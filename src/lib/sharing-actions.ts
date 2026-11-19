@@ -1,4 +1,4 @@
-import { respond } from '@solidjs/web';
+import { httpStatus, respond } from '@solidjs/web';
 
 import type { ActionError } from './board-types';
 
@@ -19,9 +19,10 @@ export async function claimFacilitatorRole(
     return respond({ ok: true } as const, { revalidate: [] });
   } catch (error) {
     if (error instanceof BoardDomainError) {
+      httpStatus(error.status);
       return respond(
         { ok: false, code: error.code, message: error.message } as const,
-        { revalidate: [] },
+        { status: error.status, revalidate: [] },
       );
     }
     throw error;
@@ -41,9 +42,10 @@ export async function getFacilitatorLink(
     return respond({ ok: true, link } as const, { revalidate: [] });
   } catch (error) {
     if (error instanceof BoardDomainError) {
+      httpStatus(error.status);
       return respond(
         { ok: false, code: error.code, message: error.message } as const,
-        { revalidate: [] },
+        { status: error.status, revalidate: [] },
       );
     }
     throw error;
@@ -63,9 +65,10 @@ export async function rotateFacilitatorLink(
     return respond({ ok: true, link } as const, { revalidate: [] });
   } catch (error) {
     if (error instanceof BoardDomainError) {
+      httpStatus(error.status);
       return respond(
         { ok: false, code: error.code, message: error.message } as const,
-        { revalidate: [] },
+        { status: error.status, revalidate: [] },
       );
     }
     throw error;

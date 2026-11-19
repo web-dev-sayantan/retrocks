@@ -24,7 +24,10 @@ async function runRequest<T>(
   const event = createRequestEvent(request);
   return provideRequestEvent(event, async () => {
     const result = await handler();
-    const response = commitEventResponse(new Response('ok'), event);
+    const response = commitEventResponse(
+      new Response('ok', { status: event.response.status ?? 200 }),
+      event,
+    );
     return { result, response };
   });
 }
@@ -1440,5 +1443,603 @@ describe('BoardService (shared Countdown Timer)', () => {
     expect(await readTimer()).toMatchObject({ durationMs: 60_000 });
     await changeTimer({ action: 'start', minutes: 60 });
     expect(await readTimer()).toMatchObject({ durationMs: 3_600_000 });
+  });
+});
+
+describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
+  async function createLifecycleFixture() {
+    const service = await import('./board-service');
+    const voting = await import('./voting-service');
+    const grouping = await import('./grouping-service');
+    const { createBoardWriteRateLimiter, setBoardWriteRateLimiterForTests } =
+      await import('../rate-limit');
+    setBoardWriteRateLimiterForTests(
+      createBoardWriteRateLimiter({ limit: 1000, windowMs: 60_000 }),
+    );
+
+    const created = await runRequest(
+      new Request('https://retrocks.app/', { method: 'POST' }),
+      () => service.createBoardForRequest({}),
+    );
+    const board = created.result;
+    const facilitatorCookie = extractSessionCookie(created.response);
+    const join = async () => {
+      const visited = await runRequest(
+        new Request(`https://retrocks.app/b/${board.id}`),
+        () => service.getBoardForRequest(board.id),
+      );
+      return extractSessionCookie(visited.response);
+    };
+    const author = await join();
+    const reader = await join();
+    const as = <T>(cookie: string, handler: () => Promise<T>) =>
+      runRequest(
+        new Request(`https://retrocks.app/b/${board.id}`, {
+          method: 'POST',
+          headers: { cookie },
+        }),
+        handler,
+      ).then(({ result }) => result);
+    const createCard = async (
+      cookie: string,
+      columnId: string,
+      content: string,
+    ) => {
+      const result = await as(cookie, () =>
+        service.createCardForRequest({ boardId: board.id, columnId, content }),
+      );
+      const event = result.events[0];
+      if (event?.type !== 'card:upserted') throw new Error('Expected a Card');
+      return event.card;
+    };
+
+    const actionCard = await createCard(
+      author,
+      board.columns[2].id,
+      'Automate canary rollback',
+    );
+    const normalCard = await createCard(
+      author,
+      board.columns[0].id,
+      'Pair on flaky tests',
+    );
+    const secondCard = await createCard(
+      author,
+      board.columns[0].id,
+      'Split slow e2e suite',
+    );
+    const grouped = await as(facilitatorCookie, () =>
+      grouping.groupCardsForRequest({
+        boardId: board.id,
+        cardId: secondCard.id,
+        targetType: 'card',
+        targetId: normalCard.id,
+      }),
+    );
+    const groupEvent = grouped.events.find((ev) => ev.type === 'group:upserted');
+    if (groupEvent?.type !== 'group:upserted') {
+      throw new Error('Expected a Card Group');
+    }
+    const comment = await as(author, () =>
+      service.createCommentForRequest({
+        boardId: board.id,
+        cardId: normalCard.id,
+        content: 'Existing discussion',
+      }),
+    );
+    const commentEvent = comment.events[0];
+    if (commentEvent?.type !== 'comment:created') {
+      throw new Error('Expected a comment');
+    }
+
+    const lock = () =>
+      as(facilitatorCookie, () =>
+        service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
+      );
+
+    return {
+      service,
+      voting,
+      grouping,
+      board,
+      facilitatorCookie,
+      author,
+      reader,
+      as,
+      actionCard,
+      normalCard,
+      secondCard,
+      groupId: groupEvent.group.id,
+      commentId: commentEvent.comment.id,
+      lock,
+    };
+  }
+
+  it('lets only the Facilitator lock and unlock the Board', async () => {
+    const { service, board, facilitatorCookie, reader, as } =
+      await createLifecycleFixture();
+
+    await expect(
+      as(reader, () =>
+        service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const locked = await as(facilitatorCookie, () =>
+      service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
+    );
+    expect(locked).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: 'board:updated',
+          patch: { isLocked: true },
+        },
+      ],
+    });
+    const lockedRead = await runRequest(
+      new Request(`https://retrocks.app/b/${board.id}`, {
+        headers: { cookie: reader },
+      }),
+      () => service.getBoardForRequest(board.id),
+    );
+    expect(lockedRead.result?.isLocked).toBe(true);
+
+    await expect(
+      as(reader, () =>
+        service.setBoardLockForRequest({ boardId: board.id, isLocked: false }),
+      ),
+    ).rejects.toMatchObject({ code: 'BOARD_LOCKED' });
+
+    const unlocked = await as(facilitatorCookie, () =>
+      service.setBoardLockForRequest({ boardId: board.id, isLocked: false }),
+    );
+    expect(unlocked).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: 'board:updated',
+          patch: { isLocked: false },
+        },
+      ],
+    });
+  });
+
+  it('rejects every write while Locked with BOARD_LOCKED except Facilitator Action Item updates and Unlock', async () => {
+    const {
+      service,
+      voting,
+      grouping,
+      board,
+      facilitatorCookie,
+      reader,
+      as,
+      actionCard,
+      normalCard,
+      groupId,
+      commentId,
+      lock,
+    } = await createLifecycleFixture();
+    await lock();
+
+    const col = board.columns[0];
+    const participantWrites = [
+      () =>
+        service.createCardForRequest({
+          boardId: board.id,
+          columnId: col.id,
+          content: 'Blocked',
+        }),
+      () =>
+        service.updateCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          content: 'Blocked edit',
+        }),
+      () =>
+        service.moveCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          targetColumnId: board.columns[1].id,
+        }),
+      () =>
+        service.deleteCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+        }),
+      () =>
+        voting.changeVoteForRequest({
+          boardId: board.id,
+          targetType: 'card',
+          targetId: normalCard.id,
+          delta: 1,
+        }),
+      () =>
+        voting.updateVotingSettingsForRequest({
+          boardId: board.id,
+          voteLimit: 3,
+        }),
+      () => voting.resetVotesForRequest({ boardId: board.id }),
+      () =>
+        service.renameBoardForRequest({
+          boardId: board.id,
+          title: 'Blocked rename',
+        }),
+      () =>
+        service.updateTimerForRequest({
+          boardId: board.id,
+          change: { action: 'start', minutes: 5 },
+        }),
+      () =>
+        service.setPrivateModeForRequest({
+          boardId: board.id,
+          isBlurred: true,
+        }),
+      () =>
+        service.addColumnForRequest({
+          boardId: board.id,
+          title: 'Blocked column',
+        }),
+      () =>
+        service.updateColumnForRequest({
+          boardId: board.id,
+          columnId: col.id,
+          title: 'Blocked column edit',
+        }),
+      () =>
+        service.reorderColumnsForRequest({
+          boardId: board.id,
+          columnIds: board.columns.map(({ id }) => id).reverse(),
+        }),
+      () =>
+        service.deleteColumnForRequest({
+          boardId: board.id,
+          columnId: col.id,
+        }),
+      () =>
+        service.toggleReactionForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          emoji: '👍',
+        }),
+      () =>
+        service.createCommentForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          content: 'Blocked comment',
+        }),
+      () =>
+        service.deleteCommentForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          commentId,
+        }),
+      () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: actionCard.id,
+          isActionItem: false,
+        }),
+      () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: actionCard.id,
+          actionDone: true,
+          actionOwner: 'Blocked',
+        }),
+      () =>
+        service.setBoardLockForRequest({
+          boardId: board.id,
+          isLocked: false,
+        }),
+      () =>
+        service.deleteBoardForRequest({
+          boardId: board.id,
+        }),
+    ];
+
+    for (const attempt of participantWrites) {
+      await expect(as(reader, attempt)).rejects.toMatchObject({
+        code: 'BOARD_LOCKED',
+        status: 403,
+      });
+    }
+
+    const facilitatorWrites = [
+      () =>
+        service.createCardForRequest({
+          boardId: board.id,
+          columnId: col.id,
+          content: 'Facilitator blocked card',
+        }),
+      () =>
+        service.updateCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          content: 'Facilitator blocked edit',
+        }),
+      () =>
+        service.moveCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          targetColumnId: board.columns[1].id,
+        }),
+      () =>
+        service.deleteCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+        }),
+      () =>
+        voting.changeVoteForRequest({
+          boardId: board.id,
+          targetType: 'card',
+          targetId: normalCard.id,
+          delta: 1,
+        }),
+      () =>
+        voting.updateVotingSettingsForRequest({
+          boardId: board.id,
+          voteLimit: 3,
+        }),
+      () => voting.resetVotesForRequest({ boardId: board.id }),
+      () =>
+        service.renameBoardForRequest({
+          boardId: board.id,
+          title: 'Facilitator blocked rename',
+        }),
+      () =>
+        service.updateTimerForRequest({
+          boardId: board.id,
+          change: { action: 'start', minutes: 5 },
+        }),
+      () =>
+        service.setPrivateModeForRequest({
+          boardId: board.id,
+          isBlurred: true,
+        }),
+      () =>
+        service.addColumnForRequest({
+          boardId: board.id,
+          title: 'Facilitator blocked column',
+        }),
+      () =>
+        service.updateColumnForRequest({
+          boardId: board.id,
+          columnId: col.id,
+          title: 'Facilitator blocked column edit',
+        }),
+      () =>
+        service.reorderColumnsForRequest({
+          boardId: board.id,
+          columnIds: board.columns.map(({ id }) => id).reverse(),
+        }),
+      () =>
+        service.deleteColumnForRequest({
+          boardId: board.id,
+          columnId: col.id,
+        }),
+      () =>
+        service.toggleReactionForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          emoji: '🎉',
+        }),
+      () =>
+        service.createCommentForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          content: 'Facilitator blocked comment',
+        }),
+      () =>
+        service.deleteCommentForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          commentId,
+        }),
+      () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: actionCard.id,
+          isActionItem: false,
+        }),
+      () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          isActionItem: true,
+        }),
+      () =>
+        grouping.renameCardGroupForRequest({
+          boardId: board.id,
+          groupId,
+          title: 'Blocked group rename',
+        }),
+      () =>
+        grouping.ungroupCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+        }),
+      () =>
+        grouping.dissolveCardGroupForRequest({
+          boardId: board.id,
+          groupId,
+        }),
+      () =>
+        grouping.moveCardGroupForRequest({
+          boardId: board.id,
+          groupId,
+          targetColumnId: board.columns[1].id,
+        }),
+      () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+          actionDone: true,
+        }),
+    ];
+
+    for (const attempt of facilitatorWrites) {
+      await expect(as(facilitatorCookie, attempt)).rejects.toMatchObject({
+        code: 'BOARD_LOCKED',
+        status: 403,
+      });
+    }
+
+    // The three Locked exceptions: Action Item completion/owner and Unlock.
+    await expect(
+      as(facilitatorCookie, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: actionCard.id,
+          actionDone: true,
+          actionOwner: 'Platform',
+        }),
+      ),
+    ).resolves.toMatchObject({
+      events: [
+        {
+          type: 'card:upserted',
+          card: {
+            id: actionCard.id,
+            actionDone: true,
+            actionOwner: 'Platform',
+          },
+        },
+      ],
+    });
+
+    const unlocked = await as(facilitatorCookie, () =>
+      service.setBoardLockForRequest({ boardId: board.id, isLocked: false }),
+    );
+    expect(unlocked.events[0]).toMatchObject({
+      type: 'board:updated',
+      patch: { isLocked: false },
+    });
+
+    // Once unlocked, ordinary writes work again.
+    await expect(
+      as(reader, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: actionCard.id,
+          actionDone: false,
+        }),
+      ),
+    ).resolves.toMatchObject({
+      events: [{ type: 'card:upserted', card: { id: actionCard.id, actionDone: false } }],
+    });
+  });
+
+  it('permanently deletes a Locked Board for the Facilitator and erases its storage', async () => {
+    const { service, board, facilitatorCookie, reader, as, normalCard, lock } =
+      await createLifecycleFixture();
+
+    await expect(
+      as(reader, () =>
+        service.deleteBoardForRequest({ boardId: board.id }),
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await store.getBoardSnapshot(board.id)).not.toBeNull();
+
+    await lock();
+    const deleted = await as(facilitatorCookie, () =>
+      service.deleteBoardForRequest({ boardId: board.id }),
+    );
+    expect(deleted).toMatchObject({
+      ok: true,
+      events: [{ type: 'board:deleted' }],
+    });
+
+    expect(await store.getBoardSnapshot(board.id)).toBeNull();
+    expect(await store.getBoardTokenSalt(board.id)).toBeNull();
+
+    const read = await runRequest(
+      new Request(`https://retrocks.app/b/${board.id}`, {
+        headers: { cookie: reader },
+      }),
+      () => service.getBoardForRequest(board.id),
+    );
+    expect(read.result).toBeNull();
+    expect(normalCard.id).toBeTruthy();
+
+    // Subsequent delete returns BOARD_NOT_FOUND (404)
+    await expect(
+      as(facilitatorCookie, () =>
+        service.deleteBoardForRequest({ boardId: board.id }),
+      ),
+    ).rejects.toMatchObject({ code: 'BOARD_NOT_FOUND', status: 404 });
+  });
+
+  it('sets HTTP 403 status from server actions on BOARD_LOCKED and allows deleting an unlocked Board', async () => {
+    const actions = await import('../../lib/board-actions');
+    const votingActions = await import('../../lib/voting-actions');
+    const { board, facilitatorCookie, reader, normalCard, lock } =
+      await createLifecycleFixture();
+
+    await lock();
+
+    const blockedCard = await runRequest(
+      new Request(`https://retrocks.app/b/${board.id}`, {
+        method: 'POST',
+        headers: { cookie: reader },
+      }),
+      () =>
+        actions.createCard({
+          boardId: board.id,
+          columnId: board.columns[0].id,
+          content: 'Blocked over server action',
+        }),
+    );
+    expect(blockedCard.response.status).toBe(403);
+    expect(blockedCard.result).toMatchObject({
+      ok: false,
+      code: 'BOARD_LOCKED',
+    });
+
+    const blockedVote = await runRequest(
+      new Request(`https://retrocks.app/b/${board.id}`, {
+        method: 'POST',
+        headers: { cookie: reader },
+      }),
+      () =>
+        votingActions.changeVote({
+          boardId: board.id,
+          targetType: 'card',
+          targetId: normalCard.id,
+          delta: 1,
+        }),
+    );
+    expect(blockedVote.response.status).toBe(403);
+    expect(blockedVote.result).toMatchObject({
+      ok: false,
+      code: 'BOARD_LOCKED',
+    });
+
+    const unlocked = await runRequest(
+      new Request(`https://retrocks.app/b/${board.id}`, {
+        method: 'POST',
+        headers: { cookie: facilitatorCookie },
+      }),
+      () => actions.setBoardLock({ boardId: board.id, isLocked: false }),
+    );
+    expect(unlocked.response.status).toBe(200);
+    expect(unlocked.result).toMatchObject({
+      ok: true,
+      events: [{ type: 'board:updated', patch: { isLocked: false } }],
+    });
+
+    const deleted = await runRequest(
+      new Request(`https://retrocks.app/b/${board.id}`, {
+        method: 'POST',
+        headers: { cookie: facilitatorCookie },
+      }),
+      () => actions.deleteBoard({ boardId: board.id }),
+    );
+    expect(deleted.response.status).toBe(200);
+    expect(deleted.result).toMatchObject({
+      ok: true,
+      events: [{ type: 'board:deleted' }],
+    });
+    expect(await store.getBoardSnapshot(board.id)).toBeNull();
   });
 });

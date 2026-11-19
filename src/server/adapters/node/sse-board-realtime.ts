@@ -52,6 +52,7 @@ export function createNodeBoardRealtime(getStore: () => Promise<BoardStore>): Bo
         if (now - subscriber.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) subscriber.disconnect();
       }
     }, LIVE_HEARTBEAT_MS);
+    heartbeat.unref?.();
     const board = { subscribers, heartbeat };
     boards.set(boardId, board);
     return board;
@@ -61,12 +62,16 @@ export function createNodeBoardRealtime(getStore: () => Promise<BoardStore>): Bo
     async publish(boardId, publication) {
       const liveBoard = boards.get(boardId);
       if (!liveBoard) return;
-      for (const subscriber of liveBoard.subscribers.values()) {
+      const isDeleted = !('snapshot' in publication) && publication.type === 'board:deleted';
+      for (const subscriber of Array.from(liveBoard.subscribers.values())) {
         if ((subscriber.controller.desiredSize ?? 0) <= -MAX_QUEUED_MESSAGES) {
           subscriber.disconnect();
           continue;
         }
         send(subscriber, projectLivePublication(publication, subscriber.viewer));
+        if (isDeleted) {
+          subscriber.disconnect();
+        }
       }
     },
 

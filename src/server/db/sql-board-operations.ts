@@ -242,6 +242,22 @@ export class SqlBoardOperations {
     this.schemaInitialized = true;
   }
 
+  /**
+   * Resets cached schema state after Durable Object `storage.deleteAll()` wipes
+   * all SQLite tables on a live instance.
+   */
+  resetSchemaState(): void {
+    this.schemaInitialized = false;
+  }
+
+  hasBoardsTable(): boolean {
+    if (this.schemaInitialized) return true;
+    const row = this.sql.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'boards'",
+    );
+    return Boolean(row);
+  }
+
   createBoard(record: CreateBoardRecord): RawBoardSnapshot {
     this.ensureSchema();
 
@@ -292,7 +308,7 @@ export class SqlBoardOperations {
   }
 
   getBoardVersion(boardId: string): number | null {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return null;
     return this.sql.get<{ version: number }>('SELECT version FROM boards WHERE id = ?', boardId)?.version ?? null;
   }
 
@@ -300,7 +316,9 @@ export class SqlBoardOperations {
     boardId: string,
     now: number = Date.now(),
   ): RawBoardSnapshot | null {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) {
+      return null;
+    }
 
     const boardRow = this.sql.get<BoardDbRow>(
       'SELECT * FROM boards WHERE id = ?',
@@ -364,13 +382,14 @@ export class SqlBoardOperations {
   }
 
   deleteBoard(boardId: string): boolean {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return false;
+    this.sql.exec('PRAGMA foreign_keys = ON');
     const { changes } = this.sql.run('DELETE FROM boards WHERE id = ?', boardId);
     return changes > 0;
   }
 
   touchActivity(boardId: string, now: number = Date.now()): RawBoardRow | null {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return null;
     this.sql.run(
       'UPDATE boards SET last_active_at = ? WHERE id = ?',
       now,
@@ -387,7 +406,7 @@ export class SqlBoardOperations {
     boardId: string,
     encryptedToken: string,
   ): void {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return;
     this.sql.run(
       'UPDATE boards SET facilitator_token_encrypted = ? WHERE id = ?',
       encryptedToken,
@@ -396,7 +415,8 @@ export class SqlBoardOperations {
   }
 
   purgeExpiredBoards(now: number = Date.now()): number {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return 0;
+    this.sql.exec('PRAGMA foreign_keys = ON');
     const { changes } = this.sql.run(
       `DELETE FROM boards WHERE (last_active_at + retention_days * ?) <= ?`,
       MS_PER_DAY,
@@ -409,27 +429,35 @@ export class SqlBoardOperations {
     boardId: string,
     now: number = Date.now(),
   ): FacilitatorCapability | null {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return null;
     const row = this.sql.get<Pick<
       BoardDbRow,
-      'facilitator_token_hash' | 'facilitator_token_encrypted'
+      'facilitator_token_hash' | 'facilitator_token_encrypted' | 'last_active_at' | 'retention_days'
     >>(
-      `SELECT facilitator_token_hash, facilitator_token_encrypted
-       FROM boards WHERE id = ? AND last_active_at + retention_days * ? > ?`,
+      `SELECT facilitator_token_hash, facilitator_token_encrypted, last_active_at, retention_days
+       FROM boards WHERE id = ?`,
       boardId,
-      MS_PER_DAY,
-      now,
     );
-    return row
-      ? {
-          facilitatorTokenHash: row.facilitator_token_hash,
-          facilitatorTokenEncrypted: row.facilitator_token_encrypted,
-        }
-      : null;
+    if (!row) {
+      return null;
+    }
+    if (
+      isBoardExpired(
+        { lastActiveAt: row.last_active_at, retentionDays: row.retention_days },
+        now,
+      )
+    ) {
+      this.deleteBoard(boardId);
+      return null;
+    }
+    return {
+      facilitatorTokenHash: row.facilitator_token_hash,
+      facilitatorTokenEncrypted: row.facilitator_token_encrypted,
+    };
   }
 
   getBoardTokenSalt(boardId: string, now: number = Date.now()): string | null {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) return null;
     const row = this.sql.get<{
       token_salt: string;
       last_active_at: number;
@@ -552,7 +580,14 @@ export class SqlBoardOperations {
     command: BoardMutationCommand,
     now: number = Date.now(),
   ): BoardMutationOutcome {
-    this.ensureSchema();
+    if (!this.hasBoardsTable()) {
+      return {
+        ok: false,
+        code: 'BOARD_NOT_FOUND',
+        message: 'Board not found or expired.',
+      };
+    }
+    this.sql.exec('PRAGMA foreign_keys = ON');
 
     return this.sql.transaction((): BoardMutationOutcome => {
       const boardRow = this.sql.get<BoardDbRow>(
@@ -577,12 +612,20 @@ export class SqlBoardOperations {
         };
       }
 
-      if (board.isLocked && command.type !== 'facilitator:rotate') {
-        return {
-          ok: false,
-          code: 'BOARD_LOCKED',
-          message: 'This Board is Locked and cannot be edited.',
-        };
+      if (board.isLocked) {
+        const canWriteWhileLocked =
+          command.type === 'facilitator:rotate' ||
+          (actor.isFacilitator &&
+            (command.type === 'board:set-lock' ||
+              (command.type === 'card:set-action' &&
+                command.isActionItem === undefined)));
+        if (!canWriteWhileLocked) {
+          return {
+            ok: false,
+            code: 'BOARD_LOCKED',
+            message: 'This Board is Locked and cannot be edited.',
+          };
+        }
       }
 
       const nextVersion = board.version + 1;
@@ -752,6 +795,34 @@ export class SqlBoardOperations {
             boardId,
           );
           rawEvents.push({ type: 'board:snapshot', version: nextVersion });
+          return finalize(nextVersion, now);
+        }
+
+        case 'board:set-lock': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can Lock or Unlock the Board.',
+            };
+          }
+
+          if (command.isLocked === board.isLocked) {
+            return finalize(board.version, board.lastActiveAt);
+          }
+
+          this.sql.run(
+            'UPDATE boards SET is_locked = ?, version = ?, last_active_at = ? WHERE id = ?',
+            command.isLocked ? 1 : 0,
+            nextVersion,
+            now,
+            boardId,
+          );
+          rawEvents.push({
+            type: 'board:updated',
+            version: nextVersion,
+            patch: { isLocked: command.isLocked },
+          });
           return finalize(nextVersion, now);
         }
 
@@ -1337,6 +1408,14 @@ export class SqlBoardOperations {
             card.author_token_hash,
           );
           if (!permission.ok) return permission;
+
+          if (board.isLocked && card.is_action_item !== 1) {
+            return {
+              ok: false,
+              code: 'BOARD_LOCKED',
+              message: 'This Board is Locked and cannot be edited.',
+            };
+          }
 
           const isActionItem =
             command.isActionItem ?? card.is_action_item === 1;

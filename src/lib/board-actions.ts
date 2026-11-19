@@ -6,6 +6,7 @@ import { changeVote, resetVotes, updateVotingSettings } from './voting-actions';
 import type {
   ActionError,
   BoardMutationResponse,
+  BoardMutationSuccess,
   BoardViewDTO,
 } from './board-types';
 import type {
@@ -13,6 +14,7 @@ import type {
   CreateBoardInput,
   CreateCardInput,
   CreateCommentInput,
+  DeleteBoardInput,
   DeleteCardInput,
   DeleteColumnInput,
   DeleteCommentInput,
@@ -23,6 +25,7 @@ import type {
   RenameBoardInput,
   RenameCardGroupInput,
   ReorderColumnsInput,
+  SetBoardLockInput,
   SetPrivateModeInput,
   ToggleReactionInput,
   UngroupCardInput,
@@ -31,6 +34,24 @@ import type {
   UpdateColumnInput,
   UpdateTimerInput,
 } from './schemas';
+
+async function respondToBoardMutation(
+  run: () => Promise<BoardMutationSuccess>,
+): Promise<BoardMutationResponse> {
+  const { BoardDomainError } = await import('../server/services/board-service');
+  try {
+    return respond(await run(), { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      httpStatus(error.status);
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { status: error.status, revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
 
 /**
  * Loads a viewer-projected Board snapshot for `/b/:id`.
@@ -70,11 +91,15 @@ export async function createBoard(
     return redirect(`/b/${board.id}`);
   } catch (error) {
     if (error instanceof BoardDomainError) {
-      return {
-        ok: false,
-        code: error.code,
-        message: error.message,
-      };
+      httpStatus(error.status);
+      return respond(
+        {
+          ok: false,
+          code: error.code,
+          message: error.message,
+        },
+        { status: error.status },
+      );
     }
     throw error;
   }
@@ -84,425 +109,220 @@ export async function renameBoard(
   input: RenameBoardInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, renameBoardForRequest } = await import(
+  const { renameBoardForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await renameBoardForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => renameBoardForRequest(input));
 }
 
 export async function updateTimer(
   input: UpdateTimerInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, updateTimerForRequest } = await import(
+  const { updateTimerForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await updateTimerForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => updateTimerForRequest(input));
 }
 
 export async function setPrivateMode(
   input: SetPrivateModeInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, setPrivateModeForRequest } = await import(
+  const { setPrivateModeForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await setPrivateModeForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => setPrivateModeForRequest(input));
+}
+
+export async function setBoardLock(
+  input: SetBoardLockInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { setBoardLockForRequest } = await import(
+    '../server/services/board-service'
+  );
+  return respondToBoardMutation(() => setBoardLockForRequest(input));
+}
+
+export async function deleteBoard(
+  input: DeleteBoardInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { deleteBoardForRequest } = await import(
+    '../server/services/board-service'
+  );
+  return respondToBoardMutation(() => deleteBoardForRequest(input));
 }
 
 export async function createCard(
   input: CreateCardInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, createCardForRequest } = await import(
+  const { createCardForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await createCardForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => createCardForRequest(input));
 }
 
 export async function updateCard(
   input: UpdateCardInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, updateCardForRequest } = await import(
+  const { updateCardForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await updateCardForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => updateCardForRequest(input));
 }
 
 export async function updateActionItem(
   input: UpdateActionItemInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, updateActionItemForRequest } = await import(
+  const { updateActionItemForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await updateActionItemForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => updateActionItemForRequest(input));
 }
 
 export async function moveCard(
   input: MoveCardInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, moveCardForRequest } = await import(
+  const { moveCardForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await moveCardForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => moveCardForRequest(input));
 }
 
 export async function deleteCard(
   input: DeleteCardInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, deleteCardForRequest } = await import(
+  const { deleteCardForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await deleteCardForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => deleteCardForRequest(input));
 }
 
 export async function toggleReaction(
   input: ToggleReactionInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, toggleReactionForRequest } = await import(
+  const { toggleReactionForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await toggleReactionForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => toggleReactionForRequest(input));
 }
 
 export async function createComment(
   input: CreateCommentInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, createCommentForRequest } = await import(
+  const { createCommentForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await createCommentForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => createCommentForRequest(input));
 }
 
 export async function deleteComment(
   input: DeleteCommentInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, deleteCommentForRequest } = await import(
+  const { deleteCommentForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await deleteCommentForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => deleteCommentForRequest(input));
 }
 
 export async function addColumn(
   input: AddColumnInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, addColumnForRequest } = await import(
+  const { addColumnForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await addColumnForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => addColumnForRequest(input));
 }
 
 export async function updateColumn(
   input: UpdateColumnInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, updateColumnForRequest } = await import(
+  const { updateColumnForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await updateColumnForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => updateColumnForRequest(input));
 }
 
 export async function reorderColumns(
   input: ReorderColumnsInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, reorderColumnsForRequest } = await import(
+  const { reorderColumnsForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await reorderColumnsForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => reorderColumnsForRequest(input));
 }
 
 export async function deleteColumn(
   input: DeleteColumnInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError, deleteColumnForRequest } = await import(
+  const { deleteColumnForRequest } = await import(
     '../server/services/board-service'
   );
-  try {
-    const result = await deleteColumnForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToBoardMutation(() => deleteColumnForRequest(input));
 }
 
 export async function groupCards(
   input: GroupCardsInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    const { groupCardsForRequest } = await import(
-      '../server/services/grouping-service'
-    );
-    const result = await groupCardsForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  const { groupCardsForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => groupCardsForRequest(input));
 }
 
 export async function renameCardGroup(
   input: RenameCardGroupInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    const { renameCardGroupForRequest } = await import(
-      '../server/services/grouping-service'
-    );
-    const result = await renameCardGroupForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  const { renameCardGroupForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => renameCardGroupForRequest(input));
 }
 
 export async function ungroupCard(
   input: UngroupCardInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    const { ungroupCardForRequest } = await import(
-      '../server/services/grouping-service'
-    );
-    const result = await ungroupCardForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  const { ungroupCardForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => ungroupCardForRequest(input));
 }
 
 export async function dissolveCardGroup(
   input: DissolveCardGroupInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    const { dissolveCardGroupForRequest } = await import(
-      '../server/services/grouping-service'
-    );
-    const result = await dissolveCardGroupForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  const { dissolveCardGroupForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => dissolveCardGroupForRequest(input));
 }
 
 export async function moveCardGroup(
   input: MoveCardGroupInput,
 ): Promise<BoardMutationResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    const { moveCardGroupForRequest } = await import(
-      '../server/services/grouping-service'
-    );
-    const result = await moveCardGroupForRequest(input);
-    return respond(result, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  const { moveCardGroupForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => moveCardGroupForRequest(input));
 }
 
 export interface BoardWorkspaceActions {
@@ -512,6 +332,8 @@ export interface BoardWorkspaceActions {
   renameBoard: (input: RenameBoardInput) => Promise<BoardMutationResponse>;
   updateTimer: (input: UpdateTimerInput) => Promise<BoardMutationResponse>;
   setPrivateMode: (input: SetPrivateModeInput) => Promise<BoardMutationResponse>;
+  setBoardLock: (input: SetBoardLockInput) => Promise<BoardMutationResponse>;
+  deleteBoard: (input: DeleteBoardInput) => Promise<BoardMutationResponse>;
   createCard: (input: CreateCardInput) => Promise<BoardMutationResponse>;
   updateCard: (input: UpdateCardInput) => Promise<BoardMutationResponse>;
   updateActionItem: (
@@ -540,6 +362,8 @@ export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
   renameBoard,
   updateTimer,
   setPrivateMode,
+  setBoardLock,
+  deleteBoard,
   createCard,
   updateCard,
   updateActionItem,

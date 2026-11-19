@@ -400,3 +400,84 @@ it('redacts Blind Voting totals in HTTP and both live streams, then reveals and 
     vi.unstubAllEnvs();
   }
 });
+
+it('broadcasts board:deleted to all live clients and immediately returns 404 on subsequent reads', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  const streams: ReturnType<typeof readLiveStream>[] = [];
+  try {
+    const service = await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const { getBoardRealtime } = await import('./adapters/runtime');
+    const origin = 'https://retrocks.app';
+    const { result: board, cookie: facilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => service.createBoardForRequest({}),
+    );
+    const boardUrl = `${origin}/b/${board.id}`;
+    const liveUrl = `${origin}/api/boards/${board.id}/live`;
+    const { cookie: participantCookie } = await withSession(
+      new Request(boardUrl),
+      () => service.getBoardForRequest(board.id),
+    );
+
+    const [participantStream, facilitatorStream] = await Promise.all(
+      [participantCookie!, facilitatorCookie!].map(async (cookie) => {
+        const stream = readLiveStream(
+          await handleLiveRequest(board.id, new Request(liveUrl, { headers: { cookie } })),
+        );
+        streams.push(stream);
+        await stream.until('board:snapshot');
+        return stream;
+      }),
+    );
+
+    // Lock then permanently delete the Board.
+    await withSession(
+      new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
+      () => service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
+    );
+    const lockFrames = await Promise.all([
+      participantStream.until('board:mutation'),
+      facilitatorStream.until('board:mutation'),
+    ]);
+    expect(lockFrames[0]).toMatchObject({
+      events: [{ type: 'board:updated', patch: { isLocked: true } }],
+    });
+
+    const { result: deleted } = await withSession(
+      new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
+      () => service.deleteBoardForRequest({ boardId: board.id }),
+    );
+    expect(deleted).toMatchObject({
+      ok: true,
+      events: [{ type: 'board:deleted', version: deleted.version }],
+    });
+
+    const deletedFrames = await Promise.all([
+      participantStream.until('board:deleted'),
+      facilitatorStream.until('board:deleted'),
+    ]);
+    expect(deletedFrames).toEqual([
+      { type: 'board:deleted', version: deleted.version },
+      { type: 'board:deleted', version: deleted.version },
+    ]);
+
+    // Presence is cleared once subscribers disconnect after board:deleted.
+    expect(await getBoardRealtime().getPresenceCount(board.id)).toBe(0);
+
+    // Subsequent HTTP reads return null (404) and live endpoint rejects with 404.
+    const { result: afterDeleteRead } = await withSession(
+      new Request(boardUrl, { headers: { cookie: participantCookie! } }),
+      () => service.getBoardForRequest(board.id),
+    );
+    expect(afterDeleteRead).toBeNull();
+    const afterDeleteLive = await handleLiveRequest(
+      board.id,
+      new Request(liveUrl, { headers: { cookie: participantCookie! } }),
+    );
+    expect(afterDeleteLive.status).toBe(404);
+  } finally {
+    await Promise.all(streams.map((stream) => stream.close()));
+    vi.unstubAllEnvs();
+  }
+});

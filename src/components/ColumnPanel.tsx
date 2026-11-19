@@ -1,10 +1,4 @@
-import {
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-} from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
   COLUMN_ACCENTS,
@@ -104,6 +98,18 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
+
+  createEffect(
+    () => props.isLocked,
+    (locked) => {
+      if (locked) {
+        setMenuOpen(false);
+        setConfirmingDelete(false);
+        setIsRenaming(false);
+        setRenameDraft('');
+      }
+    },
+  );
 
   const canManageColumn = createMemo(
     () => props.isFacilitator && !props.isLocked,

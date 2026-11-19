@@ -73,6 +73,12 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
     this.writeLimiter = createBoardWriteRateLimiter();
   }
 
+  private async wipeStorage(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.ops.resetSchemaState();
+  }
+
   async createBoard(record: CreateBoardRecord): Promise<RawBoardSnapshot> {
     const snapshot = this.ops.createBoard(record);
     await this.ctx.storage.setAlarm(
@@ -85,8 +91,12 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
     boardId: string,
     now?: number,
   ): Promise<RawBoardSnapshot | null> {
+    const hadTable = this.ops.hasBoardsTable();
     const snapshot = this.ops.getBoardSnapshot(boardId, now);
     if (!snapshot) {
+      if (hadTable) {
+        await this.wipeStorage();
+      }
       return null;
     }
     return snapshot;
@@ -96,14 +106,24 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
     boardId: string,
     now?: number,
   ): Promise<string | null> {
-    return this.ops.getBoardTokenSalt(boardId, now);
+    const hadTable = this.ops.hasBoardsTable();
+    const salt = this.ops.getBoardTokenSalt(boardId, now);
+    if (salt === null && hadTable) {
+      await this.wipeStorage();
+    }
+    return salt;
   }
 
   async getFacilitatorCapability(
     boardId: string,
     now?: number,
   ): Promise<FacilitatorCapability | null> {
-    return this.ops.getFacilitatorCapability(boardId, now);
+    const hadTable = this.ops.hasBoardsTable();
+    const capability = this.ops.getFacilitatorCapability(boardId, now);
+    if (!capability && hadTable) {
+      await this.wipeStorage();
+    }
+    return capability;
   }
 
   async mutateBoard(
@@ -121,11 +141,14 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
       };
     }
 
+    const hadTable = this.ops.hasBoardsTable();
     const outcome = this.ops.mutateBoard(boardId, actor, command, now);
     if (outcome.ok) {
       await this.ctx.storage.setAlarm(
         computeBoardExpiryAt(outcome.lastActiveAt, outcome.retentionDays),
       );
+    } else if (outcome.code === 'BOARD_NOT_FOUND' && hadTable) {
+      await this.wipeStorage();
     }
     return outcome;
   }
@@ -133,8 +156,7 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
   async deleteBoard(boardId: string): Promise<boolean> {
     const deleted = this.ops.deleteBoard(boardId);
     if (deleted) {
-      await this.ctx.storage.deleteAlarm();
-      await this.ctx.storage.deleteAll();
+      await this.wipeStorage();
     }
     return deleted;
   }
@@ -156,14 +178,17 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
   }
 
   async alarm(): Promise<void> {
-    this.ops.ensureSchema();
+    if (!this.ops.hasBoardsTable()) {
+      return;
+    }
     const row = this.ctx.storage.sql
-      .exec('SELECT id, last_active_at, retention_days FROM boards LIMIT 1')
+      .exec('SELECT id, version, last_active_at, retention_days FROM boards LIMIT 1')
       .toArray()[0] as
-      | { id: string; last_active_at: number; retention_days: number }
+      | { id: string; version: number; last_active_at: number; retention_days: number }
       | undefined;
 
     if (!row) {
+      await this.wipeStorage();
       return;
     }
 
@@ -177,7 +202,11 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
         now,
       )
     ) {
-      await this.ctx.storage.deleteAll();
+      for (const { socket } of this.liveConnections()) {
+        this.sendLive(socket, { type: 'board:deleted', version: row.version + 1 });
+        socket.close(1000, 'Board expired');
+      }
+      await this.wipeStorage();
     } else {
       await this.ctx.storage.setAlarm(
         computeBoardExpiryAt(row.last_active_at, row.retention_days),
@@ -218,8 +247,12 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
       // Concurrent RPCs can arrive after a newer write, including a privacy change.
       if (this.ops.getBoardVersion(id) !== version) return;
     }
+    const isDeleted = !('snapshot' in publication) && publication.type === 'board:deleted';
     for (const { socket, viewer } of connections) {
       this.sendLive(socket, projectLivePublication(publication, viewer));
+      if (isDeleted) {
+        socket.close(1000, 'Board deleted');
+      }
     }
   }
 
