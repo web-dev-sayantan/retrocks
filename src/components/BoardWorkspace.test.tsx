@@ -528,6 +528,13 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+function openBoardSettings(view: Pick<ReturnType<typeof render>, 'getByRole'>) {
+  fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
+  flush();
+  fireEvent.click(view.getByRole('menuitem', { name: 'Board Settings' }));
+  flush();
+}
+
 describe('<BoardWorkspace />', () => {
   it('optimistically updates the Card and toolbar balance, then restores both on rejection', async () => {
     const card = makeCard({ isMine: false, votes: 2 });
@@ -647,7 +654,7 @@ describe('<BoardWorkspace />', () => {
     const dialog = getByText('Board Settings', { selector: 'h2' }).closest('dialog')!;
     dialog.showModal = () => { dialog.open = true; };
     dialog.close = () => { dialog.open = false; };
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
     const voteLimit = settings.getByRole('combobox', { name: 'Vote limit' });
@@ -668,7 +675,7 @@ describe('<BoardWorkspace />', () => {
     expect(queryByTitle('3 total Votes · 1 yours')).not.toBeInTheDocument();
     expect(getByRole('button', { name: 'Cast Vote' })).toBeDisabled();
 
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     fireEvent.click(settings.getByRole('button', { name: 'Reset All Votes' }));
     flush();
@@ -1467,7 +1474,7 @@ describe('<BoardWorkspace />', () => {
     ).toBeInTheDocument();
 
     // Add Column
-    fireEvent.click(getByRole('button', { name: /\+ Add column/i }));
+    fireEvent.click(getByRole('button', { name: 'Add a Column' }));
     flush();
     const newColInput = getByLabelText('New column title') as HTMLInputElement;
     fireEvent.input(newColInput, { target: { value: 'Kudos' } });
@@ -1697,7 +1704,7 @@ describe('<BoardWorkspace />', () => {
     };
 
     // Open Board Settings and Lock the Board
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
     fireEvent.click(settings.getByRole('button', { name: 'Lock Board' }));
@@ -1718,7 +1725,7 @@ describe('<BoardWorkspace />', () => {
     expect(getByText('Locked')).toBeInTheDocument();
     expect(queryByRole('button', { name: 'Rename Board' })).toBeNull();
     expect(queryByRole('button', { name: 'Private Mode' })).toBeNull();
-    expect(queryByRole('button', { name: /\+ Add column/i })).toBeNull();
+    expect(queryByRole('button', { name: 'Add a Column' })).toBeNull();
     expect(queryByLabelText('Add card to Went Well')).toBeNull();
     expect(queryByRole('button', { name: 'Cast Vote' })).toBeNull();
     expect(queryByRole('button', { name: 'Remove Vote' })).toBeNull();
@@ -1727,7 +1734,11 @@ describe('<BoardWorkspace />', () => {
     expect(queryByRole('button', { name: 'Add reaction' })).toBeNull();
     expect(queryByRole('button', { name: 'Flag as Action Item' })).toBeNull();
     expect(queryByRole('button', { name: 'Unflag Action Item' })).toBeNull();
-    expect(getByRole('button', { name: 'Board Settings' })).toBeEnabled();
+    fireEvent.click(getByRole('button', { name: 'More board actions' }));
+    flush();
+    expect(getByRole('menuitem', { name: 'Board Settings' })).toBeEnabled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    flush();
     expect(getByRole('button', { name: 'Share' })).toBeEnabled();
 
     // Facilitator CAN update actionDone & actionOwner on existing Action Items in Action Items Drawer
@@ -1790,7 +1801,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     // Unlock the Board from Board Settings
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     fireEvent.click(settings.getByRole('button', { name: 'Unlock Board' }));
     await flushPromises();
@@ -1888,7 +1899,7 @@ describe('<BoardWorkspace />', () => {
       dialog.open = false;
     };
 
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
 
@@ -2000,7 +2011,7 @@ describe('<BoardWorkspace />', () => {
         dialog.close = () => {
           dialog.open = false;
         };
-        fireEvent.click(view.getByRole('button', { name: 'Board Settings' }));
+        openBoardSettings(view);
         flush();
         fireEvent.click(view.getByRole('button', { name: 'Delete Board' }));
         flush();
@@ -2264,11 +2275,11 @@ describe('<BoardWorkspace />', () => {
           ));
           flush();
 
-          const exportButton = getByRole('button', { name: 'Export' });
+          const exportButton = getByRole('button', { name: 'More board actions' });
           fireEvent.click(exportButton);
           flush();
 
-          const menu = getByRole('menu', { name: 'Export Board' });
+          const menu = getByRole('menu', { name: 'More board actions' });
           expect(menu).toHaveAttribute('data-board-overlay', 'true');
 
           const mdLink = within(menu).getByRole('menuitem', {
@@ -2315,19 +2326,19 @@ describe('<BoardWorkspace />', () => {
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
           expect(
-            queryByRole('menu', { name: 'Export Board' }),
+            queryByRole('menu', { name: 'More board actions' }),
           ).not.toBeInTheDocument();
 
           // Reopen and close on outside pointerdown
           fireEvent.click(exportButton);
           flush();
           expect(
-            getByRole('menu', { name: 'Export Board' }),
+            getByRole('menu', { name: 'More board actions' }),
           ).toBeInTheDocument();
           fireEvent.pointerDown(document.body);
           flush();
           expect(
-            queryByRole('menu', { name: 'Export Board' }),
+            queryByRole('menu', { name: 'More board actions' }),
           ).not.toBeInTheDocument();
 
           // Reopen and trigger Print / Save as PDF
@@ -2339,7 +2350,7 @@ describe('<BoardWorkspace />', () => {
           flush();
           expect(printSpy).toHaveBeenCalledTimes(1);
           expect(
-            queryByRole('menu', { name: 'Export Board' }),
+            queryByRole('menu', { name: 'More board actions' }),
           ).not.toBeInTheDocument();
         },
         { scenario: 'board-workspace-export-menu' },
@@ -2368,9 +2379,11 @@ describe('<BoardWorkspace />', () => {
       ));
       flush();
 
-      fireEvent.click(getByRole('button', { name: 'Export' }));
+      fireEvent.click(getByRole('button', { name: 'More board actions' }));
       flush();
-      const menu = getByRole('menu', { name: 'Export Board' });
+      const menu = getByRole('menu', { name: 'More board actions' });
+      expect(within(menu).queryByRole('menuitem', { name: 'Board Settings' })).not.toBeInTheDocument();
+      expect(within(menu).queryByRole('menuitem', { name: 'Add column' })).not.toBeInTheDocument();
       expect(
         within(menu).getByRole('menuitem', { name: 'Copy Markdown' }),
       ).toBeInTheDocument();
@@ -3037,7 +3050,7 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
-  it('opens the mobile overflow menu for secondary controls and closes on Escape with zero diagnostics', async () => {
+  it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {
     const board = makeBoardView({
       isFacilitator: true,
       cards: [makeCard({ isActionItem: true, actionDone: false })],
@@ -3061,7 +3074,8 @@ describe('<BoardWorkspace />', () => {
           const menu = view.getByRole('menu', { name: 'More board actions' });
           expect(menu).toHaveAttribute('data-board-overlay', 'true');
           const withinMenu = within(menu);
-          expect(withinMenu.getByRole('menuitem', { name: /Private Mode/i })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: 'Board Settings' })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: /Switch to (light|dark) theme/ })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Add column/i })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Action Items/i })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Download Markdown/i })).toBeInTheDocument();
@@ -3071,6 +3085,7 @@ describe('<BoardWorkspace />', () => {
 
           expect(trigger).toHaveAttribute('aria-expanded', 'false');
           expect(view.queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+          expect(trigger).toHaveFocus();
         } finally {
           view.unmount();
         }
@@ -3149,7 +3164,8 @@ describe('<BoardWorkspace />', () => {
 
           expect(view.queryByText('Will fail on server')).not.toBeInTheDocument();
           expect(within(col1).getByText('1')).toBeInTheDocument();
-          expect(view.getByRole('alert')).toHaveTextContent('Board card limit reached.');
+          expect(composer).toHaveValue('Will fail on server');
+          expect(within(col1).getByRole('alert')).toHaveTextContent('Board card limit reached.');
         } finally {
           view.unmount();
         }

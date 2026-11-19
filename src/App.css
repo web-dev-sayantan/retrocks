@@ -10,17 +10,18 @@
 
 /* Semantic light theme tokens (default). */
 :root {
-  --retrocks-canvas: #fafafa;
+  --retrocks-canvas: #f7f5f0;
   --retrocks-surface: #ffffff;
-  --retrocks-surface-subtle: #f3f4f6;
-  --retrocks-border: #e5e7eb;
-  --retrocks-text: #111827;
-  --retrocks-text-muted: #6b7280;
-  --retrocks-accent: #111827;
+  --retrocks-surface-subtle: #edeae3;
+  --retrocks-border: #d9d5cc;
+  --retrocks-control: #81877e;
+  --retrocks-text: #202522;
+  --retrocks-text-muted: #555c56;
+  --retrocks-accent: #255b48;
   --retrocks-accent-contrast: #ffffff;
-  --retrocks-focus: #4f46e5;
+  --retrocks-focus: #414bb0;
 
-  /* 8 curated muted pastel Column accent tokens (3px top border + 5% tint). */
+  /* Column accent markers and subtle tint tokens. */
   --retrocks-col-slate: #64748b;
   --retrocks-col-sage: #4d8b6f;
   --retrocks-col-sky: #3b82b6;
@@ -42,15 +43,16 @@
 
 /* Semantic dark theme tokens. */
 [data-theme='dark'] {
-  --retrocks-canvas: #0e0f11;
-  --retrocks-surface: #16181d;
-  --retrocks-surface-subtle: #1e2128;
-  --retrocks-border: #262a33;
-  --retrocks-text: #f3f4f6;
-  --retrocks-text-muted: #9ca3af;
-  --retrocks-accent: #e5e7eb;
-  --retrocks-accent-contrast: #0e0f11;
-  --retrocks-focus: #818cf8;
+  --retrocks-canvas: #1c1e20;
+  --retrocks-surface: #27292c;
+  --retrocks-surface-subtle: #313337;
+  --retrocks-border: #515456;
+  --retrocks-control: #777d79;
+  --retrocks-text: #f6f5f1;
+  --retrocks-text-muted: #bfc3bf;
+  --retrocks-accent: #abd7c2;
+  --retrocks-accent-contrast: #1c1e20;
+  --retrocks-focus: #aab2ff;
 
   --retrocks-col-slate: #94a3b8;
   --retrocks-col-sage: #6eb393;
@@ -68,6 +70,7 @@
   --color-surface: var(--retrocks-surface);
   --color-surface-subtle: var(--retrocks-surface-subtle);
   --color-border: var(--retrocks-border);
+  --color-control: var(--retrocks-control);
   --color-text: var(--retrocks-text);
   --color-text-muted: var(--retrocks-text-muted);
   --color-accent: var(--retrocks-accent);
@@ -96,7 +99,7 @@
 
   /* Privacy-first system typography — zero external font network requests */
   --font-sans:
-    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
@@ -116,6 +119,29 @@
     min-height: 100dvh;
     background-color: var(--retrocks-canvas);
     color: var(--retrocks-text);
+  }
+}
+
+@layer components {
+  .board-menu-item {
+    @apply flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus;
+  }
+}
+
+@layer base {
+  .board-workspace :where(button, a, summary):focus-visible {
+    outline: 2px solid var(--retrocks-focus);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --retrocks-border: #777b72;
+  }
+
+  [data-theme='dark'] {
+    --retrocks-border: #9ca09e;
   }
 }
 

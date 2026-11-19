@@ -100,14 +100,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ---
 
 ### 3.2 Board Workspace & Core Card Operations (`/b/:boardId`)
-- **Minimal Sticky Header:**
-  - Retrocks mark (links home) + inline-editable Board Title (Facilitator) + subtle `Locked` badge when Locked.
-  - Live presence indicator: subtle green dot + deduplicated anonymous Participant count (e.g., `6 online`). Shows reconnecting state visibly if offline.
-  - Compact controls: Countdown Timer pill, Private Mode / Reveal All toggle (Facilitator), Action Items drawer button (with open count badge), Share button, Export menu, Board Settings (Facilitator), Theme toggle.
+- **Board header:**
+  - Lead with the Board title and optional context. The Retrocks link returns home, and Facilitators can rename an unlocked Board from the title.
+  - Keep online presence, Countdown Timer, and active Board states near the title. Show reconnecting when live updates are interrupted. Private Mode explains who can read a Card before Reveal All.
+  - Keep Share and More in the header. More holds theme, export, and Board Settings for Facilitators. Action Items appears in the header from 768 CSS px and in More on narrower layouts, with its open count.
 - **Columns (1–10):**
-  - Displays Column title, subtle 3px pastel top accent bar, and Card count badge.
-  - Quick inline **"+ Add card"** composer pinned at the top of each Column (`Enter` or `Cmd/Ctrl+Enter` to submit, `Shift+Enter` for newline).
-  - Facilitator can add Columns (up to 10), rename inline, reorder Columns, change accent palette, or delete a Column (confirmation required if non-empty).
+  - Use a small accent marker, a wrapping title, and a tabular Card count. Use opaque Cards on the open Column rail.
+  - Offer **+ Add Card** at the top of each desktop Column and one bottom composer on phones. The phone composer names its target Column and keeps a draft for each Column. Enter submits, Shift+Enter starts a new line, and a failed submission keeps the draft and displays its error by the composer.
+  - Facilitators of unlocked Boards can add Columns at the end of the desktop rail or from More on phones. Rename, reorder, accent, and delete controls stay with each Column. Deletion requires confirmation.
 - **Cards:**
   - Plain text up to 1,000 characters; safely rendered with preserved line breaks, clickable auto-linked `https?://` URLs, and inline backtick code spans (zero raw HTML).
   - Subtle relative timestamp (e.g., `2m ago`) — strictly no author name or avatar.
@@ -225,7 +225,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - **Participant Link** (`/b/<boardId>`) with one-click copy.
   - **Co-Facilitator Link** (`/b/<boardId>#f=<token>`) fetched on demand by any Facilitator with a concise security note and a **Rotate Link** action (with confirmation) to revoke leaked links.
   - **QR Code** rendered purely client-side as SVG (zero external image requests) for in-room Participants joining via phone.
-- **Exports (Strictly Obey Current Visibility Rules):**
+- **Exports (in More):**
   - Exports always use the server-projected viewer snapshot — redacted Cards stay redacted while Private Mode is ON, and aggregate Vote totals stay omitted while Blind Voting is ON (no bypass flag; reveal first for a full export).
   - **Markdown (`.md`)** — Copy to clipboard or download; structured by Columns, Card Groups, Vote counts, comments, and a trailing Action Items checklist.
   - **CSV (`.csv`)** — Excel/Google Sheets ready with UTF-8 BOM and CSV formula-injection neutralization (prefixing leading `=`, `+`, `-`, `@`, `\t`, `\r`).
@@ -240,20 +240,20 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Tailwind CSS v4 (`@tailwindcss/vite`):**
   - Semantic design tokens defined via `@theme` and CSS custom properties in [src/App.css](../src/App.css).
   - Dark mode driven by `@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));` so `dark:*` utilities match the `data-theme` attribute cleanly.
-  - **Light Mode Tokens:** Canvas `#FAFAFA`, Surface `#FFFFFF`, Subtle Surface `#F3F4F6`, Border `#E5E7EB`, Primary Text `#111827`, Muted Text `#6B7280`, Primary Accent `#111827` (subtle indigo `#4F46E5` for interactive focus).
-  - **Dark Mode Tokens:** Canvas `#0E0F11`, Surface `#16181D`, Subtle Surface `#1E2128`, Border `#262A33`, Primary Text `#F3F4F6`, Muted Text `#9CA3AF`, Primary Accent `#E5E7EB` / `#818CF8`.
-  - **Column Pastel Accents (8 curated muted tokens):** `slate`, `sage`, `sky`, `amber`, `rose`, `violet`, `teal`, `coral` — rendered as a crisp 3px top border + whisper-soft 5% opacity Column header tint.
-- **Typography:** System UI / self-hosted `Inter` stack (zero Google Fonts network requests for strict privacy). `font-variant-numeric: tabular-nums` on timers, Vote badges, and counters.
+  - **Light:** Warm canvas `#F7F5F0`, opaque surface `#FFFFFF`, subtle surface `#EDEAE3`, text `#202522`, muted text `#555C56`, primary action `#255B48`, focus `#414BB0`.
+  - **Dark:** Charcoal canvas `#1C1E20`, opaque surface `#27292C`, subtle surface `#313337`, text `#F6F5F1`, muted text `#BFC3BF`, primary action `#ABD7C2`, focus `#AAB2FF`.
+  - **Column accents:** Slate, sage, sky, amber, rose, violet, teal, and coral appear as small markers alongside labeled Column titles and tabs.
+- **Typography:** System UI stack with no font network requests. Start composer text at 1 rem and use tabular numerals for timers and counts.
+- **Feedback:** Controls give immediate color or opacity feedback on press and commit on activation. More stays anchored to its trigger. Column tabs and swipe update the selected Column immediately, and reduced-motion mode disables decorative motion.
 - **Zero-FOUC Theme Init:** Tiny inline script in [src/Document.tsx](../src/Document.tsx) applies `data-theme="dark" | "light"` from `localStorage` / `prefers-color-scheme` before first paint.
 
 ### 4.2 Mobile-First Responsive Behavior
 - **Desktop (`>= 1024px`):** Side-by-side Columns (3–4 Columns fill viewport width cleanly; 5+ Columns scroll horizontally with smooth snap), hover-revealed quick actions, drag-and-drop Card move & grouping, slide-over Card Detail Drawer.
 - **Tablet (`640px – 1023px`):** 2-column responsive layout or horizontal snap Columns.
 - **Mobile (`< 640px`):**
-  - Compact sticky header with overflow menu for secondary controls.
-  - Horizontal scrollable **Column Tab Bar** showing Column accent dots and Card counts, plus horizontal swipe support between Columns.
-  - Full-width single-column stream with 44px minimum touch targets.
-  - Bottom-anchored quick-add Card bar for effortless thumb typing.
+  - Share and More fit on a single controls row. Give long titles and context their own full-width lines and let active states wrap.
+  - Keep the sticky **Column Tab Bar** in its own horizontal scroll region. Tabs show labels, accents, and counts. Swipe the Card stream horizontally to change Columns while preserving vertical scrolling.
+  - Show a single Column with at least 44 × 44 CSS px touch targets. Keep the composer at the bottom of the visible viewport during entry, including when the software keyboard is shown.
   - Card detail & actions presented in native-feeling **Bottom Sheets** (no hover-only controls anywhere).
 
 ### 4.3 Keyboard Shortcuts & Accessibility

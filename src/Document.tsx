@@ -24,7 +24,7 @@ export default function Document(props: ParentProps) {
     <html lang="en">
       <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
         <link rel="icon" href="/favicon.ico" />
         <title>Retrocks</title>
         {/* eslint-disable-next-line solid/no-innerhtml */}

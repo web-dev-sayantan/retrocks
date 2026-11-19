@@ -219,7 +219,7 @@ export default function CountdownTimer(props: {
           else setOpen(true);
         }}
         class={[
-          'relative inline-flex min-h-11 items-center gap-1.5 overflow-hidden rounded-full border border-border bg-surface px-2.5 text-xs font-semibold text-text tabular-nums hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-9 sm:px-3',
+          'relative inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 overflow-hidden rounded-full border border-border bg-surface px-2.5 text-xs font-semibold text-text tabular-nums hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-9 sm:px-3',
           expiryAnnounced() && 'motion-safe:animate-[timer-expiry-pulse_1.2s_ease-in-out_2]',
         ]}
       >
