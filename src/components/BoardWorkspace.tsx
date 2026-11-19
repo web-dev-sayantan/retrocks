@@ -757,7 +757,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const board = workspace.board;
     if (!board?.isFacilitator || board.isLocked || isChangingPrivateMode()) return;
     const { id: boardId, isBlurred } = board;
-    const dramatic = isBlurred && Boolean(options?.dramatic);
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const dramatic = isBlurred && Boolean(options?.dramatic) && !prefersReducedMotion;
     if (dramatic && !isTimerAudioMuted()) {
       revealChime.prepare();
     } else if (!isBlurred) {
@@ -767,18 +771,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     try {
       const response = await actions().setPrivateMode({ boardId, isBlurred: !isBlurred });
       if (dramatic && response.ok && workspace.board?.id === boardId) {
-        const prefersReducedMotion =
-          typeof window !== 'undefined' &&
-          typeof window.matchMedia === 'function' &&
-          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        if (!prefersReducedMotion) {
-          clearDramaticReveal();
-          setIsDramaticReveal(true);
-          dramaticRevealTimer = setTimeout(() => {
-            dramaticRevealTimer = undefined;
-            setIsDramaticReveal(false);
-          }, 950);
-        }
+        clearDramaticReveal();
+        setIsDramaticReveal(true);
+        dramaticRevealTimer = setTimeout(() => {
+          dramaticRevealTimer = undefined;
+          setIsDramaticReveal(false);
+        }, 950);
         if (!isTimerAudioMuted()) {
           revealChime.playRevealShimmer();
         }
@@ -2071,7 +2069,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       “{RETROSPECTIVE_PRIME_DIRECTIVE.excerpt} …”
                     </blockquote>
                     <figcaption class="mt-1">
-                      <a href={RETROSPECTIVE_PRIME_DIRECTIVE.source} class="underline underline-offset-2">
+                      <a
+                        href={RETROSPECTIVE_PRIME_DIRECTIVE.source}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="underline underline-offset-2"
+                      >
                         Norm Kerth’s Retrospective Prime Directive
                       </a>
                     </figcaption>

@@ -21,18 +21,26 @@ export function createTimerChime() {
     }
   }
 
-  function play() {
+  function playNotes(options: {
+    notes: readonly number[];
+    stepSeconds: number;
+    peakGain: number;
+    attackSeconds: number;
+    releaseSeconds: number;
+    stopSeconds: number;
+    type?: OscillatorType;
+  }) {
     const audio = context;
     if (!audio || audio.state !== 'running') return;
-    const notes = [659.25, 880];
-    for (const [index, frequency] of notes.entries()) {
-      const start = audio.currentTime + index * 0.16;
+    for (const [index, frequency] of options.notes.entries()) {
+      const start = audio.currentTime + index * options.stepSeconds;
       const oscillator = audio.createOscillator();
       const volume = audio.createGain();
+      if (options.type) oscillator.type = options.type;
       oscillator.frequency.value = frequency;
       volume.gain.setValueAtTime(0.001, start);
-      volume.gain.exponentialRampToValueAtTime(0.065, start + 0.03);
-      volume.gain.exponentialRampToValueAtTime(0.001, start + 0.28);
+      volume.gain.exponentialRampToValueAtTime(options.peakGain, start + options.attackSeconds);
+      volume.gain.exponentialRampToValueAtTime(0.001, start + options.releaseSeconds);
       oscillator.connect(volume);
       volume.connect(audio.destination);
       oscillator.onended = () => {
@@ -40,32 +48,31 @@ export function createTimerChime() {
         volume.disconnect();
       };
       oscillator.start(start);
-      oscillator.stop(start + 0.3);
+      oscillator.stop(start + options.stopSeconds);
     }
   }
 
+  function play() {
+    playNotes({
+      notes: [659.25, 880],
+      stepSeconds: 0.16,
+      peakGain: 0.065,
+      attackSeconds: 0.03,
+      releaseSeconds: 0.28,
+      stopSeconds: 0.3,
+    });
+  }
+
   function playRevealShimmer() {
-    const audio = context;
-    if (!audio || audio.state !== 'running') return;
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    for (const [index, frequency] of notes.entries()) {
-      const start = audio.currentTime + index * 0.065;
-      const oscillator = audio.createOscillator();
-      const volume = audio.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.value = frequency;
-      volume.gain.setValueAtTime(0.001, start);
-      volume.gain.exponentialRampToValueAtTime(0.035, start + 0.14);
-      volume.gain.exponentialRampToValueAtTime(0.001, start + 0.55);
-      oscillator.connect(volume);
-      volume.connect(audio.destination);
-      oscillator.onended = () => {
-        oscillator.disconnect();
-        volume.disconnect();
-      };
-      oscillator.start(start);
-      oscillator.stop(start + 0.58);
-    }
+    playNotes({
+      notes: [523.25, 659.25, 783.99, 1046.5],
+      stepSeconds: 0.065,
+      peakGain: 0.035,
+      attackSeconds: 0.14,
+      releaseSeconds: 0.55,
+      stopSeconds: 0.58,
+      type: 'sine',
+    });
   }
 
   function dispose() {

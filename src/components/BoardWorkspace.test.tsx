@@ -4264,7 +4264,8 @@ describe('<BoardWorkspace />', () => {
           flush();
           expect(workspaceEl).not.toHaveAttribute('data-dramatic-reveal');
 
-          // 4. prefers-reduced-motion suppresses dramatic reveal visual state
+          // 4. prefers-reduced-motion suppresses dramatic reveal visual state and Web Audio shimmer
+          startNote.mockClear();
           localStorage.removeItem('retrocks-timer-muted');
           vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
             matches: query === '(prefers-reduced-motion: reduce)',
@@ -4277,6 +4278,7 @@ describe('<BoardWorkspace />', () => {
           fireEvent.click(view.getByRole('button', { name: 'Reveal All' }), { shiftKey: true });
           await flushPromises();
           expect(workspaceEl).not.toHaveAttribute('data-dramatic-reveal');
+          expect(startNote).not.toHaveBeenCalled();
         } finally {
           view.unmount();
         }
