@@ -7,9 +7,14 @@ import type {
   CreateBoardRecord,
   RawBoardSnapshot,
 } from '../../db/raw-types';
-import type { BoardStore } from '../types';
+import type { BoardPublication, BoardRealtime, BoardStore } from '../types';
+
+export const LIVE_PARTICIPANT_HEADER = 'x-retrocks-live-participant';
+export const LIVE_FACILITATOR_HEADER = 'x-retrocks-live-facilitator';
 
 export interface BoardRoomRpcStub {
+  publishLive(publication: BoardPublication): Promise<void>;
+  getPresenceCount(): Promise<number>;
   createBoard(record: CreateBoardRecord): Promise<RawBoardSnapshot>;
   getBoardSnapshot(
     boardId: string,
@@ -77,6 +82,31 @@ export function createCloudflareBoardStore(
         boardId,
         encryptedToken,
       );
+    },
+  };
+}
+
+export function createCloudflareBoardRealtime(namespace: DurableObjectNamespace): BoardRealtime {
+  function stubFor(boardId: string) {
+    return namespace.get(namespace.idFromName(boardId)) as DurableObjectStub & BoardRoomRpcStub;
+  }
+
+  return {
+    publish(boardId, publication) {
+      return stubFor(boardId).publishLive(publication);
+    },
+    async handleLiveConnection(boardId, request, viewer) {
+      if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+        return new Response(null, { status: 426, headers: { upgrade: 'websocket' } });
+      }
+      const headers = new Headers(request.headers);
+      headers.delete('cookie');
+      headers.set(LIVE_PARTICIPANT_HEADER, viewer.participantHash);
+      headers.set(LIVE_FACILITATOR_HEADER, String(viewer.isFacilitator));
+      return stubFor(boardId).fetch(new Request(request.url, { headers }));
+    },
+    getPresenceCount(boardId) {
+      return stubFor(boardId).getPresenceCount();
     },
   };
 }

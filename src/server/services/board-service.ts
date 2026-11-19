@@ -25,7 +25,7 @@ import {
   formatDefaultBoardTitle,
   getBoardTemplate,
 } from '../../lib/templates';
-import { getBoardStore } from '../adapters/runtime';
+import { getBoardRealtime, getBoardStore } from '../adapters/runtime';
 import {
   encryptFacilitatorToken,
   generateBoardId,
@@ -210,6 +210,16 @@ async function executeBoardMutation(
   const outcome = await store.mutateBoard(boardId, actor, command);
   if (!outcome.ok) {
     throw new BoardDomainError(outcome.code, outcome.message);
+  }
+
+  try {
+    await getBoardRealtime().publish(boardId, {
+      snapshot: outcome.snapshot,
+      events: outcome.rawEvents,
+    });
+  } catch (error) {
+    // The write is already committed. Returning a failed write would invite retries.
+    console.error('Board live delivery failed', error);
   }
 
   const events: BoardEvent[] = projectMutationEventsForViewer(

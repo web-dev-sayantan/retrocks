@@ -3,6 +3,10 @@
 /// <reference types="@cloudflare/workers-types" />
 /// <reference types="../file-routes.d.ts" />
 
+interface ImportMetaEnv {
+  readonly RETROCKS_LIVE_SSE: boolean;
+}
+
 declare module 'virtual:solid-ssr-handler' {
   export function handleRequest(request: Request): Promise<Response>;
   const handler: {

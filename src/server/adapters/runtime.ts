@@ -2,12 +2,16 @@ import 'server-only';
 import { env } from 'virtual:solid-env/server';
 
 import { getCloudflareEnv } from './cloudflare-context';
-import { createCloudflareBoardStore } from './cloudflare/cloudflare-board-store';
+import {
+  createCloudflareBoardRealtime,
+  createCloudflareBoardStore,
+} from './cloudflare/cloudflare-board-store';
+import { createNodeBoardRealtime } from './node/sse-board-realtime';
 import {
   createNodeBoardStore,
   type NodeBoardStore,
 } from './node/sqlite-board-store';
-import type { BoardStore } from './types';
+import type { BoardRealtime, BoardStore } from './types';
 
 let testStoreOverride: BoardStore | null = null;
 let nodeStorePromise: Promise<NodeBoardStore> | null = null;
@@ -38,4 +42,13 @@ export async function getBoardStore(): Promise<BoardStore> {
     nodeStorePromise = createNodeBoardStore(dbPath);
   }
   return nodeStorePromise;
+}
+
+const nodeRealtime = createNodeBoardRealtime(getBoardStore);
+
+export function getBoardRealtime(): BoardRealtime {
+  const cfEnv = getCloudflareEnv();
+  return cfEnv?.BOARD_ROOM
+    ? createCloudflareBoardRealtime(cfEnv.BOARD_ROOM)
+    : nodeRealtime;
 }

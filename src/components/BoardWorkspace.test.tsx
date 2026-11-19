@@ -4,6 +4,7 @@ import { flush } from 'solid-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardWorkspaceActions } from '../lib/board-actions';
+import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import type { BoardViewDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
 import BoardWorkspace from './BoardWorkspace';
@@ -283,6 +284,78 @@ beforeEach(() => {
 });
 
 describe('<BoardWorkspace />', () => {
+  it('applies live deltas and requests a new stream snapshot after a version gap without clearing the composer', () => {
+    const streams: FakeEventSource[] = [];
+    class FakeEventSource extends EventTarget {
+      closed = false;
+      constructor(readonly url: string) {
+        super();
+        streams.push(this);
+      }
+      close() {
+        this.closed = true;
+      }
+      receive(message: BoardLiveMessage) {
+        this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+        flush();
+      }
+    }
+
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const board = makeBoardView();
+    const { getByRole, getByText, queryByText, unmount } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} />
+    ));
+    try {
+      flush();
+      expect(streams).toHaveLength(1);
+      expect(streams[0].url).toBe(`/api/boards/${board.id}/live`);
+      streams[0].receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+      streams[0].receive({ type: 'presence:count', count: 2 });
+      expect(getByRole('status')).toHaveTextContent('2 online');
+
+      fireEvent.click(getByRole('tab', { name: /To Improve/ }));
+      flush();
+      const composer = getByRole('textbox', { name: 'Quick add card to To Improve' });
+      fireEvent.input(composer, { target: { value: 'Still typing' } });
+      flush();
+
+      const incoming = makeCard({ content: 'Added from another tab', isMine: false });
+      streams[0].receive({
+        type: 'board:mutation',
+        version: 2,
+        events: [{ type: 'card:upserted', version: 2, card: incoming }],
+      });
+      expect(getByText(incoming.content)).toBeInTheDocument();
+      streams[0].receive({
+        type: 'board:mutation',
+        version: 4,
+        events: [{ type: 'board:updated', version: 4, patch: { title: 'Out-of-order title' } }],
+      });
+      expect(queryByText('Out-of-order title')).not.toBeInTheDocument();
+      expect(getByRole('status')).toHaveTextContent('Reconnecting');
+      expect(streams).toHaveLength(2);
+      expect(streams[0].closed).toBe(true);
+      streams[1].receive({
+        type: 'board:snapshot',
+        version: 4,
+        serverNow: 200,
+        board: makeBoardView({ title: 'Recovered title', cards: [incoming], version: 4 }),
+      });
+      streams[1].receive({ type: 'presence:count', count: 2 });
+
+      expect(getByRole('heading', { name: 'Recovered title' })).toBeInTheDocument();
+      expect(getByText(incoming.content)).toBeInTheDocument();
+      expect(getByRole('status')).toHaveTextContent('2 online');
+      expect(getByRole('tab', { name: /To Improve/ })).toHaveAttribute('aria-selected', 'true');
+      expect(composer).toHaveValue('Still typing');
+    } finally {
+      unmount();
+      vi.unstubAllGlobals();
+    }
+    expect(streams[1].closed).toBe(true);
+  });
+
   it('renders sticky header, Columns with 3px pastel accent bar and Card count badge, and records Recent Board', () => {
     const board = makeBoardView();
     const { getByRole, getByText } = render(() => (

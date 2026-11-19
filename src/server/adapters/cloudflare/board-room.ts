@@ -1,5 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
+import { LIVE_HEARTBEAT_TIMEOUT_MS, type BoardLiveMessage } from '../../../lib/board-live-protocol';
+
 import type {
   BoardMutationActor,
   BoardMutationCommand,
@@ -17,6 +19,14 @@ import {
   createBoardWriteRateLimiter,
   type BoardWriteRateLimiter,
 } from '../../rate-limit';
+
+import { projectLivePublication, projectLiveSnapshot } from '../../domain/live-projection';
+import type { BoardPublication, LiveViewerContext } from '../types';
+import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from './cloudflare-board-store';
+
+interface LiveAttachment extends LiveViewerContext {
+  lastSeenAt: number;
+}
 
 function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
   const sql = storage.sql;
@@ -50,7 +60,7 @@ function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
 
 /**
  * SQLite-backed Cloudflare Durable Object managing one Board's serialized state,
- * automatic inactivity expiry alarm, and Hibernatable WebSockets (Issue #5).
+ * automatic inactivity expiry alarm, and Hibernatable WebSockets.
  */
 export class BoardRoom extends DurableObject<Cloudflare.Env> {
   private readonly ops: SqlBoardOperations;
@@ -167,9 +177,98 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
     }
   }
 
-  async fetch(_request: Request): Promise<Response> {
-    return new Response('Live WebSocket endpoint not yet enabled', {
-      status: 501,
-    });
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response(null, { status: 426 });
+    }
+    // The Worker seals identity at the cookie-authenticated public entry point.
+    const participantHash = request.headers.get(LIVE_PARTICIPANT_HEADER);
+    if (!participantHash) return new Response(null, { status: 401 });
+
+    const boardId = this.ctx.id.name;
+    const snapshot = boardId ? this.ops.getBoardSnapshot(boardId) : null;
+    if (!snapshot) return new Response(null, { status: 404 });
+
+    const { 0: client, 1: server } = new WebSocketPair();
+    this.ctx.acceptWebSocket(server);
+    const viewer: LiveAttachment = {
+      participantHash,
+      isFacilitator: request.headers.get(LIVE_FACILITATOR_HEADER) === 'true',
+      lastSeenAt: Date.now(),
+    };
+    server.serializeAttachment(viewer);
+    this.sendLive(server, projectLiveSnapshot(snapshot, viewer));
+    this.broadcastPresence();
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async publishLive(publication: BoardPublication): Promise<void> {
+    const connections = this.liveConnections();
+    if (connections.length === 0) return;
+    if ('snapshot' in publication) {
+      const { id, version } = publication.snapshot.board;
+      // Concurrent RPCs can arrive after a newer write, including a privacy change.
+      if (this.ops.getBoardVersion(id) !== version) return;
+    }
+    for (const { socket, viewer } of connections) {
+      this.sendLive(socket, projectLivePublication(publication, viewer));
+    }
+  }
+
+  async getPresenceCount(): Promise<number> {
+    return new Set(this.liveConnections().map(({ viewer }) => viewer.participantHash)).size;
+  }
+
+  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
+    if (message !== 'ping') return;
+    const viewer = socket.deserializeAttachment() as LiveAttachment;
+    const now = Date.now();
+    if (now - viewer.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
+      socket.close(1001, 'Live connection timed out');
+      this.broadcastPresence(socket);
+      return;
+    }
+    socket.serializeAttachment({ ...viewer, lastSeenAt: now });
+    this.sendLive(socket, { type: 'heartbeat' });
+    // Active Clients' heartbeats prune stale peers, including after hibernation.
+    this.liveConnections();
+  }
+
+  webSocketClose(socket: WebSocket): void {
+    this.broadcastPresence(socket);
+  }
+
+  webSocketError(socket: WebSocket): void {
+    socket.close(1011, 'Live connection failed');
+    this.broadcastPresence(socket);
+  }
+
+  private liveConnections(excluded?: WebSocket) {
+    const active = [];
+    const now = Date.now();
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === excluded || socket.readyState !== WebSocket.OPEN) continue;
+      const viewer = socket.deserializeAttachment() as LiveAttachment;
+      if (now - viewer.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
+        socket.close(1001, 'Live connection timed out');
+        continue;
+      }
+      active.push({ socket, viewer });
+    }
+    return active;
+  }
+
+  private broadcastPresence(excluded?: WebSocket): void {
+    const active = this.liveConnections(excluded);
+    const count = new Set(active.map(({ viewer }) => viewer.participantHash)).size;
+    for (const { socket } of active) this.sendLive(socket, { type: 'presence:count', count });
+  }
+
+  private sendLive(socket: WebSocket, message: BoardLiveMessage): void {
+    try {
+      socket.send(JSON.stringify(message));
+    } catch {
+      socket.close(1011, 'Live delivery failed');
+    }
   }
 }
