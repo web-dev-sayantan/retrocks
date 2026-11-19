@@ -48,16 +48,25 @@ export async function getFacilitatorLinkForRequest(
   const capability = await store.getFacilitatorCapability(boardId);
   if (!capability) throw boardNotFound();
 
+  const secrets = getSessionSecrets();
   const decrypted = await decryptFacilitatorToken(
     capability.facilitatorTokenEncrypted,
     boardId,
-    getSessionSecrets(),
+    secrets,
   );
   if (!decrypted) {
     throw new BoardDomainError(
       'INTERNAL_ERROR',
       'This Co-Facilitator Link could not be recovered. Rotate Link to create a new one.',
     );
+  }
+  if (decrypted.needsReencrypt) {
+    const reencrypted = await encryptFacilitatorToken(
+      decrypted.token,
+      boardId,
+      secrets,
+    );
+    await store.updateFacilitatorTokenEncryption(boardId, reencrypted);
   }
   return `/b/${boardId}#f=${decrypted.token}`;
 }

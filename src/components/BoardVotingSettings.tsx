@@ -289,8 +289,8 @@ export default function BoardVotingSettings(props: {
               <h3 class="text-sm font-semibold text-text">Board Lock</h3>
               <p class="mt-0.5 text-xs text-text-muted">
                 {props.board.isLocked
-                  ? 'Cards, Columns, Votes, and comments are frozen. Facilitators can still update existing Action Items.'
-                  : 'Freeze content edits while keeping viewing, searching, exporting, and Facilitator Action Item updates.'}
+                  ? 'Cards, Columns, Votes, and comments are Locked. Facilitators can still update existing Action Items.'
+                  : 'Lock content edits while keeping viewing, searching, exporting, and Facilitator Action Item updates.'}
               </p>
             </div>
           </div>

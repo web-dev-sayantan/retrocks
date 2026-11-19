@@ -130,6 +130,18 @@ async function setup(options: Record<string, unknown> = {}) {
     as(cookie, () =>
       boardService.deleteCardForRequest({ boardId: board.id, cardId }));
 
+  const moveCard = (
+    cardId: string,
+    targetColumnId: string,
+    cookie: Cookie = facilitator,
+  ) =>
+    as(cookie, () =>
+      boardService.moveCardForRequest({
+        boardId: board.id,
+        cardId,
+        targetColumnId,
+      }));
+
   return {
     board,
     facilitator,
@@ -138,6 +150,7 @@ async function setup(options: Record<string, unknown> = {}) {
     read,
     createCard,
     deleteCard,
+    moveCard,
     merge,
     groupIdFrom,
     renameGroup,
@@ -375,6 +388,13 @@ it('auto-dissolves when deleting a member leaves fewer than 2 Cards', async () =
 
   const removedFirst = await deleteCard(first);
   expect(removedFirst.events).toMatchObject([
+    {
+      type: 'group:upserted',
+      group: {
+        id: groupId,
+        cardIds: expect.arrayContaining([second, third]),
+      },
+    },
     { type: 'card:deleted' },
     { type: 'vote:balance' },
   ]);
@@ -387,6 +407,65 @@ it('auto-dissolves when deleting a member leaves fewer than 2 Cards', async () =
     { type: 'vote:balance' },
   ]);
   expect((await read()).result!.groups).toEqual([]);
+});
+
+it('emits group:upserted with updated cardIds and combined votes when ungrouping or moving a Card out of a 3+ Card Group', async () => {
+  const { board, participant, createCard, merge, groupIdFrom, ungroup, moveCard, vote } =
+    await setup({ voteLimit: 10 });
+  const first = await createCard('Alpha');
+  const second = await createCard('Beta');
+  const third = await createCard('Gamma');
+  const fourth = await createCard('Delta');
+
+  await vote('card', first, 1, participant);
+  await vote('card', second, 1, participant);
+  await vote('card', third, 1, participant);
+
+  const groupId = groupIdFrom((await merge(first, 'card', second)).events);
+  await merge(third, 'group', groupId);
+  await merge(fourth, 'group', groupId);
+  await vote('group', groupId, 1, participant);
+
+  // Ungrouping first from a 4-Card Group leaves 3 Cards and emits group:upserted with updated votes
+  const ungrouped = await ungroup(first);
+  expect(ungrouped.events).toMatchObject([
+    {
+      type: 'group:upserted',
+      group: {
+        id: groupId,
+        cardIds: expect.arrayContaining([second, third, fourth]),
+        votes: 3, // second(1) + third(1) + direct(1); first(1) left
+      },
+    },
+    { type: 'card:upserted', card: { id: first, groupId: null } },
+  ]);
+  const ungroupedGroupEvent = ungrouped.events.find((e) => e.type === 'group:upserted');
+  if (ungroupedGroupEvent?.type === 'group:upserted') {
+    expect(ungroupedGroupEvent.group.cardIds).toHaveLength(3);
+    expect(ungroupedGroupEvent.group.cardIds).not.toContain(first);
+  }
+
+  // Moving second to another Column leaves 2 Cards and emits group:upserted with updated votes
+  const moved = await moveCard(second, board.columns[1].id);
+  expect(moved.events).toMatchObject([
+    {
+      type: 'group:upserted',
+      group: {
+        id: groupId,
+        cardIds: expect.arrayContaining([third, fourth]),
+        votes: 2, // third(1) + direct(1); second(1) left
+      },
+    },
+    {
+      type: 'card:upserted',
+      card: { id: second, columnId: board.columns[1].id, groupId: null },
+    },
+  ]);
+  const movedGroupEvent = moved.events.find((e) => e.type === 'group:upserted');
+  if (movedGroupEvent?.type === 'group:upserted') {
+    expect(movedGroupEvent.group.cardIds).toHaveLength(2);
+    expect(movedGroupEvent.group.cardIds).not.toContain(second);
+  }
 });
 
 it('grandfathers merged Votes, blocks new group Votes at the cap, and removes direct group Votes first', async () => {
@@ -422,7 +501,8 @@ it('grandfathers merged Votes, blocks new group Votes at the cap, and removes di
     ]),
   );
 
-  // A second decrement then removes one of the grandfathered member Votes.
+  // A second decrement then removes one of the grandfathered member Votes
+  // and emits vote:updated for both the Card Group and the decremented member Card.
   const decremented = await vote('group', groupId, -1);
   expect(decremented.events).toMatchObject([
     {
@@ -431,6 +511,13 @@ it('grandfathers merged Votes, blocks new group Votes at the cap, and removes di
       targetId: groupId,
       myVotes: 1,
       totalVotes: 1,
+    },
+    {
+      type: 'vote:updated',
+      targetType: 'card',
+      targetId: expect.stringMatching(new RegExp(`^(${first}|${second})$`)),
+      myVotes: 0,
+      totalVotes: 0,
     },
   ]);
   snapshot = (await read(participant)).result!;

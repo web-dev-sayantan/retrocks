@@ -2989,4 +2989,243 @@ describe('<BoardWorkspace />', () => {
     );
     expectNoDiagnostics(artifact);
   });
+
+  it('renders a redacted Private Mode Card Group with hidden header and no vote/manage controls', async () => {
+    const board = makeBoardView({
+      isBlurred: true,
+      isFacilitator: true,
+      groups: [
+        {
+          id: 'group_redacted',
+          columnId: 'col_1',
+          title: '',
+          redacted: true,
+          cardIds: ['card_r1', 'card_r2'],
+          votes: null,
+          myVotes: 0,
+          createdAt: Date.now() - 10_000,
+        },
+      ],
+      cards: [
+        makeCard({ id: 'card_r1', groupId: 'group_redacted', content: '', redacted: true, isMine: false, placeholderLines: 1 }),
+        makeCard({ id: 'card_r2', groupId: 'group_redacted', content: '', redacted: true, isMine: false, placeholderLines: 2 }),
+      ],
+    });
+    const { artifact } = await captureArtifact(
+      () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} />
+        ));
+        try {
+          flush();
+          const groupEl = view.container.querySelector('[data-group-id="group_redacted"]') as HTMLElement;
+          expect(groupEl).not.toBeNull();
+          const groupHeader = groupEl.firstElementChild as HTMLElement;
+          expect(within(groupHeader).getByText('Hidden until Reveal All')).toBeInTheDocument();
+          const group = within(groupEl);
+          expect(group.queryByRole('button', { name: /Rename Card Group/i })).not.toBeInTheDocument();
+          expect(group.queryByRole('button', { name: /Move Card Group/i })).not.toBeInTheDocument();
+          expect(group.queryByRole('button', { name: /Dissolve Card Group/i })).not.toBeInTheDocument();
+          expect(group.queryByRole('button', { name: 'Cast Vote' })).not.toBeInTheDocument();
+          expect(groupEl.querySelectorAll('[data-card-id]')).toHaveLength(2);
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'redacted-card-group-ui' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('opens the mobile overflow menu for secondary controls and closes on Escape with zero diagnostics', async () => {
+    const board = makeBoardView({
+      isFacilitator: true,
+      cards: [makeCard({ isActionItem: true, actionDone: false })],
+    });
+    const { actions } = createFakeActions(board);
+    const { artifact } = await captureArtifact(
+      () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+          const trigger = view.getByRole('button', { name: 'More board actions' });
+          expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
+          expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+          fireEvent.click(trigger);
+          flush();
+
+          expect(trigger).toHaveAttribute('aria-expanded', 'true');
+          const menu = view.getByRole('menu', { name: 'More board actions' });
+          expect(menu).toHaveAttribute('data-board-overlay', 'true');
+          const withinMenu = within(menu);
+          expect(withinMenu.getByRole('menuitem', { name: /Private Mode/i })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: /Add column/i })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: /Action Items/i })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: /Download Markdown/i })).toBeInTheDocument();
+
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+
+          expect(trigger).toHaveAttribute('aria-expanded', 'false');
+          expect(view.queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'mobile-header-overflow-menu' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('optimistically renders Card creation, reconciles on success, and rolls back on failure with zero diagnostics', async () => {
+    const board = makeBoardView({
+      columns: [
+        { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 0 },
+        { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 0 },
+      ],
+      cards: [],
+    });
+    const { actions, spies } = createFakeActions(board);
+    const pendingSuccess = Promise.withResolvers<BoardMutationResponse>();
+    const pendingFailure = Promise.withResolvers<BoardMutationResponse>();
+    spies.createCard
+      .mockReturnValueOnce(pendingSuccess.promise)
+      .mockReturnValueOnce(pendingFailure.promise);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+          const composer = view.getByRole('textbox', { name: 'Add card to Went Well' });
+
+          // 1. Optimistic Card creation -> appears immediately before server responds
+          fireEvent.input(composer, { target: { value: 'Shipped faster deploys' } });
+          flush();
+          fireEvent.keyDown(composer, { key: 'Enter' });
+          flush();
+
+          expect(view.getByText('Shipped faster deploys')).toBeInTheDocument();
+          const col1 = view.container.querySelector('[data-column-id="col_1"]') as HTMLElement;
+          expect(within(col1).getByText('1')).toBeInTheDocument();
+
+          // Reconcile with authoritative server response
+          const serverCard = makeCard({
+            id: 'card_server_1',
+            columnId: 'col_1',
+            content: 'Shipped faster deploys',
+          });
+          pendingSuccess.resolve({
+            ok: true,
+            version: 2,
+            events: [{ type: 'card:upserted', version: 2, card: serverCard }],
+          });
+          await flushPromises();
+
+          expect(view.getAllByText('Shipped faster deploys')).toHaveLength(1);
+          expect(view.container.querySelector('[data-card-id="card_server_1"]')).not.toBeNull();
+          expect(within(col1).getByText('1')).toBeInTheDocument();
+
+          // 2. Optimistic Card creation failure -> appears immediately, then rolls back on error
+          fireEvent.input(composer, { target: { value: 'Will fail on server' } });
+          flush();
+          fireEvent.keyDown(composer, { key: 'Enter' });
+          flush();
+
+          expect(view.getByText('Will fail on server')).toBeInTheDocument();
+          expect(within(col1).getByText('2')).toBeInTheDocument();
+
+          pendingFailure.resolve({
+            ok: false,
+            code: 'LIMIT_EXCEEDED',
+            message: 'Board card limit reached.',
+          });
+          await flushPromises();
+
+          expect(view.queryByText('Will fail on server')).not.toBeInTheDocument();
+          expect(within(col1).getByText('1')).toBeInTheDocument();
+          expect(view.getByRole('alert')).toHaveTextContent('Board card limit reached.');
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'optimistic-card-creation' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('optimistically toggles Emoji Reactions, reconciles on success, and rolls back on failure with zero diagnostics', async () => {
+    const card = makeCard({
+      id: 'card_react_1',
+      reactions: { '👍': 1 },
+      myReactions: [],
+    });
+    const board = makeBoardView({ cards: [card] });
+    const { actions, spies } = createFakeActions(board);
+    const pendingSuccess = Promise.withResolvers<BoardMutationResponse>();
+    const pendingFailure = Promise.withResolvers<BoardMutationResponse>();
+    spies.toggleReaction
+      .mockReturnValueOnce(pendingSuccess.promise)
+      .mockReturnValueOnce(pendingFailure.promise);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          // 1. Optimistically increment existing 👍 reaction from 1 -> 2 before server resolves
+          fireEvent.click(view.getByRole('button', { name: '👍 1 reaction' }));
+          flush();
+
+          const optimisticBtn = view.getByRole('button', { name: '👍 2 reactions' });
+          expect(optimisticBtn).toHaveAttribute('aria-pressed', 'true');
+
+          pendingSuccess.resolve({
+            ok: true,
+            version: 2,
+            events: [
+              {
+                type: 'reaction:updated',
+                version: 2,
+                cardId: card.id,
+                counts: { '👍': 2 },
+                myReactions: ['👍'],
+              },
+            ],
+          });
+          await flushPromises();
+
+          expect(view.getByRole('button', { name: '👍 2 reactions' })).toHaveAttribute('aria-pressed', 'true');
+
+          // 2. Optimistically decrement 👍 back to 1, then roll back to 2 on server failure
+          fireEvent.click(view.getByRole('button', { name: '👍 2 reactions' }));
+          flush();
+
+          expect(view.getByRole('button', { name: '👍 1 reaction' })).toHaveAttribute('aria-pressed', 'false');
+
+          pendingFailure.resolve({
+            ok: false,
+            code: 'RATE_LIMITED',
+            message: 'Slow down reactions.',
+          });
+          await flushPromises();
+
+          expect(view.getByRole('button', { name: '👍 2 reactions' })).toHaveAttribute('aria-pressed', 'true');
+          expect(view.getByRole('alert')).toHaveTextContent('Slow down reactions.');
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'optimistic-emoji-reactions' },
+    );
+    expectNoDiagnostics(artifact);
+  });
 });

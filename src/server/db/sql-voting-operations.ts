@@ -4,13 +4,17 @@ import { checkPrivateCardPermission } from '../domain/card-permissions';
 import type { BoardMutationActor, BoardMutationCommand, BoardMutationOutcome, RawBoardRow } from './raw-types';
 import type { SqlRunner } from './sql-runner';
 
+export type ChangeVoteResult =
+  | { ok: true; decrementedMemberCardId?: string }
+  | Extract<BoardMutationOutcome, { ok: false }>;
+
 export function changeVote(
   sql: SqlRunner,
   board: RawBoardRow,
   actor: BoardMutationActor,
   command: Extract<BoardMutationCommand, { type: 'vote:change' }>,
   now: number,
-): { ok: true } | Extract<BoardMutationOutcome, { ok: false }> {
+): ChangeVoteResult {
   const { id: boardId } = board;
   const { participantHash } = actor;
   const { targetType, targetId, delta } = command;
@@ -59,30 +63,7 @@ export function changeVote(
     return { ok: false, code: 'VALIDATION_ERROR', message: 'You have no Votes to remove from this Card.' };
   }
 
-  const next = current + delta;
-  if (next === 0) {
-    sql.run(
-      'DELETE FROM votes WHERE board_id = ? AND target_type = ? AND target_id = ? AND voter_token_hash = ?',
-      boardId,
-      targetType,
-      targetId,
-      participantHash,
-    );
-  } else {
-    sql.run(
-      `INSERT INTO votes (board_id, target_type, target_id, voter_token_hash, count, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (target_type, target_id, voter_token_hash) DO UPDATE
-       SET count = excluded.count, updated_at = excluded.updated_at`,
-      boardId,
-      targetType,
-      targetId,
-      participantHash,
-      next,
-      now,
-    );
-  }
-  return { ok: true };
+  return writeVoteCount(sql, boardId, targetType, targetId, participantHash, current + delta, now);
 }
 
 function changeGroupVote(
@@ -92,7 +73,7 @@ function changeGroupVote(
   groupId: string,
   delta: 1 | -1,
   now: number,
-): { ok: true } | Extract<BoardMutationOutcome, { ok: false }> {
+): ChangeVoteResult {
   const { id: boardId } = board;
   const { participantHash } = actor;
 
@@ -162,19 +143,7 @@ function changeGroupVote(
         return { ok: false, code: 'LIMIT_EXCEEDED', message: 'You have no Votes left.' };
       }
     }
-    const next = directVotes + 1;
-    sql.run(
-      `INSERT INTO votes (board_id, target_type, target_id, voter_token_hash, count, updated_at)
-       VALUES (?, 'group', ?, ?, ?, ?)
-       ON CONFLICT (target_type, target_id, voter_token_hash) DO UPDATE
-       SET count = excluded.count, updated_at = excluded.updated_at`,
-      boardId,
-      groupId,
-      participantHash,
-      next,
-      now,
-    );
-    return { ok: true };
+    return writeVoteCount(sql, boardId, 'group', groupId, participantHash, directVotes + 1, now);
   }
 
   // Direct group Votes are removed first, then grandfathered member Card Votes
@@ -192,7 +161,7 @@ function changeGroupVote(
       message: 'You have no Votes to remove from this Card Group.',
     };
   }
-  return writeVoteCount(
+  writeVoteCount(
     sql,
     boardId,
     'card',
@@ -201,6 +170,7 @@ function changeGroupVote(
     memberVote.count - 1,
     now,
   );
+  return { ok: true, decrementedMemberCardId: memberVote.target_id };
 }
 
 function writeVoteCount(

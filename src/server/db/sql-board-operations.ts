@@ -388,20 +388,6 @@ export class SqlBoardOperations {
     return changes > 0;
   }
 
-  touchActivity(boardId: string, now: number = Date.now()): RawBoardRow | null {
-    if (!this.hasBoardsTable()) return null;
-    this.sql.run(
-      'UPDATE boards SET last_active_at = ? WHERE id = ?',
-      now,
-      boardId,
-    );
-    const row = this.sql.get<BoardDbRow>(
-      'SELECT * FROM boards WHERE id = ?',
-      boardId,
-    );
-    return row ? mapBoardRow(row) : null;
-  }
-
   updateFacilitatorTokenEncryption(
     boardId: string,
     encryptedToken: string,
@@ -494,6 +480,8 @@ export class SqlBoardOperations {
     );
     if ((row?.count ?? 0) < 2) {
       this.dissolveGroup(boardId, groupId, version, rawEvents);
+    } else {
+      rawEvents.push({ type: 'group:upserted', version, groupId });
     }
   }
 
@@ -687,6 +675,14 @@ export class SqlBoardOperations {
             targetType: command.targetType,
             targetId: command.targetId,
           });
+          if (result.decrementedMemberCardId) {
+            rawEvents.push({
+              type: 'vote:updated',
+              version: nextVersion,
+              targetType: 'card',
+              targetId: result.decrementedMemberCardId,
+            });
+          }
           return finalize(nextVersion, now);
         }
 

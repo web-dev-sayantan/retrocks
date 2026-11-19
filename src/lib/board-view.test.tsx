@@ -189,6 +189,33 @@ describe('projectBoardView', () => {
     expect(result.columns.get('col_1')?.items.map((item) => item.key)).toEqual(['card:c_mine']);
   });
 
+  it('never matches a redacted Card Group title during Private Mode search', () => {
+    const redactedGroup = makeGroup({
+      id: 'g_secret',
+      columnId: 'col_1',
+      title: 'Secret merged theme',
+      redacted: true,
+      cardIds: ['c_r1', 'c_r2'],
+      votes: null,
+      myVotes: 0,
+    });
+    const board = makeBoard({
+      groups: [redactedGroup],
+      cards: [
+        makeCard({ id: 'c_r1', groupId: 'g_secret', content: '', redacted: true, isMine: false }),
+        makeCard({ id: 'c_r2', groupId: 'g_secret', content: '', redacted: true, isMine: false }),
+      ],
+    });
+
+    const result = projectBoardView(board, {
+      query: 'secret',
+      filter: 'all',
+      sortMode: 'newest',
+    });
+    expect(result.matchedCardCount).toBe(0);
+    expect(result.columns.get('col_1')?.items).toEqual([]);
+  });
+
   it('sorts unified standalone Cards and Card Groups by Newest, Oldest, and Most Voted with Blind Voting fallback', () => {
     const group = makeGroup({
       id: 'g_1',

@@ -33,7 +33,6 @@ export interface BoardRoomRpcStub {
     now?: number,
   ): Promise<BoardMutationOutcome>;
   deleteBoard(boardId: string): Promise<boolean>;
-  touchActivity(boardId: string, now?: number): Promise<void>;
   updateFacilitatorTokenEncryption(
     boardId: string,
     encryptedToken: string,
@@ -81,9 +80,6 @@ export function createCloudflareBoardStore(
     },
     deleteBoard(boardId: string): Promise<boolean> {
       return stubFor(boardId).deleteBoard(boardId);
-    },
-    touchActivity(boardId: string, now?: number): Promise<void> {
-      return stubFor(boardId).touchActivity(boardId, now);
     },
     updateFacilitatorTokenEncryption(
       boardId: string,

@@ -1,40 +1,37 @@
-import { httpStatus, respond } from '@solidjs/web';
+import { respondToBoardMutation } from './action-response';
+import type { BoardMutationResponse } from './board-types';
+import type {
+  ChangeVoteInput,
+  ResetVotesInput,
+  UpdateVotingSettingsInput,
+} from './voting-schemas';
 
-import type { BoardMutationResponse, BoardMutationSuccess } from './board-types';
-import type { ChangeVoteInput, ResetVotesInput, UpdateVotingSettingsInput } from './voting-schemas';
-
-async function respondToVotingMutation(
-  run: () => Promise<BoardMutationSuccess>,
+export async function changeVote(
+  input: ChangeVoteInput,
 ): Promise<BoardMutationResponse> {
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    return respond(await run(), { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      httpStatus(error.status);
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { status: error.status, revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  'use server';
+  const { changeVoteForRequest } = await import(
+    '../server/services/voting-service'
+  );
+  return respondToBoardMutation(() => changeVoteForRequest(input));
 }
 
-export async function changeVote(input: ChangeVoteInput): Promise<BoardMutationResponse> {
+export async function updateVotingSettings(
+  input: UpdateVotingSettingsInput,
+): Promise<BoardMutationResponse> {
   'use server';
-  const { changeVoteForRequest } = await import('../server/services/voting-service');
-  return respondToVotingMutation(() => changeVoteForRequest(input));
+  const { updateVotingSettingsForRequest } = await import(
+    '../server/services/voting-service'
+  );
+  return respondToBoardMutation(() => updateVotingSettingsForRequest(input));
 }
 
-export async function updateVotingSettings(input: UpdateVotingSettingsInput): Promise<BoardMutationResponse> {
+export async function resetVotes(
+  input: ResetVotesInput,
+): Promise<BoardMutationResponse> {
   'use server';
-  const { updateVotingSettingsForRequest } = await import('../server/services/voting-service');
-  return respondToVotingMutation(() => updateVotingSettingsForRequest(input));
-}
-
-export async function resetVotes(input: ResetVotesInput): Promise<BoardMutationResponse> {
-  'use server';
-  const { resetVotesForRequest } = await import('../server/services/voting-service');
-  return respondToVotingMutation(() => resetVotesForRequest(input));
+  const { resetVotesForRequest } = await import(
+    '../server/services/voting-service'
+  );
+  return respondToBoardMutation(() => resetVotesForRequest(input));
 }

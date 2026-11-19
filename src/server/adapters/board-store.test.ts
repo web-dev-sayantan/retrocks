@@ -88,9 +88,14 @@ describe('NodeBoardStore (node:sqlite)', () => {
 
     expect(await store.getBoardSnapshot('missing_board_123456')).toBeNull();
 
-    // Touch activity extends expiry
+    // Mutating the Board at day 20 extends lastActiveAt and expiry
     const day20 = record.createdAt + 20 * MS_PER_DAY;
-    await store.touchActivity(record.id, day20);
+    await store.mutateBoard(
+      record.id,
+      { participantHash: 'hash_author', isFacilitator: true },
+      { type: 'board:rename', title: 'Sprint 42 Retro (Updated)' },
+      day20,
+    );
     expect(
       await store.getBoardSnapshot(record.id, record.createdAt + 35 * MS_PER_DAY),
     ).not.toBeNull();
@@ -224,9 +229,6 @@ describe('CloudflareBoardStore (Durable Object RPC seam)', () => {
         ) => backingStore.mutateBoard(id, actor, command, now),
       ),
       deleteBoard: vi.fn((id: string) => backingStore.deleteBoard(id)),
-      touchActivity: vi.fn((id: string, now?: number) =>
-        backingStore.touchActivity(id, now),
-      ),
       updateFacilitatorTokenEncryption: vi.fn((id: string, enc: string) =>
         backingStore.updateFacilitatorTokenEncryption(id, enc),
       ),

@@ -34,7 +34,6 @@ export interface BoardStore {
     now?: number,
   ): Promise<BoardMutationOutcome>;
   deleteBoard(boardId: string): Promise<boolean>;
-  touchActivity(boardId: string, now?: number): Promise<void>;
   updateFacilitatorTokenEncryption(
     boardId: string,
     encryptedToken: string,

@@ -1,5 +1,4 @@
-import { httpStatus, respond } from '@solidjs/web';
-
+import { respondToServerAction } from './action-response';
 import type { ActionError } from './board-types';
 
 export type FacilitatorClaimInput = { boardId: string; token: string };
@@ -10,67 +9,37 @@ export async function claimFacilitatorRole(
   input: FacilitatorClaimInput,
 ): Promise<FacilitatorClaimResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
   const { claimFacilitatorRoleForRequest } = await import(
     '../server/services/sharing-service'
   );
-  try {
+  return respondToServerAction(async () => {
     await claimFacilitatorRoleForRequest(input);
-    return respond({ ok: true } as const, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      httpStatus(error.status);
-      return respond(
-        { ok: false, code: error.code, message: error.message } as const,
-        { status: error.status, revalidate: [] },
-      );
-    }
-    throw error;
-  }
+    return { ok: true as const };
+  });
 }
 
 export async function getFacilitatorLink(
   boardId: string,
 ): Promise<FacilitatorLinkResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
   const { getFacilitatorLinkForRequest } = await import(
     '../server/services/sharing-service'
   );
-  try {
-    const link = await getFacilitatorLinkForRequest(boardId);
-    return respond({ ok: true, link } as const, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      httpStatus(error.status);
-      return respond(
-        { ok: false, code: error.code, message: error.message } as const,
-        { status: error.status, revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToServerAction(async () => ({
+    ok: true as const,
+    link: await getFacilitatorLinkForRequest(boardId),
+  }));
 }
 
 export async function rotateFacilitatorLink(
   boardId: string,
 ): Promise<FacilitatorLinkResponse> {
   'use server';
-  const { BoardDomainError } = await import('../server/services/board-service');
   const { rotateFacilitatorLinkForRequest } = await import(
     '../server/services/sharing-service'
   );
-  try {
-    const link = await rotateFacilitatorLinkForRequest(boardId);
-    return respond({ ok: true, link } as const, { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      httpStatus(error.status);
-      return respond(
-        { ok: false, code: error.code, message: error.message } as const,
-        { status: error.status, revalidate: [] },
-      );
-    }
-    throw error;
-  }
+  return respondToServerAction(async () => ({
+    ok: true as const,
+    link: await rotateFacilitatorLinkForRequest(boardId),
+  }));
 }
