@@ -15,8 +15,12 @@ export default {
     // Comma-separated, newest first — see src/server/session.ts for the
     // rotation story. Generate one: `openssl rand -base64 32`.
     SESSION_SECRET: v.pipe(v.string(), v.minLength(32)),
+    // Runtime selector for Node fallback / self-hosted builds.
+    RETROCKS_RUNTIME: v.optional(v.picklist(['cloudflare', 'node'])),
+    // Optional SQLite path for Node runtime (defaults to local file / :memory: in tests).
+    DATABASE_URL: v.optional(v.string()),
   },
   client: {
-    VITE_APP_NAME: v.optional(v.pipe(v.string(), v.minLength(1)), 'Solid App'),
+    VITE_APP_NAME: v.optional(v.pipe(v.string(), v.minLength(1)), 'Retrocks'),
   },
 };

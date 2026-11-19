@@ -1,1 +1,126 @@
 @import 'tailwindcss';
+
+/* Drive Tailwind dark:* utilities from the zero-FOUC data-theme attribute. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* Semantic light theme tokens (default). */
+:root {
+  --retrocks-canvas: #fafafa;
+  --retrocks-surface: #ffffff;
+  --retrocks-surface-subtle: #f3f4f6;
+  --retrocks-border: #e5e7eb;
+  --retrocks-text: #111827;
+  --retrocks-text-muted: #6b7280;
+  --retrocks-accent: #111827;
+  --retrocks-accent-contrast: #ffffff;
+  --retrocks-focus: #4f46e5;
+
+  /* 8 curated muted pastel Column accent tokens (3px top border + 5% tint). */
+  --retrocks-col-slate: #64748b;
+  --retrocks-col-sage: #4d8b6f;
+  --retrocks-col-sky: #3b82b6;
+  --retrocks-col-amber: #c78b33;
+  --retrocks-col-rose: #c4687d;
+  --retrocks-col-violet: #7c67b8;
+  --retrocks-col-teal: #3f9191;
+  --retrocks-col-coral: #cc7058;
+
+  --retrocks-col-slate-tint: color-mix(in srgb, var(--retrocks-col-slate) 5%, transparent);
+  --retrocks-col-sage-tint: color-mix(in srgb, var(--retrocks-col-sage) 5%, transparent);
+  --retrocks-col-sky-tint: color-mix(in srgb, var(--retrocks-col-sky) 5%, transparent);
+  --retrocks-col-amber-tint: color-mix(in srgb, var(--retrocks-col-amber) 5%, transparent);
+  --retrocks-col-rose-tint: color-mix(in srgb, var(--retrocks-col-rose) 5%, transparent);
+  --retrocks-col-violet-tint: color-mix(in srgb, var(--retrocks-col-violet) 5%, transparent);
+  --retrocks-col-teal-tint: color-mix(in srgb, var(--retrocks-col-teal) 5%, transparent);
+  --retrocks-col-coral-tint: color-mix(in srgb, var(--retrocks-col-coral) 5%, transparent);
+}
+
+/* Semantic dark theme tokens. */
+[data-theme='dark'] {
+  --retrocks-canvas: #0e0f11;
+  --retrocks-surface: #16181d;
+  --retrocks-surface-subtle: #1e2128;
+  --retrocks-border: #262a33;
+  --retrocks-text: #f3f4f6;
+  --retrocks-text-muted: #9ca3af;
+  --retrocks-accent: #e5e7eb;
+  --retrocks-accent-contrast: #0e0f11;
+  --retrocks-focus: #818cf8;
+
+  --retrocks-col-slate: #94a3b8;
+  --retrocks-col-sage: #6eb393;
+  --retrocks-col-sky: #6cb0e0;
+  --retrocks-col-amber: #dfb060;
+  --retrocks-col-rose: #e08ea1;
+  --retrocks-col-violet: #a796dc;
+  --retrocks-col-teal: #66b8b8;
+  --retrocks-col-coral: #e3957f;
+}
+
+@theme inline {
+  /* Core surfaces, borders, text, and interactive focus */
+  --color-canvas: var(--retrocks-canvas);
+  --color-surface: var(--retrocks-surface);
+  --color-surface-subtle: var(--retrocks-surface-subtle);
+  --color-border: var(--retrocks-border);
+  --color-text: var(--retrocks-text);
+  --color-text-muted: var(--retrocks-text-muted);
+  --color-accent: var(--retrocks-accent);
+  --color-accent-contrast: var(--retrocks-accent-contrast);
+  --color-focus: var(--retrocks-focus);
+
+  /* Column accent borders */
+  --color-col-slate: var(--retrocks-col-slate);
+  --color-col-sage: var(--retrocks-col-sage);
+  --color-col-sky: var(--retrocks-col-sky);
+  --color-col-amber: var(--retrocks-col-amber);
+  --color-col-rose: var(--retrocks-col-rose);
+  --color-col-violet: var(--retrocks-col-violet);
+  --color-col-teal: var(--retrocks-col-teal);
+  --color-col-coral: var(--retrocks-col-coral);
+
+  /* Column accent 5% header tints */
+  --color-col-slate-tint: var(--retrocks-col-slate-tint);
+  --color-col-sage-tint: var(--retrocks-col-sage-tint);
+  --color-col-sky-tint: var(--retrocks-col-sky-tint);
+  --color-col-amber-tint: var(--retrocks-col-amber-tint);
+  --color-col-rose-tint: var(--retrocks-col-rose-tint);
+  --color-col-violet-tint: var(--retrocks-col-violet-tint);
+  --color-col-teal-tint: var(--retrocks-col-teal-tint);
+  --color-col-coral-tint: var(--retrocks-col-coral-tint);
+
+  /* Privacy-first system typography — zero external font network requests */
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
+@layer base {
+  html {
+    background-color: var(--retrocks-canvas);
+    color: var(--retrocks-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--retrocks-canvas);
+    color: var(--retrocks-text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
