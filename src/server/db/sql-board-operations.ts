@@ -9,6 +9,7 @@ import {
   type ColumnAccent,
 } from '../../lib/board-types';
 import { applyTimerChange } from '../domain/timer';
+import { checkPrivateCardPermission } from '../domain/card-permissions';
 import type {
   BoardMutationActor,
   BoardMutationCommand,
@@ -484,22 +485,13 @@ export class SqlBoardOperations {
     actor: BoardMutationActor,
     verb: 'edit' | 'move' | 'delete',
   ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
-    const isMine = card.author_token_hash === actor.participantHash;
-    if (isMine) {
-      return { ok: true };
-    }
-    if (!actor.isFacilitator) {
+    const privacy = checkPrivateCardPermission(board, actor, card.author_token_hash);
+    if (!privacy.ok) return privacy;
+    if (!actor.isFacilitator && card.author_token_hash !== actor.participantHash) {
       return {
         ok: false,
         code: 'FORBIDDEN',
         message: `You can only ${verb} your own Cards.`,
-      };
-    }
-    if (board.isBlurred) {
-      return {
-        ok: false,
-        code: 'FORBIDDEN',
-        message: `Cannot ${verb} another Participant's Card while Private Mode is active.`,
       };
     }
     return { ok: true };
@@ -659,6 +651,31 @@ export class SqlBoardOperations {
             version: nextVersion,
             patch,
           });
+          return finalize(nextVersion, now);
+        }
+
+        case 'board:set-private-mode': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can change Private Mode.',
+            };
+          }
+
+          if (command.isBlurred === board.isBlurred) {
+            rawEvents.push({ type: 'board:snapshot', version: board.version });
+            return finalize(board.version, board.lastActiveAt);
+          }
+
+          this.sql.run(
+            'UPDATE boards SET is_blurred = ?, version = ?, last_active_at = ? WHERE id = ?',
+            command.isBlurred ? 1 : 0,
+            nextVersion,
+            now,
+            boardId,
+          );
+          rawEvents.push({ type: 'board:snapshot', version: nextVersion });
           return finalize(nextVersion, now);
         }
 
@@ -1056,6 +1073,19 @@ export class SqlBoardOperations {
               ok: false,
               code: 'VALIDATION_ERROR',
               message: 'A Board must have at least 1 Column.',
+            };
+          }
+
+          if (board.isBlurred && this.sql.get<{ id: string }>(
+            'SELECT id FROM cards WHERE board_id = ? AND column_id = ? AND author_token_hash != ? LIMIT 1',
+            boardId,
+            command.columnId,
+            actor.participantHash,
+          )) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Reveal All before deleting a Column with hidden Cards.',
             };
           }
 

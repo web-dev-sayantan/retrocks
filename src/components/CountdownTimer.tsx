@@ -189,7 +189,16 @@ export default function CountdownTimer(props: {
   }
 
   return (
-    <div ref={root} class="shrink-0 sm:relative">
+    <div
+      ref={root}
+      class="shrink-0 sm:relative"
+      onFocusOut={(event) => {
+        if (open() && event.relatedTarget instanceof Node &&
+            !event.currentTarget.contains(event.relatedTarget)) {
+          closePanel(false);
+        }
+      }}
+    >
       <button
         ref={trigger}
         type="button"
@@ -198,7 +207,10 @@ export default function CountdownTimer(props: {
         aria-haspopup="dialog"
         aria-expanded={open() ? 'true' : 'false'}
         aria-controls={open() ? panelId : undefined}
-        onClick={() => open() ? closePanel(true) : setOpen(true)}
+        onClick={() => {
+          if (open()) closePanel(true);
+          else setOpen(true);
+        }}
         class={[
           'relative inline-flex min-h-11 items-center gap-1.5 overflow-hidden rounded-full border border-border bg-surface px-2.5 text-xs font-semibold text-text tabular-nums hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-9 sm:px-3',
           expiryAnnounced() && 'motion-safe:animate-[timer-expiry-pulse_1.2s_ease-in-out_2]',

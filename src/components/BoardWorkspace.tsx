@@ -87,6 +87,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
 
+  const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
+  const [revealAnnouncement, setRevealAnnouncement] = createSignal('');
+
   // Board inline rename state
   const [isRenamingBoard, setIsRenamingBoard] = createSignal(false);
   const [boardTitleDraft, setBoardTitleDraft] = createSignal('');
@@ -132,7 +135,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setNowMs(serverNow);
   }
 
+  function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
+    const current = workspace.board;
+    if (current?.id !== nextBoard.id || nextBoard.version < current.version) return;
+    syncServerClock(nextBoard.id, serverNow);
+    applySnapshot(nextBoard, true);
+  }
+
   function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
+    const snapshot = events.find((event) => event.type === 'board:snapshot');
+    if (snapshot) {
+      applyServerSnapshot(snapshot.board, snapshot.serverNow);
+      return;
+    }
     let needsResync = false;
     let serverNow: number | undefined;
     setWorkspace((draft) => {
@@ -154,6 +169,20 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   createEffect(() => props.board, (nextBoard) => applySnapshot(nextBoard));
 
+  createEffect(
+    () => {
+      const board = workspace.board;
+      return board && { id: board.id, isBlurred: board.isBlurred };
+    },
+    (board, previous) => {
+      if (!board || board.isBlurred || previous?.id !== board.id) {
+        setRevealAnnouncement('');
+      } else if (previous.isBlurred) {
+        setRevealAnnouncement('All Cards revealed.');
+      }
+    },
+  );
+
   const liveBoardId = createMemo(() => workspace.board?.id);
   createEffect(liveBoardId, (boardId) => {
     if (!boardId || typeof window === 'undefined') return;
@@ -162,8 +191,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       onMessage(message) {
         switch (message.type) {
           case 'board:snapshot':
-            syncServerClock(boardId, message.serverNow);
-            applySnapshot(message.board, true);
+            applyServerSnapshot(message.board, message.serverNow);
             break;
           case 'board:mutation':
             applyVersionedEvents(boardId, message.version, message.events);
@@ -190,6 +218,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       setNowMs(Date.now() + serverTimeOffsetMs);
     }, 30_000);
     return () => clearInterval(intervalId);
+  });
+
+  onSettled(() => {
+    document.addEventListener('keydown', handlePrivateModeShortcut);
+    return () => document.removeEventListener('keydown', handlePrivateModeShortcut);
   });
 
   // Record / scrub localStorage Recent Boards cleanly (including after Board rename)
@@ -269,6 +302,39 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return response;
   }
 
+  function handlePrivateModeShortcut(event: KeyboardEvent): void {
+    if (
+      event.defaultPrevented || event.repeat || event.isComposing ||
+      event.altKey || event.ctrlKey || event.metaKey || event.key.toLowerCase() !== 'b'
+    ) return;
+    if (event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+
+    const board = workspace.board;
+    if (!board?.isFacilitator || board.isLocked) return;
+    event.preventDefault();
+    void togglePrivateMode();
+  }
+
+  async function togglePrivateMode(): Promise<void> {
+    const board = workspace.board;
+    if (!board?.isFacilitator || board.isLocked || isChangingPrivateMode()) return;
+    const { id: boardId, isBlurred } = board;
+    setIsChangingPrivateMode(true);
+    try {
+      const response = await actions().setPrivateMode({ boardId, isBlurred: !isBlurred });
+      applyMutationResponse(boardId, response);
+    } finally {
+      setIsChangingPrivateMode(false);
+    }
+  }
+
+  function canManageCard(board: BoardViewDTO, cardId: string): boolean {
+    const card = board.cards.find((item) => item.id === cardId);
+    return !board.isLocked && !!card && !card.redacted &&
+      (card.isMine || (board.isFacilitator && !board.isBlurred));
+  }
+
   function startBoardRename(): void {
     const board = workspace.board;
     if (!board || !board.isFacilitator || board.isLocked) return;
@@ -338,7 +404,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     content: string,
   ): Promise<boolean> {
     const board = workspace.board;
-    if (!board) return false;
+    if (!board || !canManageCard(board, cardId)) return false;
     const response = await actions().updateCard({
       boardId: board.id,
       cardId,
@@ -352,7 +418,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     targetColumnId: string,
   ): Promise<boolean> {
     const board = workspace.board;
-    if (!board) return false;
+    if (!board || !canManageCard(board, cardId)) return false;
     const response = await actions().moveCard({
       boardId: board.id,
       cardId,
@@ -363,7 +429,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   async function handleDeleteCard(cardId: string): Promise<boolean> {
     const board = workspace.board;
-    if (!board) return false;
+    if (!board || !canManageCard(board, cardId)) return false;
     const response = await actions().deleteCard({
       boardId: board.id,
       cardId,
@@ -504,6 +570,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function handleDragStartCard(cardId: string, sourceColumnId: string): void {
+    const board = workspace.board;
+    if (!board || !canManageCard(board, cardId)) return;
     setDraggingCardId(cardId);
     setDraggingSourceColumnId(sourceColumnId);
   }
@@ -564,6 +632,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     >
       {(board) => (
         <div class="flex min-h-dvh flex-col bg-canvas">
+          <div aria-live="polite" aria-atomic="true" class="sr-only">
+            {revealAnnouncement()}
+          </div>
           {/* Minimal sticky Board header */}
           <header class="sticky top-0 z-20 border-b border-border bg-surface/95 backdrop-blur-sm">
             <div class="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6">
@@ -687,6 +758,24 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       onChange={(change) => changeCountdown(boardId, change)}
                     />
                   )}
+                </Show>
+                <Show when={board().isFacilitator && !board().isLocked}>
+                  <button
+                    type="button"
+                    aria-keyshortcuts="B"
+                    title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
+                    disabled={isChangingPrivateMode()}
+                    onClick={() => void togglePrivateMode()}
+                    class={[
+                      'inline-flex min-h-11 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium sm:min-h-9 sm:px-3',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                      board().isBlurred
+                        ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
+                        : 'border-border bg-surface text-text hover:bg-surface-subtle',
+                    ]}
+                  >
+                    {board().isBlurred ? 'Reveal All' : 'Private Mode'}
+                  </button>
                 </Show>
                 <Show
                   when={

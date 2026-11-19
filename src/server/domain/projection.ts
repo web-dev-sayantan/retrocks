@@ -253,6 +253,20 @@ export function projectMutationEventsForViewer(
     viewerParticipantHash,
     isFacilitator,
   );
+  if (rawEvents.some((event) =>
+    event.type === 'board:snapshot' ||
+    (event.type === 'board:updated' &&
+      (event.patch.isBlurred !== undefined || event.patch.blindVoting !== undefined)),
+  )) {
+    // Privacy transitions change the presentation of existing Cards and Votes.
+    return [{
+      type: 'board:snapshot',
+      version: projected.version,
+      serverNow: Date.now(),
+      board: projected,
+    }];
+  }
+
   const cardsById = new Map(projected.cards.map((card) => [card.id, card]));
   const columnsById = new Map(
     projected.columns.map((column) => [column.id, column]),

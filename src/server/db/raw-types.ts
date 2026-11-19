@@ -136,6 +136,7 @@ export type BoardMutationCommand =
   | { type: 'facilitator:rotate'; capability: FacilitatorCapability }
   | { type: 'board:rename'; title: string; subtitle?: string }
   | { type: 'timer:update'; change: TimerChange }
+  | { type: 'board:set-private-mode'; isBlurred: boolean }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
@@ -159,6 +160,7 @@ export type BoardMutationCommand =
 
 export type RawBoardMutationEvent =
   | { type: 'timer:updated'; version: number; serverNow: number }
+  | { type: 'board:snapshot'; version: number }
   | {
       type: 'board:updated';
       version: number;

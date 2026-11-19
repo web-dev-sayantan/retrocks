@@ -1,5 +1,10 @@
 @import 'tailwindcss';
 
+@keyframes card-reveal {
+  from { filter: blur(7px); opacity: 0.6; }
+  to { filter: blur(0); opacity: 1; }
+}
+
 /* Drive Tailwind dark:* utilities from the zero-FOUC data-theme attribute. */
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 

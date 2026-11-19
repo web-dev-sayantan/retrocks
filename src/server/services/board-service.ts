@@ -18,6 +18,7 @@ import {
   MoveCardInputSchema,
   RenameBoardInputSchema,
   ReorderColumnsInputSchema,
+  SetPrivateModeInputSchema,
   UpdateCardInputSchema,
   UpdateColumnInputSchema,
   UpdateTimerInputSchema,
@@ -255,6 +256,16 @@ export async function updateTimerForRequest(
   return executeBoardMutation(input.boardId, {
     type: 'timer:update',
     change: input.change,
+  });
+}
+
+export async function setPrivateModeForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(SetPrivateModeInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'board:set-private-mode',
+    isBlurred: input.isBlurred,
   });
 }
 

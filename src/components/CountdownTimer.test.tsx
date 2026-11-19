@@ -145,7 +145,7 @@ describe('Board Countdown Timer', () => {
 
       fireEvent.keyDown(document.body, { key: 't' });
       flush();
-      expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toBeVisible();
+      expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toHaveFocus();
       fireEvent.click(view.getByRole('button', { name: '10m' }));
       flush();
       expect(view.getByRole('spinbutton', { name: 'Minutes' })).toHaveValue(10);

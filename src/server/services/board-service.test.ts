@@ -540,6 +540,19 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       );
     }
 
+    await runRequest(
+      new Request(`https://retrocks.app/b/${privateBoard.id}`, {
+        method: 'POST',
+        headers: { cookie: privFac },
+      }),
+      async () => {
+        await expect(service.deleteColumnForRequest({
+          boardId: privateBoard.id,
+          columnId: privateBoard.columns[0].id,
+        })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      },
+    );
+
     // Carol (the author) CAN edit, move, and delete her own Card even while Private Mode is ON
     await runRequest(
       new Request(`https://retrocks.app/b/${privateBoard.id}`, {
