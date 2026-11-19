@@ -2674,6 +2674,55 @@ describe('<BoardWorkspace />', () => {
     }
   });
 
+  it('keeps Search and the active filter available outside Filter & sort on a Locked Board', () => {
+    const board = makeBoardView({
+      isFacilitator: false,
+      isLocked: true,
+      cards: [
+        makeCard({ id: 'own', content: 'My deployment checklist' }),
+        makeCard({ id: 'peer', content: 'Teammate deployment checklist', isMine: false }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const search = view.getByRole('searchbox', { name: 'Search Cards, Card Groups, and comments' });
+    const disclosure = view.getByRole('button', { name: 'Filter & sort' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(disclosure);
+    flush();
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(within(view.getByRole('group', { name: 'Filter cards' })).getByRole('button', { name: 'Mine' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Sort cards' }), { target: { value: 'oldest' } });
+    fireEvent.click(disclosure);
+    fireEvent.input(search, { target: { value: 'deployment' } });
+    flush();
+
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(view.getByText('Filter: Mine')).toBeVisible();
+    expect(view.getByText('1 match (1 of 2 cards)')).toBeVisible();
+    expect(view.queryByText('Teammate deployment checklist')).not.toBeInTheDocument();
+
+    fireEvent.click(view.getByRole('button', { name: 'Clear filters' }));
+    flush();
+    expect(search).toHaveValue('');
+    expect(search).toHaveFocus();
+    expect(view.queryByText('Filter: Mine')).not.toBeInTheDocument();
+    expect(view.getByText('Teammate deployment checklist')).toBeInTheDocument();
+
+    fireEvent.click(disclosure);
+    flush();
+    expect(view.getByRole('combobox', { name: 'Sort cards' })).toHaveValue('oldest');
+    for (const spy of Object.values(spies)) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
   it('composes Quick Filter chips (All, Mine, Voted, Action Items) with Search and Sort and renders distinct empty-filter states', () => {
     const groupVoted: CardGroupDTO = {
       id: 'group_voted',
