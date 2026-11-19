@@ -31,12 +31,20 @@ import {
   type ColumnAccent,
   type ReactionEmoji,
 } from '../lib/board-types';
+import {
+  hasOpenBoardOverlay,
+  isTypingInEditableElement,
+  projectBoardView,
+  type BoardQuickFilter,
+  type BoardSortMode,
+} from '../lib/board-view';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import type { ServerClockSample } from '../lib/timer';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
+import BoardFilterBar from './BoardFilterBar';
 import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
@@ -170,6 +178,30 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       ).length ?? 0,
   );
 
+  // Viewer-local Search, Quick Filter & Sort state (never persisted/broadcast)
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const [quickFilter, setQuickFilter] = createSignal<BoardQuickFilter>('all');
+  const [sortMode, setSortMode] = createSignal<BoardSortMode>('newest');
+  let searchInputEl: HTMLInputElement | undefined;
+  let mobileComposerEl: HTMLTextAreaElement | undefined;
+  const columnComposers = new Map<string, HTMLTextAreaElement>();
+
+  function resetFilters(): void {
+    setSearchQuery('');
+    setQuickFilter('all');
+  }
+
+  function registerColumnComposer(
+    columnId: string,
+    el: HTMLTextAreaElement | null,
+  ): void {
+    if (el) {
+      columnComposers.set(columnId, el);
+    } else {
+      columnComposers.delete(columnId);
+    }
+  }
+
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     setWorkspace((draft) => {
       const current = draft.board;
@@ -223,6 +255,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   createEffect(() => props.board, (nextBoard) => applySnapshot(nextBoard));
 
   createEffect(
+    () => props.boardId,
+    (nextId, previousId) => {
+      if (previousId !== undefined && nextId !== previousId) {
+        setSearchQuery('');
+        setQuickFilter('all');
+        setSortMode('newest');
+      }
+    },
+  );
+
+  createEffect(
     () => {
       const board = workspace.board;
       return board && { id: board.id, isBlurred: board.isBlurred };
@@ -274,11 +317,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   onSettled(() => {
-    document.addEventListener('keydown', handlePrivateModeShortcut);
-    document.addEventListener('keydown', handleActionItemsShortcut);
+    document.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
-      document.removeEventListener('keydown', handlePrivateModeShortcut);
-      document.removeEventListener('keydown', handleActionItemsShortcut);
+      document.removeEventListener('keydown', handleGlobalKeyDown);
     };
   });
 
@@ -353,6 +394,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return grouped;
   });
 
+  const boardView = createMemo(() => {
+    const board = workspace.board;
+    if (!board) return null;
+    return projectBoardView(board, {
+      query: searchQuery(),
+      filter: quickFilter(),
+      sortMode: sortMode(),
+    });
+  });
+
   const isHorizontalSnap = createMemo(
     () => (workspace.board?.columns.length ?? 0) >= 5,
   );
@@ -399,31 +450,72 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return response;
   }
 
-  function handlePrivateModeShortcut(event: KeyboardEvent): void {
-    if (
-      event.defaultPrevented || event.repeat || event.isComposing ||
-      event.altKey || event.ctrlKey || event.metaKey || event.key.toLowerCase() !== 'b'
-    ) return;
-    if (event.target instanceof Element &&
-        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+  function handleGlobalKeyDown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) return;
+
+    if (event.key === 'Escape') {
+      const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+      if (openDialog) {
+        event.preventDefault();
+        openDialog.close();
+        return;
+      }
+      if (isAddingColumn()) {
+        event.preventDefault();
+        setIsAddingColumn(false);
+      }
+      return;
+    }
+
+    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (isTypingInEditableElement(event)) return;
 
     const board = workspace.board;
-    if (!board?.isFacilitator || board.isLocked) return;
-    event.preventDefault();
-    void togglePrivateMode();
-  }
+    if (!board) return;
 
-  function handleActionItemsShortcut(event: KeyboardEvent): void {
-    if (
-      event.defaultPrevented || event.repeat || event.isComposing ||
-      event.altKey || event.ctrlKey || event.metaKey ||
-      event.key.toLowerCase() !== 'a' || isActionItemsOpen()
-    ) return;
-    if (event.target instanceof Element &&
-        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
-    if (document.querySelector('dialog[open], [aria-modal="true"], [data-board-overlay]')) return;
-    event.preventDefault();
-    setIsActionItemsOpen(true);
+    if (event.key === '/') {
+      if (hasOpenBoardOverlay()) return;
+      if (searchInputEl?.isConnected) {
+        event.preventDefault();
+        searchInputEl.focus();
+        searchInputEl.select();
+      }
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === 'n') {
+      if (board.isLocked || hasOpenBoardOverlay()) return;
+      const targetCol = activeMobileColumn();
+      const composer = targetCol ? columnComposers.get(targetCol.id) : undefined;
+      if (composer?.isConnected) {
+        event.preventDefault();
+        composer.focus();
+        composer.scrollIntoView?.({ block: 'nearest' });
+      } else if (mobileComposerEl?.isConnected) {
+        event.preventDefault();
+        mobileComposerEl.focus();
+      }
+      return;
+    }
+
+    if (key === 'a') {
+      if (isActionItemsOpen()) {
+        event.preventDefault();
+        setIsActionItemsOpen(false);
+        return;
+      }
+      if (hasOpenBoardOverlay()) return;
+      event.preventDefault();
+      setIsActionItemsOpen(true);
+      return;
+    }
+
+    if (key === 'b') {
+      if (hasOpenBoardOverlay() || !board.isFacilitator || board.isLocked) return;
+      event.preventDefault();
+      void togglePrivateMode();
+    }
   }
 
   async function togglePrivateMode(): Promise<void> {
@@ -1235,7 +1327,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       />
                       <span class="max-w-32 truncate">{column.title}</span>
                       <span class="rounded-full bg-surface px-1.5 py-0.5 text-[11px] text-text-muted tabular-nums">
-                        {column.cardCount}
+                        {boardView()?.hasActiveFilter
+                          ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
+                          : column.cardCount}
                       </span>
                     </button>
                   )}
@@ -1243,6 +1337,30 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </div>
             </nav>
           </header>
+
+          {/* Viewer-local Search, Quick Filter & Sort toolbar */}
+          <Show when={boardView()}>
+            {(view) => (
+              <BoardFilterBar
+                query={searchQuery()}
+                filter={quickFilter()}
+                requestedSortMode={sortMode()}
+                effectiveSortMode={view().effectiveSortMode}
+                blindVoting={board().blindVoting}
+                hasActiveFilter={view().hasActiveFilter}
+                hasSearchQuery={view().hasSearchQuery}
+                matchedCardCount={view().matchedCardCount}
+                totalCardCount={view().totalCardCount}
+                onQueryChange={setSearchQuery}
+                onFilterChange={setQuickFilter}
+                onSortChange={setSortMode}
+                onResetFilters={resetFilters}
+                onSearchInputRef={(el) => {
+                  searchInputEl = el;
+                }}
+              />
+            )}
+          </Show>
 
           {/* Inline dismissible error feedback */}
           <Show when={errorMessage()}>
@@ -1371,6 +1489,29 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             onTouchEnd={handleTouchEnd}
             class="mx-auto w-full max-w-[1600px] flex-1 px-4 pt-4 pb-28 sm:px-6 sm:py-6"
           >
+            <Show
+              when={
+                boardView()?.hasActiveFilter &&
+                (boardView()?.totalCardCount ?? 0) > 0 &&
+                (boardView()?.matchedCardCount ?? 0) === 0
+              }
+            >
+              <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+                <p>No Cards match your current search or filter.</p>
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  class={[
+                    'inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
+                    'transition-colors hover:bg-canvas',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  Clear filters
+                </button>
+              </div>
+            </Show>
+
             <div
               data-board-columns="true"
               class={[
@@ -1387,6 +1528,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     columns={board().columns}
                     cards={cardsByColumn().get(column.id) ?? []}
                     groups={groupsByColumn().get(column.id) ?? []}
+                    streamItems={boardView()?.columns.get(column.id)?.items ?? []}
+                    visibleCardCount={
+                      boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
+                    }
+                    hasActiveFilter={boardView()?.hasActiveFilter ?? false}
                     voting={voting()}
                     isFacilitator={board().isFacilitator}
                     isLocked={board().isLocked}
@@ -1398,6 +1544,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     draggingCardId={draggingCardId()}
                     draggingGroupId={draggingGroupId()}
                     draggingSourceColumnId={draggingSourceColumnId()}
+                    onResetFilters={resetFilters}
+                    onRegisterComposer={registerColumnComposer}
+                    onActivateColumn={(colId) => setActiveColumnId(colId)}
                     onCreateCard={handleCreateCard}
                     onUpdateCard={handleUpdateCard}
                     onUpdateActionItem={handleUpdateActionItem}
@@ -1460,6 +1609,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               >
                 <div class="flex items-end gap-2">
                   <textarea
+                    ref={(el) => {
+                      mobileComposerEl = el;
+                    }}
                     aria-label={`Quick add card to ${targetCol().title}`}
                     placeholder={`Add a card to ${targetCol().title}...`}
                     value={mobileDraft()}

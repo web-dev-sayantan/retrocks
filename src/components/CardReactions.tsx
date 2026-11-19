@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import { REACTION_EMOJIS, type ReactionEmoji } from '../lib/board-types';
 import { SmilePlusIcon } from './Icons';
@@ -16,6 +16,18 @@ export default function CardReactions(props: CardReactionsProps) {
   const [pendingEmoji, setPendingEmoji] = createSignal<ReactionEmoji | null>(
     null,
   );
+
+  createEffect(pickerOpen, (isOpen) => {
+    if (!isOpen) return;
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setPickerOpen(false);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  });
 
   const activeReactions = createMemo(() => {
     const counts = props.reactions;
@@ -90,6 +102,7 @@ export default function CardReactions(props: CardReactionsProps) {
             <div
               role="group"
               aria-label="Choose a reaction"
+              data-board-overlay="true"
               class="absolute bottom-full left-0 z-30 mb-1.5 flex items-center gap-1 rounded-full border border-border bg-surface p-1 shadow-md"
             >
               <For each={REACTION_EMOJIS}>
