@@ -194,13 +194,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ---
 
 ### 3.9 Sorting, Search & Filtering
-- **Instant Client-Side Search:** Compact search bar (`/` shortcut) filtering visible Cards, Card Group titles, and comments in real time with match counts.
+- Keep the labeled **Search** field, filters, sort, and **Clear filters** above the Columns. Search (`/` shortcut) filters visible Cards, Card Group titles, and comments as the Participant types. Private Mode placeholders stay outside search results.
 - **Sort Modes (Purely Viewer-Local — No Manual Intra-Column Ordering):**
   - `Newest` (default during writing)
   - `Oldest`
-  - `Most Voted` (descending by total Votes, ideal for discussion phase)
+  - `Most Voted` (descending by total Votes). During Blind Voting, this option is unavailable and a selected `Most Voted` sort falls back to `Newest` until Blind Voting ends.
 - **Quick Filter Chips:** `All`, `Mine`, `Voted`, `Action Items`.
-- Filtering and sorting are strictly local per viewer so one person searching never disrupts anyone else's screen.
+- When the view is narrowed, keep the selected filter (when set), match count, and **Clear filters** visible. Clearing restores `All` and empties Search while preserving the sort. A Column that has no Cards and a Column with no matches have distinct messages.
+- Search, filters, and sorting affect only the Participant's view and remain available on a Locked Board.
 
 ---
 
@@ -254,6 +255,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Mobile (`< 640px`):**
   - Share and More fit on a single controls row. Give long titles and context their own full-width lines and let active states wrap.
   - Keep the sticky **Column Tab Bar** in its own horizontal scroll region. Tabs show labels, accents, and counts. Swipe the Card stream horizontally to change Columns while preserving vertical scrolling.
+  - Keep **Search** visible and place the filter chips and sort selector in a **Filter & sort** disclosure. Leave the active filter, match count, and **Clear filters** visible when the disclosure closes.
   - Show a single Column with at least 44 × 44 CSS px touch targets. Keep the composer at the bottom of the visible viewport during entry, including when the software keyboard is shown.
   - Card detail & actions presented in native-feeling **Bottom Sheets** (no hover-only controls anywhere).
 
