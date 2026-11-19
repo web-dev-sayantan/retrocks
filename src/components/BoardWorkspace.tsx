@@ -1884,20 +1884,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 (boardView()?.matchedCardCount ?? 0) === 0
               }
             >
-              <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
-                <p>No Cards match your current search or filter.</p>
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  class={[
-                    'inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
-                    'transition-colors hover:bg-canvas',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  Clear filters
-                </button>
-              </div>
+              <p class="mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+                No Cards match your current search or filter.
+              </p>
             </Show>
 
             <div
