@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createStore } from 'solid-js';
+import { For, Show, createMemo, createSignal, createStore } from 'solid-js';
 
 import { createBoard } from '../lib/board-actions';
 import {
@@ -12,6 +12,7 @@ import {
   type RetentionDaysOption,
   type VoteLimitOption,
 } from '../lib/board-types';
+import { matchHiddenTemplate } from '../lib/easter-eggs';
 import type { CreateBoardInput } from '../lib/schemas';
 import {
   BOARD_TEMPLATES,
@@ -116,6 +117,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
 
   const [title, setTitle] = createSignal('');
   const [subtitle, setSubtitle] = createSignal('');
+  const hiddenTemplate = createMemo(() => matchHiddenTemplate(title()));
   const [templateId, setTemplateId] =
     createSignal<BoardTemplateId>('standard');
   const [columns, setColumns] = createStore<EditableColumn[]>(
@@ -279,6 +281,9 @@ export default function BoardCreator(props: BoardCreatorProps) {
           placeholder={defaultTitlePlaceholder}
           class={inputClass}
         />
+        <Show when={hiddenTemplate()}>
+          {(template) => <span class="text-sm text-text-muted">Try {template().name}</span>}
+        </Show>
       </div>
 
       <div class="mt-4">

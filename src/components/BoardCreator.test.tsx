@@ -207,6 +207,37 @@ describe('<BoardCreator />', () => {
     expect(getByRole('button', { name: 'Create board' })).toBeEnabled();
   });
 
+  it('suggests a title match without changing edited Columns', async () => {
+    const onSubmit = vi.fn(async (_input: CreateBoardInput) => undefined);
+    const { getByRole, getByText } = render(() => <BoardCreator onSubmit={onSubmit} />);
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Customize board' }));
+    flush();
+    fireEvent.input(getByRole('textbox', { name: 'Column 1 title' }), {
+      target: { value: 'Team wins' },
+    });
+    fireEvent.input(getByRole('textbox', { name: 'Board title (optional)' }), {
+      target: { value: 'Sprint 42 (D&D)' },
+    });
+    flush();
+
+    expect(getByText('Try Dungeon Quest')).toBeInTheDocument();
+    fireEvent.click(getByRole('button', { name: 'Create board' }));
+    flush();
+    await Promise.resolve();
+
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      title: 'Sprint 42 (D&D)',
+      templateId: 'standard',
+      columns: [
+        { title: 'Team wins', accent: 'sage', isActionColumn: false },
+        { title: 'To Improve', accent: 'rose', isActionColumn: false },
+        { title: 'Action Items', accent: 'sky', isActionColumn: true },
+      ],
+    }));
+  });
+
   it('interacts with zero Solid 2.0 reactivity diagnostics', async () => {
     const noopSubmit = async () => undefined;
     const { artifact } = await captureArtifact(
