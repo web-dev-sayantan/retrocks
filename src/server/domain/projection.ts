@@ -300,6 +300,45 @@ export function projectMutationEventsForViewer(
           cardId: rawEvent.cardId,
         });
         break;
+      case 'reaction:updated': {
+        const card = cardsById.get(rawEvent.cardId);
+        if (card && !card.redacted) {
+          events.push({
+            type: 'reaction:updated',
+            version: rawEvent.version,
+            cardId: rawEvent.cardId,
+            counts: card.reactions,
+            myReactions: card.myReactions,
+          });
+        }
+        break;
+      }
+      case 'comment:created': {
+        const card = cardsById.get(rawEvent.cardId);
+        if (!card || card.redacted) break;
+        const comment = card.comments.find((item) => item.id === rawEvent.commentId);
+        if (comment) {
+          events.push({
+            type: 'comment:created',
+            version: rawEvent.version,
+            cardId: rawEvent.cardId,
+            comment,
+          });
+        }
+        break;
+      }
+      case 'comment:deleted': {
+        const card = cardsById.get(rawEvent.cardId);
+        if (card && !card.redacted) {
+          events.push({
+            type: 'comment:deleted',
+            version: rawEvent.version,
+            cardId: rawEvent.cardId,
+            commentId: rawEvent.commentId,
+          });
+        }
+        break;
+      }
       case 'column:upserted': {
         const column = columnsById.get(rawEvent.columnId);
         if (column) {

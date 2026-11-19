@@ -8,6 +8,8 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMNS_PER_BOARD,
   MAX_COLUMN_TITLE_LENGTH,
+  MAX_COMMENT_LENGTH,
+  REACTION_EMOJIS,
   RETENTION_DAYS_OPTIONS,
 } from './board-types';
 
@@ -160,6 +162,38 @@ export const DeleteCardInputSchema = v.object({
 });
 
 export type DeleteCardInput = v.InferInput<typeof DeleteCardInputSchema>;
+
+export const ToggleReactionInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+  emoji: v.picklist(REACTION_EMOJIS),
+});
+
+export type ToggleReactionInput = v.InferInput<typeof ToggleReactionInputSchema>;
+
+export const CreateCommentInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+  content: v.pipe(
+    v.string(),
+    v.trim(),
+    v.minLength(1, 'Comment cannot be empty'),
+    v.maxLength(
+      MAX_COMMENT_LENGTH,
+      `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`,
+    ),
+  ),
+});
+
+export type CreateCommentInput = v.InferInput<typeof CreateCommentInputSchema>;
+
+export const DeleteCommentInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+  commentId: EntityIdSchema,
+});
+
+export type DeleteCommentInput = v.InferInput<typeof DeleteCommentInputSchema>;
 
 export const AddColumnInputSchema = v.object({
   boardId: BoardIdSchema,

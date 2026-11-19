@@ -34,8 +34,13 @@ export type MaxVotesPerCardOption = (typeof MAX_VOTES_PER_CARD_OPTIONS)[number];
 export const RETENTION_DAYS_OPTIONS = [30, 90, 180] as const;
 export type RetentionDaysOption = (typeof RETENTION_DAYS_OPTIONS)[number];
 
+export const REACTION_EMOJIS = ['👍', '❤️', '🎉', '🤔', '🔥', '👀'] as const;
+export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
+
 export const MAX_COLUMNS_PER_BOARD = 10;
 export const MAX_CARDS_PER_BOARD = 500;
+export const MAX_COMMENTS_PER_CARD = 50;
+export const MAX_COMMENT_LENGTH = 500;
 export const MAX_CARD_CONTENT_LENGTH = 1000;
 export const MAX_BOARD_TITLE_LENGTH = 120;
 export const MAX_BOARD_SUBTITLE_LENGTH = 240;
@@ -168,6 +173,12 @@ export type BoardEvent =
   | { type: 'group:upserted'; version: number; group: CardGroupDTO }
   | { type: 'group:dissolved'; version: number; groupId: string }
   | { type: 'vote:updated'; version: number; targetType: 'card' | 'group'; targetId: string; totalVotes: number | null }
-  | { type: 'reaction:updated'; version: number; cardId: string; counts: Record<string, number> }
+  | {
+      type: 'reaction:updated';
+      version: number;
+      cardId: string;
+      counts: CardViewDTO['reactions'];
+      myReactions: CardViewDTO['myReactions'];
+    }
   | { type: 'comment:created'; version: number; cardId: string; comment: CommentViewDTO }
   | { type: 'comment:deleted'; version: number; cardId: string; commentId: string };
