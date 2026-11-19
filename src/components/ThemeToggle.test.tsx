@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { fireEvent, render } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,6 +40,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -61,10 +63,12 @@ describe('zero-FOUC theme init script', () => {
     new Function(THEME_INIT_SCRIPT)();
     expect(document.documentElement.dataset.theme).toBe('dark');
 
-    localStorage.setItem(THEME_STORAGE_KEY, 'sepia');
     mockMatchMedia(false);
-    new Function(THEME_INIT_SCRIPT)();
-    expect(document.documentElement.dataset.theme).toBe('light');
+    for (const invalid of ['sepia', 'retro', 'parchment']) {
+      localStorage.setItem(THEME_STORAGE_KEY, invalid);
+      new Function(THEME_INIT_SCRIPT)();
+      expect(document.documentElement.dataset.theme).toBe('light');
+    }
   });
 
   it('falls back safely when localStorage throws', () => {
@@ -102,6 +106,96 @@ describe('<ThemeToggle />', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('dark');
     expect(button).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('cycles through both secret themes without persisting them', () => {
+    vi.useFakeTimers();
+    const { getByRole } = render(() => <ThemeToggle />);
+    flush();
+
+    const button = getByRole('button');
+    const clickTheme = () => {
+      fireEvent.click(button);
+      flush();
+      vi.advanceTimersByTime(300);
+    };
+
+    for (const expected of ['dark', 'light', 'dark', 'light', 'dark', 'light']) {
+      clickTheme();
+      expect(document.documentElement.dataset.theme).toBe(expected);
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe(expected);
+    }
+
+    clickTheme();
+    expect(document.documentElement.dataset.theme).toBe('retro');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
+
+    vi.advanceTimersByTime(3_000);
+    clickTheme();
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('dark');
+
+    for (let i = 0; i < 6; i++) clickTheme();
+    expect(document.documentElement.dataset.theme).toBe('parchment');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
+
+    for (let i = 0; i < 7; i++) clickTheme();
+    expect(document.documentElement.dataset.theme).toBe('retro');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
+
+    new Function(THEME_INIT_SCRIPT)();
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
+  it('keeps mounted controls in sync and announces unlocks once', async () => {
+    vi.useFakeTimers();
+
+    const { artifact } = await captureArtifact(
+      () => {
+        const { getByRole } = render(() => (
+          <>
+            <ThemeToggle />
+            <ThemeToggle menuItem />
+          </>
+        ));
+        flush();
+
+        const button = getByRole('button');
+        const menuItem = getByRole('menuitem');
+        const clickTheme = (control: HTMLElement) => {
+          fireEvent.click(control);
+          flush();
+        };
+
+        clickTheme(button);
+        vi.advanceTimersByTime(1_000);
+        for (let i = 0; i < 4; i++) clickTheme(i % 2 === 0 ? menuItem : button);
+        vi.advanceTimersByTime(2_100);
+        clickTheme(menuItem);
+        clickTheme(button);
+        expect(document.documentElement.dataset.theme).toBe('dark');
+
+        clickTheme(menuItem);
+        const message = /(?:Retro 1984|Parchment) unlocked\. Select the theme toggle again to exit\./;
+        expect(screen.getByText(message)).toBeVisible();
+        expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+        expect(screen.getByRole('status')).toHaveTextContent(message);
+        expect(button).toHaveAccessibleName(/^Exit (Retro 1984|Parchment) theme$/);
+        expect(menuItem).toHaveAccessibleName(button.getAttribute('aria-label')!);
+
+        vi.advanceTimersByTime(2_800);
+        flush();
+        expect(screen.queryByText(message)).not.toBeInTheDocument();
+
+        clickTheme(button);
+        expect(button).toHaveAccessibleName('Switch to dark theme');
+        expect(menuItem).toHaveAccessibleName('Switch to dark theme');
+        for (let i = 0; i < 6; i++) clickTheme(menuItem);
+        expect(screen.getByText(message)).toBeVisible();
+      },
+      { scenario: 'secret-theme-toggle-sync-and-announcements' },
+    );
+    expectNoDiagnostics(artifact);
   });
 
   it('toggles with zero Solid 2.0 reactivity diagnostics', async () => {

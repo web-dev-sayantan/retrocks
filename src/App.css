@@ -58,7 +58,7 @@
 }
 
 /* Drive Tailwind dark:* utilities from the zero-FOUC data-theme attribute. */
-@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *, [data-theme=retro], [data-theme=retro] *));
 
 /* Semantic light theme tokens (default). */
 :root {
@@ -94,7 +94,8 @@
 }
 
 /* Semantic dark theme tokens. */
-[data-theme='dark'] {
+[data-theme='dark'],
+[data-theme='retro'] {
   --retrocks-canvas: #1c1e20;
   --retrocks-surface: #27292c;
   --retrocks-surface-subtle: #313337;
@@ -114,6 +115,46 @@
   --retrocks-col-violet: #a796dc;
   --retrocks-col-teal: #66b8b8;
   --retrocks-col-coral: #e3957f;
+}
+
+[data-theme='retro'] {
+  --retrocks-canvas: #1a1713;
+  --retrocks-surface: #251f18;
+  --retrocks-surface-subtle: #30271d;
+  --retrocks-border: #645038;
+  --retrocks-control: #a6845d;
+  --retrocks-text: #ffd693;
+  --retrocks-text-muted: #dbb67e;
+  --retrocks-accent: #ffc46b;
+  --retrocks-accent-contrast: #21180e;
+  --retrocks-focus: #ffdc9e;
+
+  font-family: var(--font-mono);
+}
+
+[data-theme='parchment'] {
+  --retrocks-canvas: #f4ead5;
+  --retrocks-surface: #fff8e8;
+  --retrocks-surface-subtle: #eae0ca;
+  --retrocks-border: #cabb9e;
+  --retrocks-control: #8a7150;
+  --retrocks-text: #302418;
+  --retrocks-text-muted: #5e4b39;
+  --retrocks-accent: #644724;
+  --retrocks-accent-contrast: #fff8e8;
+  --retrocks-focus: #784729;
+}
+
+@media screen and (prefers-reduced-motion: no-preference) {
+  html[data-theme='retro']::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    opacity: 0.02;
+    background: repeating-linear-gradient(transparent 0 2px, #000 2px 3px);
+  }
 }
 
 @theme inline {
@@ -177,6 +218,11 @@
 @layer components {
   .page-message-action {
     @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+  }
+
+  .theme-unlock-toast {
+    @apply pointer-events-none fixed inset-x-4 z-70 mx-auto w-fit rounded-xl border border-border bg-surface px-4 py-3 text-center text-sm text-text shadow-lg;
+    bottom: max(1rem, env(safe-area-inset-bottom));
   }
 
   .board-menu-item {
@@ -250,6 +296,14 @@
 
   [data-theme='dark'] {
     --retrocks-border: #9ca09e;
+  }
+
+  [data-theme='retro'] {
+    --retrocks-border: #ba986b;
+  }
+
+  [data-theme='parchment'] {
+    --retrocks-border: #806748;
   }
 }
 
@@ -344,7 +398,9 @@
     font-size: 10pt;
   }
   :root,
-  [data-theme='dark'] {
+  [data-theme='dark'],
+  [data-theme='retro'],
+  [data-theme='parchment'] {
     --retrocks-canvas: #ffffff;
     --retrocks-surface: #ffffff;
     --retrocks-surface-subtle: #f8fafc;
@@ -353,6 +409,10 @@
     --retrocks-text-muted: #4b5563;
     --retrocks-accent: #111827;
     --retrocks-accent-contrast: #ffffff;
+  }
+
+  html[data-theme='retro'] {
+    font-family: var(--font-sans);
   }
 
   html,
