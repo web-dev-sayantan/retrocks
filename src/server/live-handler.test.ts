@@ -251,3 +251,152 @@ it('prunes an SSE subscriber that stops sending heartbeats', async () => {
     vi.unstubAllEnvs();
   }
 });
+
+it('broadcasts a Facilitator’s timer deadline and server time to Participants', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-19T14:00:00Z') });
+  let stream: ReturnType<typeof readLiveStream> | undefined;
+  try {
+    const { createBoardForRequest, getBoardForRequest, updateTimerForRequest } =
+      await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const origin = 'https://retrocks.app';
+    const { result: board, cookie: facilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    const boardUrl = `${origin}/b/${board.id}`;
+    const { cookie: participantCookie } = await withSession(
+      new Request(boardUrl),
+      () => getBoardForRequest(board.id),
+    );
+    const makeLiveRequest = () => handleLiveRequest(
+      board.id,
+      new Request(`${origin}/api/boards/${board.id}/live`, {
+        headers: { cookie: participantCookie! },
+      }),
+    );
+    stream = readLiveStream(await makeLiveRequest());
+    expect((await stream.until('board:snapshot')).board.timer).toEqual({
+      endsAt: null, remainingMs: null, durationMs: null,
+    });
+
+    const { result } = await withSession(
+      new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
+      () => updateTimerForRequest({ boardId: board.id, change: { action: 'start', minutes: 3 } }),
+    );
+    const timer = {
+      endsAt: Date.parse('2026-11-19T14:03:00Z'),
+      remainingMs: null,
+      durationMs: 180_000,
+    };
+    const event = {
+      type: 'timer:updated',
+      version: 2,
+      serverNow: Date.parse('2026-11-19T14:00:00Z'),
+      timer,
+    };
+    expect(result.events).toEqual([event]);
+    expect(await stream.until('board:mutation')).toEqual({
+      type: 'board:mutation', version: 2, events: [event],
+    });
+
+    await stream.close();
+    stream = readLiveStream(await makeLiveRequest());
+    expect((await stream.until('board:snapshot')).board.timer).toEqual(timer);
+  } finally {
+    await stream?.close();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  }
+});
+
+it('redacts Blind Voting totals in HTTP and both live streams, then reveals and resets everyone together', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  const streams: ReturnType<typeof readLiveStream>[] = [];
+
+  try {
+    const { createBoardForRequest, createCardForRequest, getBoardForRequest } =
+      await import('./services/board-service');
+    const { changeVoteForRequest, resetVotesForRequest, updateVotingSettingsForRequest } =
+      await import('./services/voting-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const origin = 'https://retrocks.app';
+    const { result: board, cookie: facilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    const boardUrl = `${origin}/b/${board.id}`;
+    const liveUrl = `${origin}/api/boards/${board.id}/live`;
+    const { cookie: participantCookie } = await withSession(
+      new Request(boardUrl),
+      () => getBoardForRequest(board.id),
+    );
+
+    const write = <T>(cookie: string, handler: () => Promise<T>) =>
+      withSession(new Request(boardUrl, { method: 'POST', headers: { cookie } }), handler);
+
+    const { result: created } = await write(facilitatorCookie!, () =>
+      createCardForRequest({ boardId: board.id, columnId: board.columns[0].id, content: 'Keep pairing' }));
+    const cardEvent = created.events[0];
+    if (cardEvent.type !== 'card:upserted') throw new Error('Expected a new Card');
+
+    const voteInput = { boardId: board.id, targetType: 'card', targetId: cardEvent.card.id, delta: 1 } as const;
+    await write(participantCookie!, () => changeVoteForRequest(voteInput));
+    await write(participantCookie!, () => changeVoteForRequest(voteInput));
+
+    for (const cookie of [participantCookie!, facilitatorCookie!]) {
+      streams.push(readLiveStream(await handleLiveRequest(board.id, new Request(liveUrl, { headers: { cookie } }))));
+    }
+    const initial = await Promise.all(streams.map((stream) => stream.until('board:snapshot')));
+    expect(initial.map(({ board }) => board.cards[0].votes)).toEqual([2, 2]);
+
+    const setBlind = (blindVoting: boolean) => write(facilitatorCookie!, () =>
+      updateVotingSettingsForRequest({ boardId: board.id, blindVoting }));
+    const { result: enabled } = await setBlind(true);
+    expect(enabled.events).toEqual([expect.objectContaining({
+      type: 'board:snapshot',
+      board: expect.objectContaining({
+        blindVoting: true,
+        cards: [expect.objectContaining({ votes: null, myVotes: 0 })],
+      }),
+    })]);
+    const enabledOnStreams = await Promise.all(streams.map((stream) => stream.until('board:snapshot')));
+    expect(enabledOnStreams).toMatchObject([
+      { version: enabled.version, board: { blindVoting: true, cards: [{ votes: null, myVotes: 2 }], remainingVotes: 3 } },
+      { version: enabled.version, board: { blindVoting: true, cards: [{ votes: null, myVotes: 0 }], remainingVotes: 5 } },
+    ]);
+
+    const { result: blindVote } = await write(facilitatorCookie!, () => changeVoteForRequest(voteInput));
+    expect(blindVote.events).toMatchObject([{ type: 'vote:updated', totalVotes: null, myVotes: 1, remainingVotes: 4 }]);
+    const blindDeltas = await Promise.all(streams.map((stream) => stream.until('board:mutation')));
+    expect(blindDeltas).toMatchObject([
+      { version: blindVote.version, events: [{ type: 'vote:updated', totalVotes: null, myVotes: 2, remainingVotes: 3 }] },
+      { version: blindVote.version, events: [{ type: 'vote:updated', totalVotes: null, myVotes: 1, remainingVotes: 4 }] },
+    ]);
+    const { result: httpRead } = await withSession(
+      new Request(boardUrl, { headers: { cookie: participantCookie! } }),
+      () => getBoardForRequest(board.id),
+    );
+    expect(httpRead).toMatchObject({ blindVoting: true, cards: [{ votes: null, myVotes: 2 }] });
+
+    const { result: revealed } = await setBlind(false);
+    const facilitatorReveal = { blindVoting: false, cards: [{ votes: 3, myVotes: 1 }], remainingVotes: 4 };
+    expect(revealed.events).toMatchObject([{ type: 'board:snapshot', board: facilitatorReveal }]);
+    const revealedOnStreams = await Promise.all(streams.map((stream) => stream.until('board:snapshot')));
+    expect(revealedOnStreams).toMatchObject([
+      { version: revealed.version, board: { blindVoting: false, cards: [{ votes: 3, myVotes: 2 }], remainingVotes: 3 } },
+      { version: revealed.version, board: facilitatorReveal },
+    ]);
+
+    const { result: reset } = await write(facilitatorCookie!, () => resetVotesForRequest({ boardId: board.id }));
+    const resetOnStreams = await Promise.all(streams.map((stream) => stream.until('board:snapshot')));
+    expect(resetOnStreams).toMatchObject(streams.map(() => ({
+      version: reset.version,
+      board: { cards: [{ votes: 0, myVotes: 0 }], remainingVotes: 5 },
+    })));
+  } finally {
+    await Promise.all(streams.map((stream) => stream.close()));
+    vi.unstubAllEnvs();
+  }
+});

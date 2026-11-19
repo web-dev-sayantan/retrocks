@@ -275,6 +275,26 @@ export function projectMutationEventsForViewer(
   const events: BoardEvent[] = [];
   for (const rawEvent of rawEvents) {
     switch (rawEvent.type) {
+      case 'vote:updated': {
+        const target = rawEvent.targetType === 'card'
+          ? cardsById.get(rawEvent.targetId)
+          : projected.groups.find((group) => group.id === rawEvent.targetId);
+        if (target) {
+          events.push({
+            type: 'vote:updated',
+            version: rawEvent.version,
+            targetType: rawEvent.targetType,
+            targetId: rawEvent.targetId,
+            totalVotes: target.votes,
+            myVotes: target.myVotes,
+            remainingVotes: projected.remainingVotes,
+          });
+        }
+        break;
+      }
+      case 'timer:updated':
+        events.push({ ...rawEvent, timer: projected.timer });
+        break;
       case 'board:updated':
         events.push({
           type: 'board:updated',
@@ -372,6 +392,16 @@ export function projectMutationEventsForViewer(
         });
         break;
     }
+  }
+
+  if (rawEvents.some((event) =>
+    event.type === 'card:deleted' || event.type === 'column:deleted' || event.type === 'group:dissolved',
+  )) {
+    events.push({
+      type: 'vote:balance',
+      version: projected.version,
+      remainingVotes: projected.remainingVotes,
+    });
   }
 
   return events;

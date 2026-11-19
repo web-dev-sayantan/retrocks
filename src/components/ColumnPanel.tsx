@@ -11,6 +11,7 @@ import {
 } from '../lib/board-types';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
+import type { WorkspaceVoting } from './VoteControls';
 import {
   CheckIcon,
   ChevronLeftIcon,
@@ -27,6 +28,7 @@ export interface ColumnPanelProps {
   totalColumns: number;
   columns: readonly ColumnDTO[];
   cards: readonly CardViewDTO[];
+  voting: WorkspaceVoting;
   isFacilitator: boolean;
   isLocked: boolean;
   isBlurred: boolean;
@@ -544,6 +546,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             {(card) => (
               <CardItem
                 card={card}
+                voting={props.voting}
                 columns={props.columns}
                 isFacilitator={props.isFacilitator}
                 isLocked={props.isLocked}

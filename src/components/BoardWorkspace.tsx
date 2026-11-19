@@ -30,12 +30,18 @@ import {
   type ReactionEmoji,
 } from '../lib/board-types';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
+import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import type { ServerClockSample } from '../lib/timer';
+import type { ChangeVoteInput } from '../lib/voting-schemas';
+import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
+import CountdownTimer from './CountdownTimer';
 import { CheckIcon, CloseIcon, PencilIcon, PlusIcon } from './Icons';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
+import type { WorkspaceVoting } from './VoteControls';
 
 export interface BoardWorkspaceProps {
   board: BoardViewDTO | null;
@@ -77,9 +83,43 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   const [nowMs, setNowMs] = createSignal(Date.now());
   const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
+  const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
+  const timerClock = createMemo(() => {
+    const clock = serverClock();
+    return clock?.boardId === workspace.board?.id ? clock : null;
+  });
   let serverTimeOffsetMs = 0;
   let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
+
+  type PendingVote = ChangeVoteInput & { baseVersion: number };
+  const [pendingVote, setPendingVote] = createSignal<PendingVote | null>(null);
+  let voteInFlight = false;
+
+  const voting = createMemo<WorkspaceVoting>(() => {
+    const board = workspace.board;
+    const request = pendingVote();
+    const optimisticVote = request && board?.id === request.boardId &&
+      board.version === request.baseVersion ? request : null;
+    let remainingVotes = board?.remainingVotes ?? null;
+
+    if (board && optimisticVote && board.voteLimit !== null) {
+      const spentOnCards = board.cards.reduce(
+        (sum, card) => sum + (card.groupId === null ? card.myVotes : 0),
+        0,
+      );
+      const spentOnGroups = board.groups.reduce((sum, group) => sum + group.myVotes, 0);
+      remainingVotes = Math.max(0, board.voteLimit - spentOnCards - spentOnGroups - optimisticVote.delta);
+    }
+
+    return {
+      remainingVotes,
+      maxVotesPerCard: board?.maxVotesPerCard ?? null,
+      pending: request !== null && request.boardId === board?.id,
+      optimisticVote,
+      onChange: handleChangeVote,
+    };
+  });
 
   const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
   const [revealAnnouncement, setRevealAnnouncement] = createSignal('');
@@ -128,7 +168,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     });
   }
 
-  function syncServerClock(serverNow: number): void {
+  function syncServerClock(boardId: string, serverNow: number): void {
+    setServerClock({ boardId, serverNow, receivedAt: performance.now() });
     serverTimeOffsetMs = serverNow - Date.now();
     setNowMs(serverNow);
   }
@@ -136,7 +177,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
     const current = workspace.board;
     if (current?.id !== nextBoard.id || nextBoard.version < current.version) return;
-    syncServerClock(serverNow);
+    syncServerClock(nextBoard.id, serverNow);
     applySnapshot(nextBoard, true);
   }
 
@@ -161,7 +202,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         if (event.type === 'timer:updated') serverNow = event.serverNow;
       }
     });
-    if (serverNow !== undefined) syncServerClock(serverNow);
+    if (serverNow !== undefined) syncServerClock(boardId, serverNow);
     if (needsResync) reconnectLive?.();
   }
 
@@ -317,6 +358,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setErrorMessage(null);
     applyVersionedEvents(boardId, response.version, response.events);
     return true;
+  }
+
+  async function changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse> {
+    const response = await actions().updateTimer({ boardId, change });
+    if (response.ok) applyVersionedEvents(boardId, response.version, response.events);
+    return response;
   }
 
   function handlePrivateModeShortcut(event: KeyboardEvent): void {
@@ -590,6 +637,52 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return applyMutationResponse(board.id, response);
   }
 
+  async function handleChangeVote(targetId: string, delta: ChangeVoteInput['delta']): Promise<void> {
+    const board = workspace.board;
+    if (!board || board.isLocked || voteInFlight) return;
+
+    const boardId = board.id;
+    const input = { boardId, targetType: 'card', targetId, delta } as const;
+    voteInFlight = true;
+    setPendingVote({ ...input, baseVersion: board.version });
+    try {
+      const response = await actions().changeVote(input);
+      applyMutationResponse(boardId, response);
+    } catch {
+      if (workspace.board?.id === boardId) setErrorMessage('Could not update your Vote. Try again.');
+    } finally {
+      voteInFlight = false;
+      setPendingVote(null);
+    }
+  }
+
+  async function runVotingSettingsMutation(
+    mutate: (boardId: string) => Promise<BoardMutationResponse>,
+  ): Promise<string | null> {
+    const board = workspace.board;
+    if (!board?.isFacilitator || board.isLocked) return 'Voting settings are unavailable.';
+    const boardId = board.id;
+
+    try {
+      const response = await mutate(boardId);
+      if (!response.ok) return response.message;
+      applyMutationResponse(boardId, response);
+      return null;
+    } catch {
+      return 'Could not update Voting. Try again.';
+    }
+  }
+
+  function saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null> {
+    const update = actions().updateVotingSettings;
+    return runVotingSettingsMutation((boardId) => update({ boardId, ...patch }));
+  }
+
+  function resetAllVotes(): Promise<string | null> {
+    const reset = actions().resetVotes;
+    return runVotingSettingsMutation((boardId) => reset({ boardId }));
+  }
+
   async function handleMobileQuickAdd(): Promise<void> {
     const targetCol = activeMobileColumn();
     const trimmed = mobileDraft().trim();
@@ -826,6 +919,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </div>
 
               <div class="flex shrink-0 items-center gap-2">
+                <Show when={board().id} keyed>
+                  {(boardId) => (
+                    <CountdownTimer
+                      timer={board().timer}
+                      clock={timerClock()}
+                      canControl={board().isFacilitator && !board().isLocked}
+                      onChange={(change) => changeCountdown(boardId, change)}
+                    />
+                  )}
+                </Show>
                 <Show when={board().isFacilitator && !board().isLocked}>
                   <button
                     type="button"
@@ -876,6 +979,32 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 <ThemeToggle />
               </div>
             </div>
+
+            <Show when={
+              board().voteLimit !== null ||
+              board().blindVoting ||
+              (board().isFacilitator && !board().isLocked)
+            }>
+              <div class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6">
+                <Show when={board().voteLimit !== null}>
+                  <span aria-live="polite" class="rounded-full border border-border bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text tabular-nums">
+                    {voting().remainingVotes} / {board().voteLimit} votes left
+                  </span>
+                </Show>
+                <Show when={board().blindVoting}>
+                  <span class="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted">
+                    Blind Voting
+                  </span>
+                </Show>
+                <Show when={board().isFacilitator && !board().isLocked}>
+                  <BoardVotingSettings
+                    board={board()}
+                    onUpdate={saveVotingSettings}
+                    onReset={resetAllVotes}
+                  />
+                </Show>
+              </div>
+            </Show>
 
             {/* Mobile (< 640px) scrollable Column Tab Bar */}
             <nav
@@ -1068,6 +1197,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     totalColumns={board().columns.length}
                     columns={board().columns}
                     cards={cardsByColumn().get(column.id) ?? []}
+                    voting={voting()}
                     isFacilitator={board().isFacilitator}
                     isLocked={board().isLocked}
                     isBlurred={board().isBlurred}

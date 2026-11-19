@@ -16,9 +16,11 @@ import {
   PencilIcon,
   TrashIcon,
 } from './Icons';
+import VoteControls, { type WorkspaceVoting } from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;
+  voting: WorkspaceVoting;
   columns: readonly ColumnDTO[];
   isFacilitator: boolean;
   isLocked: boolean;
@@ -295,6 +297,10 @@ export default function CardItem(props: CardItemProps) {
               </Show>
               <time class="tabular-nums">{relativeTimestamp()}</time>
             </div>
+
+            <Show when={props.card.groupId === null}>
+              <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
+            </Show>
 
             <div class="flex items-center gap-1">
               <button

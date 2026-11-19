@@ -10,6 +10,7 @@ import {
   type BoardTemplateId,
   type ColumnAccent,
 } from '../../lib/board-types';
+import { applyTimerChange } from '../domain/timer';
 import { checkPrivateCardPermission } from '../domain/card-permissions';
 import type {
   BoardMutationActor,
@@ -29,6 +30,7 @@ import type {
 } from './raw-types';
 import { BOARD_SCHEMA_STATEMENTS } from './schema';
 import type { SqlRunner } from './sql-runner';
+import { changeVote, configureVoting } from './sql-voting-operations';
 
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -572,6 +574,33 @@ export class SqlBoardOperations {
       };
 
       switch (command.type) {
+        case 'voting:configure':
+        case 'voting:reset': {
+          if (!actor.isFacilitator) {
+            return { ok: false, code: 'FORBIDDEN', message: 'Only a Facilitator can change Voting settings or reset Votes.' };
+          }
+          if (command.type === 'voting:configure') {
+            configureVoting(this.sql, board, command);
+          } else {
+            this.sql.run('DELETE FROM votes WHERE board_id = ?', boardId);
+          }
+          bumpBoard();
+          rawEvents.push({ type: 'board:snapshot', version: nextVersion });
+          return finalize(nextVersion, now);
+        }
+        case 'vote:change': {
+          const result = changeVote(this.sql, board, actor, command, now);
+          if (!result.ok) return result;
+          bumpBoard();
+          rawEvents.push({
+            type: 'vote:updated',
+            version: nextVersion,
+            targetType: command.targetType,
+            targetId: command.targetId,
+          });
+          return finalize(nextVersion, now);
+        }
+
         case 'facilitator:rotate': {
           if (!actor.isFacilitator) {
             return {
@@ -591,6 +620,31 @@ export class SqlBoardOperations {
             boardId,
           );
           rawEvents.push({ type: 'board:updated', version: nextVersion, patch: {} });
+          return finalize(nextVersion, now);
+        }
+
+        case 'timer:update': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can control the timer.',
+            };
+          }
+          const timer = applyTimerChange(board, command.change, now);
+          if (!timer) return finalize(board.version, board.lastActiveAt);
+
+          this.sql.run(
+            `UPDATE boards SET timer_ends_at = ?, timer_remaining_ms = ?, timer_duration_ms = ?,
+                               version = ?, last_active_at = ? WHERE id = ?`,
+            timer.endsAt,
+            timer.remainingMs,
+            timer.durationMs,
+            nextVersion,
+            now,
+            boardId,
+          );
+          rawEvents.push({ type: 'timer:updated', version: nextVersion, serverNow: now });
           return finalize(nextVersion, now);
         }
 

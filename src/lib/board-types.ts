@@ -172,7 +172,16 @@ export type BoardEvent =
   | { type: 'card:deleted'; version: number; cardId: string }
   | { type: 'group:upserted'; version: number; group: CardGroupDTO }
   | { type: 'group:dissolved'; version: number; groupId: string }
-  | { type: 'vote:updated'; version: number; targetType: 'card' | 'group'; targetId: string; totalVotes: number | null }
+  | {
+      type: 'vote:updated';
+      version: number;
+      targetType: 'card' | 'group';
+      targetId: string;
+      totalVotes: number | null;
+      myVotes: number;
+      remainingVotes: number | null;
+    }
+  | { type: 'vote:balance'; version: number; remainingVotes: number | null }
   | {
       type: 'reaction:updated';
       version: number;

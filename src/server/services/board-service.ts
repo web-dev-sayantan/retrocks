@@ -24,6 +24,7 @@ import {
   ToggleReactionInputSchema,
   UpdateCardInputSchema,
   UpdateColumnInputSchema,
+  UpdateTimerInputSchema,
 } from '../../lib/schemas';
 import {
   formatDefaultBoardTitle,
@@ -178,7 +179,7 @@ export async function getBoardForRequest(
   return projectBoardForViewer(rawSnapshot, viewerParticipantHash, isFacilitator);
 }
 
-function parseMutationInput<
+export function parseMutationInput<
   TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>,
 >(schema: TSchema, rawInput: unknown): v.InferOutput<TSchema> {
   const parsed = v.safeParse(schema, rawInput);
@@ -248,6 +249,16 @@ export async function renameBoardForRequest(
     type: 'board:rename',
     title: input.title,
     ...(input.subtitle !== undefined ? { subtitle: input.subtitle } : {}),
+  });
+}
+
+export async function updateTimerForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(UpdateTimerInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'timer:update',
+    change: input.change,
   });
 }
 

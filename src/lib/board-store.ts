@@ -175,15 +175,19 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
     }
 
     case 'vote:updated': {
-      if (event.targetType === 'card') {
-        const card = draft.cards.find((c) => c.id === event.targetId);
-        if (card) card.votes = event.totalVotes;
-      } else {
-        const group = draft.groups.find((g) => g.id === event.targetId);
-        if (group) group.votes = event.totalVotes;
+      const targets = event.targetType === 'card' ? draft.cards : draft.groups;
+      const target = targets.find((item) => item.id === event.targetId);
+      if (target) {
+        target.votes = event.totalVotes;
+        target.myVotes = event.myVotes;
       }
+      draft.remainingVotes = event.remainingVotes;
       break;
     }
+
+    case 'vote:balance':
+      draft.remainingVotes = event.remainingVotes;
+      break;
 
     case 'reaction:updated': {
       const card = draft.cards.find((c) => c.id === event.cardId);
