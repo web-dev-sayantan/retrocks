@@ -65,6 +65,17 @@ export default function CardItem(props: CardItemProps) {
     },
   );
 
+  createEffect(
+    () => props.isLocked,
+    (locked) => {
+      if (locked) {
+        cancelEdit();
+        setConfirmingDelete(false);
+        setMoveMenuOpen(false);
+      }
+    },
+  );
+
   const canManage = createMemo(() => {
     if (props.isLocked || props.card.redacted) return false;
     if (props.card.isMine) return true;
@@ -290,7 +301,9 @@ export default function CardItem(props: CardItemProps) {
               <input
                 type="checkbox"
                 checked={props.card.actionDone}
-                disabled={props.isLocked || isUpdatingAction()}
+                disabled={
+                  (props.isLocked && !props.isFacilitator) || isUpdatingAction()
+                }
                 aria-label={`Mark ${props.card.content} as Done`}
                 onChange={(event) =>
                   void updateAction({ actionDone: event.currentTarget.checked })

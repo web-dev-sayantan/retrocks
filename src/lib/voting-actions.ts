@@ -1,4 +1,4 @@
-import { respond } from '@solidjs/web';
+import { httpStatus, respond } from '@solidjs/web';
 
 import type { BoardMutationResponse, BoardMutationSuccess } from './board-types';
 import type { ChangeVoteInput, ResetVotesInput, UpdateVotingSettingsInput } from './voting-schemas';
@@ -11,9 +11,10 @@ async function respondToVotingMutation(
     return respond(await run(), { revalidate: [] });
   } catch (error) {
     if (error instanceof BoardDomainError) {
+      httpStatus(error.status);
       return respond(
         { ok: false, code: error.code, message: error.message },
-        { revalidate: [] },
+        { status: error.status, revalidate: [] },
       );
     }
     throw error;

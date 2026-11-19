@@ -134,6 +134,19 @@ export const SetPrivateModeInputSchema = v.object({
 
 export type SetPrivateModeInput = v.InferInput<typeof SetPrivateModeInputSchema>;
 
+export const SetBoardLockInputSchema = v.object({
+  boardId: BoardIdSchema,
+  isLocked: v.boolean(),
+});
+
+export type SetBoardLockInput = v.InferInput<typeof SetBoardLockInputSchema>;
+
+export const DeleteBoardInputSchema = v.object({
+  boardId: BoardIdSchema,
+});
+
+export type DeleteBoardInput = v.InferInput<typeof DeleteBoardInputSchema>;
+
 export const CreateCardInputSchema = v.object({
   boardId: BoardIdSchema,
   columnId: EntityIdSchema,

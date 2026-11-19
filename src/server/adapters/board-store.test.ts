@@ -108,6 +108,99 @@ describe('NodeBoardStore (node:sqlite)', () => {
 
     store.close();
   });
+
+  it('runs a periodic .unref() inactivity cleanup sweep that purges expired Boards and cascades child rows while preserving active ones', async () => {
+    vi.useFakeTimers();
+    const realSetInterval = globalThis.setInterval;
+    const unrefSpy = vi.fn();
+    const setIntervalSpy = vi
+      .spyOn(globalThis, 'setInterval')
+      .mockImplementation(((fn: TimerHandler, ms?: number) => {
+        const handle = realSetInterval(fn, ms) as unknown as NodeJS.Timeout;
+        const wrapped = Object.assign(Object(handle), { unref: unrefSpy });
+        return wrapped as unknown as ReturnType<typeof setInterval>;
+      }) as unknown as typeof setInterval);
+    let currentTime = 1_760_000_000_000;
+    const store = await createNodeBoardStore(':memory:', {
+      expirySweepIntervalMs: 60_000,
+      now: () => currentTime,
+    });
+    try {
+      expect(unrefSpy).toHaveBeenCalledTimes(1);
+
+      const expiredRecord = makeCreateRecord({
+        id: 'board_expired_1234567',
+        retentionDays: 30,
+        createdAt: currentTime,
+      });
+      const activeRecord = makeCreateRecord({
+        id: 'board_active_12345678',
+        retentionDays: 30,
+        createdAt: currentTime,
+        columns: [
+          {
+            id: 'col_active_a',
+            title: 'Went Well',
+            accent: 'sage',
+            position: 0,
+            isActionColumn: false,
+          },
+        ],
+      });
+      await store.createBoard(expiredRecord);
+      await store.createBoard(activeRecord);
+
+      // Populate child records (Card, Vote, Reaction, Comment) on the Board that will expire.
+      await store.mutateBoard(
+        expiredRecord.id,
+        { participantHash: 'author_1', isFacilitator: true },
+        { type: 'card:create', id: 'card_exp_1', columnId: 'col_a', content: 'Old card' },
+        currentTime,
+      );
+      await store.mutateBoard(
+        expiredRecord.id,
+        { participantHash: 'author_1', isFacilitator: true },
+        { type: 'vote:change', targetType: 'card', targetId: 'card_exp_1', delta: 1 },
+        currentTime,
+      );
+      await store.mutateBoard(
+        expiredRecord.id,
+        { participantHash: 'author_1', isFacilitator: true },
+        { type: 'reaction:toggle', cardId: 'card_exp_1', emoji: '👍' },
+        currentTime,
+      );
+      await store.mutateBoard(
+        expiredRecord.id,
+        { participantHash: 'author_1', isFacilitator: true },
+        { type: 'comment:create', id: 'comment_exp_1', cardId: 'card_exp_1', content: 'Old comment' },
+        currentTime,
+      );
+
+      // Write on activeRecord at day 20 extends its last_active_at.
+      currentTime += 20 * MS_PER_DAY;
+      await store.mutateBoard(
+        activeRecord.id,
+        { participantHash: 'author_2', isFacilitator: false },
+        { type: 'card:create', id: 'card_act_1', columnId: 'col_active_a', content: 'Fresh card' },
+        currentTime,
+      );
+
+      // Advance to day 31: expiredRecord is past 30 days, activeRecord has 19 days left.
+      currentTime += 11 * MS_PER_DAY;
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      // Expired Board was purged by the background sweep (even before any read).
+      expect(await store.getBoardSnapshot(expiredRecord.id, 0)).toBeNull();
+      expect(await store.getFacilitatorCapability(expiredRecord.id, 0)).toBeNull();
+      // Active Board remains intact with its Card.
+      const activeSnap = await store.getBoardSnapshot(activeRecord.id, currentTime);
+      expect(activeSnap?.cards).toHaveLength(1);
+    } finally {
+      store.close();
+      setIntervalSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('CloudflareBoardStore (Durable Object RPC seam)', () => {

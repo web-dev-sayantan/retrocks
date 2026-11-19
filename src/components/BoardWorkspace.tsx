@@ -168,6 +168,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
+    if (nextBoard === null) {
+      setErrorMessage(null);
+      setIsRenamingBoard(false);
+      setIsAddingColumn(false);
+      setOpenCardDetailId(null);
+      setIsActionItemsOpen(false);
+    }
     setWorkspace((draft) => {
       const current = draft.board;
       if (nextBoard && current?.id === nextBoard.id) {
@@ -193,6 +200,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
+    if (events.some((event) => event.type === 'board:deleted')) {
+      if (workspace.board?.id === boardId) {
+        applySnapshot(null);
+      }
+      return;
+    }
     const snapshot = events.find((event) => event.type === 'board:snapshot');
     if (snapshot) {
       applyServerSnapshot(snapshot.board, snapshot.serverNow);
@@ -218,6 +231,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   createEffect(() => props.board, (nextBoard) => applySnapshot(nextBoard));
+
+  createEffect(
+    () => workspace.board?.isLocked ?? false,
+    (locked) => {
+      if (locked) {
+        setIsRenamingBoard(false);
+        setIsAddingColumn(false);
+      }
+    },
+  );
 
   createEffect(
     () => {
@@ -510,9 +533,18 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     patch: ActionItemPatch,
   ): Promise<boolean> {
     const board = workspace.board;
-    if (!board || board.isLocked) return false;
+    if (!board) return false;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return false;
+    if (board.isLocked) {
+      if (
+        !board.isFacilitator ||
+        !card.isActionItem ||
+        patch.isActionItem !== undefined
+      ) {
+        return false;
+      }
+    }
     const response = await actions().updateActionItem({
       boardId: board.id,
       cardId,
@@ -725,6 +757,34 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function resetAllVotes(): Promise<string | null> {
     const reset = actions().resetVotes;
     return runVotingSettingsMutation((boardId) => reset({ boardId }));
+  }
+
+  async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
+    const board = workspace.board;
+    if (!board?.isFacilitator) return 'Only a Facilitator can Lock or Unlock the Board.';
+    const boardId = board.id;
+    try {
+      const response = await actions().setBoardLock({ boardId, isLocked });
+      if (!response.ok) return response.message;
+      applyMutationResponse(boardId, response);
+      return null;
+    } catch {
+      return 'Could not update Board lock state. Try again.';
+    }
+  }
+
+  async function deleteCurrentBoard(): Promise<string | null> {
+    const board = workspace.board;
+    if (!board?.isFacilitator) return 'Only a Facilitator can delete this Board.';
+    const boardId = board.id;
+    try {
+      const response = await actions().deleteBoard({ boardId });
+      if (!response.ok) return response.message;
+      applyMutationResponse(boardId, response);
+      return null;
+    } catch {
+      return 'Could not delete this Board. Try again.';
+    }
   }
 
   async function handleMobileQuickAdd(): Promise<void> {
@@ -1047,7 +1107,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <Show when={
               board().voteLimit !== null ||
               board().blindVoting ||
-              (board().isFacilitator && !board().isLocked)
+              board().isFacilitator
             }>
               <div class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6">
                 <Show when={board().voteLimit !== null}>
@@ -1060,11 +1120,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     Blind Voting
                   </span>
                 </Show>
-                <Show when={board().isFacilitator && !board().isLocked}>
+                <Show when={board().isFacilitator}>
                   <BoardVotingSettings
                     board={board()}
                     onUpdate={saveVotingSettings}
                     onReset={resetAllVotes}
+                    onToggleLock={toggleBoardLock}
+                    onDeleteBoard={deleteCurrentBoard}
                   />
                 </Show>
               </div>

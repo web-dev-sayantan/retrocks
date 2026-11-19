@@ -14,12 +14,14 @@ import {
   CreateBoardInputSchema,
   CreateCardInputSchema,
   CreateCommentInputSchema,
+  DeleteBoardInputSchema,
   DeleteCardInputSchema,
   DeleteCommentInputSchema,
   DeleteColumnInputSchema,
   MoveCardInputSchema,
   RenameBoardInputSchema,
   ReorderColumnsInputSchema,
+  SetBoardLockInputSchema,
   SetPrivateModeInputSchema,
   ToggleReactionInputSchema,
   UpdateActionItemInputSchema,
@@ -57,13 +59,33 @@ import {
   isFacilitatorForBoard,
 } from '../session';
 
+export function httpStatusForBoardError(code: BoardErrorCode): number {
+  switch (code) {
+    case 'BOARD_LOCKED':
+    case 'FORBIDDEN':
+      return 403;
+    case 'BOARD_NOT_FOUND':
+    case 'NOT_FOUND':
+      return 404;
+    case 'RATE_LIMITED':
+      return 429;
+    case 'VALIDATION_ERROR':
+    case 'LIMIT_EXCEEDED':
+      return 400;
+    case 'INTERNAL_ERROR':
+      return 500;
+  }
+}
+
 export class BoardDomainError extends Error {
   readonly code: BoardErrorCode;
+  readonly status: number;
 
   constructor(code: BoardErrorCode, message: string) {
     super(message);
     this.name = 'BoardDomainError';
     this.code = code;
+    this.status = httpStatusForBoardError(code);
     markSafeError(this);
   }
 }
@@ -271,6 +293,67 @@ export async function setPrivateModeForRequest(
     type: 'board:set-private-mode',
     isBlurred: input.isBlurred,
   });
+}
+
+export async function setBoardLockForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(SetBoardLockInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'board:set-lock',
+    isLocked: input.isLocked,
+  });
+}
+
+export async function deleteBoardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  requireRequest();
+  const input = parseMutationInput(DeleteBoardInputSchema, rawInput);
+  const store = await getBoardStore();
+
+  const snapshot = await store.getBoardSnapshot(input.boardId);
+  if (!snapshot) {
+    throw new BoardDomainError('BOARD_NOT_FOUND', 'Board not found or expired.');
+  }
+
+  const session = await ensureParticipantSession({ renew: true });
+  const isFacilitator = isFacilitatorForBoard(session, input.boardId);
+  if (!isFacilitator) {
+    if (snapshot.board.isLocked) {
+      throw new BoardDomainError(
+        'BOARD_LOCKED',
+        'This Board is Locked and cannot be edited.',
+      );
+    }
+    throw new BoardDomainError(
+      'FORBIDDEN',
+      'Only a Facilitator can delete this Board.',
+    );
+  }
+
+  const deletedVersion = snapshot.board.version + 1;
+  const deleted = await store.deleteBoard(input.boardId);
+  if (!deleted) {
+    throw new BoardDomainError('BOARD_NOT_FOUND', 'Board not found or expired.');
+  }
+
+  const event: Extract<BoardEvent, { type: 'board:deleted' }> = {
+    type: 'board:deleted',
+    version: deletedVersion,
+  };
+  try {
+    await getBoardRealtime().publish(input.boardId, event);
+  } catch (error) {
+    // Storage is already purged; returning a failed delete would invite retries.
+    console.error('Board delete live delivery failed', error);
+  }
+
+  return {
+    ok: true,
+    version: deletedVersion,
+    events: [event],
+  };
 }
 
 export async function createCardForRequest(

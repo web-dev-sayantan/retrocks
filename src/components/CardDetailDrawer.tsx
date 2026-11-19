@@ -70,6 +70,10 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
+  const canEditActionItemFollowUp = createMemo(
+    () =>
+      props.card.isActionItem && (!props.isLocked || props.isFacilitator),
+  );
 
   createEffect(
     () => props.card.actionOwner,
@@ -79,7 +83,16 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   );
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
-    if (props.isLocked || isSavingAction()) return false;
+    if (isSavingAction()) return false;
+    if (props.isLocked) {
+      if (
+        !props.isFacilitator ||
+        !props.card.isActionItem ||
+        patch.isActionItem !== undefined
+      ) {
+        return false;
+      }
+    }
     setIsSavingAction(true);
     try {
       return await props.onUpdateActionItem(props.card.id, patch);
@@ -89,7 +102,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   }
 
   async function saveActionOwner(): Promise<void> {
-    if (props.isLocked || isSavingAction()) return;
+    if (!canEditActionItemFollowUp() || isSavingAction()) return;
     const trimmed = ownerDraft().trim();
     if (trimmed === props.card.actionOwner) {
       setOwnerDraft(props.card.actionOwner);
@@ -270,7 +283,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   <input
                     type="checkbox"
                     checked={props.card.actionDone}
-                    disabled={props.isLocked || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp() || isSavingAction()}
                     onChange={(event) =>
                       void updateAction({
                         actionDone: event.currentTarget.checked,
@@ -295,7 +308,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     placeholder={'e.g. "Platform"'}
                     value={ownerDraft()}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
-                    disabled={props.isLocked || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp() || isSavingAction()}
                     onInput={(event) => setOwnerDraft(event.currentTarget.value)}
                     onBlur={() => void saveActionOwner()}
                     onKeyDown={(event) => {

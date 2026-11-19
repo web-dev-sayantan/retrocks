@@ -64,6 +64,11 @@ export function connectBoardLive(boardId: string, callbacks: LiveCallbacks) {
         retryConnection();
         return;
       }
+      if (message.type === 'board:deleted') {
+        disconnect();
+        callbacks.onMessage(message);
+        return;
+      }
       if (message.type === 'board:snapshot') {
         attempt = 0;
         if (message.connectionId) connectionId = message.connectionId;

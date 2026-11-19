@@ -14,9 +14,11 @@ const buttonClass = [
 const fieldClass = 'min-h-11 w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-text focus:border-focus focus:outline-none sm:min-h-9';
 
 export default function BoardVotingSettings(props: {
-  board: Pick<BoardViewDTO, 'voteLimit' | 'maxVotesPerCard' | 'blindVoting'>;
+  board: Pick<BoardViewDTO, 'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'isLocked'>;
   onUpdate: (patch: VotingSettingsPatch) => Promise<string | null>;
   onReset: () => Promise<string | null>;
+  onToggleLock: (isLocked: boolean) => Promise<string | null>;
+  onDeleteBoard: () => Promise<string | null>;
 }) {
   let dialog!: HTMLDialogElement;
   const titleId = createUniqueId();
@@ -25,9 +27,10 @@ export default function BoardVotingSettings(props: {
   const [singleVote, setSingleVote] = createSignal(false);
   const [blindVoting, setBlindVoting] = createSignal(false);
   const [confirmingReset, setConfirmingReset] = createSignal(false);
-  const [pending, setPending] = createSignal<'save' | 'reset' | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
+  const [pending, setPending] = createSignal<'save' | 'reset' | 'lock' | 'delete' | null>(null);
   const [error, setError] = createSignal<string | null>(null);
-  let initialSettings: typeof props.board;
+  let initialSettings: Pick<BoardViewDTO, 'voteLimit' | 'maxVotesPerCard' | 'blindVoting'>;
 
   const voteLimit = createMemo(() => {
     const choice = voteLimitChoice();
@@ -46,13 +49,14 @@ export default function BoardVotingSettings(props: {
     setSingleVote(maxVotesPerCard === 1);
     setBlindVoting(blindVoting);
     setConfirmingReset(false);
+    setConfirmingDelete(false);
     setError(null);
     dialog.showModal();
   }
 
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
-    if (pending() || !validLimit()) return;
+    if (pending() || !validLimit() || props.board.isLocked) return;
 
     const patch: VotingSettingsPatch = {};
     const limit = voteLimit();
@@ -78,13 +82,43 @@ export default function BoardVotingSettings(props: {
   }
 
   async function resetVotes() {
-    if (pending()) return;
+    if (pending() || props.board.isLocked) return;
     setPending('reset');
     setError(null);
     try {
       const message = await props.onReset();
       setError(message);
       if (message === null) setConfirmingReset(false);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function toggleLock() {
+    if (pending()) return;
+    const nextLocked = !props.board.isLocked;
+    setPending('lock');
+    setError(null);
+    setConfirmingReset(false);
+    try {
+      const message = await props.onToggleLock(nextLocked);
+      setError(message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function confirmDeleteBoard() {
+    if (pending()) return;
+    setPending('delete');
+    setError(null);
+    try {
+      const message = await props.onDeleteBoard();
+      setError(message);
+      if (message === null) {
+        setConfirmingDelete(false);
+        if (dialog.open) dialog.close();
+      }
     } finally {
       setPending(null);
     }
@@ -118,8 +152,14 @@ export default function BoardVotingSettings(props: {
           </button>
         </div>
 
+        <Show when={props.board.isLocked}>
+          <p class="mb-3 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-text-muted">
+            This Board is Locked. Unlock the Board to adjust Voting settings or reset Votes.
+          </p>
+        </Show>
+
         <form onSubmit={(event) => void saveSettings(event)}>
-          <fieldset disabled={pending() !== null} class="space-y-4">
+          <fieldset disabled={pending() !== null || props.board.isLocked} class="space-y-4">
             <label class="grid gap-1.5 text-sm font-medium">
               Vote limit
               <select
@@ -171,7 +211,7 @@ export default function BoardVotingSettings(props: {
             <button
               type="submit"
               class={[buttonClass, 'bg-accent text-accent-contrast hover:opacity-90']}
-              disabled={!validLimit()}
+              disabled={!validLimit() || props.board.isLocked}
             >
               {pending() === 'save' ? 'Saving…' : 'Save Settings'}
             </button>
@@ -180,12 +220,12 @@ export default function BoardVotingSettings(props: {
 
         <div class="mt-4 border-t border-border pt-4">
           <Show
-            when={confirmingReset()}
+            when={confirmingReset() && !props.board.isLocked}
             fallback={
               <button
                 type="button"
                 class={[buttonClass, 'border border-col-rose bg-surface text-text hover:bg-surface-subtle']}
-                disabled={pending() !== null}
+                disabled={pending() !== null || props.board.isLocked}
                 onClick={() => { setError(null); setConfirmingReset(true); }}
               >
                 Reset All Votes
@@ -213,6 +253,82 @@ export default function BoardVotingSettings(props: {
             </div>
           </Show>
         </div>
+
+        <div class="mt-4 space-y-2 border-t border-border pt-4">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-text">Board Lock</h3>
+              <p class="mt-0.5 text-xs text-text-muted">
+                {props.board.isLocked
+                  ? 'Cards, Columns, Votes, and comments are frozen. Facilitators can still update existing Action Items.'
+                  : 'Freeze content edits while keeping viewing, searching, exporting, and Facilitator Action Item updates.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            class={[buttonClass, 'border border-border bg-surface text-text hover:bg-surface-subtle']}
+            disabled={pending() !== null}
+            onClick={() => void toggleLock()}
+          >
+            {pending() === 'lock'
+              ? props.board.isLocked
+                ? 'Unlocking…'
+                : 'Locking…'
+              : props.board.isLocked
+                ? 'Unlock Board'
+                : 'Lock Board'}
+          </button>
+        </div>
+
+        <div class="mt-4 space-y-2 border-t border-border pt-4">
+          <div>
+            <h3 class="text-sm font-semibold text-text">Delete Board</h3>
+            <p class="mt-0.5 text-xs text-text-muted">
+              Permanently erase this Board and all Cards, Columns, Votes, and comments immediately.
+            </p>
+          </div>
+          <Show
+            when={confirmingDelete()}
+            fallback={
+              <button
+                type="button"
+                class={[buttonClass, 'border border-col-rose bg-surface text-col-rose hover:bg-surface-subtle']}
+                disabled={pending() !== null}
+                onClick={() => {
+                  setError(null);
+                  setConfirmingReset(false);
+                  setConfirmingDelete(true);
+                }}
+              >
+                Delete Board
+              </button>
+            }
+          >
+            <p class="text-sm text-text">
+              Permanently delete this Board? This cannot be undone.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                class={[buttonClass, 'border border-col-rose bg-col-rose text-white hover:opacity-90']}
+                disabled={pending() !== null}
+                onClick={() => void confirmDeleteBoard()}
+              >
+                {pending() === 'delete' ? 'Deleting…' : 'Confirm Delete'}
+              </button>
+              <button
+                type="button"
+                class={[buttonClass, 'border border-border bg-surface text-text hover:bg-surface-subtle']}
+                disabled={pending() !== null}
+                onClick={() => setConfirmingDelete(false)}
+              >
+                Cancel Delete
+              </button>
+            </div>
+          </Show>
+        </div>
+
         <Show when={error()}>
           <p role="alert" class="mt-3 text-sm text-text">{error()}</p>
         </Show>

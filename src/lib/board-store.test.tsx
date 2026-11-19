@@ -237,4 +237,27 @@ describe('applyBoardEvents (reactive store patcher)', () => {
     expect(afterColDelete.columns.map((c) => c.position)).toEqual([0, 1]);
     expect(afterColDelete.cards).toHaveLength(0);
   });
+
+  it('patches Locked and Unlocked state transitions idempotently', () => {
+    const [board, setBoard] = createStore<BoardViewDTO>(makeInitialBoard());
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        { type: 'board:updated', version: 2, patch: { isLocked: true } },
+        { type: 'board:updated', version: 2, patch: { isLocked: true } },
+      ]);
+    });
+    flush();
+
+    expect(snapshot(board)).toMatchObject({ version: 2, isLocked: true });
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        { type: 'board:updated', version: 3, patch: { isLocked: false } },
+      ]);
+    });
+    flush();
+
+    expect(snapshot(board)).toMatchObject({ version: 3, isLocked: false });
+  });
 });

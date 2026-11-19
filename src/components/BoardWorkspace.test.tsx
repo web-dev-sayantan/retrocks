@@ -277,6 +277,30 @@ function createFakeActions(initialBoard: BoardViewDTO): {
   });
 
   const setPrivateMode = vi.fn<BoardWorkspaceActions['setPrivateMode']>();
+  const setBoardLock = vi.fn<BoardWorkspaceActions['setBoardLock']>(
+    async (input) => {
+      version += 1;
+      return {
+        ok: true as const,
+        version,
+        events: [
+          {
+            type: 'board:updated' as const,
+            version,
+            patch: { isLocked: input.isLocked },
+          },
+        ],
+      };
+    },
+  );
+  const deleteBoard = vi.fn<BoardWorkspaceActions['deleteBoard']>(async () => {
+    version += 1;
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'board:deleted' as const, version }],
+    };
+  });
   const toggleReaction = vi.fn<BoardWorkspaceActions['toggleReaction']>();
   const createComment = vi.fn<BoardWorkspaceActions['createComment']>();
   const deleteComment = vi.fn<BoardWorkspaceActions['deleteComment']>();
@@ -288,6 +312,8 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     updateVotingSettings,
     resetVotes,
     setPrivateMode,
+    setBoardLock,
+    deleteBoard,
     renameBoard,
     updateTimer,
     createCard,
@@ -311,6 +337,8 @@ function createFakeActions(initialBoard: BoardViewDTO): {
       updateVotingSettings,
       resetVotes,
       setPrivateMode,
+      setBoardLock,
+      deleteBoard,
       renameBoard,
       updateTimer,
       createCard,
@@ -1458,6 +1486,370 @@ describe('<BoardWorkspace />', () => {
       within(col1).queryByRole('button', { name: 'Edit card' }),
     ).toBeNull();
     expect(within(col1).queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('lets a Facilitator Lock and Unlock the Board while keeping Action Item follow-up enabled and disabling content edits', async () => {
+    const regularCard = makeCard({
+      id: 'card_regular',
+      columnId: 'col_1',
+      content: 'Great collaboration',
+      isMine: true,
+      votes: 2,
+      myVotes: 1,
+      reactions: { '👍': 1 },
+      myReactions: ['👍'],
+    });
+    const actionCard = makeCard({
+      id: 'card_action',
+      columnId: 'col_3',
+      content: 'Automate canary rollback',
+      isMine: false,
+      isActionItem: true,
+      actionDone: false,
+      actionOwner: '',
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      isLocked: false,
+      cards: [regularCard, actionCard],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole, getByText, queryByRole, queryByLabelText, queryByText } =
+      render(() => (
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+      ));
+    flush();
+
+    const dialog = getByText('Board Settings', { selector: 'h2' }).closest(
+      'dialog',
+    )!;
+    dialog.showModal = () => {
+      dialog.open = true;
+    };
+    dialog.close = () => {
+      dialog.open = false;
+    };
+
+    // Open Board Settings and Lock the Board
+    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    flush();
+    const settings = within(getByRole('dialog', { name: 'Board Settings' }));
+    fireEvent.click(settings.getByRole('button', { name: 'Lock Board' }));
+    await flushPromises();
+
+    expect(spies.setBoardLock).toHaveBeenCalledWith({
+      boardId: board.id,
+      isLocked: true,
+    });
+    // Voting controls inside Board Settings are disabled while Locked, Unlock is enabled
+    expect(settings.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
+    expect(settings.getByRole('button', { name: 'Reset All Votes' })).toBeDisabled();
+    expect(settings.getByRole('button', { name: 'Unlock Board' })).toBeEnabled();
+    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
+    flush();
+
+    // Locked badge shown; content mutation controls hidden/disabled; Board Settings & Share stay available
+    expect(getByText('Locked')).toBeInTheDocument();
+    expect(queryByRole('button', { name: 'Rename Board' })).toBeNull();
+    expect(queryByRole('button', { name: 'Private Mode' })).toBeNull();
+    expect(queryByRole('button', { name: /\+ Add column/i })).toBeNull();
+    expect(queryByLabelText('Add card to Went Well')).toBeNull();
+    expect(queryByRole('button', { name: 'Cast Vote' })).toBeNull();
+    expect(queryByRole('button', { name: 'Remove Vote' })).toBeNull();
+    expect(queryByRole('button', { name: 'Edit card' })).toBeNull();
+    expect(queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(queryByRole('button', { name: 'Add reaction' })).toBeNull();
+    expect(queryByRole('button', { name: 'Flag as Action Item' })).toBeNull();
+    expect(queryByRole('button', { name: 'Unflag Action Item' })).toBeNull();
+    expect(getByRole('button', { name: 'Board Settings' })).toBeEnabled();
+    expect(getByRole('button', { name: 'Share' })).toBeEnabled();
+
+    // Facilitator CAN update actionDone & actionOwner on existing Action Items in Action Items Drawer
+    fireEvent.click(getByRole('button', { name: /Action Items/i }));
+    flush();
+    const drawer = within(getByRole('dialog', { name: 'Action Items' }));
+    const drawerDone = drawer.getByLabelText(
+      'Mark Automate canary rollback as Done',
+    );
+    const drawerOwner = drawer.getByLabelText(
+      'Owner for Automate canary rollback',
+    );
+    expect(drawerDone).toBeEnabled();
+    expect(drawerOwner).toBeEnabled();
+
+    fireEvent.click(drawerDone);
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: actionCard.id,
+      actionDone: true,
+    });
+
+    const refreshedOwner = drawer.getByLabelText(
+      'Owner for Automate canary rollback',
+    );
+    fireEvent.input(refreshedOwner, { target: { value: 'Platform' } });
+    flush();
+    fireEvent.keyDown(refreshedOwner, { key: 'Enter' });
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: actionCard.id,
+      actionOwner: 'Platform',
+    });
+    fireEvent.click(drawer.getByRole('button', { name: 'Close Action Items' }));
+    flush();
+
+    // Facilitator CAN also update existing Action Item in Card Detail Drawer, but cannot unflag or comment
+    const actionArticle = getByText('Automate canary rollback').closest(
+      'article',
+    )!;
+    fireEvent.click(
+      within(actionArticle).getByRole('button', { name: 'Open Card details' }),
+    );
+    flush();
+    const detail = within(getByRole('dialog', { name: 'Card details' }));
+    expect(detail.getByLabelText('Action Item')).toBeDisabled();
+    expect(detail.getByLabelText('Done')).toBeEnabled();
+    expect(detail.getByLabelText('Action owner')).toBeEnabled();
+    expect(detail.queryByLabelText('Comment')).toBeNull();
+    fireEvent.click(detail.getByLabelText('Done'));
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: actionCard.id,
+      actionDone: false,
+    });
+    fireEvent.click(detail.getByRole('button', { name: 'Close Card details' }));
+    flush();
+
+    // Unlock the Board from Board Settings
+    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    flush();
+    fireEvent.click(settings.getByRole('button', { name: 'Unlock Board' }));
+    await flushPromises();
+    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
+    flush();
+
+    expect(spies.setBoardLock).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      isLocked: false,
+    });
+    expect(queryByText('Locked')).toBeNull();
+    expect(getByRole('button', { name: 'Private Mode' })).toBeEnabled();
+  });
+
+  it('prevents non-Facilitator Participants from editing Action Items or accessing Board Settings when Locked', () => {
+    const actionCard = makeCard({
+      id: 'card_action',
+      columnId: 'col_3',
+      content: 'Follow up with QA',
+      isMine: true,
+      isActionItem: true,
+      actionDone: false,
+      actionOwner: 'QA',
+    });
+    const board = makeBoardView({
+      isFacilitator: false,
+      isLocked: true,
+      cards: [actionCard],
+    });
+    const { actions } = createFakeActions(board);
+
+    const { getByRole, getByText, queryByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    expect(getByText('Locked')).toBeInTheDocument();
+    expect(queryByRole('button', { name: 'Board Settings' })).toBeNull();
+    expect(
+      getByRole('checkbox', { name: 'Mark Follow up with QA as Done' }),
+    ).toBeDisabled();
+
+    // Action Items Drawer disables controls for Participant while Locked
+    fireEvent.click(getByRole('button', { name: /Action Items/i }));
+    flush();
+    const drawer = within(getByRole('dialog', { name: 'Action Items' }));
+    expect(
+      drawer.getByLabelText('Mark Follow up with QA as Done'),
+    ).toBeDisabled();
+    expect(drawer.getByLabelText('Owner for Follow up with QA')).toBeDisabled();
+    fireEvent.click(drawer.getByRole('button', { name: 'Close Action Items' }));
+    flush();
+
+    // Card Detail Drawer disables Action Item controls & hides comments composer
+    fireEvent.click(getByRole('button', { name: 'Open Card details' }));
+    flush();
+    const detail = within(getByRole('dialog', { name: 'Card details' }));
+    expect(detail.getByLabelText('Action Item')).toBeDisabled();
+    expect(detail.getByLabelText('Done')).toBeDisabled();
+    expect(detail.getByLabelText('Action owner')).toBeDisabled();
+    expect(detail.queryByLabelText('Comment')).toBeNull();
+  });
+
+  it('requires explicit confirmation before permanently deleting a Board and scrubs Recent Boards', async () => {
+    const board = makeBoardView({ isFacilitator: true, isLocked: true });
+    recordRecentBoard({
+      id: board.id,
+      title: board.title,
+      isFacilitator: true,
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole, getByText } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const dialog = getByText('Board Settings', { selector: 'h2' }).closest(
+      'dialog',
+    )!;
+    dialog.showModal = () => {
+      dialog.open = true;
+    };
+    dialog.close = () => {
+      dialog.open = false;
+    };
+
+    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    flush();
+    const settings = within(getByRole('dialog', { name: 'Board Settings' }));
+
+    // Clicking Delete Board opens confirmation without deleting yet
+    fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
+    flush();
+    expect(spies.deleteBoard).not.toHaveBeenCalled();
+
+    // Cancel aborts deletion
+    fireEvent.click(settings.getByRole('button', { name: 'Cancel Delete' }));
+    flush();
+    expect(spies.deleteBoard).not.toHaveBeenCalled();
+
+    // Confirming deletes the Board, shows 404 empty state, and removes from Recent Boards
+    fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
+    flush();
+    fireEvent.click(settings.getByRole('button', { name: 'Confirm Delete' }));
+    await flushPromises();
+
+    expect(spies.deleteBoard).toHaveBeenCalledWith({ boardId: board.id });
+    expect(
+      getByRole('heading', { level: 1, name: 'Board not found or expired' }),
+    ).toBeInTheDocument();
+    expect(
+      getByRole('link', { name: 'Create a new board' }),
+    ).toBeInTheDocument();
+    expect(readRecentBoards().some((item) => item.id === board.id)).toBe(false);
+  });
+
+  it('transitions connected clients to "Board not found or expired" and removes Recent Board on live board:deleted', () => {
+    const streams: FakeEventSource[] = [];
+    class FakeEventSource extends EventTarget {
+      closed = false;
+      constructor(readonly url: string) {
+        super();
+        streams.push(this);
+      }
+      close() {
+        this.closed = true;
+      }
+      emit(message: BoardLiveMessage) {
+        this.dispatchEvent(
+          new MessageEvent('message', { data: JSON.stringify(message) }),
+        );
+      }
+    }
+
+    vi.stubEnv('RETROCKS_LIVE_SSE', '1');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    try {
+      const board = makeBoardView({ isFacilitator: false });
+      recordRecentBoard({
+        id: board.id,
+        title: board.title,
+        isFacilitator: false,
+      });
+
+      const { getByRole } = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+      ));
+      flush();
+
+      expect(streams).toHaveLength(1);
+      expect(readRecentBoards().some((item) => item.id === board.id)).toBe(true);
+
+      streams[0].emit({ type: 'board:deleted', version: 2 });
+      flush();
+
+      expect(
+        getByRole('heading', { level: 1, name: 'Board not found or expired' }),
+      ).toBeInTheDocument();
+      expect(readRecentBoards().some((item) => item.id === board.id)).toBe(
+        false,
+      );
+      expect(streams[0].closed).toBe(true);
+      expect(streams).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('renders Locked Board, Board Settings, and board:deleted with zero Solid 2.0 reactivity diagnostics', async () => {
+    const board = makeBoardView({
+      isFacilitator: true,
+      isLocked: true,
+      cards: [
+        makeCard({ id: 'a1', isActionItem: true, content: 'Track follow-up' }),
+      ],
+    });
+    const { actions } = createFakeActions(board);
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace
+            board={board}
+            boardId={board.id}
+            homeHref="/"
+            actions={actions}
+          />
+        ));
+        flush();
+        const dialog = view
+          .getByText('Board Settings', { selector: 'h2' })
+          .closest('dialog')!;
+        dialog.showModal = () => {
+          dialog.open = true;
+        };
+        dialog.close = () => {
+          dialog.open = false;
+        };
+        fireEvent.click(view.getByRole('button', { name: 'Board Settings' }));
+        flush();
+        fireEvent.click(view.getByRole('button', { name: 'Delete Board' }));
+        flush();
+        fireEvent.click(view.getByRole('button', { name: 'Confirm Delete' }));
+        await flushPromises();
+      },
+      { scenario: 'board-workspace-locked-delete' },
+    );
+    expectNoDiagnostics(artifact);
   });
 
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {

@@ -41,7 +41,7 @@ export interface ActionItemsDrawerProps {
 function ActionItemRow(props: {
   card: CardViewDTO;
   columnTitle: string;
-  isLocked: boolean;
+  canEdit: boolean;
   onUpdate: ActionItemsDrawerProps['onUpdateActionItem'];
 }) {
   const [ownerDraft, setOwnerDraft] = createSignal(
@@ -57,7 +57,7 @@ function ActionItemRow(props: {
   );
 
   async function saveOwner(): Promise<void> {
-    if (props.isLocked || isSaving()) return;
+    if (!props.canEdit || isSaving()) return;
     const trimmed = ownerDraft().trim();
     if (trimmed === props.card.actionOwner) {
       setOwnerDraft(props.card.actionOwner);
@@ -78,7 +78,7 @@ function ActionItemRow(props: {
         <input
           type="checkbox"
           checked={props.card.actionDone}
-          disabled={props.isLocked}
+          disabled={!props.canEdit}
           aria-label={`Mark ${props.card.content} as Done`}
           onChange={(event) =>
             void props.onUpdate(props.card.id, {
@@ -106,7 +106,7 @@ function ActionItemRow(props: {
               placeholder="Owner (optional)"
               value={ownerDraft()}
               maxlength={MAX_ACTION_OWNER_LENGTH}
-              disabled={props.isLocked || isSaving()}
+              disabled={!props.canEdit || isSaving()}
               onInput={(event) => setOwnerDraft(event.currentTarget.value)}
               onBlur={() => void saveOwner()}
               onKeyDown={(event) => {
@@ -149,6 +149,9 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   }));
   const columnTitles = createMemo(
     () => new Map(props.board.columns.map((column) => [column.id, column.title])),
+  );
+  const canEditActionItems = createMemo(
+    () => !props.isLocked || props.board.isFacilitator,
   );
   const emptyMessage = createMemo(() => {
     const current = filter();
@@ -280,7 +283,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
                   <ActionItemRow
                     card={card}
                     columnTitle={columnTitles().get(card.columnId) ?? ''}
-                    isLocked={props.isLocked}
+                    canEdit={canEditActionItems()}
                     onUpdate={props.onUpdateActionItem}
                   />
                 )}

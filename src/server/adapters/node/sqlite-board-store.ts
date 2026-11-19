@@ -8,10 +8,19 @@ import type {
   FacilitatorCapability,
   RawBoardSnapshot,
 } from '../../db/raw-types';
-import { SqlBoardOperations } from '../../db/sql-board-operations';
+import { MS_PER_DAY, SqlBoardOperations } from '../../db/sql-board-operations';
 import type { SqlParam, SqlRunResult, SqlRunner } from '../../db/sql-runner';
 import { checkBoardWriteRateLimit } from '../../rate-limit';
 import type { BoardStore } from '../types';
+
+export const DEFAULT_EXPIRY_SWEEP_INTERVAL_MS = MS_PER_DAY;
+
+export interface CreateNodeBoardStoreOptions {
+  /** Periodic inactivity cleanup interval in ms; pass `0` to disable. Defaults to 24 hours. */
+  expirySweepIntervalMs?: number;
+  /** Clock function used by startup and periodic expiry sweeps. */
+  now?: () => number;
+}
 
 interface NodeStatementSync {
   run(...params: SqlParam[]): { changes: number | bigint };
@@ -80,6 +89,7 @@ function wrapDatabaseSync(db: NodeDatabaseSync): SqlRunner {
  */
 export async function createNodeBoardStore(
   dbPath: string = ':memory:',
+  options: CreateNodeBoardStoreOptions = {},
 ): Promise<NodeBoardStore> {
   if (dbPath !== ':memory:') {
     const fsSpecifier = 'node:fs';
@@ -110,6 +120,25 @@ export async function createNodeBoardStore(
   const runner = wrapDatabaseSync(db);
   const ops = new SqlBoardOperations(runner);
   ops.ensureSchema();
+
+  const clock = options.now ?? (() => Date.now());
+  const sweepIntervalMs =
+    options.expirySweepIntervalMs ?? DEFAULT_EXPIRY_SWEEP_INTERVAL_MS;
+  ops.purgeExpiredBoards(clock());
+
+  let closed = false;
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  if (sweepIntervalMs > 0) {
+    sweepTimer = setInterval(() => {
+      if (closed) return;
+      try {
+        ops.purgeExpiredBoards(clock());
+      } catch {
+        // Ignore if the database was closed concurrently.
+      }
+    }, sweepIntervalMs);
+    sweepTimer.unref?.();
+  }
 
   return {
     async createBoard(record: CreateBoardRecord): Promise<RawBoardSnapshot> {
@@ -169,6 +198,12 @@ export async function createNodeBoardStore(
       return ops.purgeExpiredBoards(now);
     },
     close(): void {
+      if (closed) return;
+      closed = true;
+      if (sweepTimer !== undefined) {
+        clearInterval(sweepTimer);
+        sweepTimer = undefined;
+      }
       db.close();
     },
   };

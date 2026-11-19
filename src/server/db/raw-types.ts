@@ -146,6 +146,7 @@ export type BoardMutationCommand =
   | { type: 'board:rename'; title: string; subtitle?: string }
   | { type: 'timer:update'; change: TimerChange }
   | { type: 'board:set-private-mode'; isBlurred: boolean }
+  | { type: 'board:set-lock'; isLocked: boolean }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
