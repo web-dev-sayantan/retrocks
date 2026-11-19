@@ -49,9 +49,13 @@ function ActionItemRow(props: {
   const [ownerDraft, setOwnerDraft] = createSignal(
     untrack(() => props.card.actionOwner),
   );
-  const [isSaving, setIsSaving] = createSignal(false);
-  const [error, setError] = createSignal('');
-  let saving = false;
+  const [isSavingOwner, setIsSavingOwner] = createSignal(false);
+  const [pendingDone, setPendingDone] = createSignal<boolean | null>(null);
+  const [ownerFailed, setOwnerFailed] = createSignal(false);
+  const [doneFailed, setDoneFailed] = createSignal(false);
+  const isSaving = () => isSavingOwner() || pendingDone() !== null;
+  let ownerSave: Promise<boolean> | undefined;
+  let savingDone = false;
 
   createEffect(
     () => props.card.actionOwner,
@@ -60,41 +64,44 @@ function ActionItemRow(props: {
     },
   );
 
-  async function update(patch: ActionItemPatch, failureMessage: string): Promise<boolean> {
-    if (!props.canEdit || saving) return false;
-    saving = true;
-    setIsSaving(true);
-    setError('');
+  async function update(patch: ActionItemPatch): Promise<boolean> {
+    if (!props.canEdit) return false;
     try {
-      if (await props.onUpdate(props.card.id, patch)) return true;
+      return await props.onUpdate(props.card.id, patch);
     } catch {
-      // Report rejected requests alongside unsuccessful mutation responses.
-    } finally {
-      saving = false;
-      setIsSaving(false);
+      return false;
     }
-    setError(failureMessage);
-    return false;
   }
 
   async function saveOwner(value: string): Promise<void> {
-    if (!props.canEdit || saving) return;
+    if (!props.canEdit || ownerSave || savingDone) return;
     const trimmed = value.trim();
     if (trimmed === props.card.actionOwner) {
       setOwnerDraft(trimmed);
       return;
     }
-    if (await update({ actionOwner: trimmed }, 'Could not save the owner. Try again.')) {
+    setIsSavingOwner(true);
+    setOwnerFailed(false);
+    ownerSave = update({ actionOwner: trimmed });
+    if (await ownerSave) {
       setOwnerDraft(trimmed);
+    } else {
+      setOwnerFailed(true);
     }
+    ownerSave = undefined;
+    setIsSavingOwner(false);
   }
 
-  async function changeDone(checkbox: HTMLInputElement): Promise<void> {
-    const ok = await update(
-      { actionDone: checkbox.checked },
-      'Could not update Done. Try again.',
-    );
-    if (!ok && checkbox.isConnected) checkbox.checked = props.card.actionDone;
+  async function changeDone(checked: boolean): Promise<void> {
+    if (savingDone) return;
+    savingDone = true;
+    setPendingDone(checked);
+    setDoneFailed(false);
+    // A click on Done can start the Owner save as the input loses focus.
+    if (ownerSave) await ownerSave;
+    if (!await update({ actionDone: checked })) setDoneFailed(true);
+    savingDone = false;
+    setPendingDone(null);
   }
 
   return (
@@ -103,10 +110,10 @@ function ActionItemRow(props: {
         <label class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg has-disabled:cursor-not-allowed sm:size-6">
           <input
             type="checkbox"
-            checked={props.card.actionDone}
-            disabled={!props.canEdit || isSaving()}
+            checked={pendingDone() ?? props.card.actionDone}
+            disabled={!props.canEdit || pendingDone() !== null}
             aria-label={`Mark ${props.card.content} as Done`}
-            onChange={(event) => void changeDone(event.currentTarget)}
+            onChange={(event) => void changeDone(event.currentTarget.checked)}
             class="size-5 cursor-inherit rounded border-border accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
           />
         </label>
@@ -134,7 +141,7 @@ function ActionItemRow(props: {
               onInput={(event) => setOwnerDraft(event.currentTarget.value)}
               onBlur={(event) => void saveOwner(event.currentTarget.value)}
               onKeyDown={(event) => {
-                if (event.isComposing || saving) return;
+                if (event.isComposing || ownerSave || savingDone) return;
                 const input = event.currentTarget;
                 if (event.key === 'Enter') {
                   event.preventDefault();
@@ -144,7 +151,7 @@ function ActionItemRow(props: {
                   event.stopPropagation();
                   input.value = props.card.actionOwner;
                   setOwnerDraft(input.value);
-                  setError('');
+                  setOwnerFailed(false);
                 }
               }}
               class={[
@@ -156,8 +163,11 @@ function ActionItemRow(props: {
           <Show when={isSaving()}>
             <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
           </Show>
-          <Show when={error()}>
-            <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">{error()}</p>
+          <Show when={ownerFailed()}>
+            <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">Could not save the owner. Try again.</p>
+          </Show>
+          <Show when={doneFailed()}>
+            <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">Could not update Done. Try again.</p>
           </Show>
         </div>
       </div>

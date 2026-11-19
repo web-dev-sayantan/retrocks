@@ -22,6 +22,16 @@ function formatCountdown(remainingMs: number): string {
   return `${minutes}:${seconds}`;
 }
 
+function formatSpokenDuration(milliseconds: number): string {
+  const totalSeconds = Math.ceil(milliseconds / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const secondLabel = `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+  if (minutes === 0) return secondLabel;
+  const minuteLabel = `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  return seconds === 0 ? minuteLabel : `${minuteLabel} and ${secondLabel}`;
+}
+
 export default function CountdownTimer(props: {
   timer: TimerStateDTO;
   clock: ServerClockSample | null;
@@ -108,13 +118,15 @@ export default function CountdownTimer(props: {
       if (duration === null) {
         setTimerAnnouncement('Timer dismissed.');
       } else if (remaining !== null) {
-        setTimerAnnouncement(oldRemaining === null ? 'Timer paused.' : 'Paused timer updated.');
+        setTimerAnnouncement(oldRemaining === null
+          ? 'Timer paused.'
+          : `Paused timer updated. ${formatSpokenDuration(remaining)} remaining.`);
       } else if (oldDuration === null) {
         setTimerAnnouncement('Timer started.');
       } else if (oldRemaining !== null) {
         setTimerAnnouncement('Timer resumed.');
       } else {
-        setTimerAnnouncement('Timer updated.');
+        setTimerAnnouncement(`Timer updated. ${formatSpokenDuration(duration)} total.`);
       }
     },
   );

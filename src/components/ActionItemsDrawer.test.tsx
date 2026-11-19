@@ -1,10 +1,10 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
-import { flush } from 'solid-js';
+import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
+import { createStore, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardViewDTO, CardViewDTO } from '../lib/board-types';
-import ActionItemsDrawer from './ActionItemsDrawer';
+import ActionItemsDrawer, { type ActionItemsDrawerProps } from './ActionItemsDrawer';
 
 function makeCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
   return {
@@ -176,7 +176,8 @@ describe('<ActionItemsDrawer />', () => {
     fireEvent.keyDown(owner, { key: 'Enter' });
     fireEvent.keyDown(owner, { key: 'Enter' });
     flush();
-    expect(done).toBeDisabled();
+    expect(owner).toHaveAttribute('readonly');
+    expect(done).toBeEnabled();
     expect(onUpdate).toHaveBeenCalledTimes(1);
     completeOwnerSave(false);
     await flushPromises();
@@ -196,6 +197,55 @@ describe('<ActionItemsDrawer />', () => {
     await flushPromises();
     expect(onUpdate).toHaveBeenLastCalledWith('open', { actionDone: true });
     expect(drawer.queryByRole('alert')).toBeNull();
+  });
+
+  it.each([true, false])('keeps a Done click while the Owner save is pending (Owner succeeds: %s)', async (ownerSaved) => {
+    let completeOwnerSave!: (ok: boolean) => void;
+    const update = vi.fn<ActionItemsDrawerProps['onUpdateActionItem']>()
+      .mockImplementationOnce(() => new Promise((resolve) => { completeOwnerSave = resolve; }))
+      .mockResolvedValueOnce(true);
+    const view = render(() => {
+      const [board, setBoard] = createStore(makeBoard([{ ...openItem }]));
+      const applyUpdate: ActionItemsDrawerProps['onUpdateActionItem'] = async (id, patch) => {
+        const ok = await update(id, patch);
+        if (ok) setBoard((draft) => { Object.assign(draft.cards[0], patch); });
+        return ok;
+      };
+      return (
+        <ActionItemsDrawer
+          open={true}
+          board={board}
+          isLocked={false}
+          onClose={() => {}}
+          onUpdateActionItem={applyUpdate}
+        />
+      );
+    });
+    flush();
+
+    const owner = view.getByLabelText('Owner for Ship the API');
+    const done = view.getByLabelText('Mark Ship the API as Done');
+    owner.focus();
+    fireEvent.input(owner, { target: { value: 'API squad' } });
+    done.focus();
+    flush();
+
+    expect(update).toHaveBeenCalledExactlyOnceWith('open', { actionOwner: 'API squad' });
+    expect(done).toBeEnabled();
+    fireEvent.click(done);
+    flush();
+    expect(done).toBeChecked();
+    expect(update).toHaveBeenCalledTimes(1);
+
+    completeOwnerSave(ownerSaved);
+    await waitFor(() => {
+      expect(update).toHaveBeenNthCalledWith(2, 'open', { actionDone: true });
+      expect(done).toBeEnabled();
+    });
+    expect(done).toBeChecked();
+    expect(owner).toHaveValue('API squad');
+    if (ownerSaved) expect(view.queryByRole('alert')).toBeNull();
+    else expect(view.getByRole('alert')).toHaveTextContent('Could not save the owner');
   });
 
   it('copies the filtered list as a Markdown checklist, focuses the close button, and closes on Escape', async () => {

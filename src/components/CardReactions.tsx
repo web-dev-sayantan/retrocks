@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import { REACTION_EMOJIS, type ReactionEmoji } from '../lib/board-types';
 import { SmilePlusIcon } from './Icons';
@@ -18,7 +18,42 @@ export default function CardReactions(props: CardReactionsProps) {
   );
 
   const [reactionError, setReactionError] = createSignal<string | null>(null);
+  let controls: HTMLDivElement | undefined;
   let pickerTrigger: HTMLButtonElement | undefined;
+  let pressingOutside = false;
+
+  createEffect(pickerOpen, (open) => {
+    const root = controls;
+    if (!open || !root) return;
+
+    const doc = root.ownerDocument;
+    let releaseCheck: number | undefined;
+    const handleMouseEvent = (event: MouseEvent): void => {
+      const outside = event.target instanceof Node && !root.contains(event.target);
+      if (event.type === 'mousedown') {
+        pressingOutside = event.button === 0 && outside;
+        return;
+      }
+
+      if (event.type === 'mouseup' && pressingOutside && releaseCheck === undefined) {
+        // An outside press can move focus without producing a click.
+        releaseCheck = requestAnimationFrame(() => {
+          releaseCheck = undefined;
+          if (!root.contains(doc.activeElement)) setPickerOpen(false);
+        });
+      }
+      pressingOutside = false;
+      if (event.type === 'click' && outside) setPickerOpen(false);
+    };
+
+    const mouseEvents = ['mousedown', 'mouseup', 'click'] as const;
+    for (const type of mouseEvents) doc.addEventListener(type, handleMouseEvent, true);
+    return () => {
+      pressingOutside = false;
+      if (releaseCheck !== undefined) cancelAnimationFrame(releaseCheck);
+      for (const type of mouseEvents) doc.removeEventListener(type, handleMouseEvent, true);
+    };
+  });
 
   function handlePickerKeyDown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || event.isComposing || !pickerOpen()) return;
@@ -55,7 +90,19 @@ export default function CardReactions(props: CardReactionsProps) {
   }
 
   return (
-    <div onKeyDown={handlePickerKeyDown} class="relative flex flex-wrap items-center gap-1.5">
+    <div
+      ref={controls}
+      onKeyDown={handlePickerKeyDown}
+      onFocusOut={(event) => {
+        // The picker is in flow. Wait for an outside click to reach its target.
+        if (!pickerOpen() || pressingOutside) return;
+        const nextFocus = event.relatedTarget;
+        if (!(nextFocus instanceof Node) || !event.currentTarget.contains(nextFocus)) {
+          setPickerOpen(false);
+        }
+      }}
+      class="relative flex flex-wrap items-center gap-1.5"
+    >
       <For each={activeReactions()}>
         {(item) => (
           <button
@@ -90,7 +137,11 @@ export default function CardReactions(props: CardReactionsProps) {
             aria-expanded={pickerOpen() ? 'true' : 'false'}
             title="Add reaction"
             disabled={pendingEmoji() !== null}
-            onClick={() => setPickerOpen((prev) => !prev)}
+            onClick={(event) => {
+              const opening = !pickerOpen();
+              if (opening) event.currentTarget.focus({ preventScroll: true });
+              setPickerOpen(opening);
+            }}
             class={[
               'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-transparent text-text-muted sm:min-h-6 sm:min-w-6',
               'transition-colors hover:border-border hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',

@@ -172,6 +172,45 @@ describe('Board Countdown Timer', () => {
     }
   });
 
+  it('announces consecutive extensions to running and paused timers', () => {
+    const board = makeBoard({
+      timer: { endsAt: SERVER_TIME + 120_000, remainingMs: null, durationMs: 180_000 },
+    });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    try {
+      flush();
+      sendSnapshot(board, SERVER_TIME);
+
+      function updateTimer(version: number, timer: BoardViewDTO['timer']) {
+        streams[0].receive({
+          type: 'board:mutation',
+          version,
+          events: [{ type: 'timer:updated', version, serverNow: SERVER_TIME, timer }],
+        });
+      }
+
+      updateTimer(2, { endsAt: SERVER_TIME + 180_000, remainingMs: null, durationMs: 240_000 });
+      const announcement = view.getByText('Timer updated. 4 minutes total.');
+      expect(announcement).toHaveAttribute('aria-live', 'polite');
+
+      updateTimer(3, { endsAt: SERVER_TIME + 240_000, remainingMs: null, durationMs: 300_000 });
+      expect(announcement).toHaveTextContent(/^Timer updated\. 5 minutes total\.$/);
+      vi.advanceTimersByTime(1_100);
+      flush();
+      expect(view.getByText('03:59')).toBeVisible();
+      expect(announcement).toHaveTextContent(/^Timer updated\. 5 minutes total\.$/);
+
+      updateTimer(4, { endsAt: null, remainingMs: 239_000, durationMs: 300_000 });
+      updateTimer(5, { endsAt: null, remainingMs: 299_000, durationMs: 360_000 });
+      expect(announcement).toHaveTextContent(/^Paused timer updated\. 4 minutes and 59 seconds remaining\.$/);
+
+      updateTimer(6, { endsAt: null, remainingMs: 359_000, durationMs: 420_000 });
+      expect(announcement).toHaveTextContent(/^Paused timer updated\. 5 minutes and 59 seconds remaining\.$/);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('announces a live timer reaching zero and does not replay an already-ended snapshot', () => {
     const board = makeBoard({
       timer: { endsAt: SERVER_TIME + 2_000, remainingMs: null, durationMs: 180_000 },
