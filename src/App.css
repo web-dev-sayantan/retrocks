@@ -124,3 +124,10 @@
     scroll-behavior: auto !important;
   }
 }
+
+
+@keyframes timer-expiry-pulse {
+  50% {
+    opacity: 0.65;
+  }
+}

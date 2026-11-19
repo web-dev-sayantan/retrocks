@@ -6,6 +6,7 @@ import type {
   BoardTemplateId,
   ColumnAccent,
 } from '../../lib/board-types';
+import type { TimerChange } from '../../lib/schemas';
 
 export interface RawBoardRow {
   id: string;
@@ -134,6 +135,7 @@ export interface BoardMutationActor {
 export type BoardMutationCommand =
   | { type: 'facilitator:rotate'; capability: FacilitatorCapability }
   | { type: 'board:rename'; title: string; subtitle?: string }
+  | { type: 'timer:update'; change: TimerChange }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
@@ -156,6 +158,7 @@ export type BoardMutationCommand =
   | { type: 'column:delete'; columnId: string };
 
 export type RawBoardMutationEvent =
+  | { type: 'timer:updated'; version: number; serverNow: number }
   | {
       type: 'board:updated';
       version: number;
