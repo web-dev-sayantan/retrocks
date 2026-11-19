@@ -7,6 +7,7 @@ import type {
   BoardMutationCommand,
   BoardMutationOutcome,
   CreateBoardRecord,
+  FacilitatorCapability,
   RawBoardSnapshot,
 } from '../../db/raw-types';
 import {
@@ -96,6 +97,13 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
     now?: number,
   ): Promise<string | null> {
     return this.ops.getBoardTokenSalt(boardId, now);
+  }
+
+  async getFacilitatorCapability(
+    boardId: string,
+    now?: number,
+  ): Promise<FacilitatorCapability | null> {
+    return this.ops.getFacilitatorCapability(boardId, now);
   }
 
   async mutateBoard(

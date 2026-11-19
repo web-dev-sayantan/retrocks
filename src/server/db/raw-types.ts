@@ -30,6 +30,11 @@ export interface RawBoardRow {
   lastActiveAt: number;
 }
 
+export type FacilitatorCapability = Pick<
+  RawBoardRow,
+  'facilitatorTokenHash' | 'facilitatorTokenEncrypted'
+>;
+
 export interface RawColumnRow {
   id: string;
   boardId: string;
@@ -127,6 +132,7 @@ export interface BoardMutationActor {
 }
 
 export type BoardMutationCommand =
+  | { type: 'facilitator:rotate'; capability: FacilitatorCapability }
   | { type: 'board:rename'; title: string; subtitle?: string }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }

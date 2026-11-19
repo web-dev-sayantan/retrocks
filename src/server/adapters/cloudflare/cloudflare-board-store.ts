@@ -5,6 +5,7 @@ import type {
   BoardMutationCommand,
   BoardMutationOutcome,
   CreateBoardRecord,
+  FacilitatorCapability,
   RawBoardSnapshot,
 } from '../../db/raw-types';
 import type { BoardPublication, BoardRealtime, BoardStore } from '../types';
@@ -21,6 +22,10 @@ export interface BoardRoomRpcStub {
     now?: number,
   ): Promise<RawBoardSnapshot | null>;
   getBoardTokenSalt(boardId: string, now?: number): Promise<string | null>;
+  getFacilitatorCapability(
+    boardId: string,
+    now?: number,
+  ): Promise<FacilitatorCapability | null>;
   mutateBoard(
     boardId: string,
     actor: BoardMutationActor,
@@ -59,6 +64,12 @@ export function createCloudflareBoardStore(
     },
     getBoardTokenSalt(boardId: string, now?: number): Promise<string | null> {
       return stubFor(boardId).getBoardTokenSalt(boardId, now);
+    },
+    getFacilitatorCapability(
+      boardId: string,
+      now?: number,
+    ): Promise<FacilitatorCapability | null> {
+      return stubFor(boardId).getFacilitatorCapability(boardId, now);
     },
     mutateBoard(
       boardId: string,

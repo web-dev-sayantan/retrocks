@@ -186,7 +186,7 @@ function parseMutationInput<
   return parsed.output;
 }
 
-async function executeBoardMutation(
+export async function executeBoardMutation(
   boardId: string,
   command: BoardMutationCommand,
 ): Promise<BoardMutationSuccess> {
