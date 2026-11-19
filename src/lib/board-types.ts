@@ -45,6 +45,7 @@ export const MAX_CARD_CONTENT_LENGTH = 1000;
 export const MAX_BOARD_TITLE_LENGTH = 120;
 export const MAX_BOARD_SUBTITLE_LENGTH = 240;
 export const MAX_COLUMN_TITLE_LENGTH = 60;
+export const MAX_ACTION_OWNER_LENGTH = 40;
 
 export type BoardErrorCode =
   | 'VALIDATION_ERROR'
@@ -69,6 +70,12 @@ export type BoardMutationSuccess = {
 };
 
 export type BoardMutationResponse = BoardMutationSuccess | ActionError;
+
+export interface ActionItemPatch {
+  isActionItem?: boolean;
+  actionDone?: boolean;
+  actionOwner?: string;
+}
 
 export interface ColumnDTO {
   id: string;

@@ -22,6 +22,7 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMNS_PER_BOARD,
   MAX_COLUMN_TITLE_LENGTH,
+  type ActionItemPatch,
   type BoardEvent,
   type BoardMutationResponse,
   type BoardViewDTO,
@@ -34,11 +35,12 @@ import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import type { ServerClockSample } from '../lib/timer';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
+import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
-import { CheckIcon, CloseIcon, PencilIcon, PlusIcon } from './Icons';
+import { CheckIcon, CloseIcon, FlagIcon, PencilIcon, PlusIcon } from './Icons';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
 import type { WorkspaceVoting } from './VoteControls';
@@ -156,6 +158,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     null,
   );
 
+  // Action Items Drawer state
+  const [isActionItemsOpen, setIsActionItemsOpen] = createSignal(false);
+  const openActionItemCount = createMemo(
+    () =>
+      workspace.board?.cards.filter(
+        (card) => card.isActionItem && !card.actionDone,
+      ).length ?? 0,
+  );
+
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     setWorkspace((draft) => {
       const current = draft.board;
@@ -261,7 +272,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   onSettled(() => {
     document.addEventListener('keydown', handlePrivateModeShortcut);
-    return () => document.removeEventListener('keydown', handlePrivateModeShortcut);
+    document.addEventListener('keydown', handleActionItemsShortcut);
+    return () => {
+      document.removeEventListener('keydown', handlePrivateModeShortcut);
+      document.removeEventListener('keydown', handleActionItemsShortcut);
+    };
   });
 
   // Record / scrub localStorage Recent Boards cleanly (including after Board rename)
@@ -380,6 +395,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     void togglePrivateMode();
   }
 
+  function handleActionItemsShortcut(event: KeyboardEvent): void {
+    if (
+      event.defaultPrevented || event.repeat || event.isComposing ||
+      event.altKey || event.ctrlKey || event.metaKey ||
+      event.key.toLowerCase() !== 'a' || isActionItemsOpen()
+    ) return;
+    if (event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+    if (document.querySelector('dialog[open], [aria-modal="true"], [data-board-overlay]')) return;
+    event.preventDefault();
+    setIsActionItemsOpen(true);
+  }
+
   async function togglePrivateMode(): Promise<void> {
     const board = workspace.board;
     if (!board?.isFacilitator || board.isLocked || isChangingPrivateMode()) return;
@@ -473,6 +501,22 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       boardId: board.id,
       cardId,
       content,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleUpdateActionItem(
+    cardId: string,
+    patch: ActionItemPatch,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || board.isLocked) return false;
+    const card = board.cards.find((item) => item.id === cardId);
+    if (!card || card.redacted) return false;
+    const response = await actions().updateActionItem({
+      boardId: board.id,
+      cardId,
+      ...patch,
     });
     return applyMutationResponse(board.id, response);
   }
@@ -968,6 +1012,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     <span class="sm:hidden">Column</span>
                   </button>
                 </Show>
+                <button
+                  type="button"
+                  aria-label={`Action Items, ${openActionItemCount()} open`}
+                  aria-keyshortcuts="A"
+                  aria-haspopup="dialog"
+                  aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
+                  title="Action Items (A)"
+                  onClick={() => setIsActionItemsOpen((open) => !open)}
+                  class={[
+                    'inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text sm:min-h-9 sm:px-3',
+                    'transition-colors hover:bg-surface-subtle',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  <FlagIcon class="h-3.5 w-3.5" />
+                  <span class="hidden lg:inline">Action Items</span>
+                  <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text-muted tabular-nums">
+                    {openActionItemCount()}
+                  </span>
+                </button>
                 <Show when={board().id} keyed>
                   {(boardId) => (
                     <ShareBoard
@@ -1208,6 +1272,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     draggingSourceColumnId={draggingSourceColumnId()}
                     onCreateCard={handleCreateCard}
                     onUpdateCard={handleUpdateCard}
+                    onUpdateActionItem={handleUpdateActionItem}
                     onMoveCard={handleMoveCard}
                     onDeleteCard={handleDeleteCard}
                     onToggleReaction={handleToggleReaction}
@@ -1234,11 +1299,22 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 isBlurred={board().isBlurred}
                 nowMs={nowMs()}
                 onClose={() => setOpenCardDetailId(null)}
+                onUpdateActionItem={handleUpdateActionItem}
                 onToggleReaction={handleToggleReaction}
                 onCreateComment={handleCreateComment}
                 onDeleteComment={handleDeleteComment}
               />
             )}
+          </Show>
+
+          {/* Action Items Drawer / Bottom Sheet */}
+          <Show when={isActionItemsOpen()}>
+            <ActionItemsDrawer
+              board={board()}
+              isLocked={board().isLocked}
+              onClose={() => setIsActionItemsOpen(false)}
+              onUpdateActionItem={handleUpdateActionItem}
+            />
           </Show>
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}

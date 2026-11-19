@@ -4,6 +4,7 @@ import {
   COLUMN_ACCENTS,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
+  type ActionItemPatch,
   type CardViewDTO,
   type ColumnAccent,
   type ColumnDTO,
@@ -39,6 +40,10 @@ export interface ColumnPanelProps {
   draggingSourceColumnId: string | null;
   onCreateCard: (columnId: string, content: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateActionItem: (
+    cardId: string,
+    patch: ActionItemPatch,
+  ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
@@ -553,6 +558,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 isBlurred={props.isBlurred}
                 nowMs={props.nowMs}
                 onUpdateCard={props.onUpdateCard}
+                onUpdateActionItem={props.onUpdateActionItem}
                 onMoveCard={props.onMoveCard}
                 onDeleteCard={props.onDeleteCard}
                 onToggleReaction={props.onToggleReaction}
