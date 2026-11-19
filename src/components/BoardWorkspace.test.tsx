@@ -2880,6 +2880,108 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
+  it.each([false, true])('shows a secret search on a Board with cards: %s', async (hasCards) => {
+    const board = makeBoardView({
+      cards: hasCards ? [makeCard({ content: 'Fast deploy pipeline', isMine: false })] : [],
+    });
+    const { actions } = createFakeActions(board);
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      ));
+      flush();
+
+      const search = view.getByRole('searchbox');
+      const searchFor = (query: string) => {
+        fireEvent.input(search, { target: { value: query } });
+        flush();
+      };
+
+      searchFor('  MeEtInGs  ');
+      expect(view.getByText('No Cards matched — this search could have been an email.')).toBeInTheDocument();
+
+      searchFor('blame');
+      expect(view.getByText('No blame found here.')).toBeInTheDocument();
+      expect(view.getByText(/^“Regardless of what we discover/)).toBeInTheDocument();
+      expect(view.getByRole('link', { name: /Norm Kerth/ })).toBeInTheDocument();
+
+      searchFor('42');
+      expect(view.getByText('The answer to life, the sprint, and everything.')).toBeInTheDocument();
+      expect(view.queryByRole('link', { name: /Norm Kerth/ })).not.toBeInTheDocument();
+
+      searchFor('scope creep');
+      expect(view.getByText("Careful, don't let it grow.")).toBeInTheDocument();
+      const searchField = search.closest('.secret-search-field');
+      expect(searchField).toHaveClass('secret-search-wide');
+
+      for (const query of ['retrocks', 'rock']) {
+        searchFor(query);
+        expect(view.getByText('Retrospectives that rock.')).toBeInTheDocument();
+        expect(view.container.querySelector('svg.secret-search-pebble')).toBeInTheDocument();
+        expect(searchField).not.toHaveClass('secret-search-wide');
+      }
+
+      searchFor('pivot');
+      expect(view.getByText('Pivot!')).toBeInTheDocument();
+      const columns = view.container.querySelector('[data-board-columns]');
+      expect(columns).toHaveClass('secret-search-pivot');
+      expect(view.container.querySelector('svg.secret-search-pebble')).not.toBeInTheDocument();
+
+      for (const query of ['kudos', 'party']) {
+        searchFor(query);
+        expect(view.getByText('Kudos all around!')).toBeInTheDocument();
+        expect(view.container.querySelectorAll('.secret-search-dot')).toHaveLength(10);
+        expect(columns).not.toHaveClass('secret-search-pivot');
+      }
+
+      fireEvent.click(view.getByRole('button', { name: 'Clear search' }));
+      flush();
+      expect(search).toHaveValue('');
+      expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
+      expect(view.container.querySelectorAll('.secret-search-dot')).toHaveLength(0);
+
+      searchFor('meetings');
+      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      flush();
+      if (hasCards) {
+        expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
+      } else {
+        expect(view.getByText('No Cards matched — this search could have been an email.')).toBeInTheDocument();
+      }
+
+      fireEvent.click(view.getByRole('button', { name: 'All' }));
+      flush();
+      searchFor('more meetings');
+      expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
+    }, { scenario: 'board-workspace-secret-search' });
+    expectNoDiagnostics(artifact);
+  });
+
+  it('keeps matching Cards visible before applying any secret search', async () => {
+    const board = makeBoardView({
+      cards: [makeCard({ content: 'Kudos for the fast deployment', isMine: false })],
+    });
+    const { actions } = createFakeActions(board);
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      ));
+      flush();
+      fireEvent.input(view.getByRole('searchbox'), { target: { value: 'kudos' } });
+      flush();
+
+      expect(view.getByText('Kudos for the fast deployment')).toBeInTheDocument();
+      expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
+
+      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      flush();
+      expect(view.queryByText('Kudos for the fast deployment')).not.toBeInTheDocument();
+      expect(view.getByText('No Cards match your current search or filter.')).toBeInTheDocument();
+      expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
+    }, { scenario: 'board-workspace-secret-search-card-match' });
+    expectNoDiagnostics(artifact);
+  });
+
   it('filters Cards, Card Group titles, and live comments locally with match counts and never matches redacted Cards', () => {
     const streams: Array<EventTarget & { receive: (msg: BoardLiveMessage) => void }> = [];
     vi.stubGlobal(

@@ -1,5 +1,6 @@
 import {
   For,
+  Repeat,
   Show,
   createEffect,
   createMemo,
@@ -41,6 +42,7 @@ import {
   type BoardSortMode,
   type ColumnStreamItem,
 } from '../lib/board-view';
+import { RETROSPECTIVE_PRIME_DIRECTIVE, matchSecretSearch } from '../lib/easter-eggs';
 import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
@@ -578,6 +580,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       filter: quickFilter(),
       sortMode: sortMode(),
     });
+  });
+
+  const secretSearch = createMemo(() => {
+    const view = boardView();
+    if (!view?.hasSearchQuery || view.matchedCardCount !== 0) return;
+    if (view.totalCardCount !== 0 && quickFilter() !== 'all') return;
+    return matchSecretSearch(searchQuery());
   });
 
   const isHorizontalSnap = createMemo(
@@ -1838,6 +1847,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 blindVoting={board().blindVoting}
                 hasActiveFilter={view().hasActiveFilter}
                 hasSearchQuery={view().hasSearchQuery}
+                widenSearch={secretSearch()?.id === 'scope-creep'}
                 matchedCardCount={view().matchedCardCount}
                 totalCardCount={view().totalCardCount}
                 onQueryChange={setSearchQuery}
@@ -1984,14 +1994,45 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           >
             <Show
               when={
-                boardView()?.hasActiveFilter &&
-                (boardView()?.totalCardCount ?? 0) > 0 &&
-                (boardView()?.matchedCardCount ?? 0) === 0
+                secretSearch() ||
+                (boardView()?.hasActiveFilter &&
+                  (boardView()?.totalCardCount ?? 0) > 0 &&
+                  (boardView()?.matchedCardCount ?? 0) === 0)
               }
             >
-              <p class="mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
-                No Cards match your current search or filter.
-              </p>
+              <div class="relative mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+                <p class="flex items-center gap-2">
+                  {secretSearch()?.message ?? 'No Cards match your current search or filter.'}
+                  <Show when={secretSearch()?.id === 'rock'}>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 12"
+                      class="secret-search-pebble size-4 shrink-0 text-col-slate"
+                    >
+                      <path fill="currentColor" d="M1 8c0-2 2-5 5-6 3-1 7 1 9 5 1 2-2 4-6 4-5 0-8-1-8-3Z" />
+                    </svg>
+                  </Show>
+                </p>
+                <Show when={secretSearch()?.id === 'blame'}>
+                  <figure class="mt-2 max-w-prose">
+                    <blockquote cite={RETROSPECTIVE_PRIME_DIRECTIVE.source}>
+                      “{RETROSPECTIVE_PRIME_DIRECTIVE.excerpt} …”
+                    </blockquote>
+                    <figcaption class="mt-1">
+                      <a href={RETROSPECTIVE_PRIME_DIRECTIVE.source} class="underline underline-offset-2">
+                        Norm Kerth’s Retrospective Prime Directive
+                      </a>
+                    </figcaption>
+                  </figure>
+                </Show>
+                <Show when={secretSearch()?.id === 'kudos'}>
+                  <span aria-hidden="true" class="pointer-events-none absolute inset-0 overflow-hidden">
+                    <Repeat count={10}>
+                      {() => <span class="secret-search-dot" />}
+                    </Repeat>
+                  </span>
+                </Show>
+              </div>
             </Show>
 
             <div
@@ -1999,6 +2040,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               class={[
                 'gap-4',
                 getResponsiveGridClass(board().columns.length, canAddColumn()),
+                { 'secret-search-pivot': secretSearch()?.id === 'pivot' },
               ]}
             >
               <For each={board().columns}>
