@@ -70,7 +70,10 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const canMoveRight = createMemo(
     () => props.columnIndex < props.totalColumns - 1,
   );
-  const canDeleteColumn = createMemo(() => props.totalColumns > 1);
+  const hasHiddenCards = createMemo(() => props.cards.some((card) => card.redacted));
+  const canDeleteColumn = createMemo(() =>
+    canManageColumn() && props.totalColumns > 1 && !hasHiddenCards(),
+  );
 
   const isEligibleDropTarget = createMemo(
     () =>
@@ -156,7 +159,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   }
 
   async function handleConfirmDeleteColumn(): Promise<void> {
-    if (isDeletingColumn()) return;
+    if (isDeletingColumn() || !canDeleteColumn()) return;
     setIsDeletingColumn(true);
     try {
       const ok = await props.onDeleteColumn(props.column.id);
@@ -436,7 +439,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                           <div class="flex items-center gap-1.5">
                             <button
                               type="button"
-                              disabled={isDeletingColumn()}
+                              disabled={isDeletingColumn() || !canDeleteColumn()}
                               onClick={() => void handleConfirmDeleteColumn()}
                               class="min-h-9 flex-1 cursor-pointer rounded-md bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
                             >
@@ -459,6 +462,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <button
                         type="button"
                         disabled={!canDeleteColumn()}
+                        title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
                         onClick={() => setConfirmingDelete(true)}
                         class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-col-rose hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
                       >

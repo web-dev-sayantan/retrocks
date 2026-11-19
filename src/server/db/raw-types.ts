@@ -142,6 +142,7 @@ export type BoardMutationCommand =
   | { type: 'voting:reset' }
   | { type: 'vote:change'; targetType: 'card'; targetId: string; delta: 1 | -1 }
   | { type: 'board:rename'; title: string; subtitle?: string }
+  | { type: 'board:set-private-mode'; isBlurred: boolean }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
