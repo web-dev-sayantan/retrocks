@@ -74,11 +74,10 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ## 3. Feature Specification
 
 ### 3.1 Home & Instant Board Creation (`/`)
-- **Zero-clutter hero & creator:** Immediate Board creation form right above the fold — no marketing walls or signup banners.
-- **Board Metadata:**
-  - Board Title (optional; defaults to `"Sprint Retrospective — <MMM D>"`, max 120 chars).
-  - Optional short context/subtitle (max 240 chars, e.g., `"Sprint 42 · Checkout Team"`).
-- **Curated Templates** (visual mini-column previews, fully editable before creation):
+- Show **Create a board**, the optional Board title, the selected **Standard Retro** and its Column names, and one primary **Create board** action above the fold. The default flow targets creation in under five seconds.
+- The optional Board title defaults to `"Sprint Retrospective — <MMM D>"` and allows up to 120 characters.
+- **Customize board** opens the optional subtitle (up to 240 characters) and the Column editor. Selecting **Custom Board** opens the editor automatically. Add, remove, rename, reorder, choose an accent, or toggle Action Column behavior before creation. Draft values persist when disclosures close and when creation fails.
+- **Change template** shows all templates and their Column names with accent markers.
   1. **Standard Retro** — Went Well / To Improve / Action Items *(marked `isActionColumn`)*
   2. **Start / Stop / Continue** — Start Doing / Stop Doing / Continue Doing
   3. **Mad / Sad / Glad** — Mad / Sad / Glad
@@ -88,14 +87,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   7. **Six Thinking Hats** — Facts (White) / Feelings (Red) / Caution (Black) / Benefits (Yellow) / Creativity (Green) / Process (Blue)
   8. **Pros & Cons** — Pros / Cons
   9. **Custom Board** — 1 to 10 customizable Columns (add, remove, rename, drag-reorder, choose subtle pastel accent).
-- **Collapsible Advanced Options** (sensible defaults, hidden until expanded):
+- **Advanced options** shows voting, Private Mode, and expiry settings on demand.
   - Votes per Participant: `3` / `5` *(default)* / `10` / `Unlimited`
   - Max Votes per Card / Card Group: `Unlimited (stackable)` *(default)* / `1 per Card or Card Group`
   - Start in Private Mode: `Off` *(default)* / `On`
   - Auto-expiry on inactivity: `30 days` / `90 days` *(default)* / `180 days`
 - **Recent Boards (Client-Side Only):**
   - Stored strictly in `localStorage` (never transmitted to or stored on the server; stores only Board ID, title, last visited timestamp, and a non-sensitive boolean display hint — never raw tokens).
-  - Displays recently created/visited Boards with title, last visited relative time, and a one-click remove-from-history action.
+  - Appears when local history exists and lists Boards in last-visited order with a title link, relative visit time, Facilitator role where applicable, and a labeled **Remove** action. The page explains that the list is saved in this browser only.
 
 ---
 
@@ -510,7 +509,7 @@ export type BoardEvent =
    - `BoardStore` + `BoardRealtime` interfaces; Cloudflare Workers + SQLite Durable Object (`BoardRoom` + `src/worker.ts` + `wrangler.jsonc` + `@cloudflare/vite-plugin` default `pnpm dev`) and Node SQLite + SSE adapter (Vitest `server` tests & self-hosted swap).
    - Anonymous Participant & Facilitator signed cookie + AES-256-GCM facilitator token crypto (`src/server/session.ts`, 90-day sliding TTL, lazy mint on `GET /b/:id`).
    - Tailwind CSS v4 `@theme` design tokens & zero-FOUC Light/Dark theme init in `src/Document.tsx`.
-   - Home page (`/`) with template gallery, custom Column builder, advanced options, and `localStorage` Recent Boards.
+   - Home page (`/`) with default creation, disclosed template selection, a Column editor, advanced options, and local Recent Boards.
 2. **Phase 2 — Core Retro Workspace & Live Sync**
    - Board route (`/b/:id`) with streaming SSR preload, responsive desktop Columns & mobile tabbed swipe view, and Deleted/Expired Board empty state.
    - Full Column & Card CRUD (hard delete with inline confirmation), desktop drag-and-drop (cross-Column moves), mobile Move menu, live WS/SSE delta patching, reconnect resync, and deduplicated presence count.
