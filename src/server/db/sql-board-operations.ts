@@ -6,6 +6,7 @@ import {
   MAX_COLUMNS_PER_BOARD,
   MAX_COMMENT_LENGTH,
   MAX_COMMENTS_PER_CARD,
+  MAX_GROUP_TITLE_LENGTH,
   type BoardSettingsDTO,
   type BoardTemplateId,
   type ColumnAccent,
@@ -463,23 +464,67 @@ export class SqlBoardOperations {
       groupId,
     );
     if ((row?.count ?? 0) < 2) {
-      this.sql.run(
-        'UPDATE cards SET group_id = NULL WHERE board_id = ? AND group_id = ?',
-        boardId,
-        groupId,
-      );
-      this.sql.run(
-        `DELETE FROM votes WHERE board_id = ? AND target_type = 'group' AND target_id = ?`,
-        boardId,
-        groupId,
-      );
-      this.sql.run(
-        'DELETE FROM card_groups WHERE board_id = ? AND id = ?',
-        boardId,
-        groupId,
-      );
-      rawEvents.push({ type: 'group:dissolved', version, groupId });
+      this.dissolveGroup(boardId, groupId, version, rawEvents);
     }
+  }
+
+  private dissolveGroup(
+    boardId: string,
+    groupId: string,
+    version: number,
+    rawEvents: RawBoardMutationEvent[],
+  ): void {
+    this.sql.run(
+      'UPDATE cards SET group_id = NULL WHERE board_id = ? AND group_id = ?',
+      boardId,
+      groupId,
+    );
+    this.sql.run(
+      `DELETE FROM votes WHERE board_id = ? AND target_type = 'group' AND target_id = ?`,
+      boardId,
+      groupId,
+    );
+    this.sql.run(
+      'DELETE FROM card_groups WHERE board_id = ? AND id = ?',
+      boardId,
+      groupId,
+    );
+    rawEvents.push({ type: 'group:dissolved', version, groupId });
+  }
+
+  private checkGroupManagePermission(
+    board: RawBoardRow,
+    actor: BoardMutationActor,
+  ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
+    if (actor.isFacilitator || board.allowParticipantGroup) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'Only a Facilitator can group Cards.',
+    };
+  }
+
+  private checkGroupPrivacy(
+    board: RawBoardRow,
+    actor: BoardMutationActor,
+    groupId: string,
+  ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
+    const members = this.sql.all<{ author_token_hash: string }>(
+      'SELECT author_token_hash FROM cards WHERE board_id = ? AND group_id = ?',
+      board.id,
+      groupId,
+    );
+    for (const member of members) {
+      const permission = checkPrivateCardPermission(
+        board,
+        actor,
+        member.author_token_hash,
+      );
+      if (!permission.ok) return permission;
+    }
+    return { ok: true };
   }
 
   private checkCardManagePermission(
@@ -941,6 +986,333 @@ export class SqlBoardOperations {
             version: nextVersion,
             cardId: command.cardId,
           });
+          return finalize(nextVersion, now);
+        }
+
+        case 'group:merge': {
+          const managePermission = this.checkGroupManagePermission(board, actor);
+          if (!managePermission.ok) return managePermission;
+
+          const source = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!source) {
+            return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
+          }
+          const sourcePrivacy = checkPrivateCardPermission(
+            board,
+            actor,
+            source.author_token_hash,
+          );
+          if (!sourcePrivacy.ok) return sourcePrivacy;
+
+          let targetCard: CardDbRow | null = null;
+          let group: CardGroupDbRow | null = null;
+          if (command.targetType === 'card') {
+            targetCard = this.sql.get<CardDbRow>(
+              'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+              boardId,
+              command.targetId,
+            ) ?? null;
+            if (!targetCard) {
+              return { ok: false, code: 'NOT_FOUND', message: 'Target Card not found.' };
+            }
+            if (targetCard.id === source.id) {
+              return {
+                ok: false,
+                code: 'VALIDATION_ERROR',
+                message: 'Choose a different Card to group with.',
+              };
+            }
+            const targetPrivacy = checkPrivateCardPermission(
+              board,
+              actor,
+              targetCard.author_token_hash,
+            );
+            if (!targetPrivacy.ok) return targetPrivacy;
+            if (targetCard.group_id !== null) {
+              group = this.sql.get<CardGroupDbRow>(
+                'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
+                boardId,
+                targetCard.group_id,
+              ) ?? null;
+              if (!group) {
+                return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
+              }
+            }
+          } else {
+            group = this.sql.get<CardGroupDbRow>(
+              'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
+              boardId,
+              command.targetId,
+            ) ?? null;
+            if (!group) {
+              return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
+            }
+          }
+
+          const targetColumnId = group ? group.column_id : targetCard!.column_id;
+          if (source.column_id !== targetColumnId) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: 'Cards can only be grouped within the same Column.',
+            };
+          }
+          if (group) {
+            const groupPrivacy = this.checkGroupPrivacy(board, actor, group.id);
+            if (!groupPrivacy.ok) return groupPrivacy;
+          }
+
+          const targetGroupId = group?.id ?? command.groupId;
+          if (source.group_id === targetGroupId) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: 'This Card is already in that Card Group.',
+            };
+          }
+
+          if (!group) {
+            const title = targetCard!.content.trim().slice(0, MAX_GROUP_TITLE_LENGTH);
+            this.sql.run(
+              `INSERT INTO card_groups (id, board_id, column_id, title, created_at)
+               VALUES (?, ?, ?, ?, ?)`,
+              targetGroupId,
+              boardId,
+              source.column_id,
+              title,
+              now,
+            );
+          }
+
+          const previousGroupId = source.group_id;
+          const cardIdsToAssign =
+            targetCard !== null && group === null
+              ? [source.id, targetCard.id]
+              : [source.id];
+          for (const cardId of cardIdsToAssign) {
+            this.sql.run(
+              'UPDATE cards SET group_id = ?, updated_at = ? WHERE board_id = ? AND id = ?',
+              targetGroupId,
+              now,
+              boardId,
+              cardId,
+            );
+          }
+          if (previousGroupId) {
+            this.maybeDissolveSmallGroup(
+              boardId,
+              previousGroupId,
+              nextVersion,
+              rawEvents,
+            );
+          }
+
+          bumpBoard();
+          rawEvents.push({
+            type: 'group:upserted',
+            version: nextVersion,
+            groupId: targetGroupId,
+          });
+          rawEvents.push({
+            type: 'card:upserted',
+            version: nextVersion,
+            cardId: source.id,
+          });
+          if (targetCard) {
+            rawEvents.push({
+              type: 'card:upserted',
+              version: nextVersion,
+              cardId: targetCard.id,
+            });
+          }
+          return finalize(nextVersion, now);
+        }
+
+        case 'group:rename': {
+          const managePermission = this.checkGroupManagePermission(board, actor);
+          if (!managePermission.ok) return managePermission;
+
+          const group = this.sql.get<CardGroupDbRow>(
+            'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
+            boardId,
+            command.groupId,
+          );
+          if (!group) {
+            return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
+          }
+          const privacy = this.checkGroupPrivacy(board, actor, group.id);
+          if (!privacy.ok) return privacy;
+
+          if (
+            command.title.length === 0 ||
+            command.title.length > MAX_GROUP_TITLE_LENGTH
+          ) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: `Card Group title must be between 1 and ${MAX_GROUP_TITLE_LENGTH} characters.`,
+            };
+          }
+
+          this.sql.run(
+            'UPDATE card_groups SET title = ? WHERE board_id = ? AND id = ?',
+            command.title,
+            boardId,
+            group.id,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'group:upserted',
+            version: nextVersion,
+            groupId: group.id,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'group:ungroup': {
+          const managePermission = this.checkGroupManagePermission(board, actor);
+          if (!managePermission.ok) return managePermission;
+
+          const card = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!card) {
+            return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
+          }
+          const privacy = checkPrivateCardPermission(
+            board,
+            actor,
+            card.author_token_hash,
+          );
+          if (!privacy.ok) return privacy;
+
+          const previousGroupId = card.group_id;
+          if (!previousGroupId) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: 'Card is not in a Card Group.',
+            };
+          }
+
+          this.sql.run(
+            'UPDATE cards SET group_id = NULL, updated_at = ? WHERE board_id = ? AND id = ?',
+            now,
+            boardId,
+            card.id,
+          );
+          this.maybeDissolveSmallGroup(
+            boardId,
+            previousGroupId,
+            nextVersion,
+            rawEvents,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'card:upserted',
+            version: nextVersion,
+            cardId: card.id,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'group:dissolve': {
+          const managePermission = this.checkGroupManagePermission(board, actor);
+          if (!managePermission.ok) return managePermission;
+
+          const group = this.sql.get<CardGroupDbRow>(
+            'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
+            boardId,
+            command.groupId,
+          );
+          if (!group) {
+            return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
+          }
+          const privacy = this.checkGroupPrivacy(board, actor, group.id);
+          if (!privacy.ok) return privacy;
+
+          this.dissolveGroup(boardId, group.id, nextVersion, rawEvents);
+          bumpBoard();
+          return finalize(nextVersion, now);
+        }
+
+        case 'group:move': {
+          const managePermission = this.checkGroupManagePermission(board, actor);
+          if (!managePermission.ok) return managePermission;
+
+          const group = this.sql.get<CardGroupDbRow>(
+            'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
+            boardId,
+            command.groupId,
+          );
+          if (!group) {
+            return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
+          }
+          const privacy = this.checkGroupPrivacy(board, actor, group.id);
+          if (!privacy.ok) return privacy;
+
+          const targetColumn = this.sql.get<ColumnDbRow>(
+            'SELECT * FROM columns WHERE board_id = ? AND id = ?',
+            boardId,
+            command.targetColumnId,
+          );
+          if (!targetColumn) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Target Column not found.',
+            };
+          }
+
+          if (group.column_id === command.targetColumnId) {
+            rawEvents.push({
+              type: 'group:upserted',
+              version: board.version,
+              groupId: group.id,
+            });
+            return finalize(board.version, board.lastActiveAt);
+          }
+
+          const memberIds = this.sql
+            .all<{ id: string }>(
+              'SELECT id FROM cards WHERE board_id = ? AND group_id = ?',
+              boardId,
+              group.id,
+            )
+            .map((member) => member.id);
+
+          this.sql.run(
+            'UPDATE card_groups SET column_id = ? WHERE board_id = ? AND id = ?',
+            command.targetColumnId,
+            boardId,
+            group.id,
+          );
+          this.sql.run(
+            'UPDATE cards SET column_id = ?, updated_at = ? WHERE board_id = ? AND group_id = ?',
+            command.targetColumnId,
+            now,
+            boardId,
+            group.id,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'group:upserted',
+            version: nextVersion,
+            groupId: group.id,
+          });
+          for (const memberId of memberIds) {
+            rawEvents.push({
+              type: 'card:upserted',
+              version: nextVersion,
+              cardId: memberId,
+            });
+          }
           return finalize(nextVersion, now);
         }
 

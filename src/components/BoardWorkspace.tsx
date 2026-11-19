@@ -25,6 +25,7 @@ import {
   type BoardEvent,
   type BoardMutationResponse,
   type BoardViewDTO,
+  type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
   type ReactionEmoji,
@@ -147,6 +148,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // Desktop drag-and-drop Card state
   const [draggingCardId, setDraggingCardId] = createSignal<string | null>(null);
+  const [draggingGroupId, setDraggingGroupId] = createSignal<string | null>(null);
   const [draggingSourceColumnId, setDraggingSourceColumnId] = createSignal<
     string | null
   >(null);
@@ -316,6 +318,21 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         grouped.set(card.columnId, list);
       }
       list.push(card);
+    }
+    return grouped;
+  });
+
+  const groupsByColumn = createMemo(() => {
+    const grouped = new Map<string, CardGroupDTO[]>();
+    const board = workspace.board;
+    if (!board) return grouped;
+    for (const group of board.groups) {
+      let list = grouped.get(group.columnId);
+      if (!list) {
+        list = [];
+        grouped.set(group.columnId, list);
+      }
+      list.push(group);
     }
     return grouped;
   });
@@ -501,6 +518,86 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return applyMutationResponse(board.id, response);
   }
 
+  function canManageGrouping(board: BoardViewDTO): boolean {
+    return !board.isLocked &&
+      (board.isFacilitator || board.allowParticipantGroup);
+  }
+
+  function canManageGroup(
+    board: BoardViewDTO,
+    group: CardGroupDTO,
+  ): boolean {
+    if (!canManageGrouping(board)) return false;
+    if (!board.isBlurred) return true;
+    return group.cardIds.every(
+      (id) => board.cards.find((card) => card.id === id)?.isMine === true,
+    );
+  }
+
+  async function handleGroupCard(
+    cardId: string,
+    targetType: 'card' | 'group',
+    targetId: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().groupCards({
+      boardId: board.id,
+      cardId,
+      targetType,
+      targetId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleRenameCardGroup(
+    groupId: string,
+    title: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().renameCardGroup({
+      boardId: board.id,
+      groupId,
+      title,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleUngroupCard(cardId: string): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().ungroupCard({
+      boardId: board.id,
+      cardId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleDissolveCardGroup(groupId: string): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().dissolveCardGroup({
+      boardId: board.id,
+      groupId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleMoveCardGroup(
+    groupId: string,
+    targetColumnId: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().moveCardGroup({
+      boardId: board.id,
+      groupId,
+      targetColumnId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
   async function handleToggleReaction(
     cardId: string,
     emoji: ReactionEmoji,
@@ -637,12 +734,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return applyMutationResponse(board.id, response);
   }
 
-  async function handleChangeVote(targetId: string, delta: ChangeVoteInput['delta']): Promise<void> {
+  async function handleChangeVote(
+    targetType: 'card' | 'group',
+    targetId: string,
+    delta: ChangeVoteInput['delta'],
+  ): Promise<void> {
     const board = workspace.board;
     if (!board || board.isLocked || voteInFlight) return;
 
     const boardId = board.id;
-    const input = { boardId, targetType: 'card', targetId, delta } as const;
+    const input = { boardId, targetType, targetId, delta } as const;
     voteInFlight = true;
     setPendingVote({ ...input, baseVersion: board.version });
     try {
@@ -743,11 +844,23 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const board = workspace.board;
     if (!board || !canManageCard(board, cardId)) return;
     setDraggingCardId(cardId);
+    setDraggingGroupId(null);
+    setDraggingSourceColumnId(sourceColumnId);
+  }
+
+  function handleDragStartGroup(groupId: string, sourceColumnId: string): void {
+    const board = workspace.board;
+    if (!board) return;
+    const group = board.groups.find((item) => item.id === groupId);
+    if (!group || !canManageGroup(board, group)) return;
+    setDraggingCardId(null);
+    setDraggingGroupId(groupId);
     setDraggingSourceColumnId(sourceColumnId);
   }
 
   function handleDragEndCard(): void {
     setDraggingCardId(null);
+    setDraggingGroupId(null);
     setDraggingSourceColumnId(null);
   }
 
@@ -1197,14 +1310,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     totalColumns={board().columns.length}
                     columns={board().columns}
                     cards={cardsByColumn().get(column.id) ?? []}
+                    groups={groupsByColumn().get(column.id) ?? []}
                     voting={voting()}
                     isFacilitator={board().isFacilitator}
                     isLocked={board().isLocked}
                     isBlurred={board().isBlurred}
+                    canGroupCards={canManageGrouping(board())}
                     nowMs={nowMs()}
                     isMobileActive={resolvedActiveColumnIndex() === index()}
                     isHorizontalSnap={isHorizontalSnap()}
                     draggingCardId={draggingCardId()}
+                    draggingGroupId={draggingGroupId()}
                     draggingSourceColumnId={draggingSourceColumnId()}
                     onCreateCard={handleCreateCard}
                     onUpdateCard={handleUpdateCard}
@@ -1215,7 +1331,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     onUpdateColumn={handleUpdateColumn}
                     onMoveColumn={handleMoveColumn}
                     onDeleteColumn={handleDeleteColumn}
+                    onGroupCard={handleGroupCard}
+                    onUngroupCard={handleUngroupCard}
+                    onRenameCardGroup={handleRenameCardGroup}
+                    onDissolveCardGroup={handleDissolveCardGroup}
+                    onMoveCardGroup={handleMoveCardGroup}
                     onDragStartCard={handleDragStartCard}
+                    onDragStartGroup={handleDragStartGroup}
                     onDragEndCard={handleDragEndCard}
                   />
                 )}

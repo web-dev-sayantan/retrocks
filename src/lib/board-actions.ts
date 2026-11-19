@@ -16,11 +16,16 @@ import type {
   DeleteCardInput,
   DeleteColumnInput,
   DeleteCommentInput,
+  DissolveCardGroupInput,
+  GroupCardsInput,
+  MoveCardGroupInput,
   MoveCardInput,
   RenameBoardInput,
+  RenameCardGroupInput,
   ReorderColumnsInput,
   SetPrivateModeInput,
   ToggleReactionInput,
+  UngroupCardInput,
   UpdateCardInput,
   UpdateColumnInput,
   UpdateTimerInput,
@@ -368,6 +373,116 @@ export async function deleteColumn(
   }
 }
 
+export async function groupCards(
+  input: GroupCardsInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError } = await import('../server/services/board-service');
+  try {
+    const { groupCardsForRequest } = await import(
+      '../server/services/grouping-service'
+    );
+    const result = await groupCardsForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function renameCardGroup(
+  input: RenameCardGroupInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError } = await import('../server/services/board-service');
+  try {
+    const { renameCardGroupForRequest } = await import(
+      '../server/services/grouping-service'
+    );
+    const result = await renameCardGroupForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function ungroupCard(
+  input: UngroupCardInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError } = await import('../server/services/board-service');
+  try {
+    const { ungroupCardForRequest } = await import(
+      '../server/services/grouping-service'
+    );
+    const result = await ungroupCardForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function dissolveCardGroup(
+  input: DissolveCardGroupInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError } = await import('../server/services/board-service');
+  try {
+    const { dissolveCardGroupForRequest } = await import(
+      '../server/services/grouping-service'
+    );
+    const result = await dissolveCardGroupForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function moveCardGroup(
+  input: MoveCardGroupInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError } = await import('../server/services/board-service');
+  try {
+    const { moveCardGroupForRequest } = await import(
+      '../server/services/grouping-service'
+    );
+    const result = await moveCardGroupForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
 export interface BoardWorkspaceActions {
   changeVote: typeof changeVote;
   updateVotingSettings: typeof updateVotingSettings;
@@ -386,6 +501,11 @@ export interface BoardWorkspaceActions {
   updateColumn: (input: UpdateColumnInput) => Promise<BoardMutationResponse>;
   reorderColumns: (input: ReorderColumnsInput) => Promise<BoardMutationResponse>;
   deleteColumn: (input: DeleteColumnInput) => Promise<BoardMutationResponse>;
+  groupCards: (input: GroupCardsInput) => Promise<BoardMutationResponse>;
+  renameCardGroup: (input: RenameCardGroupInput) => Promise<BoardMutationResponse>;
+  ungroupCard: (input: UngroupCardInput) => Promise<BoardMutationResponse>;
+  dissolveCardGroup: (input: DissolveCardGroupInput) => Promise<BoardMutationResponse>;
+  moveCardGroup: (input: MoveCardGroupInput) => Promise<BoardMutationResponse>;
 }
 
 export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
@@ -406,4 +526,9 @@ export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
   updateColumn,
   reorderColumns,
   deleteColumn,
+  groupCards,
+  renameCardGroup,
+  ungroupCard,
+  dissolveCardGroup,
+  moveCardGroup,
 };

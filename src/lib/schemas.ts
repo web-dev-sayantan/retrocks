@@ -9,6 +9,7 @@ import {
   MAX_COLUMNS_PER_BOARD,
   MAX_COLUMN_TITLE_LENGTH,
   MAX_COMMENT_LENGTH,
+  MAX_GROUP_TITLE_LENGTH,
   REACTION_EMOJIS,
   RETENTION_DAYS_OPTIONS,
 } from './board-types';
@@ -163,6 +164,59 @@ export const DeleteCardInputSchema = v.object({
 });
 
 export type DeleteCardInput = v.InferInput<typeof DeleteCardInputSchema>;
+
+export const CardGroupTitleSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1, 'Card Group title cannot be empty'),
+  v.maxLength(
+    MAX_GROUP_TITLE_LENGTH,
+    `Card Group title must be ${MAX_GROUP_TITLE_LENGTH} characters or fewer`,
+  ),
+);
+
+export const GroupCardsInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+  targetType: v.picklist(['card', 'group']),
+  targetId: EntityIdSchema,
+});
+
+export type GroupCardsInput = v.InferInput<typeof GroupCardsInputSchema>;
+
+export const RenameCardGroupInputSchema = v.object({
+  boardId: BoardIdSchema,
+  groupId: EntityIdSchema,
+  title: CardGroupTitleSchema,
+});
+
+export type RenameCardGroupInput = v.InferInput<
+  typeof RenameCardGroupInputSchema
+>;
+
+export const UngroupCardInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+});
+
+export type UngroupCardInput = v.InferInput<typeof UngroupCardInputSchema>;
+
+export const DissolveCardGroupInputSchema = v.object({
+  boardId: BoardIdSchema,
+  groupId: EntityIdSchema,
+});
+
+export type DissolveCardGroupInput = v.InferInput<
+  typeof DissolveCardGroupInputSchema
+>;
+
+export const MoveCardGroupInputSchema = v.object({
+  boardId: BoardIdSchema,
+  groupId: EntityIdSchema,
+  targetColumnId: EntityIdSchema,
+});
+
+export type MoveCardGroupInput = v.InferInput<typeof MoveCardGroupInputSchema>;
 
 export const ToggleReactionInputSchema = v.object({
   boardId: BoardIdSchema,

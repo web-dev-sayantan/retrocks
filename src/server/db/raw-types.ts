@@ -140,9 +140,10 @@ export type BoardMutationCommand =
       voteLimit?: number | null;
       maxVotesPerCard?: 1 | null;
       blindVoting?: boolean;
+      allowParticipantGroup?: boolean;
     }
   | { type: 'voting:reset' }
-  | { type: 'vote:change'; targetType: 'card'; targetId: string; delta: 1 | -1 }
+  | { type: 'vote:change'; targetType: 'card' | 'group'; targetId: string; delta: 1 | -1 }
   | { type: 'board:rename'; title: string; subtitle?: string }
   | { type: 'timer:update'; change: TimerChange }
   | { type: 'board:set-private-mode'; isBlurred: boolean }
@@ -150,6 +151,17 @@ export type BoardMutationCommand =
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
   | { type: 'card:delete'; cardId: string }
+  | {
+      type: 'group:merge';
+      cardId: string;
+      targetType: 'card' | 'group';
+      targetId: string;
+      groupId: string;
+    }
+  | { type: 'group:rename'; groupId: string; title: string }
+  | { type: 'group:ungroup'; cardId: string }
+  | { type: 'group:dissolve'; groupId: string }
+  | { type: 'group:move'; groupId: string; targetColumnId: string }
   | { type: 'reaction:toggle'; cardId: string; emoji: ReactionEmoji }
   | { type: 'comment:create'; cardId: string; id: string; content: string }
   | { type: 'comment:delete'; cardId: string; commentId: string }
@@ -187,6 +199,7 @@ export type RawBoardMutationEvent =
   | { type: 'column:upserted'; version: number; columnId: string }
   | { type: 'column:deleted'; version: number; columnId: string }
   | { type: 'columns:reordered'; version: number; columnIds: string[] }
+  | { type: 'group:upserted'; version: number; groupId: string }
   | { type: 'group:dissolved'; version: number; groupId: string };
 
 export type BoardMutationOutcome =
