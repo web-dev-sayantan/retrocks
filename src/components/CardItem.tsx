@@ -8,6 +8,7 @@ import {
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardReactions from './CardReactions';
@@ -70,6 +71,7 @@ export default function CardItem(props: CardItemProps) {
   const [isUngrouping, setIsUngrouping] = createSignal(false);
   const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
   const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
+  const [actionError, setActionError] = createSignal('');
 
   const menuId = createUniqueId();
   const [menuPage, setMenuPage] = createSignal<'actions' | 'move' | 'group' | null>(null);
@@ -93,6 +95,7 @@ export default function CardItem(props: CardItemProps) {
     (redacted, previous) => {
       setWasRevealed(previous === true && !redacted);
       if (redacted) {
+        setActionError('');
         cancelEdit();
         setConfirmingDelete(false);
         setMenuPage(null);
@@ -122,7 +125,7 @@ export default function CardItem(props: CardItemProps) {
   });
 
   createEffect(menuPage, (page) => {
-    if (page) menuItems()[0]?.focus();
+    if (page) getEnabledMenuItems(menu)[0]?.focus();
   });
 
   createEffect(() => menuPage() !== null, (isOpen) => {
@@ -135,10 +138,6 @@ export default function CardItem(props: CardItemProps) {
     document.addEventListener('pointerdown', dismissOutside);
     return () => document.removeEventListener('pointerdown', dismissOutside);
   });
-
-  function menuItems(): HTMLButtonElement[] {
-    return Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role=menuitem]:enabled') ?? []);
-  }
 
   function closeMenu(): void {
     setMenuPage(null);
@@ -157,19 +156,7 @@ export default function CardItem(props: CardItemProps) {
       closeMenu();
       return;
     }
-    const items = menuItems();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    let next: HTMLButtonElement | undefined;
-    switch (event.key) {
-      case 'Home': next = items[0]; break;
-      case 'End': next = items.at(-1); break;
-      case 'ArrowDown': next = items[(index + 1) % items.length]; break;
-      case 'ArrowUp': next = items[(index - 1 + items.length) % items.length]; break;
-    }
-    if (next) {
-      event.preventDefault();
-      next.focus();
-    }
+    handleMenuNavigation(event);
   }
 
   const canManage = createMemo(() => {
@@ -302,35 +289,50 @@ export default function CardItem(props: CardItemProps) {
     }
   }
 
+  async function runCardAction(
+    request: () => Promise<boolean>,
+    failureMessage: string,
+    setPending: (pending: boolean) => void,
+  ): Promise<boolean> {
+    setPending(true);
+    setActionError('');
+    try {
+      if (await request()) return true;
+    } catch {
+      // Report rejected requests alongside unsuccessful mutation responses.
+    } finally {
+      setPending(false);
+    }
+    if (!props.card.redacted) setActionError(failureMessage);
+    return false;
+  }
+
   async function handleConfirmDelete(): Promise<void> {
     if (isDeleting()) return;
-    setIsDeleting(true);
-    try {
-      await props.onDeleteCard(props.card.id);
-    } finally {
-      setIsDeleting(false);
-    }
+    await runCardAction(
+      () => props.onDeleteCard(props.card.id),
+      'Could not delete the Card. Try again.',
+      setIsDeleting,
+    );
   }
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isUpdatingAction()) return false;
-    setIsUpdatingAction(true);
-    try {
-      return await props.onUpdateActionItem(props.card.id, patch);
-    } finally {
-      setIsUpdatingAction(false);
-    }
+    return runCardAction(
+      () => props.onUpdateActionItem(props.card.id, patch),
+      'Could not update the Action Item. Try again.',
+      setIsUpdatingAction,
+    );
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    setIsMoving(true);
     closeMenu();
-    try {
-      await props.onMoveCard(props.card.id, targetColumnId);
-    } finally {
-      setIsMoving(false);
-    }
+    await runCardAction(
+      () => props.onMoveCard(props.card.id, targetColumnId),
+      'Could not move the Card. Try again.',
+      setIsMoving,
+    );
   }
 
   async function groupWith(
@@ -339,23 +341,21 @@ export default function CardItem(props: CardItemProps) {
     targetId: string,
   ): Promise<void> {
     if (isGrouping()) return;
-    setIsGrouping(true);
     if (menuPage()) closeMenu();
-    try {
-      await props.onGroupCard(cardId, targetType, targetId);
-    } finally {
-      setIsGrouping(false);
-    }
+    await runCardAction(
+      () => props.onGroupCard(cardId, targetType, targetId),
+      'Could not group the Card. Try again.',
+      setIsGrouping,
+    );
   }
 
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
-    setIsUngrouping(true);
-    try {
-      await props.onUngroupCard(props.card.id);
-    } finally {
-      setIsUngrouping(false);
-    }
+    await runCardAction(
+      () => props.onUngroupCard(props.card.id),
+      'Could not ungroup the Card. Try again.',
+      setIsUngrouping,
+    );
   }
 
   function handleGroupDragOver(event: DragEvent): void {
@@ -613,7 +613,7 @@ export default function CardItem(props: CardItemProps) {
                       event.preventDefault();
                       setConfirmingDelete(false);
                       setMenuPage('actions');
-                      if (menuPage()) menuItems()[0]?.focus();
+                      if (menuPage()) getEnabledMenuItems(menu)[0]?.focus();
                     }
                   }}
                   class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
@@ -674,7 +674,9 @@ export default function CardItem(props: CardItemProps) {
                     role="menuitem"
                     tabindex={-1}
                     class={menuItemClass}
+                    disabled={isDeleting()}
                     onClick={() => {
+                      setActionError('');
                       setMenuPage(null);
                       setConfirmingDelete(true);
                     }}
@@ -740,6 +742,9 @@ export default function CardItem(props: CardItemProps) {
           </Show>
           <Show when={pendingAction()}>
             <p role="status" class="mt-1 text-xs text-text-muted">{pendingAction()}</p>
+          </Show>
+          <Show when={actionError()}>
+            <p role="alert" data-print-hide="true" class="mt-1 text-xs text-rose-700 dark:text-rose-300">{actionError()}</p>
           </Show>
         </Show>
       </Show>

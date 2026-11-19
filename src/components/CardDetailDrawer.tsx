@@ -99,14 +99,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
 
   onSettled(() => {
     function handleKeyDown(event: KeyboardEvent): void {
-      if (!dialog?.open || event.isComposing) return;
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        props.onClose();
-        return;
-      }
-      if (event.key !== 'Tab') return;
+      if (!dialog?.open || event.isComposing || event.key !== 'Tab') return;
 
       // Native modal containment handles the rest of the tab order.
       const stops = Array.from(dialog.querySelectorAll<HTMLElement>(
@@ -173,9 +166,9 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     }
   }
 
-  async function saveActionOwner(): Promise<void> {
+  async function saveActionOwner(value: string): Promise<void> {
     if (!canEditActionItemFollowUp() || isSavingAction()) return;
-    const trimmed = ownerDraft().trim();
+    const trimmed = value.trim();
     if (trimmed === props.card.actionOwner) {
       setOwnerDraft(props.card.actionOwner);
       return;
@@ -243,6 +236,12 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
       aria-label="Card details"
       data-board-overlay={props.isOpen ? 'true' : undefined}
       data-print-hide="true"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        props.onClose();
+      }}
       onCancel={(event) => {
         event.preventDefault();
         props.onClose();
@@ -382,13 +381,19 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     maxlength={MAX_ACTION_OWNER_LENGTH}
                     disabled={!canEditActionItemFollowUp() || isSavingAction()}
                     onInput={(event) => setOwnerDraft(event.currentTarget.value)}
-                    onBlur={() => void saveActionOwner()}
+                    onBlur={(event) => void saveActionOwner(event.currentTarget.value)}
                     onKeyDown={(event) => {
+                      if (event.isComposing) return;
+                      const input = event.currentTarget;
                       if (event.key === 'Enter') {
                         event.preventDefault();
-                        void saveActionOwner();
-                      } else if (event.key === 'Escape') {
-                        setOwnerDraft(props.card.actionOwner);
+                        void saveActionOwner(input.value);
+                      } else if (event.key === 'Escape' && input.value !== props.card.actionOwner) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        input.value = props.card.actionOwner;
+                        setOwnerDraft(input.value);
+                        setActionError(null);
                       }
                     }}
                     class={[

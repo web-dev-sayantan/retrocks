@@ -65,6 +65,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const [isSaving, setIsSaving] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
+  const [moveFailed, setMoveFailed] = createSignal(false);
   const [isDissolving, setIsDissolving] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
   let moveTrigger: HTMLButtonElement | undefined;
@@ -80,6 +81,10 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
+  });
+
+  createEffect(isMoving, (moving, wasMoving) => {
+    if (!moving && wasMoving && moveFailed()) moveTrigger?.focus({ preventScroll: true });
   });
 
   const otherColumns = createMemo(
@@ -159,10 +164,13 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
     setIsMoving(true);
+    setMoveFailed(false);
     setMoveMenuOpen(false);
     try {
       const ok = await props.onMoveGroup(props.group.id, targetColumnId);
-      if (!ok) moveTrigger?.focus();
+      setMoveFailed(!ok);
+    } catch {
+      setMoveFailed(true);
     } finally {
       setIsMoving(false);
     }
@@ -418,6 +426,11 @@ export default function CardGroupItem(props: CardGroupItemProps) {
               </div>
             </Show>
 
+            <Show when={moveFailed()}>
+              <p role="alert" data-print-hide="true" class="basis-full text-xs text-rose-700 dark:text-rose-300">
+                Could not move the Card Group. Try again.
+              </p>
+            </Show>
             <Show when={isSaving() || isMoving() || isDissolving()}>
               <p role="status" class="basis-full text-xs text-text-muted">
                 {isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : 'Dissolving Card Group…'}
