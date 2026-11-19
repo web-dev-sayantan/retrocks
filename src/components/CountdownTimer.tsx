@@ -44,6 +44,7 @@ export default function CountdownTimer(props: {
   const [minutesDraft, setMinutesDraft] = createSignal('5');
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal('');
+  const [timerAnnouncement, setTimerAnnouncement] = createSignal('');
   const [announcedDeadline, setAnnouncedDeadline] = createSignal<number | null>(null);
 
   const remainingMs = createMemo(() => {
@@ -94,6 +95,26 @@ export default function CountdownTimer(props: {
       } else if (observedDeadline === endsAt && announced !== endsAt) {
         setAnnouncedDeadline(endsAt);
         if (!untrack(muted)) chime.play();
+      }
+    },
+  );
+
+  createEffect(
+    () => [props.timer.endsAt, props.timer.remainingMs, props.timer.durationMs] as const,
+    ([endsAt, remaining, duration], previous) => {
+      if (!previous) return;
+      const [oldEndsAt, oldRemaining, oldDuration] = previous;
+      if (endsAt === oldEndsAt && remaining === oldRemaining && duration === oldDuration) return;
+      if (duration === null) {
+        setTimerAnnouncement('Timer dismissed.');
+      } else if (remaining !== null) {
+        setTimerAnnouncement(oldRemaining === null ? 'Timer paused.' : 'Paused timer updated.');
+      } else if (oldDuration === null) {
+        setTimerAnnouncement('Timer started.');
+      } else if (oldRemaining !== null) {
+        setTimerAnnouncement('Timer resumed.');
+      } else {
+        setTimerAnnouncement('Timer updated.');
       }
     },
   );
@@ -230,14 +251,15 @@ export default function CountdownTimer(props: {
           stroke-width="1.5"
           stroke-linecap="round"
           aria-hidden="true"
-          class={['size-4', isConfigured() && !isPaused() && 'hidden sm:block']}
+          class="size-4 shrink-0"
         >
           <Show when={isPaused()} fallback={<path d="M8 4.75V8l2 1.25" />}>
             <path d="M6.5 5.5v5m3-5v5" />
           </Show>
           <circle cx="8" cy="8" r="6" />
         </svg>
-        <Show when={isConfigured()} fallback={<span class="hidden sm:inline">Timer</span>}>
+        <Show when={isConfigured()} fallback={<span>Timer</span>}>
+          <Show when={isPaused()}><span>Paused</span></Show>
           <span>{timeLabel()}</span>
           <span aria-hidden="true" class="absolute inset-x-0 bottom-0 h-0.5 bg-accent/15">
             <span class="block h-full bg-accent/80" style={{ width: `${progress()}%` }} />
@@ -245,7 +267,7 @@ export default function CountdownTimer(props: {
         </Show>
       </button>
       <span aria-live="polite" aria-atomic="true" class="sr-only">
-        {expiryAnnounced() ? 'Time is up.' : ''}
+        {expiryAnnounced() ? 'Time is up.' : timerAnnouncement()}
       </span>
 
       <Show when={open()}>
@@ -256,7 +278,7 @@ export default function CountdownTimer(props: {
           aria-labelledby={titleId}
           tabindex={-1}
           data-board-overlay
-          class="fixed inset-x-4 top-14 z-30 rounded-xl border border-border bg-surface p-3.5 text-text shadow-lg focus:outline-none sm:absolute sm:inset-x-auto sm:top-full sm:right-0 sm:mt-2 sm:w-64"
+          class="fixed inset-x-4 top-14 z-30 max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-xl border border-border bg-surface p-3.5 text-text shadow-lg focus:outline-none sm:absolute sm:inset-x-auto sm:top-full sm:left-0 sm:mt-2 sm:w-64"
         >
           <div class="flex items-center justify-between gap-2">
             <h2 id={titleId} class="text-sm font-semibold">Countdown Timer</h2>
@@ -272,7 +294,7 @@ export default function CountdownTimer(props: {
                 if (validMinutes()) void updateTimer({ action: 'start', minutes: Number(minutesDraft()) });
               }}
             >
-              <div class="grid grid-cols-4 gap-1.5">
+              <div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,3rem),1fr))] gap-1.5">
                 <For each={presets}>
                   {(minutes) => (
                     <button

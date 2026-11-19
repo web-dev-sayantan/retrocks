@@ -87,9 +87,13 @@ describe('Board Countdown Timer', () => {
         }],
       });
       expect(view.getByText('03:00')).toBeVisible();
+      const announcement = view.getByText('Timer started.');
+      expect(announcement).toHaveAttribute('aria-live', 'polite');
       vi.advanceTimersByTime(1_100);
       flush();
       expect(view.getByText('02:59')).toBeVisible();
+      expect(announcement).toHaveTextContent(/^Timer started\.$/);
+      expect(view.getByText('02:59').closest('[aria-live]')).toBeNull();
 
       vi.setSystemTime(new Date('2026-11-19T20:00:00Z'));
       vi.advanceTimersByTime(1_000);
@@ -105,6 +109,7 @@ describe('Board Countdown Timer', () => {
           timer: { endsAt: null, remainingMs: 72_000, durationMs: 180_000 },
         }), SERVER_TIME + 108_000);
         expect(view.getByText('01:12')).toBeVisible();
+        expect(announcement).toHaveTextContent('Timer paused.');
         vi.advanceTimersByTime(3_500);
         flush();
         expect(view.getByText('01:12')).toBeVisible();
