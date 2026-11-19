@@ -1376,6 +1376,11 @@ describe('<BoardWorkspace />', () => {
     const composer = getByLabelText(
       'Add card to Went Well',
     ) as HTMLTextAreaElement;
+    const untouchedComposer = getByLabelText('Add card to To Improve');
+    expect(composer).toHaveAttribute('rows', '1');
+    composer.focus();
+    flush();
+    expect(composer).toHaveAttribute('rows', '2');
     fireEvent.input(composer, {
       target: {
         value: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
@@ -1397,6 +1402,16 @@ describe('<BoardWorkspace />', () => {
       columnId: 'col_1',
       content: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
     });
+    expect(composer).toHaveValue('');
+    expect(composer).toHaveFocus();
+
+    const column = within(getByRole('region', { name: 'Went Well' }));
+    const cardActions = column.getByRole('button', { name: 'Card actions' });
+    cardActions.focus();
+    flush();
+    expect(composer).toHaveAttribute('rows', '2');
+    expect(column.getByRole('button', { name: 'Add' })).toBeDisabled();
+    expect(untouchedComposer).toHaveAttribute('rows', '1');
 
     const wentWell = getByRole('region', { name: 'Went Well' });
     expect(within(wentWell).getByText('v2')).toBeInTheDocument();

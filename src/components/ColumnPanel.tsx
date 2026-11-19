@@ -89,7 +89,8 @@ export interface ColumnPanelProps {
 export default function ColumnPanel(props: ColumnPanelProps) {
   const [cardDraft, setCardDraft] = createSignal('');
   const [cardError, setCardError] = createSignal<string | null>(null);
-  const [composerFocused, setComposerFocused] = createSignal(false);
+  // Keep Cards below the composer stationary when focus leaves the textarea.
+  const [hasFocusedComposer, setHasFocusedComposer] = createSignal(false);
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
 
   const [menuOpen, setMenuOpen] = createSignal(false);
@@ -642,13 +643,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             placeholder="+ Add Card"
             value={cardDraft()}
             maxlength={MAX_CARD_CONTENT_LENGTH}
-            rows={composerFocused() || cardDraft().length > 0 ? 2 : 1}
-            onFocus={() => setComposerFocused(true)}
-            onBlur={() => {
-              if (cardDraft().length === 0) {
-                setComposerFocused(false);
-              }
-            }}
+            rows={hasFocusedComposer() || cardDraft().length > 0 ? 2 : 1}
+            onFocus={() => setHasFocusedComposer(true)}
             onInput={(e) => {
               setCardDraft(e.currentTarget.value);
               setCardError(null);
@@ -662,7 +658,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           <Show when={cardError()}>
             {(error) => <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
           </Show>
-          <Show when={composerFocused() || cardDraft().length > 0}>
+          <Show when={hasFocusedComposer() || cardDraft().length > 0}>
             <div class="mt-2 flex items-center justify-between gap-2">
               <span class="text-[11px] text-text-muted">
                 <Show
