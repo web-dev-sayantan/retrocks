@@ -1153,6 +1153,53 @@ describe('<BoardWorkspace />', () => {
     });
   });
 
+  it('lets Participants recover from a failed copy and return to Share after dismissal', async () => {
+    const board = makeBoardView({ isFacilitator: false });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const share = view.getByRole('button', { name: 'Share' });
+    share.focus();
+    fireEvent.click(share);
+    flush();
+    const dialog = within(view.getByRole('dialog', { name: 'Share Board' }));
+    expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus();
+    expect(dialog.getByRole('img', { name: 'Participant Link QR code' })).toBeInTheDocument();
+    expect(dialog.queryByRole('region', { name: 'Co-Facilitator Link' })).toBeNull();
+
+    const link = dialog.getByRole('textbox', { name: 'Participant Link' }) as HTMLInputElement;
+    const participantUrl = new URL(`/b/${board.id}`, window.location.origin).href;
+    expect(link).toHaveValue(participantUrl);
+    const copy = dialog.getByRole('button', { name: 'Copy Participant Link' });
+    const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard unavailable'));
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      copy.focus();
+      fireEvent.click(copy);
+      await flushPromises();
+      expect(dialog.getByRole('status')).toHaveTextContent('Copy the selected link manually.');
+      expect(link).toHaveFocus();
+      expect(link.selectionStart).toBe(0);
+      expect(link.selectionEnd).toBe(participantUrl.length);
+
+      copy.focus();
+      fireEvent.click(copy);
+      await flushPromises();
+      expect(dialog.getByRole('status')).toHaveTextContent('Participant Link copied.');
+      expect(writeText).toHaveBeenLastCalledWith(participantUrl);
+
+      fireEvent.keyDown(copy, { key: 'Escape' });
+      flush();
+      expect(view.queryByRole('dialog', { name: 'Share Board' })).toBeNull();
+      expect(share).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('renders clean missing/expired state with CTA and removes stale Board ID from localStorage Recent Boards', () => {
     const staleId = 'board_expired_12345678';
     recordRecentBoard({ id: staleId, title: 'Old Expired Retro' });
@@ -1979,7 +2026,7 @@ describe('<BoardWorkspace />', () => {
         isFacilitator: false,
       });
 
-      const { getByRole } = render(() => (
+      const { getByRole, queryByRole } = render(() => (
         <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
       ));
       flush();
@@ -1987,12 +2034,17 @@ describe('<BoardWorkspace />', () => {
       expect(streams).toHaveLength(1);
       expect(readRecentBoards().some((item) => item.id === board.id)).toBe(true);
 
+      fireEvent.click(getByRole('button', { name: 'Share' }));
+      flush();
+      expect(getByRole('dialog', { name: 'Share Board' })).toBeInTheDocument();
+
       streams[0].emit({ type: 'board:deleted', version: 2 });
       flush();
 
       expect(
         getByRole('heading', { level: 1, name: 'Board not found or expired' }),
-      ).toBeInTheDocument();
+      ).toHaveFocus();
+      expect(queryByRole('dialog', { name: 'Share Board' })).toBeNull();
       expect(readRecentBoards().some((item) => item.id === board.id)).toBe(
         false,
       );

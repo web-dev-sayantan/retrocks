@@ -103,7 +103,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Board header:**
   - Lead with the Board title and optional context. The Retrocks link returns home, and Facilitators can rename an unlocked Board from the title.
   - Keep online presence, Countdown Timer, and active Board states near the title. Show reconnecting when live updates are interrupted. Private Mode explains who can read a Card before Reveal All.
-  - Keep Share and More in the header. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
+  - Keep Share and More in the header. Share has a target of at least 44 × 44 CSS pixels on phones. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
 - **Columns (1–10):**
   - Use a small accent marker, a wrapping title, and a tabular Card count. Use opaque Cards on the open Column rail.
   - Offer **+ Add Card** at the top of each desktop Column and one bottom composer on phones. The phone composer names its target Column and keeps a draft for each Column. Enter submits, Shift+Enter starts a new line, and a failed submission keeps the draft and displays its error by the composer.
@@ -218,15 +218,16 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - On Cloudflare Durable Objects, this runs via a per-Board **DO Alarm** (`ctx.storage.setAlarm`). On Node, a lightweight daily scheduled sweep deletes expired rows.
 - **Immediate Deletion & Expired Board UX:**
   - Facilitator can permanently delete a Board at any time (with explicit confirmation), broadcasting a `board:deleted` notice to connected clients and wiping storage immediately.
-  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) displays a clean *"Board not found or expired"* view with a *"Create a new board"* CTA and automatically removes that `boardId` from the browser's `localStorage` Recent Boards list.
+  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) shows **Board not found or expired**, explains deletion and inactivity expiry, and links to **Create a new board**. The screen follows the selected theme and removes that Board from Recent Boards. When an open Board becomes unavailable, dismiss its overlays and move focus to the unavailable screen heading.
 
 ---
 
 ### 3.11 Export & Sharing
 - **Share Modal:**
-  - **Participant Link** (`/b/<boardId>`) with one-click copy.
-  - **Co-Facilitator Link** (`/b/<boardId>#f=<token>`) fetched on demand by any Facilitator with a concise security note and a **Rotate Link** action (with confirmation) to revoke leaked links.
-  - **QR Code** rendered purely client-side as SVG (zero external image requests) for in-room Participants joining via phone.
+  - Show the **Participant Link** (`/b/<boardId>`) first, with a copy action and a locally generated QR code that opens the same URL.
+  - Show a separate **Co-Facilitator Link** section only to Facilitators, including on Locked Boards. Explain that it grants Facilitator access and control over Board settings. Retrieve the link on demand and confirm **Rotate Link** before replacing it and invalidating previously shared links.
+  - Announce copy, retrieval, and rotation results in the dialog. If clipboard access fails, offer to copy from the selectable link field. Keep the retrieval and rotation controls available for retry after failures.
+  - Move focus into Share when it opens, keep Board controls out of its tab order, and return focus when **Close Share** or Escape dismisses it.
 - **Exports (in More):**
   - Exports always use the server-projected viewer snapshot — redacted Cards stay redacted while Private Mode is ON, and aggregate Vote totals stay omitted while Blind Voting is ON (no bypass flag; reveal first for a full export).
   - **Markdown (`.md`)** — Copy to clipboard or download; structured by Columns, Card Groups, Vote counts, comments, and a trailing Action Items checklist.

@@ -55,7 +55,7 @@ export default function ThemeToggle(props: { menuItem?: boolean }) {
         theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
       }
       class={props.menuItem ? 'board-menu-item' : [
-        'inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg',
+        'inline-flex h-11 w-11 cursor-pointer sm:h-9 sm:w-9 items-center justify-center rounded-lg',
         'border border-border bg-surface text-text-muted transition-colors',
         'hover:bg-surface-subtle hover:text-text',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
