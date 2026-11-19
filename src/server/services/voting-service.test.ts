@@ -10,9 +10,11 @@ async function setup(options: Record<string, unknown> = {}) {
   const board = created.result;
   const boardUrl = `${origin}/b/${board.id}`;
   const facilitator = created.cookie;
+  if (!facilitator) throw new Error('Expected a Facilitator session');
   const read = (cookie?: string) => request(boardUrl, { cookie, method: 'GET' }, () =>
     boardService.getBoardForRequest(board.id));
   const participant = (await read()).cookie;
+  if (!participant) throw new Error('Expected a Participant session');
   async function createCard(content: string, cookie = facilitator) {
     const { result } = await request(boardUrl, { cookie }, () =>
       boardService.createCardForRequest({ boardId: board.id, columnId: board.columns[0].id, content }));
@@ -27,7 +29,7 @@ async function setup(options: Record<string, unknown> = {}) {
   const settings = (patch: Record<string, unknown>, cookie = facilitator) =>
     request(boardUrl, { cookie }, () => voting.updateVotingSettingsForRequest({ boardId: board.id, ...patch }));
 
-  return { board, boardUrl, facilitator, participant, read, createCard, vote, voting, settings };
+  return { board, boardUrl, facilitator, participant, read, createCard, vote, voting, settings, boardService };
 }
 
 async function request<T>(
@@ -137,4 +139,43 @@ it('lets a Facilitator reset everyone’s Votes and restores each Participant’
     remainingVotes: 5,
     cards: [{ votes: 0, myVotes: 0 }],
   });
+});
+
+it('publishes the refunded Vote budget when Cards or Columns are deleted', async () => {
+  const { board, boardUrl, facilitator, createCard, vote, boardService } = await setup();
+  const firstCard = await createCard('Preserve the changelog');
+  const secondCard = await createCard('Improve onboarding');
+  await vote(firstCard, 1, facilitator);
+  await vote(secondCard, 1, facilitator);
+
+  const { result } = await request(boardUrl, { cookie: facilitator }, () =>
+    boardService.deleteCardForRequest({ boardId: board.id, cardId: firstCard }));
+  expect(result.events).toMatchObject([
+    { type: 'card:deleted', cardId: firstCard },
+    { type: 'vote:balance', remainingVotes: 4 },
+  ]);
+
+  const { result: removedColumn } = await request(boardUrl, { cookie: facilitator }, () =>
+    boardService.deleteColumnForRequest({ boardId: board.id, columnId: board.columns[0].id }));
+  expect(removedColumn.events).toMatchObject([
+    { type: 'column:deleted', columnId: board.columns[0].id },
+    { type: 'vote:balance', remainingVotes: 5 },
+  ]);
+});
+
+it('serializes concurrent Votes for a final budget slot and rejects Votes on redacted Cards', async () => {
+  const { vote, createCard, participant, facilitator } = await setup({ isBlurred: true, voteLimit: 3 });
+  const privateCard = await createCard('Unrevealed idea', facilitator);
+  const firstCard = await createCard('My first idea', participant);
+  const secondCard = await createCard('My second idea', participant);
+
+  await expect(vote(privateCard, 1)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  await expect(vote(firstCard, 1, facilitator)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  await vote(firstCard, 1);
+  await vote(firstCard, 1);
+
+  const results = await Promise.allSettled([vote(firstCard, 1), vote(secondCard, 1)]);
+  expect(results.map(({ status }) => status).sort()).toEqual(['fulfilled', 'rejected']);
+  const rejected = results.find((result) => result.status === 'rejected');
+  expect(rejected?.reason).toMatchObject({ code: 'LIMIT_EXCEEDED' });
 });

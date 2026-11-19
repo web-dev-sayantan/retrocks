@@ -328,6 +328,58 @@ describe('<BoardWorkspace />', () => {
     expect(getByTitle('2 total Votes · 0 yours')).toBeInTheDocument();
     expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
   });
+  it('stacks and removes Votes without showing a balance on an unlimited Board', async () => {
+    const card = makeCard({ votes: 6, myVotes: 3 });
+    const board = makeBoardView({ cards: [card], voteLimit: null, remainingVotes: null });
+    const { actions, spies } = createFakeActions(board);
+    spies.changeVote
+      .mockResolvedValueOnce({
+        ok: true,
+        version: 2,
+        events: [{
+          type: 'vote:updated',
+          version: 2,
+          targetType: 'card',
+          targetId: card.id,
+          totalVotes: 7,
+          myVotes: 4,
+          remainingVotes: null,
+        }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        version: 3,
+        events: [{
+          type: 'vote:updated',
+          version: 3,
+          targetType: 'card',
+          targetId: card.id,
+          totalVotes: 6,
+          myVotes: 3,
+          remainingVotes: null,
+        }],
+      });
+
+    const { getByRole, getByTitle, queryByText } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+    expect(queryByText(/votes left/)).not.toBeInTheDocument();
+    expect(getByRole('button', { name: 'Cast Vote' })).toBeEnabled();
+    fireEvent.click(getByRole('button', { name: 'Cast Vote' }));
+    await flushPromises();
+    expect(getByTitle('7 total Votes · 4 yours')).toBeInTheDocument();
+
+    fireEvent.click(getByRole('button', { name: 'Remove Vote' }));
+    flush();
+    expect(getByTitle('6 total Votes · 3 yours')).toBeInTheDocument();
+    await flushPromises();
+    expect(getByTitle('6 total Votes · 3 yours')).toBeInTheDocument();
+    expect(spies.changeVote).toHaveBeenLastCalledWith({
+      boardId: board.id, targetType: 'card', targetId: card.id, delta: -1,
+    });
+  });
+
   it('applies voting settings immediately and resets all Votes only after confirmation', async () => {
     const card = makeCard({ votes: 3, myVotes: 1 });
     const board = makeBoardView({ cards: [card], remainingVotes: 4 });
