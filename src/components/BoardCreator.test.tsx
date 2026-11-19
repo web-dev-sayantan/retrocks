@@ -238,6 +238,82 @@ describe('<BoardCreator />', () => {
     }));
   });
 
+  it('suppresses a dismissed subtitle preset across both inputs for the same draft', () => {
+    const { getByRole, getByText, queryByText } = render(() => <BoardCreator />);
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Customize board' }));
+    flush();
+    const subtitle = getByRole('textbox', { name: /Subtitle/ });
+    const title = getByRole('textbox', { name: 'Board title (optional)' });
+    fireEvent.input(subtitle, { target: { value: 'Espresso chat' } });
+    flush();
+    expect(getByText('Try Coffee Shop')).toBeInTheDocument();
+
+    fireEvent.click(getByRole('button', { name: 'Dismiss' }));
+    flush();
+    expect(queryByText('Try Coffee Shop')).toBeNull();
+
+    fireEvent.input(subtitle, { target: { value: 'Another latte chat' } });
+    fireEvent.input(title, { target: { value: 'Coffee retrospective' } });
+    flush();
+    expect(queryByText('Try Coffee Shop')).toBeNull();
+
+    fireEvent.input(subtitle, { target: { value: 'Ahoy, team!' } });
+    flush();
+    expect(getByText('Try Pirate Ship')).toBeInTheDocument();
+  });
+
+  it('opens the Column editor and submits the applied hidden preset as Custom Board', async () => {
+    const onSubmit = vi.fn(async (_input: CreateBoardInput) => undefined);
+    const { getByRole, getByText, queryByRole } = render(() => <BoardCreator onSubmit={onSubmit} />);
+    flush();
+
+    fireEvent.input(getByRole('textbox', { name: 'Board title (optional)' }), {
+      target: { value: 'Countdown to launch' },
+    });
+    flush();
+    expect(getByText('Try Mission Control')).toBeInTheDocument();
+    fireEvent.click(getByRole('button', { name: 'Apply' }));
+    flush();
+
+    expect(queryByRole('button', { name: 'Apply' })).toBeNull();
+    expect(getByRole('button', { name: 'Customize board', expanded: true })).toHaveFocus();
+    expect(getByRole('textbox', { name: 'Column 4 title' })).toHaveValue('Next Orbit');
+
+    fireEvent.click(getByRole('button', { name: 'Create board' }));
+    flush();
+    await Promise.resolve();
+
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      templateId: 'custom',
+      columns: [
+        { title: 'Liftoff', accent: 'sky', isActionColumn: false },
+        { title: 'Turbulence', accent: 'coral', isActionColumn: false },
+        { title: 'Gravity', accent: 'slate', isActionColumn: false },
+        { title: 'Next Orbit', accent: 'violet', isActionColumn: true },
+      ],
+    }));
+  });
+
+  it('shows no hidden-template controls for titles and subtitles with partial keyword matches', () => {
+    const { getByRole, queryByRole } = render(() => <BoardCreator />);
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Customize board' }));
+    flush();
+    fireEvent.input(getByRole('textbox', { name: 'Board title (optional)' }), {
+      target: { value: 'Requests for the workspace' },
+    });
+    fireEvent.input(getByRole('textbox', { name: /Subtitle/ }), {
+      target: { value: 'Cafeteria retrospective' },
+    });
+    flush();
+
+    expect(queryByRole('button', { name: 'Apply' })).toBeNull();
+    expect(queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+
   it('interacts with zero Solid 2.0 reactivity diagnostics', async () => {
     const noopSubmit = async () => undefined;
     const { artifact } = await captureArtifact(
@@ -251,6 +327,18 @@ describe('<BoardCreator />', () => {
         fireEvent.click(getByRole('button', { name: 'Sailboat' }));
         flush();
         fireEvent.click(getByRole('button', { name: /Advanced options/i }));
+        flush();
+        fireEvent.input(getByRole('textbox', { name: 'Board title (optional)' }), {
+          target: { value: 'Dungeon retrospective' },
+        });
+        flush();
+        fireEvent.click(getByRole('button', { name: 'Apply' }));
+        flush();
+        fireEvent.input(getByRole('textbox', { name: /Subtitle/ }), {
+          target: { value: 'Coffee with the team' },
+        });
+        flush();
+        fireEvent.click(getByRole('button', { name: 'Dismiss' }));
         flush();
       },
       { scenario: 'board-creator-interactions' },

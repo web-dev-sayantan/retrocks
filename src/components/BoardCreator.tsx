@@ -12,7 +12,7 @@ import {
   type RetentionDaysOption,
   type VoteLimitOption,
 } from '../lib/board-types';
-import { matchHiddenTemplate } from '../lib/easter-eggs';
+import { matchHiddenTemplate, type HiddenTemplate, type HiddenTemplateId } from '../lib/easter-eggs';
 import type { CreateBoardInput } from '../lib/schemas';
 import {
   BOARD_TEMPLATES,
@@ -44,6 +44,25 @@ const optionClass = (selected: boolean) => [
     : 'border-control bg-surface text-text hover:bg-surface-subtle',
 ];
 const columnCommandClass = `inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-control bg-surface text-base text-text hover:bg-surface-subtle active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`;
+const suggestionButtonClass = `min-h-11 shrink-0 cursor-pointer rounded-full px-2 hover:bg-surface hover:text-text ${focusClass}`;
+
+function HiddenTemplateSuggestion(props: {
+  name: string;
+  onApply: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div class="flex w-fit max-w-full items-center gap-1 rounded-full border border-border bg-surface-subtle pl-3 pr-1 text-sm text-text-muted">
+      <span class="min-w-0 truncate">Try {props.name}</span>
+      <button type="button" class={`${suggestionButtonClass} font-semibold text-text`} onClick={() => props.onApply()}>
+        Apply
+      </button>
+      <button type="button" class={suggestionButtonClass} onClick={() => props.onDismiss()}>
+        Dismiss
+      </button>
+    </div>
+  );
+}
 
 function ColumnPreview(props: { columns: readonly TemplateColumnDef[]; id?: string }) {
   return (
@@ -102,9 +121,8 @@ function nextColumnLocalId(): string {
   return `draft_col_${columnKeyCounter}`;
 }
 
-function columnsFromTemplate(templateId: BoardTemplateId): EditableColumn[] {
-  const template = getBoardTemplate(templateId);
-  return template.columns.map((col) => ({
+function editableColumns(columns: readonly TemplateColumnDef[]): EditableColumn[] {
+  return columns.map((col) => ({
     localId: nextColumnLocalId(),
     title: col.title,
     accent: col.accent,
@@ -117,11 +135,13 @@ export default function BoardCreator(props: BoardCreatorProps) {
 
   const [title, setTitle] = createSignal('');
   const [subtitle, setSubtitle] = createSignal('');
-  const hiddenTemplate = createMemo(() => matchHiddenTemplate(title()));
+  const [handledTemplates, setHandledTemplates] = createSignal<HiddenTemplateId[]>([]);
+  const titleTemplate = createMemo(() => matchHiddenTemplate(title(), handledTemplates()));
+  const subtitleTemplate = createMemo(() => matchHiddenTemplate(subtitle(), handledTemplates()));
   const [templateId, setTemplateId] =
     createSignal<BoardTemplateId>('standard');
   const [columns, setColumns] = createStore<EditableColumn[]>(
-    columnsFromTemplate('standard'),
+    editableColumns(getBoardTemplate('standard').columns),
   );
   const [templatesOpen, setTemplatesOpen] = createSignal(false);
   const [customizeOpen, setCustomizeOpen] = createSignal(false);
@@ -140,11 +160,28 @@ export default function BoardCreator(props: BoardCreatorProps) {
 
   let templateToggle: HTMLButtonElement;
   let customizeToggle: HTMLButtonElement;
+  let titleInput: HTMLInputElement;
+  let subtitleInput: HTMLInputElement;
+
+  const handleDismissTemplate = (id: HiddenTemplateId, input: HTMLInputElement) => {
+    setHandledTemplates((ids) => [...ids, id]);
+    input.focus();
+  };
+
+  const handleApplyTemplate = (template: HiddenTemplate) => {
+    setHandledTemplates((ids) => [...ids, template.id]);
+    setTemplateId('custom');
+    setColumns(() => editableColumns(template.columns));
+    setErrorMessage(null);
+    setTemplatesOpen(false);
+    setCustomizeOpen(true);
+    customizeToggle.focus();
+  };
 
   const handleSelectTemplate = (nextTemplateId: BoardTemplateId) => {
     if (nextTemplateId !== templateId()) {
       setTemplateId(nextTemplateId);
-      setColumns(() => columnsFromTemplate(nextTemplateId));
+      setColumns(() => editableColumns(getBoardTemplate(nextTemplateId).columns));
       setErrorMessage(null);
     }
     setTemplatesOpen(false);
@@ -273,6 +310,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
           Board title <span class="font-normal text-text-muted">(optional)</span>
         </label>
         <input
+          ref={(element) => { titleInput = element; }}
           id="board-title-input"
           type="text"
           maxlength={120}
@@ -281,8 +319,14 @@ export default function BoardCreator(props: BoardCreatorProps) {
           placeholder={defaultTitlePlaceholder}
           class={inputClass}
         />
-        <Show when={hiddenTemplate()}>
-          {(template) => <span class="text-sm text-text-muted">Try {template().name}</span>}
+        <Show when={titleTemplate() ?? (!customizeOpen() && subtitleTemplate())} keyed>
+          {(template) => (
+            <HiddenTemplateSuggestion
+              name={template.name}
+              onApply={() => handleApplyTemplate(template)}
+              onDismiss={() => handleDismissTemplate(template.id, titleInput)}
+            />
+          )}
         </Show>
       </div>
 
@@ -375,6 +419,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 Subtitle / context <span class="font-normal text-text-muted">(optional)</span>
               </label>
               <input
+                ref={(element) => { subtitleInput = element; }}
                 id="board-subtitle-input"
                 type="text"
                 maxlength={240}
@@ -383,6 +428,15 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 placeholder="e.g., Sprint 42 · Checkout Team"
                 class={inputClass}
               />
+              <Show when={!titleTemplate() && subtitleTemplate()} keyed>
+                {(template) => (
+                  <HiddenTemplateSuggestion
+                    name={template.name}
+                    onApply={() => handleApplyTemplate(template)}
+                    onDismiss={() => handleDismissTemplate(template.id, subtitleInput)}
+                  />
+                )}
+              </Show>
             </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2">

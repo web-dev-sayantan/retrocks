@@ -1,8 +1,8 @@
 import type { TemplateColumnDef } from './templates';
 
-type HiddenTemplateId = 'dungeon-quest' | 'coffee-shop' | 'mission-control' | 'pirate-ship';
+export type HiddenTemplateId = 'dungeon-quest' | 'coffee-shop' | 'mission-control' | 'pirate-ship';
 
-interface HiddenTemplate {
+export interface HiddenTemplate {
   id: HiddenTemplateId;
   name: string;
   keywords: RegExp;
@@ -56,6 +56,11 @@ const hiddenTemplates: readonly HiddenTemplate[] = [
   },
 ];
 
-export function matchHiddenTemplate(text: string): HiddenTemplate | undefined {
-  return hiddenTemplates.find((template) => template.keywords.test(text));
+export function matchHiddenTemplate(
+  text: string,
+  excluded: readonly HiddenTemplateId[],
+): HiddenTemplate | undefined {
+  return hiddenTemplates.find((template) =>
+    !excluded.includes(template.id) && template.keywords.test(text),
+  );
 }
