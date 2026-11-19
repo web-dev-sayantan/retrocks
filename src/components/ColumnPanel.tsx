@@ -692,8 +692,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       </Show>
 
       <Show when={props.isLocked}>
-        <p data-print-hide="true" class="rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-muted">
-          This Board is locked. You can still read and search Cards.
+        <p data-print-hide="true" class="hidden rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-muted sm:block">
+          This Board is Locked. You can still read and search Cards.
         </p>
       </Show>
 

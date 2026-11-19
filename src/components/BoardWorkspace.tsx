@@ -244,6 +244,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // Action Items Drawer state
   const [isActionItemsOpen, setIsActionItemsOpen] = createSignal(false);
+  let actionItemsHeaderEntry: HTMLButtonElement | undefined;
+
+  function restoreActionItemsFocus(previousFocus: HTMLElement | null): void {
+    for (const target of [previousFocus, actionItemsHeaderEntry, boardMenuTriggerEl]) {
+      if (!target?.isConnected || target.closest('[hidden]')) continue;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
+    }
+  }
+
   const openActionItemCount = createMemo(
     () =>
       workspace.board?.cards.filter(
@@ -591,6 +601,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     if (event.defaultPrevented || event.isComposing) return;
 
     if (event.key === 'Escape') {
+      if (isActionItemsOpen()) {
+        event.preventDefault();
+        setIsActionItemsOpen(false);
+        return;
+      }
       const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
       if (openDialog) {
         event.preventDefault();
@@ -1413,7 +1428,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           <div aria-live="polite" aria-atomic="true" class="sr-only">
             {revealAnnouncement()}
           </div>
-          <header class="relative z-20 border-b border-border bg-canvas">
+          <header class="@container relative z-20 border-b border-border bg-canvas">
             <div class="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 pt-3 pb-4 sm:px-6 sm:pt-5">
               <a
                 href={props.homeHref ?? '/'}
@@ -1495,15 +1510,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
               <div data-print-hide="true" class="col-start-2 row-start-1 flex items-center justify-end gap-2 sm:row-span-2 sm:self-end">
                 <button
+                  ref={actionItemsHeaderEntry}
                   type="button"
                   aria-keyshortcuts="A"
                   aria-haspopup="dialog"
                   aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
                   title="Action Items (A)"
-                  onClick={() => setIsActionItemsOpen((open) => !open)}
+                  onClick={(event) => {
+                    event.currentTarget.focus();
+                    setIsActionItemsOpen(true);
+                  }}
                   class={[
-                    'hidden min-h-11 md:inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text sm:min-h-9 sm:px-3',
-                    'transition-colors hover:bg-surface-subtle',
+                    'hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text @min-[26rem]:inline-flex sm:min-h-9 sm:px-3',
+                    'transition-colors hover:bg-surface-subtle active:bg-surface-subtle',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
                 >
@@ -1595,14 +1614,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       type="button"
                       role="menuitem"
                       aria-haspopup="dialog"
-                      aria-label={`Action Items ${openActionItemCount()} open`}
-                      class="board-menu-item md:hidden"
+                      class="board-menu-item @min-[26rem]:hidden"
                       onClick={() => {
                         closeBoardMenu(true);
                         setIsActionItemsOpen(true);
                       }}
                     >
-                      <span class="inline-flex items-center gap-2"><FlagIcon /> Action Items</span>
+                      <span class="inline-flex items-center gap-2"><FlagIcon /> Action Items</span>{' '}
                       <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
                     </button>
                     <div role="separator" class="my-1 border-t border-border" />
@@ -1906,20 +1924,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 (boardView()?.matchedCardCount ?? 0) === 0
               }
             >
-              <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
-                <p>No Cards match your current search or filter.</p>
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  class={[
-                    'inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
-                    'transition-colors hover:bg-canvas',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  Clear filters
-                </button>
-              </div>
+              <p class="mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+                No Cards match your current search or filter.
+              </p>
             </Show>
 
             <div
@@ -2060,17 +2067,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </Show>
 
           {/* Action Items Drawer / Bottom Sheet */}
-          <Show when={isActionItemsOpen()}>
-            <ActionItemsDrawer
-              board={board()}
-              isLocked={board().isLocked}
-              onClose={() => setIsActionItemsOpen(false)}
-              onUpdateActionItem={handleUpdateActionItem}
-            />
-          </Show>
+          <ActionItemsDrawer
+            board={board()}
+            open={isActionItemsOpen()}
+            isLocked={board().isLocked}
+            onClose={() => setIsActionItemsOpen(false)}
+            onRestoreFocus={restoreActionItemsFocus}
+            onUpdateActionItem={handleUpdateActionItem}
+          />
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
-          <Show when={!board().isLocked && activeMobileColumn()}>
+          <Show
+            when={!board().isLocked && activeMobileColumn()}
+            fallback={
+              <Show when={board().isLocked}>
+                <p data-print-hide="true" class="sticky bottom-0 z-20 border-t border-border bg-surface px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-sm text-text-muted sm:hidden">
+                  This Board is Locked. You can still read and search Cards.
+                </p>
+              </Show>
+            }
+          >
             {(targetCol) => (
               <div
                 data-print-hide="true"

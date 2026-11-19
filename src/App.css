@@ -180,6 +180,58 @@
   }
 }
 
+/* Keep the drawer in the top layer briefly on close to finish its exit. */
+.action-items-dialog {
+  --action-items-offset: translateY(100%);
+  transition: display 160ms allow-discrete, overlay 160ms allow-discrete;
+}
+
+.action-items-dialog::backdrop {
+  background-color: transparent;
+  transition: background-color 160ms ease, display 160ms allow-discrete,
+    overlay 160ms allow-discrete;
+}
+
+.action-items-dialog .action-items-panel {
+  transform: var(--action-items-offset);
+  transition: transform 160ms ease-in;
+}
+
+.action-items-dialog[open] .action-items-panel {
+  transform: translate(0);
+  transition-timing-function: ease-out;
+}
+
+.action-items-dialog[open]::backdrop {
+  background-color: rgb(0 0 0 / 50%);
+}
+
+.action-items-dialog:not([open]) {
+  pointer-events: none;
+}
+
+@media (width >= 40rem) {
+  .action-items-dialog {
+    --action-items-offset: translateX(100%);
+  }
+}
+
+@starting-style {
+  .action-items-dialog[open]::backdrop {
+    background-color: transparent;
+  }
+
+  .action-items-dialog[open] .action-items-panel {
+    transform: var(--action-items-offset);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-items-dialog .action-items-panel {
+    transform: none !important;
+  }
+}
+
 @layer base {
   .board-workspace :where(button, a, summary):focus-visible {
     outline: 2px solid var(--retrocks-focus);

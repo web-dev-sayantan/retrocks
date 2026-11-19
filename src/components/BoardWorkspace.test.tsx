@@ -1880,9 +1880,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     // Facilitator CAN also update existing Action Item in Card Detail Drawer, but cannot unflag or comment
-    const actionArticle = getByText('Automate canary rollback').closest(
-      'article',
-    )!;
+    const actionArticle = within(getByRole('main')).getByText('Automate canary rollback').closest('article')!;
     fireEvent.click(
       within(actionArticle).getByRole('button', { name: 'Open Card details' }),
     );
@@ -1916,6 +1914,30 @@ describe('<BoardWorkspace />', () => {
     });
     expect(queryByText('Locked')).toBeNull();
     expect(getByRole('button', { name: 'Private Mode' })).toBeEnabled();
+  });
+
+  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', () => {
+    const board = makeBoardView({ isLocked: true });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const entry = view.getByRole('button', { name: 'Action Items 0 open' });
+    entry.focus();
+    fireEvent.click(entry);
+    flush();
+
+    const close = view.getByRole('button', { name: 'Close Action Items' });
+    expect(close).toHaveFocus();
+    // In the browser the header entry becomes hidden at the compact layout width.
+    entry.hidden = true;
+    fireEvent.click(close);
+    flush();
+
+    expect(view.queryByRole('dialog', { name: 'Action Items' })).toBeNull();
+    expect(view.getByRole('button', { name: 'More board actions' })).toHaveFocus();
   });
 
   it('prevents non-Facilitator Participants from editing Action Items or accessing Board Settings when Locked', () => {
@@ -2776,6 +2798,55 @@ describe('<BoardWorkspace />', () => {
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps Search and the active filter available outside Filter & sort on a Locked Board', () => {
+    const board = makeBoardView({
+      isFacilitator: false,
+      isLocked: true,
+      cards: [
+        makeCard({ id: 'own', content: 'My deployment checklist' }),
+        makeCard({ id: 'peer', content: 'Teammate deployment checklist', isMine: false }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const search = view.getByRole('searchbox', { name: 'Search Cards, Card Groups, and comments' });
+    const disclosure = view.getByRole('button', { name: 'Filter & sort' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(disclosure);
+    flush();
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(within(view.getByRole('group', { name: 'Filter cards' })).getByRole('button', { name: 'Mine' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Sort cards' }), { target: { value: 'oldest' } });
+    fireEvent.click(disclosure);
+    fireEvent.input(search, { target: { value: 'deployment' } });
+    flush();
+
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(view.getByText('Filter: Mine')).toBeVisible();
+    expect(view.getByText('1 match (1 of 2 cards)')).toBeVisible();
+    expect(view.queryByText('Teammate deployment checklist')).not.toBeInTheDocument();
+
+    fireEvent.click(view.getByRole('button', { name: 'Clear filters' }));
+    flush();
+    expect(search).toHaveValue('');
+    expect(search).toHaveFocus();
+    expect(view.queryByText('Filter: Mine')).not.toBeInTheDocument();
+    expect(view.getByText('Teammate deployment checklist')).toBeInTheDocument();
+
+    fireEvent.click(disclosure);
+    flush();
+    expect(view.getByRole('combobox', { name: 'Sort cards' })).toHaveValue('oldest');
+    for (const spy of Object.values(spies)) {
+      expect(spy).not.toHaveBeenCalled();
     }
   });
 

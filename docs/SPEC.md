@@ -103,7 +103,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Board header:**
   - Lead with the Board title and optional context. The Retrocks link returns home, and Facilitators can rename an unlocked Board from the title.
   - Keep online presence, Countdown Timer, and active Board states near the title. Show reconnecting when live updates are interrupted. Private Mode explains who can read a Card before Reveal All.
-  - Keep Share and More in the header. More holds theme, export, and Board Settings for Facilitators. Action Items appears in the header from 768 CSS px and in More on narrower layouts, with its open count.
+  - Keep Share and More in the header. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
 - **Columns (1–10):**
   - Use a small accent marker, a wrapping title, and a tabular Card count. Use opaque Cards on the open Column rail.
   - Offer **+ Add Card** at the top of each desktop Column and one bottom composer on phones. The phone composer names its target Column and keeps a draft for each Column. Enter submits, Shift+Enter starts a new line, and a failed submission keeps the draft and displays its error by the composer.
@@ -188,7 +188,8 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - `actionDone`: boolean checkbox (`Open` / `Done`).
   - `actionOwner`: optional short free-text tag (max 40 chars, e.g., `"Platform"`, `"API squad"`, or blank — explicitly optional and never asks for emails or accounts).
 - **Action Items Drawer:**
-  - Accessible from the Board header; aggregates all Action Items across every Column.
+  - Opens from the header or More and aggregates visible Action Items across every Column. Present it as a right-side drawer on desktop and a bottom sheet on phones.
+  - Dim the Board with a scrim. Contain focus and allow dismissal with Escape, the close button, or the scrim, including while the panel is opening. Return focus to the opening control or to an available Action Items entry or More after the layout changes. Use static feedback with reduced motion.
   - Filterable by `All` / `Open` / `Done`.
   - One-click **"Copy as Markdown Checklist"** for pasting into GitHub Issues, Linear, Jira, or Slack.
   - When a Board is **Locked**, Facilitators can still check off `actionDone` and update `actionOwner` on existing Action Items for post-retro follow-up.
@@ -196,13 +197,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ---
 
 ### 3.9 Sorting, Search & Filtering
-- **Instant Client-Side Search:** Compact search bar (`/` shortcut) filtering visible Cards, Card Group titles, and comments in real time with match counts.
+- Keep the labeled **Search** field, filters, sort, and **Clear filters** above the Columns. Search (`/` shortcut) filters visible Cards, Card Group titles, and comments as the Participant types. Private Mode placeholders stay outside search results.
 - **Sort Modes (Purely Viewer-Local — No Manual Intra-Column Ordering):**
   - `Newest` (default during writing)
   - `Oldest`
-  - `Most Voted` (descending by total Votes, ideal for discussion phase)
+  - `Most Voted` (descending by total Votes). During Blind Voting, this option is unavailable and a selected `Most Voted` sort falls back to `Newest` until Blind Voting ends.
 - **Quick Filter Chips:** `All`, `Mine`, `Voted`, `Action Items`.
-- Filtering and sorting are strictly local per viewer so one person searching never disrupts anyone else's screen.
+- When the view is narrowed, keep the selected filter (when set), match count, and **Clear filters** visible. Clearing restores `All` and empties Search while preserving the sort. A Column that has no Cards and a Column with no matches have distinct messages.
+- Search, filters, and sorting affect only the Participant's view and remain available on a Locked Board.
 
 ---
 
@@ -212,7 +214,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
     1. Toggle `actionDone` and update `actionOwner` on **existing Action Items**,
     2. **Unlock** the Board, or
     3. **Delete** the Board permanently.
-  - Board remains viewable, searchable, and exportable until expiry.
+  - Show Locked where the composer appears in each desktop Column and in the phone’s bottom writing area. Viewing, search, sorting, filters, and export remain available. Facilitators can also view and rotate the Co-Facilitator Link while the Board is Locked.
 - **Automatic Inactivity Cleanup:**
   - Every Board tracks `last_active_at` (updated on any write).
   - After `retention_days` (default 90 days) of inactivity, the Board and all associated records are permanently purged.
@@ -256,6 +258,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Mobile (`< 640px`):**
   - Share and More fit on a single controls row. Give long titles and context their own full-width lines and let active states wrap.
   - Keep the sticky **Column Tab Bar** in its own horizontal scroll region. Tabs show labels, accents, and counts. Swipe the Card stream horizontally to change Columns while preserving vertical scrolling.
+  - Keep **Search** visible and place the filter chips and sort selector in a **Filter & sort** disclosure. Leave the active filter, match count, and **Clear filters** visible when the disclosure closes.
   - Show a single Column with at least 44 × 44 CSS px touch targets. Keep the composer at the bottom of the visible viewport during entry, including when the software keyboard is shown.
   - Card details open in a bottom sheet. Card and Card Group commands remain available by touch with hit areas at least 44 × 44 CSS px, including reaction choices and the tappable checkbox labels.
 
