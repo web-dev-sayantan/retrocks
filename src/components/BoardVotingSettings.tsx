@@ -171,7 +171,7 @@ export default function BoardVotingSettings(props: {
         </div>
 
         <Show when={props.board.isLocked}>
-          <p class="mb-3 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-text-muted">
+          <p class="mb-3 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-text">
             This Board is Locked. Unlock the Board to adjust Voting settings or reset Votes.
           </p>
         </Show>
@@ -265,7 +265,7 @@ export default function BoardVotingSettings(props: {
             <div class="flex flex-wrap gap-2">
               <button
                 type="button"
-                class={[buttonClass, 'border border-col-rose bg-col-rose text-white hover:opacity-90']}
+                class={[buttonClass, 'border border-rose-700 bg-rose-700 text-white hover:opacity-90 dark:border-rose-600 dark:bg-rose-600']}
                 disabled={pending() !== null}
                 onClick={() => void resetVotes()}
               >
@@ -322,7 +322,7 @@ export default function BoardVotingSettings(props: {
             fallback={
               <button
                 type="button"
-                class={[buttonClass, 'border border-col-rose bg-surface text-col-rose hover:bg-surface-subtle']}
+                class={[buttonClass, 'border border-rose-700 bg-surface text-rose-700 hover:bg-surface-subtle dark:border-rose-400 dark:text-rose-300']}
                 disabled={pending() !== null}
                 onClick={() => {
                   setError(null);
@@ -340,7 +340,7 @@ export default function BoardVotingSettings(props: {
             <div class="flex flex-wrap gap-2">
               <button
                 type="button"
-                class={[buttonClass, 'border border-col-rose bg-col-rose text-white hover:opacity-90']}
+                class={[buttonClass, 'border border-rose-700 bg-rose-700 text-white hover:opacity-90 dark:border-rose-600 dark:bg-rose-600']}
                 disabled={pending() !== null}
                 onClick={() => void confirmDeleteBoard()}
               >

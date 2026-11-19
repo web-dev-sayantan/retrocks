@@ -171,4 +171,48 @@ describe('<RecentBoardsList /> & localStorage persistence', () => {
     expect(queryByText('Sprint 41 Retro')).toBeNull();
     expect(readRecentBoards()).toEqual([]);
   });
+
+  it('mounts and removes Recent Boards entries with zero Solid 2.0 reactivity diagnostics', async () => {
+    recordRecentBoard(
+      {
+        id: 'board_diag_1111111111',
+        title: 'Facilitated Sprint Retro',
+        isFacilitator: true,
+      },
+      Date.now() - 60_000,
+    );
+    recordRecentBoard(
+      {
+        id: 'board_diag_2222222222',
+        title: 'Participant Design Crit',
+        isFacilitator: false,
+      },
+      Date.now() - 120_000,
+    );
+
+    const { artifact } = await captureArtifact(
+      () => {
+        const { getByRole, getByText, queryByText, unmount } = render(() => (
+          <RecentBoardsList />
+        ));
+        try {
+          flush();
+          expect(getByText('Facilitated Sprint Retro')).toBeInTheDocument();
+          expect(getByText('Facilitator')).toBeInTheDocument();
+          fireEvent.click(
+            getByRole('button', {
+              name: /Remove Facilitated Sprint Retro from recent boards/i,
+            }),
+          );
+          flush();
+          expect(queryByText('Facilitated Sprint Retro')).toBeNull();
+          expect(getByText('Participant Design Crit')).toBeInTheDocument();
+        } finally {
+          unmount();
+        }
+      },
+      { scenario: 'recent-boards-list-interactions' },
+    );
+    expectNoDiagnostics(artifact);
+  });
 });

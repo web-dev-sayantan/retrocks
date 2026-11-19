@@ -1,6 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
-import { flush } from 'solid-js';
+import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardWorkspaceActions } from '../lib/board-actions';
@@ -971,7 +971,7 @@ describe('<BoardWorkspace />', () => {
       flush();
       receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
       expect(
-        view.getByRole('button', { name: 'Action Items, 1 open' }),
+        view.getByRole('button', { name: 'Action Items 1 open' }),
       ).toBeInTheDocument();
 
       const cardArticle = view
@@ -989,7 +989,7 @@ describe('<BoardWorkspace />', () => {
         isActionItem: true,
       });
       expect(
-        view.getByRole('button', { name: 'Action Items, 2 open' }),
+        view.getByRole('button', { name: 'Action Items 2 open' }),
       ).toBeInTheDocument();
 
       const refreshedArticle = view
@@ -1006,7 +1006,7 @@ describe('<BoardWorkspace />', () => {
         actionDone: true,
       });
       expect(
-        view.getByRole('button', { name: 'Action Items, 1 open' }),
+        view.getByRole('button', { name: 'Action Items 1 open' }),
       ).toBeInTheDocument();
 
       receive({
@@ -1021,7 +1021,7 @@ describe('<BoardWorkspace />', () => {
         ],
       });
       expect(
-        view.getByRole('button', { name: 'Action Items, 0 open' }),
+        view.getByRole('button', { name: 'Action Items 0 open' }),
       ).toBeInTheDocument();
 
       fireEvent.keyDown(document, { key: 'a' });
@@ -1731,7 +1731,7 @@ describe('<BoardWorkspace />', () => {
     expect(getByRole('button', { name: 'Share' })).toBeEnabled();
 
     // Facilitator CAN update actionDone & actionOwner on existing Action Items in Action Items Drawer
-    fireEvent.click(getByRole('button', { name: /Action Items, \d+ open/i }));
+    fireEvent.click(getByRole('button', { name: /Action Items \d+ open/i }));
     flush();
     const drawer = within(getByRole('dialog', { name: 'Action Items' }));
     const drawerDone = drawer.getByLabelText(
@@ -1839,7 +1839,7 @@ describe('<BoardWorkspace />', () => {
     ).toBeDisabled();
 
     // Action Items Drawer disables controls for Participant while Locked
-    fireEvent.click(getByRole('button', { name: /Action Items, \d+ open/i }));
+    fireEvent.click(getByRole('button', { name: /Action Items \d+ open/i }));
     flush();
     const drawer = within(getByRole('dialog', { name: 'Action Items' }));
     expect(
@@ -2933,5 +2933,60 @@ describe('<BoardWorkspace />', () => {
     fireEvent.keyDown(document.body, { key: '/' });
     flush();
     expect(searchInput).toHaveFocus();
+  });
+
+  it('mounts cleanly when Board snapshot resolves via soft navigation and reconciles updates with zero diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      () => {
+        const [resolvedBoard, setResolvedBoard] = createSignal<BoardViewDTO | null>(null);
+        const view = render(() => (
+          <Show
+            when={resolvedBoard()}
+            fallback={<BoardWorkspace board={null} boardId="board_soft_nav" homeHref="/" />}
+          >
+            {(board) => (
+              <BoardWorkspace board={board()} boardId="board_soft_nav" homeHref="/" />
+            )}
+          </Show>
+        ));
+        try {
+          flush();
+          expect(view.getByText(/Board not found or expired/i)).toBeInTheDocument();
+
+          const initial = makeBoardView({
+            id: 'board_soft_nav',
+            title: 'Soft Navigated Board',
+            version: 1,
+            cards: [makeCard({ id: 'card_nav_1', content: 'Loaded after navigation' })],
+          });
+          setResolvedBoard(initial);
+          flush();
+
+          expect(view.getByRole('heading', { name: 'Soft Navigated Board' })).toBeInTheDocument();
+          expect(view.getByText('Loaded after navigation')).toBeInTheDocument();
+
+          // Reconcile a fresher snapshot prop update without strict-read diagnostics
+          setResolvedBoard(
+            makeBoardView({
+              id: 'board_soft_nav',
+              title: 'Soft Navigated Board v2',
+              version: 2,
+              cards: [
+                makeCard({ id: 'card_nav_1', content: 'Loaded after navigation' }),
+                makeCard({ id: 'card_nav_2', content: 'Second card after refresh' }),
+              ],
+            }),
+          );
+          flush();
+
+          expect(view.getByRole('heading', { name: 'Soft Navigated Board v2' })).toBeInTheDocument();
+          expect(view.getByText('Second card after refresh')).toBeInTheDocument();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'board-route-soft-navigation-mount' },
+    );
+    expectNoDiagnostics(artifact);
   });
 });

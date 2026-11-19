@@ -80,8 +80,13 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   });
 
-  const otherColumns = createMemo(() =>
-    props.columns.filter((column) => column.id !== props.group.columnId),
+  const otherColumns = createMemo(
+    () => props.columns.filter((column) => column.id !== props.group.columnId),
+    {
+      equals: (prev, next) =>
+        prev.length === next.length &&
+        prev.every((col, index) => col === next[index]),
+    },
   );
 
   const draggingCard = createMemo(() => {
@@ -294,7 +299,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             >
               <button
                 type="button"
-                aria-label="Edit Card Group title"
+                aria-label={`${props.group.title || 'Card Group'} — Edit Card Group title`}
                 title="Edit Card Group title"
                 onClick={startRename}
                 class="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-semibold text-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
@@ -385,7 +390,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
               title="Dissolve Card Group"
               disabled={isDissolving()}
               onClick={() => void handleDissolve()}
-              class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-col-rose disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+              class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-rose-700 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus dark:hover:text-rose-300"
             >
               <TrashIcon />
             </button>

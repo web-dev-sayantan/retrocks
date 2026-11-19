@@ -238,7 +238,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                 </span>
               </Show>
               <Show when={props.card.isActionItem}>
-                <span class="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                <span class="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
                   Action Item
                 </span>
               </Show>
@@ -413,7 +413,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                               onClick={() => setConfirmingCommentId(comment.id)}
                               class={[
                                 'inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                                'transition-colors hover:bg-surface-subtle hover:text-col-rose',
+                                'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
                                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                               ]}
                             >

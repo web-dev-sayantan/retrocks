@@ -118,23 +118,37 @@ export default function CardItem(props: CardItemProps) {
     return props.isFacilitator && !props.isBlurred;
   });
 
-  const otherColumns = createMemo(() =>
-    props.columns.filter((col) => col.id !== props.card.columnId),
+  const otherColumns = createMemo(
+    () => props.columns.filter((col) => col.id !== props.card.columnId),
+    {
+      equals: (prev, next) =>
+        prev.length === next.length &&
+        prev.every((col, index) => col === next[index]),
+    },
   );
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
 
-  const groupTargets = createMemo(() => ({
-    cards: props.columnCards.filter(
-      (other) =>
-        other.id !== props.card.id &&
-        !other.redacted &&
-        other.groupId === null,
-    ),
-    groups: props.columnGroups.filter(
-      (group) => group.id !== props.card.groupId,
-    ),
-  }));
+  const groupTargets = createMemo(
+    () => ({
+      cards: props.columnCards.filter(
+        (other) =>
+          other.id !== props.card.id &&
+          !other.redacted &&
+          other.groupId === null,
+      ),
+      groups: props.columnGroups.filter(
+        (group) => group.id !== props.card.groupId,
+      ),
+    }),
+    {
+      equals: (prev, next) =>
+        prev.cards.length === next.cards.length &&
+        prev.groups.length === next.groups.length &&
+        prev.cards.every((card, index) => card === next.cards[index]) &&
+        prev.groups.every((group, index) => group === next.groups[index]),
+    },
+  );
 
   const canGroup = createMemo(
     () =>
@@ -468,7 +482,7 @@ export default function CardItem(props: CardItemProps) {
                 </span>
               </Show>
               <Show when={props.card.isActionItem}>
-                <span class="rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+                <span class="rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text">
                   Action Item
                 </span>
               </Show>
@@ -478,7 +492,7 @@ export default function CardItem(props: CardItemProps) {
                   aria-label={`${props.card.commentCount} ${props.card.commentCount === 1 ? 'comment' : 'comments'}`}
                   onClick={() => props.onOpenCardDetail(props.card.id)}
                   class={[
-                    'inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-subtle/70 px-2 py-0.5 text-[11px] font-medium text-text-muted sm:min-h-6',
+                    'inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-subtle/70 px-2 py-0.5 text-[11px] font-medium text-text sm:min-h-6',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
@@ -748,7 +762,7 @@ export default function CardItem(props: CardItemProps) {
                     }}
                     class={[
                       'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                      'transition-colors hover:bg-surface-subtle hover:text-col-rose',
+                      'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
                   >

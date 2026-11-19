@@ -49,7 +49,7 @@ export default function RecentBoardsList() {
                       {entry.title}
                     </span>
                     <Show when={entry.isFacilitator}>
-                      <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                      <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
                         Facilitator
                       </span>
                     </Show>

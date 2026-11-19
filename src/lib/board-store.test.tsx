@@ -1,3 +1,4 @@
+import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { createStore, flush, snapshot } from 'solid-js';
 import { describe, expect, it } from 'vitest';
 
@@ -359,5 +360,83 @@ describe('applyBoardEvents (reactive store patcher)', () => {
     flush();
 
     expect(snapshot(board)).toMatchObject({ version: 3, isLocked: false });
+  });
+
+  it('patches Cards, Card Groups, and reactions in place with zero Solid 2.0 store diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      () => {
+        const [board, setBoard] = createStore<BoardViewDTO>(makeInitialBoard());
+        const cardA = makeCard({ id: 'card_a', content: 'First card' });
+        const cardB = makeCard({ id: 'card_b', content: 'Second card' });
+        const cardC = makeCard({ id: 'card_c', content: 'Third card' });
+
+        setBoard((draft) => {
+          applyBoardEvents(draft, [
+            { type: 'card:upserted', version: 2, card: cardA },
+          ]);
+        });
+        flush();
+
+        setBoard((draft) => {
+          applyBoardEvents(draft, [
+            { type: 'card:upserted', version: 3, card: cardB },
+            { type: 'card:upserted', version: 4, card: cardC },
+          ]);
+        });
+        flush();
+
+        setBoard((draft) => {
+          applyBoardEvents(draft, [
+            {
+              type: 'card:upserted',
+              version: 5,
+              card: { ...cardA, content: 'First card edited', updatedAt: cardA.updatedAt + 1000 },
+            },
+            {
+              type: 'group:upserted',
+              version: 6,
+              group: {
+                id: 'group_1',
+                columnId: 'col_1',
+                title: 'Initial group',
+                cardIds: ['card_a', 'card_b'],
+                votes: 0,
+                myVotes: 0,
+                createdAt: 1_760_000_005_000,
+              },
+            },
+            {
+              type: 'group:upserted',
+              version: 7,
+              group: {
+                id: 'group_1',
+                columnId: 'col_1',
+                title: 'Renamed group',
+                cardIds: ['card_a', 'card_b'],
+                votes: 1,
+                myVotes: 1,
+                createdAt: 1_760_000_005_000,
+              },
+            },
+            {
+              type: 'reaction:updated',
+              version: 8,
+              cardId: 'card_c',
+              counts: { '👍': 1 },
+              myReactions: ['👍'],
+            },
+          ]);
+        });
+        flush();
+
+        const current = snapshot(board);
+        expect(current.cards.map((c) => c.id)).toEqual(['card_a', 'card_b', 'card_c']);
+        expect(current.cards[0].content).toBe('First card edited');
+        expect(current.groups[0].title).toBe('Renamed group');
+        expect(current.cards[2].reactions).toEqual({ '👍': 1 });
+      },
+      { scenario: 'board-store-in-place-patches' },
+    );
+    expectNoDiagnostics(artifact);
   });
 });
