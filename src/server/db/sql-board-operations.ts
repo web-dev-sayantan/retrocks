@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  MAX_ACTION_OWNER_LENGTH,
   MAX_CARDS_PER_BOARD,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMNS_PER_BOARD,
@@ -1316,6 +1317,69 @@ export class SqlBoardOperations {
           return finalize(nextVersion, now);
         }
 
+        case 'card:set-action': {
+          const card = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!card) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Card not found.',
+            };
+          }
+
+          const permission = checkPrivateCardPermission(
+            board,
+            actor,
+            card.author_token_hash,
+          );
+          if (!permission.ok) return permission;
+
+          const isActionItem =
+            command.isActionItem ?? card.is_action_item === 1;
+          if (
+            !isActionItem &&
+            (command.actionDone !== undefined ||
+              command.actionOwner !== undefined)
+          ) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message:
+                'Only Action Items can have completion and owner fields.',
+            };
+          }
+
+          const actionOwner = command.actionOwner ?? card.action_owner;
+          if (actionOwner.length > MAX_ACTION_OWNER_LENGTH) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: `Action owner must be ${MAX_ACTION_OWNER_LENGTH} characters or fewer.`,
+            };
+          }
+
+          this.sql.run(
+            `UPDATE cards SET is_action_item = ?, action_done = ?, action_owner = ?, updated_at = ?
+             WHERE board_id = ? AND id = ?`,
+            isActionItem ? 1 : 0,
+            isActionItem && (command.actionDone ?? card.action_done === 1) ? 1 : 0,
+            isActionItem ? actionOwner : '',
+            now,
+            boardId,
+            command.cardId,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'card:upserted',
+            version: nextVersion,
+            cardId: command.cardId,
+          });
+          return finalize(nextVersion, now);
+        }
         case 'reaction:toggle':
         case 'comment:create':
         case 'comment:delete': {

@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
 
 import type {
+  ActionItemPatch,
   CardGroupDTO,
   CardViewDTO,
   ColumnDTO,
@@ -44,6 +45,10 @@ export interface CardGroupItemProps {
   ) => Promise<boolean>;
   onUngroupCard: (cardId: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateActionItem: (
+    cardId: string,
+    patch: ActionItemPatch,
+  ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
@@ -395,6 +400,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 onGroupCard={props.onGroupCard}
                 onUngroupCard={props.onUngroupCard}
                 onUpdateCard={props.onUpdateCard}
+                onUpdateActionItem={props.onUpdateActionItem}
                 onMoveCard={props.onMoveCard}
                 onDeleteCard={props.onDeleteCard}
                 onToggleReaction={props.onToggleReaction}

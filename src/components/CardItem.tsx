@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
   MAX_CARD_CONTENT_LENGTH,
+  type ActionItemPatch,
   type CardGroupDTO,
   type CardViewDTO,
   type ColumnDTO,
@@ -13,6 +14,7 @@ import CardReactions from './CardReactions';
 import CardText from './CardText';
 import {
   ArrowRightLeftIcon,
+  FlagIcon,
   MessageSquareIcon,
   PencilIcon,
   PlusIcon,
@@ -41,6 +43,10 @@ export interface CardItemProps {
   ) => Promise<boolean>;
   onUngroupCard: (cardId: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateActionItem: (
+    cardId: string,
+    patch: ActionItemPatch,
+  ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
@@ -61,6 +67,7 @@ export default function CardItem(props: CardItemProps) {
   const [isGrouping, setIsGrouping] = createSignal(false);
   const [isUngrouping, setIsUngrouping] = createSignal(false);
   const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
+  const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
 
   const [wasRevealed, setWasRevealed] = createSignal(false);
 
@@ -199,6 +206,16 @@ export default function CardItem(props: CardItemProps) {
       }
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function updateAction(patch: ActionItemPatch): Promise<void> {
+    if (isUpdatingAction()) return;
+    setIsUpdatingAction(true);
+    try {
+      await props.onUpdateActionItem(props.card.id, patch);
+    } finally {
+      setIsUpdatingAction(false);
     }
   }
 
@@ -390,6 +407,29 @@ export default function CardItem(props: CardItemProps) {
             />
           </div>
 
+          <Show when={props.card.isActionItem}>
+            <div class="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-subtle/60 px-2 py-1.5">
+              <input
+                type="checkbox"
+                checked={props.card.actionDone}
+                disabled={props.isLocked || isUpdatingAction()}
+                aria-label={`Mark ${props.card.content} as Done`}
+                onChange={(event) =>
+                  void updateAction({ actionDone: event.currentTarget.checked })
+                }
+                class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <span class="text-[11px] font-medium text-text-muted">
+                {props.card.actionDone ? 'Done' : 'Open'}
+              </span>
+              <Show when={props.card.actionOwner}>
+                <span class="ml-auto truncate rounded-full border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+                  {props.card.actionOwner}
+                </span>
+              </Show>
+            </div>
+          </Show>
+
           <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2">
             <div class="flex items-center gap-1.5 text-[11px] text-text-muted">
               <Show when={props.card.isMine}>
@@ -512,6 +552,39 @@ export default function CardItem(props: CardItemProps) {
                     </div>
                   </Show>
                 </div>
+              </Show>
+
+              <Show when={!props.isLocked}>
+                <button
+                  type="button"
+                  aria-label={
+                    props.card.isActionItem
+                      ? 'Unflag Action Item'
+                      : 'Flag as Action Item'
+                  }
+                  aria-pressed={props.card.isActionItem ? 'true' : 'false'}
+                  title={
+                    props.card.isActionItem
+                      ? 'Unflag Action Item'
+                      : 'Flag as Action Item'
+                  }
+                  disabled={isUpdatingAction()}
+                  onClick={() =>
+                    void updateAction({
+                      isActionItem: !props.card.isActionItem,
+                    })
+                  }
+                  class={[
+                    'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md sm:min-h-7 sm:min-w-7',
+                    'transition-colors hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-50',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    props.card.isActionItem
+                      ? 'text-text'
+                      : 'text-text-muted hover:text-text',
+                  ]}
+                >
+                  <FlagIcon />
+                </button>
               </Show>
 
               <Show when={canManage()}>

@@ -174,6 +174,23 @@ export function SmilePlusIcon(props: IconProps) {
   );
 }
 
+export function FlagIcon(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class ?? 'h-3.5 w-3.5'}
+    >
+      <path d="M3.75 13.75v-11h3.1c.9 0 1.35.35 2.2.35.85 0 1.3-.35 2.2-.35h1v6.75h-1c-.9 0-1.35.35-2.2.35-.85 0-1.3-.35-2.2-.35h-3.1" />
+    </svg>
+  );
+}
+
 export function MessageSquareIcon(props: IconProps) {
   return (
     <svg

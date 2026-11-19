@@ -3,6 +3,7 @@ import * as v from 'valibot';
 import {
   BOARD_TEMPLATE_IDS,
   COLUMN_ACCENTS,
+  MAX_ACTION_OWNER_LENGTH,
   MAX_BOARD_SUBTITLE_LENGTH,
   MAX_BOARD_TITLE_LENGTH,
   MAX_CARD_CONTENT_LENGTH,
@@ -249,6 +250,36 @@ export const DeleteCommentInputSchema = v.object({
 });
 
 export type DeleteCommentInput = v.InferInput<typeof DeleteCommentInputSchema>;
+
+export const ActionOwnerSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.maxLength(
+    MAX_ACTION_OWNER_LENGTH,
+    `Action owner must be ${MAX_ACTION_OWNER_LENGTH} characters or fewer`,
+  ),
+);
+
+export const UpdateActionItemInputSchema = v.pipe(
+  v.object({
+    boardId: BoardIdSchema,
+    cardId: EntityIdSchema,
+    isActionItem: v.optional(v.boolean()),
+    actionDone: v.optional(v.boolean()),
+    actionOwner: v.optional(ActionOwnerSchema),
+  }),
+  v.check(
+    (input) =>
+      input.isActionItem !== undefined ||
+      input.actionDone !== undefined ||
+      input.actionOwner !== undefined,
+    'No Action Item changes provided',
+  ),
+);
+
+export type UpdateActionItemInput = v.InferInput<
+  typeof UpdateActionItemInputSchema
+>;
 
 export const AddColumnInputSchema = v.object({
   boardId: BoardIdSchema,

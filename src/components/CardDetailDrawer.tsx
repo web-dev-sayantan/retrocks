@@ -1,8 +1,19 @@
-import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  createUniqueId,
+  onSettled,
+  untrack,
+} from 'solid-js';
 
 import {
+  MAX_ACTION_OWNER_LENGTH,
   MAX_COMMENTS_PER_CARD,
   MAX_COMMENT_LENGTH,
+  type ActionItemPatch,
   type CardViewDTO,
   type ColumnDTO,
   type ReactionEmoji,
@@ -21,12 +32,21 @@ export interface CardDetailDrawerProps {
   isBlurred: boolean;
   nowMs: number;
   onClose: () => void;
+  onUpdateActionItem: (
+    cardId: string,
+    patch: ActionItemPatch,
+  ) => Promise<boolean>;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
   onCreateComment: (cardId: string, content: string) => Promise<boolean>;
   onDeleteComment: (cardId: string, commentId: string) => Promise<boolean>;
 }
 
 export default function CardDetailDrawer(props: CardDetailDrawerProps) {
+  const actionOwnerId = createUniqueId();
+  const [ownerDraft, setOwnerDraft] = createSignal(
+    untrack(() => props.card.actionOwner),
+  );
+  const [isSavingAction, setIsSavingAction] = createSignal(false);
   const [commentDraft, setCommentDraft] = createSignal('');
   const [isPosting, setIsPosting] = createSignal(false);
   const [confirmingCommentId, setConfirmingCommentId] = createSignal<
@@ -50,6 +70,34 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
+
+  createEffect(
+    () => props.card.actionOwner,
+    (owner) => {
+      setOwnerDraft(owner);
+    },
+  );
+
+  async function updateAction(patch: ActionItemPatch): Promise<boolean> {
+    if (props.isLocked || isSavingAction()) return false;
+    setIsSavingAction(true);
+    try {
+      return await props.onUpdateActionItem(props.card.id, patch);
+    } finally {
+      setIsSavingAction(false);
+    }
+  }
+
+  async function saveActionOwner(): Promise<void> {
+    if (props.isLocked || isSavingAction()) return;
+    const trimmed = ownerDraft().trim();
+    if (trimmed === props.card.actionOwner) {
+      setOwnerDraft(props.card.actionOwner);
+      return;
+    }
+    const ok = await updateAction({ actionOwner: trimmed });
+    setOwnerDraft(ok ? trimmed : props.card.actionOwner);
+  }
 
   async function submitComment(): Promise<void> {
     const trimmed = commentDraft().trim();
@@ -193,6 +241,82 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
               disabled={props.isLocked}
               onToggleReaction={props.onToggleReaction}
             />
+
+            <div class="space-y-2 rounded-lg border border-border bg-canvas/60 p-3">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-xs font-semibold tracking-wide text-text-muted uppercase">
+                  Action Item
+                </h3>
+                <label class="inline-flex min-h-9 cursor-pointer items-center gap-2 text-xs font-medium text-text">
+                  <input
+                    type="checkbox"
+                    checked={props.card.isActionItem}
+                    disabled={props.isLocked || isSavingAction()}
+                    onChange={(event) =>
+                      void updateAction({
+                        isActionItem: event.currentTarget.checked,
+                      })
+                    }
+                    class="h-4 w-4 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  {props.card.isActionItem
+                    ? 'Action Item'
+                    : 'Flag as Action Item'}
+                </label>
+              </div>
+
+              <Show when={props.card.isActionItem}>
+                <label class="flex min-h-9 cursor-pointer items-center gap-2 text-xs text-text">
+                  <input
+                    type="checkbox"
+                    checked={props.card.actionDone}
+                    disabled={props.isLocked || isSavingAction()}
+                    onChange={(event) =>
+                      void updateAction({
+                        actionDone: event.currentTarget.checked,
+                      })
+                    }
+                    class="h-4 w-4 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  Done
+                </label>
+
+                <div>
+                  <label
+                    for={actionOwnerId}
+                    class="block text-xs font-medium text-text-muted"
+                  >
+                    Owner (optional)
+                  </label>
+                  <input
+                    id={actionOwnerId}
+                    type="text"
+                    aria-label="Action owner"
+                    placeholder={'e.g. "Platform"'}
+                    value={ownerDraft()}
+                    maxlength={MAX_ACTION_OWNER_LENGTH}
+                    disabled={props.isLocked || isSavingAction()}
+                    onInput={(event) => setOwnerDraft(event.currentTarget.value)}
+                    onBlur={() => void saveActionOwner()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void saveActionOwner();
+                      } else if (event.key === 'Escape') {
+                        setOwnerDraft(props.card.actionOwner);
+                      }
+                    }}
+                    class={[
+                      'mt-1 min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text sm:min-h-9',
+                      'placeholder:text-text-muted focus:border-focus focus:outline-none disabled:opacity-50',
+                    ]}
+                  />
+                  <p class="mt-1 text-[11px] text-text-muted">
+                    Optional short tag, never an email or account.
+                  </p>
+                </div>
+              </Show>
+            </div>
           </section>
 
           {/* Chronological anonymous comments */}

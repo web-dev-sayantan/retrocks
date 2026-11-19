@@ -4,6 +4,7 @@ import {
   COLUMN_ACCENTS,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
+  type ActionItemPatch,
   type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
@@ -44,6 +45,10 @@ export interface ColumnPanelProps {
   draggingSourceColumnId: string | null;
   onCreateCard: (columnId: string, content: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateActionItem: (
+    cardId: string,
+    patch: ActionItemPatch,
+  ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
@@ -620,6 +625,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 onMoveGroup={props.onMoveCardGroup}
                 onGroupCard={props.onGroupCard}
                 onUngroupCard={props.onUngroupCard}
+                onUpdateActionItem={props.onUpdateActionItem}
                 onUpdateCard={props.onUpdateCard}
                 onMoveCard={props.onMoveCard}
                 onDeleteCard={props.onDeleteCard}
@@ -650,6 +656,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 onGroupCard={props.onGroupCard}
                 onUngroupCard={props.onUngroupCard}
                 onUpdateCard={props.onUpdateCard}
+                onUpdateActionItem={props.onUpdateActionItem}
                 onMoveCard={props.onMoveCard}
                 onDeleteCard={props.onDeleteCard}
                 onToggleReaction={props.onToggleReaction}

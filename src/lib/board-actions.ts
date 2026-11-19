@@ -26,6 +26,7 @@ import type {
   SetPrivateModeInput,
   ToggleReactionInput,
   UngroupCardInput,
+  UpdateActionItemInput,
   UpdateCardInput,
   UpdateColumnInput,
   UpdateTimerInput,
@@ -172,6 +173,27 @@ export async function updateCard(
   );
   try {
     const result = await updateCardForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function updateActionItem(
+  input: UpdateActionItemInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError, updateActionItemForRequest } = await import(
+    '../server/services/board-service'
+  );
+  try {
+    const result = await updateActionItemForRequest(input);
     return respond(result, { revalidate: [] });
   } catch (error) {
     if (error instanceof BoardDomainError) {
@@ -492,6 +514,9 @@ export interface BoardWorkspaceActions {
   setPrivateMode: (input: SetPrivateModeInput) => Promise<BoardMutationResponse>;
   createCard: (input: CreateCardInput) => Promise<BoardMutationResponse>;
   updateCard: (input: UpdateCardInput) => Promise<BoardMutationResponse>;
+  updateActionItem: (
+    input: UpdateActionItemInput,
+  ) => Promise<BoardMutationResponse>;
   moveCard: (input: MoveCardInput) => Promise<BoardMutationResponse>;
   deleteCard: (input: DeleteCardInput) => Promise<BoardMutationResponse>;
   toggleReaction: (input: ToggleReactionInput) => Promise<BoardMutationResponse>;
@@ -517,6 +542,7 @@ export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
   setPrivateMode,
   createCard,
   updateCard,
+  updateActionItem,
   moveCard,
   deleteCard,
   toggleReaction,

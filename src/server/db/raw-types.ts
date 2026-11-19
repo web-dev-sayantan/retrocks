@@ -162,6 +162,13 @@ export type BoardMutationCommand =
   | { type: 'group:ungroup'; cardId: string }
   | { type: 'group:dissolve'; groupId: string }
   | { type: 'group:move'; groupId: string; targetColumnId: string }
+  | {
+      type: 'card:set-action';
+      cardId: string;
+      isActionItem?: boolean;
+      actionDone?: boolean;
+      actionOwner?: string;
+    }
   | { type: 'reaction:toggle'; cardId: string; emoji: ReactionEmoji }
   | { type: 'comment:create'; cardId: string; id: string; content: string }
   | { type: 'comment:delete'; cardId: string; commentId: string }
