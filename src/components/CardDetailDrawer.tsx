@@ -75,7 +75,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         closeInProgress = false;
         if (typeof element.showModal === 'function') element.showModal();
         else element.open = true;
-        closeButton?.focus();
+        closeButton?.focus({ preventScroll: true });
         return;
       }
       closeInProgress = true;
@@ -247,7 +247,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         event.preventDefault();
         props.onClose();
       }}
-      class="card-detail-dialog fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-hidden bg-transparent text-text"
+      class="card-detail-dialog fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-clip bg-transparent text-text"
     >
       <div
         aria-hidden="true"
