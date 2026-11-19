@@ -84,6 +84,22 @@ export default function CardItem(props: CardItemProps) {
     },
   );
 
+  createEffect(
+    () => moveMenuOpen() || groupMenuOpen(),
+    (isOpen) => {
+      if (!isOpen) return;
+      function handleKeyDown(event: KeyboardEvent): void {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setMoveMenuOpen(false);
+          setGroupMenuOpen(false);
+        }
+      }
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    },
+  );
+
   const canManage = createMemo(() => {
     if (props.isLocked || props.card.redacted) return false;
     if (props.card.isMine) return true;
@@ -506,6 +522,7 @@ export default function CardItem(props: CardItemProps) {
                     <div
                       role="menu"
                       aria-label="Group card with"
+                      data-board-overlay="true"
                       class="absolute right-0 bottom-full z-30 mb-1 min-w-48 rounded-lg border border-border bg-surface p-1 shadow-md"
                     >
                       <p class="px-2 py-1 text-[11px] font-medium text-text-muted">
@@ -669,6 +686,7 @@ export default function CardItem(props: CardItemProps) {
                         <div
                           role="menu"
                           aria-label="Move card to Column"
+                          data-board-overlay="true"
                           class="absolute right-0 bottom-full z-30 mb-1 min-w-44 rounded-lg border border-border bg-surface p-1 shadow-md"
                         >
                           <p class="px-2 py-1 text-[11px] font-medium text-text-muted">

@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import type {
   ActionItemPatch,
@@ -67,6 +67,18 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isDissolving, setIsDissolving] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
+
+  createEffect(moveMenuOpen, (isOpen) => {
+    if (!isOpen) return;
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMoveMenuOpen(false);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  });
 
   const otherColumns = createMemo(() =>
     props.columns.filter((column) => column.id !== props.group.columnId),
@@ -326,6 +338,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   <div
                     role="menu"
                     aria-label="Move Card Group to Column"
+                    data-board-overlay="true"
                     class="absolute right-0 bottom-full z-30 mb-1 min-w-44 rounded-lg border border-border bg-surface p-1 shadow-md"
                   >
                     <p class="px-2 py-1 text-[11px] font-medium text-text-muted">
