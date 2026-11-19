@@ -27,13 +27,15 @@ import {
   type BoardViewDTO,
   type CardViewDTO,
   type ColumnAccent,
+  type ReactionEmoji,
 } from '../lib/board-types';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import type { ServerClockSample } from '../lib/timer';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
-import type { ServerClockSample } from '../lib/timer';
+import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import { CheckIcon, CloseIcon, PencilIcon, PlusIcon } from './Icons';
@@ -148,6 +150,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const [draggingSourceColumnId, setDraggingSourceColumnId] = createSignal<
     string | null
   >(null);
+
+  // Card Detail Drawer state
+  const [openCardDetailId, setOpenCardDetailId] = createSignal<string | null>(
+    null,
+  );
 
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     setWorkspace((draft) => {
@@ -317,6 +324,31 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     () => (workspace.board?.columns.length ?? 0) >= 5,
   );
 
+  const openDetailCard = createMemo(() => {
+    const id = openCardDetailId();
+    if (!id) return null;
+    const card = workspace.board?.cards.find((item) => item.id === id) ?? null;
+    if (!card || card.redacted) return null;
+    return card;
+  });
+
+  const openDetailColumn = createMemo(() => {
+    const card = openDetailCard();
+    if (!card) return null;
+    return (
+      workspace.board?.columns.find((col) => col.id === card.columnId) ?? null
+    );
+  });
+
+  createEffect(
+    () => ({ id: openCardDetailId(), card: openDetailCard() }),
+    ({ id, card }) => {
+      if (id !== null && card === null) {
+        setOpenCardDetailId(null);
+      }
+    },
+  );
+
   function applyMutationResponse(boardId: string, response: BoardMutationResponse): boolean {
     if (workspace.board?.id !== boardId) return false;
     if (!response.ok) {
@@ -467,6 +499,66 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       cardId,
     });
     return applyMutationResponse(board.id, response);
+  }
+
+  async function handleToggleReaction(
+    cardId: string,
+    emoji: ReactionEmoji,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || board.isLocked) return false;
+    const card = board.cards.find((item) => item.id === cardId);
+    if (!card || card.redacted) return false;
+    const response = await actions().toggleReaction({
+      boardId: board.id,
+      cardId,
+      emoji,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleCreateComment(
+    cardId: string,
+    content: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || board.isLocked) return false;
+    const card = board.cards.find((item) => item.id === cardId);
+    if (!card || card.redacted) return false;
+    const response = await actions().createComment({
+      boardId: board.id,
+      cardId,
+      content,
+    });
+    const ok = applyMutationResponse(board.id, response);
+    if (ok) {
+      setNowMs(Date.now() + serverTimeOffsetMs);
+    }
+    return ok;
+  }
+
+  async function handleDeleteComment(
+    cardId: string,
+    commentId: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || board.isLocked) return false;
+    const card = board.cards.find((item) => item.id === cardId);
+    if (!card || card.redacted) return false;
+    const response = await actions().deleteComment({
+      boardId: board.id,
+      cardId,
+      commentId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  function handleOpenCardDetail(cardId: string): void {
+    const board = workspace.board;
+    if (!board) return;
+    const card = board.cards.find((item) => item.id === cardId);
+    if (!card || card.redacted) return;
+    setOpenCardDetailId(cardId);
   }
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
@@ -1118,6 +1210,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     onUpdateCard={handleUpdateCard}
                     onMoveCard={handleMoveCard}
                     onDeleteCard={handleDeleteCard}
+                    onToggleReaction={handleToggleReaction}
+                    onOpenCardDetail={handleOpenCardDetail}
                     onUpdateColumn={handleUpdateColumn}
                     onMoveColumn={handleMoveColumn}
                     onDeleteColumn={handleDeleteColumn}
@@ -1128,6 +1222,24 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </For>
             </div>
           </main>
+
+          {/* Card Detail Drawer / Bottom Sheet */}
+          <Show when={openDetailCard()}>
+            {(card) => (
+              <CardDetailDrawer
+                card={card()}
+                column={openDetailColumn()}
+                isFacilitator={board().isFacilitator}
+                isLocked={board().isLocked}
+                isBlurred={board().isBlurred}
+                nowMs={nowMs()}
+                onClose={() => setOpenCardDetailId(null)}
+                onToggleReaction={handleToggleReaction}
+                onCreateComment={handleCreateComment}
+                onDeleteComment={handleDeleteComment}
+              />
+            )}
+          </Show>
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
           <Show when={!board().isLocked && activeMobileColumn()}>

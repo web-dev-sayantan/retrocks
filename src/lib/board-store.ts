@@ -193,6 +193,7 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
       const card = draft.cards.find((c) => c.id === event.cardId);
       if (card) {
         card.reactions = { ...event.counts };
+        card.myReactions = [...event.myReactions];
       }
       break;
     }
@@ -200,7 +201,11 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
     case 'comment:created': {
       const card = draft.cards.find((c) => c.id === event.cardId);
       if (card && !card.comments.some((c) => c.id === event.comment.id)) {
-        card.comments.push({ ...event.comment });
+        const insertAt = card.comments.findIndex(
+          (c) => c.createdAt > event.comment.createdAt,
+        );
+        if (insertAt === -1) card.comments.push({ ...event.comment });
+        else card.comments.splice(insertAt, 0, { ...event.comment });
         card.commentCount = card.comments.length;
       }
       break;

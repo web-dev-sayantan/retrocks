@@ -152,3 +152,41 @@ export function CloseIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function SmilePlusIcon(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class ?? 'h-3.5 w-3.5'}
+    >
+      <path d="M13.5 8.5a5.5 5.5 0 1 1-6-6" />
+      <path d="M5.75 9.5a2.5 2.5 0 0 0 4.5 0" />
+      <circle cx="6" cy="7" r=".6" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="7" r=".6" fill="currentColor" stroke="none" />
+      <path d="M12.25 1.75v3.5M10.5 3.5H14" />
+    </svg>
+  );
+}
+
+export function MessageSquareIcon(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class ?? 'h-3.5 w-3.5'}
+    >
+      <path d="M13.5 9.75a1.5 1.5 0 0 1-1.5 1.5H5.5L2.5 13.75V4a1.5 1.5 0 0 1 1.5-1.5h8a1.5 1.5 0 0 1 1.5 1.5z" />
+    </svg>
+  );
+}

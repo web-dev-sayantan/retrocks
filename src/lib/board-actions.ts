@@ -12,12 +12,15 @@ import type {
   AddColumnInput,
   CreateBoardInput,
   CreateCardInput,
+  CreateCommentInput,
   DeleteCardInput,
   DeleteColumnInput,
+  DeleteCommentInput,
   MoveCardInput,
   RenameBoardInput,
   ReorderColumnsInput,
   SetPrivateModeInput,
+  ToggleReactionInput,
   UpdateCardInput,
   UpdateColumnInput,
   UpdateTimerInput,
@@ -218,6 +221,69 @@ export async function deleteCard(
   }
 }
 
+export async function toggleReaction(
+  input: ToggleReactionInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError, toggleReactionForRequest } = await import(
+    '../server/services/board-service'
+  );
+  try {
+    const result = await toggleReactionForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function createComment(
+  input: CreateCommentInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError, createCommentForRequest } = await import(
+    '../server/services/board-service'
+  );
+  try {
+    const result = await createCommentForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function deleteComment(
+  input: DeleteCommentInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError, deleteCommentForRequest } = await import(
+    '../server/services/board-service'
+  );
+  try {
+    const result = await deleteCommentForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
 export async function addColumn(
   input: AddColumnInput,
 ): Promise<BoardMutationResponse> {
@@ -313,6 +379,9 @@ export interface BoardWorkspaceActions {
   updateCard: (input: UpdateCardInput) => Promise<BoardMutationResponse>;
   moveCard: (input: MoveCardInput) => Promise<BoardMutationResponse>;
   deleteCard: (input: DeleteCardInput) => Promise<BoardMutationResponse>;
+  toggleReaction: (input: ToggleReactionInput) => Promise<BoardMutationResponse>;
+  createComment: (input: CreateCommentInput) => Promise<BoardMutationResponse>;
+  deleteComment: (input: DeleteCommentInput) => Promise<BoardMutationResponse>;
   addColumn: (input: AddColumnInput) => Promise<BoardMutationResponse>;
   updateColumn: (input: UpdateColumnInput) => Promise<BoardMutationResponse>;
   reorderColumns: (input: ReorderColumnsInput) => Promise<BoardMutationResponse>;
@@ -330,6 +399,9 @@ export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
   updateCard,
   moveCard,
   deleteCard,
+  toggleReaction,
+  createComment,
+  deleteComment,
   addColumn,
   updateColumn,
   reorderColumns,

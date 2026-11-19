@@ -287,6 +287,151 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
     return extractSessionCookie(visited.response);
   }
 
+  async function createDiscussionFixture() {
+    const service = await import('./board-service');
+    const { board, facilitatorCookie } = await createTestBoard(service);
+    const author = await joinAsParticipant(service, board.id);
+    const reader = await joinAsParticipant(service, board.id);
+    const as = <T>(cookie: string, handler: () => Promise<T>) =>
+      runRequest(new Request(`https://retrocks.app/b/${board.id}`, {
+        method: 'POST',
+        headers: { cookie },
+      }), handler).then(({ result }) => result);
+    const created = await as(author, () => service.createCardForRequest({
+      boardId: board.id,
+      columnId: board.columns[0].id,
+      content: 'Discuss our deployment workflow',
+    }));
+    const event = created.events[0];
+    if (event?.type !== 'card:upserted') throw new Error('Expected a Card');
+    return {
+      service,
+      as,
+      author,
+      reader,
+      facilitatorCookie,
+      target: { boardId: board.id, cardId: event.card.id },
+    };
+  }
+
+  it('toggles each Participant’s reaction independently and returns viewer-scoped totals', async () => {
+    const { service, as, author, reader, target } = await createDiscussionFixture();
+    const input = { ...target, emoji: '🎉' };
+    await expect(as(author, () => service.toggleReactionForRequest(input)))
+      .resolves.toMatchObject({
+        events: [{ type: 'reaction:updated', counts: { '🎉': 1 }, myReactions: ['🎉'] }],
+      });
+    await expect(as(reader, () => service.toggleReactionForRequest(input)))
+      .resolves.toMatchObject({
+        events: [{ type: 'reaction:updated', counts: { '🎉': 2 }, myReactions: ['🎉'] }],
+      });
+    await expect(as(author, () => service.toggleReactionForRequest(input)))
+      .resolves.toMatchObject({
+        events: [{ type: 'reaction:updated', counts: { '🎉': 1 }, myReactions: [] }],
+      });
+    await expect(as(reader, () => service.toggleReactionForRequest(input)))
+      .resolves.toMatchObject({
+        events: [{ type: 'reaction:updated', counts: {}, myReactions: [] }],
+      });
+    await expect(as(author, () => service.toggleReactionForRequest({ ...target, emoji: '🙃' })))
+      .rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('limits plain-text comments to 500 characters and 50 comments per Card', async () => {
+    const { service, as, author, reader, target } = await createDiscussionFixture();
+    const { createBoardWriteRateLimiter, setBoardWriteRateLimiterForTests } =
+      await import('../rate-limit');
+    setBoardWriteRateLimiterForTests(createBoardWriteRateLimiter({ limit: 100, windowMs: 60_000 }));
+
+    for (const content of ['   ', 'a'.repeat(501)]) {
+      await expect(as(reader, () => service.createCommentForRequest({ ...target, content })))
+        .rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    }
+
+    const plainText = '<b>Discussion</b>'.padEnd(500, '.');
+    await expect(as(reader, () => service.createCommentForRequest({ ...target, content: plainText })))
+      .resolves.toMatchObject({
+        events: [{
+          type: 'comment:created',
+          cardId: target.cardId,
+          comment: { content: plainText, isMine: true },
+        }],
+      });
+    for (let number = 2; number <= 50; number++) {
+      await as(reader, () => service.createCommentForRequest({ ...target, content: `Comment ${number}` }));
+    }
+    await expect(as(author, () => service.createCommentForRequest({ ...target, content: 'One more' })))
+      .rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' });
+
+    const snapshot = await as(author, () => service.getBoardForRequest(target.boardId));
+    const card = snapshot?.cards[0];
+    expect(card?.commentCount).toBe(50);
+    expect(card?.comments.map(({ content }) => content)).toEqual([
+      plainText,
+      ...Array.from({ length: 49 }, (_, index) => `Comment ${index + 2}`),
+    ]);
+    expect(card?.comments[0]).toEqual({
+      id: expect.any(String),
+      cardId: target.cardId,
+      content: plainText,
+      isMine: false,
+      createdAt: expect.any(Number),
+    });
+  });
+
+  it('lets comment authors and Facilitators delete comments only on Cards they can see', async () => {
+    const { service, as, author, reader, facilitatorCookie, target } =
+      await createDiscussionFixture();
+    const comment = async (content: string) => {
+      const { events: [event] } = await as(reader, () =>
+        service.createCommentForRequest({ ...target, content }));
+      if (event?.type !== 'comment:created') throw new Error('Expected a comment');
+      return { ...target, commentId: event.comment.id };
+    };
+    const remove = await comment('Author deletion');
+    const moderate = await comment('Facilitator deletion');
+    await expect(as(author, () => service.deleteCommentForRequest(remove)))
+      .rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(as(reader, () => service.deleteCommentForRequest(remove)))
+      .resolves.toMatchObject({
+        events: [{ type: 'comment:deleted', cardId: target.cardId, commentId: remove.commentId }],
+      });
+
+    await as(facilitatorCookie, () => service.setPrivateModeForRequest({
+      boardId: target.boardId,
+      isBlurred: true,
+    }));
+    for (const [cookie, attempt] of [
+      [reader, () => service.deleteCommentForRequest(moderate)],
+      [facilitatorCookie, () => service.deleteCommentForRequest(moderate)],
+      [reader, () => service.toggleReactionForRequest({ ...target, emoji: '👍' })],
+      [reader, () => service.createCommentForRequest({ ...target, content: 'Hidden' })],
+    ] as const) {
+      await expect(as(cookie, attempt)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    }
+    const hidden = await as(reader, () => service.getBoardForRequest(target.boardId));
+    expect(hidden?.cards[0]).toMatchObject({
+      redacted: true, reactions: {}, myReactions: [], commentCount: 0, comments: [],
+    });
+    await expect(as(author, () => service.createCommentForRequest({ ...target, content: 'My Card' })))
+      .resolves.toMatchObject({ events: [{ type: 'comment:created' }] });
+    await expect(as(author, () => service.toggleReactionForRequest({ ...target, emoji: '👍' })))
+      .resolves.toMatchObject({ events: [{ type: 'reaction:updated' }] });
+
+    await as(facilitatorCookie, () => service.setPrivateModeForRequest({
+      boardId: target.boardId,
+      isBlurred: false,
+    }));
+    await expect(as(facilitatorCookie, () => service.deleteCommentForRequest(moderate)))
+      .resolves.toMatchObject({
+        events: [{ type: 'comment:deleted', cardId: target.cardId, commentId: moderate.commentId }],
+      });
+    await expect(as(reader, () => service.deleteCommentForRequest(remove)))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const revealed = await as(reader, () => service.getBoardForRequest(target.boardId));
+    expect(revealed?.cards[0].comments.map(({ content }) => content)).toEqual(['My Card']);
+  });
+
   it('supports Card create, inline edit, cross-Column move, and permanent SQLite hard-delete', async () => {
     const service = await import('./board-service');
     const { board } = await createTestBoard(service, { title: 'Sprint 43' });

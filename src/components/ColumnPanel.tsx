@@ -7,6 +7,7 @@ import {
   type CardViewDTO,
   type ColumnAccent,
   type ColumnDTO,
+  type ReactionEmoji,
 } from '../lib/board-types';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
@@ -40,6 +41,8 @@ export interface ColumnPanelProps {
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
+  onOpenCardDetail: (cardId: string) => void;
   onUpdateColumn: (
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
@@ -552,6 +555,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 onUpdateCard={props.onUpdateCard}
                 onMoveCard={props.onMoveCard}
                 onDeleteCard={props.onDeleteCard}
+                onToggleReaction={props.onToggleReaction}
+                onOpenCardDetail={props.onOpenCardDetail}
                 onDragStartCard={props.onDragStartCard}
                 onDragEndCard={props.onDragEndCard}
               />

@@ -4,6 +4,8 @@ import {
   MAX_CARDS_PER_BOARD,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMNS_PER_BOARD,
+  MAX_COMMENT_LENGTH,
+  MAX_COMMENTS_PER_CARD,
   type BoardSettingsDTO,
   type BoardTemplateId,
   type ColumnAccent,
@@ -343,7 +345,7 @@ export class SqlBoardOperations {
 
     const comments = this.sql
       .all<CommentDbRow>(
-        'SELECT * FROM comments WHERE board_id = ? ORDER BY created_at ASC',
+        'SELECT * FROM comments WHERE board_id = ? ORDER BY created_at ASC, rowid ASC',
         boardId,
       )
       .map(mapCommentRow);
@@ -939,6 +941,109 @@ export class SqlBoardOperations {
             version: nextVersion,
             cardId: command.cardId,
           });
+          return finalize(nextVersion, now);
+        }
+
+        case 'reaction:toggle':
+        case 'comment:create':
+        case 'comment:delete': {
+          const card = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!card) return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
+          const permission = checkPrivateCardPermission(board, actor, card.author_token_hash);
+          if (!permission.ok) return permission;
+
+          if (command.type === 'reaction:toggle') {
+            const { changes } = this.sql.run(
+              `DELETE FROM reactions
+               WHERE board_id = ? AND card_id = ? AND emoji = ? AND reactor_token_hash = ?`,
+              boardId,
+              command.cardId,
+              command.emoji,
+              actor.participantHash,
+            );
+            if (changes === 0) {
+              this.sql.run(
+                `INSERT INTO reactions (board_id, card_id, emoji, reactor_token_hash, created_at)
+                 VALUES (?, ?, ?, ?, ?)`,
+                boardId,
+                command.cardId,
+                command.emoji,
+                actor.participantHash,
+                now,
+              );
+            }
+            rawEvents.push({
+              type: 'reaction:updated',
+              version: nextVersion,
+              cardId: command.cardId,
+            });
+          } else if (command.type === 'comment:create') {
+            if (command.content.length === 0 || command.content.length > MAX_COMMENT_LENGTH) {
+              return {
+                ok: false,
+                code: 'VALIDATION_ERROR',
+                message: `Comment must be between 1 and ${MAX_COMMENT_LENGTH} characters.`,
+              };
+            }
+            const count = this.sql.get<{ count: number }>(
+              'SELECT COUNT(*) AS count FROM comments WHERE board_id = ? AND card_id = ?',
+              boardId,
+              command.cardId,
+            );
+            if ((count?.count ?? 0) >= MAX_COMMENTS_PER_CARD) {
+              return {
+                ok: false,
+                code: 'LIMIT_EXCEEDED',
+                message: `This Card has reached the maximum of ${MAX_COMMENTS_PER_CARD} comments.`,
+              };
+            }
+            this.sql.run(
+              `INSERT INTO comments (id, board_id, card_id, content, author_token_hash, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              command.id,
+              boardId,
+              command.cardId,
+              command.content,
+              actor.participantHash,
+              now,
+            );
+            rawEvents.push({
+              type: 'comment:created',
+              version: nextVersion,
+              cardId: command.cardId,
+              commentId: command.id,
+            });
+          } else {
+            const comment = this.sql.get<Pick<CommentDbRow, 'author_token_hash'>>(
+              'SELECT author_token_hash FROM comments WHERE board_id = ? AND card_id = ? AND id = ?',
+              boardId,
+              command.cardId,
+              command.commentId,
+            );
+            if (!comment) {
+              return { ok: false, code: 'NOT_FOUND', message: 'Comment not found.' };
+            }
+            if (!actor.isFacilitator && comment.author_token_hash !== actor.participantHash) {
+              return { ok: false, code: 'FORBIDDEN', message: 'You can only delete your own comments.' };
+            }
+            this.sql.run(
+              'DELETE FROM comments WHERE board_id = ? AND card_id = ? AND id = ?',
+              boardId,
+              command.cardId,
+              command.commentId,
+            );
+            rawEvents.push({
+              type: 'comment:deleted',
+              version: nextVersion,
+              cardId: command.cardId,
+              commentId: command.commentId,
+            });
+          }
+          bumpBoard();
           return finalize(nextVersion, now);
         }
 

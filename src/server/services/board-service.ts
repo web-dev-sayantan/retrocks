@@ -13,12 +13,15 @@ import {
   BoardIdSchema,
   CreateBoardInputSchema,
   CreateCardInputSchema,
+  CreateCommentInputSchema,
   DeleteCardInputSchema,
+  DeleteCommentInputSchema,
   DeleteColumnInputSchema,
   MoveCardInputSchema,
   RenameBoardInputSchema,
   ReorderColumnsInputSchema,
   SetPrivateModeInputSchema,
+  ToggleReactionInputSchema,
   UpdateCardInputSchema,
   UpdateColumnInputSchema,
   UpdateTimerInputSchema,
@@ -310,6 +313,40 @@ export async function deleteCardForRequest(
   return executeBoardMutation(input.boardId, {
     type: 'card:delete',
     cardId: input.cardId,
+  });
+}
+
+export async function toggleReactionForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(ToggleReactionInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'reaction:toggle',
+    cardId: input.cardId,
+    emoji: input.emoji,
+  });
+}
+
+export async function createCommentForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(CreateCommentInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'comment:create',
+    id: generateEntityId(),
+    cardId: input.cardId,
+    content: input.content,
+  });
+}
+
+export async function deleteCommentForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(DeleteCommentInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'comment:delete',
+    cardId: input.cardId,
+    commentId: input.commentId,
   });
 }
 

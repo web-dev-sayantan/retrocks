@@ -5,6 +5,7 @@ import type {
   BoardSettingsDTO,
   BoardTemplateId,
   ColumnAccent,
+  ReactionEmoji,
 } from '../../lib/board-types';
 import type { TimerChange } from '../../lib/schemas';
 
@@ -149,6 +150,9 @@ export type BoardMutationCommand =
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
   | { type: 'card:delete'; cardId: string }
+  | { type: 'reaction:toggle'; cardId: string; emoji: ReactionEmoji }
+  | { type: 'comment:create'; cardId: string; id: string; content: string }
+  | { type: 'comment:delete'; cardId: string; commentId: string }
   | {
       type: 'column:add';
       id: string;
@@ -177,6 +181,9 @@ export type RawBoardMutationEvent =
   | { type: 'vote:updated'; version: number; targetType: 'card' | 'group'; targetId: string }
   | { type: 'card:upserted'; version: number; cardId: string }
   | { type: 'card:deleted'; version: number; cardId: string }
+  | { type: 'reaction:updated'; version: number; cardId: string }
+  | { type: 'comment:created'; version: number; cardId: string; commentId: string }
+  | { type: 'comment:deleted'; version: number; cardId: string; commentId: string }
   | { type: 'column:upserted'; version: number; columnId: string }
   | { type: 'column:deleted'; version: number; columnId: string }
   | { type: 'columns:reordered'; version: number; columnIds: string[] }
