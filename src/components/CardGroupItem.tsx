@@ -44,15 +44,15 @@ export interface CardGroupItemProps {
     targetId: string,
   ) => Promise<boolean>;
   onUngroupCard: (cardId: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
   ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
-  onOpenCardDetail: (cardId: string) => void;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
   onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
@@ -67,6 +67,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isDissolving, setIsDissolving] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
+  let moveTrigger: HTMLButtonElement | undefined;
 
   createEffect(moveMenuOpen, (isOpen) => {
     if (!isOpen) return;
@@ -74,6 +75,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       if (event.key === 'Escape') {
         event.preventDefault();
         setMoveMenuOpen(false);
+        moveTrigger?.focus();
       }
     }
     document.addEventListener('keydown', handleKeyDown);
@@ -159,7 +161,8 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     setIsMoving(true);
     setMoveMenuOpen(false);
     try {
-      await props.onMoveGroup(props.group.id, targetColumnId);
+      const ok = await props.onMoveGroup(props.group.id, targetColumnId);
+      if (!ok) moveTrigger?.focus();
     } finally {
       setIsMoving(false);
     }
@@ -223,7 +226,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       class={[
-        'rounded-xl border border-border bg-canvas/60 transition-shadow',
+        'rounded-xl border border-border bg-canvas transition-shadow',
         {
           'ring-2 ring-focus/70': isDropActive(),
         },
@@ -234,7 +237,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         onDragStart={handleDragStart}
         onDragEnd={() => props.onDragEndCard()}
         class={[
-          'flex flex-wrap items-center gap-2 rounded-t-xl border-b border-border/70 bg-surface-subtle/70 px-2.5 py-2',
+          'flex flex-wrap items-center gap-2 rounded-t-xl border-b border-border/70 bg-surface-subtle px-2.5 py-2',
           {
             'cursor-grab active:cursor-grabbing':
               canManageGroup() && !props.isLocked,
@@ -247,7 +250,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
           aria-label={expanded() ? 'Collapse Card Group' : 'Expand Card Group'}
           aria-expanded={expanded() ? 'true' : 'false'}
           onClick={() => setExpanded((prev) => !prev)}
-          class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          class="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
           <span
             class={[
@@ -262,7 +265,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         <Show
           when={!isRedacted()}
           fallback={
-            <div class="flex min-w-0 flex-1 items-center gap-2">
+            <div class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-center gap-2">
               <span class="truncate text-xs font-medium text-text-muted italic">
                 Hidden until Reveal All
               </span>
@@ -276,24 +279,25 @@ export default function CardGroupItem(props: CardGroupItemProps) {
           }
         >
           <Show
-            when={!isRenaming()}
+            when={!isRenaming() || !canManageGroup()}
             fallback={
-              <div class="flex min-w-0 flex-1 items-center gap-1">
+              <div class="flex min-w-full flex-1 flex-wrap items-center gap-1 sm:min-w-0">
                 <input
                   type="text"
                   aria-label="Card Group title"
                   value={renameDraft()}
+                  readonly={isSaving()}
                   maxlength={MAX_GROUP_TITLE_LENGTH}
                   onInput={(event) => setRenameDraft(event.currentTarget.value)}
                   onKeyDown={handleRenameKeyDown}
-                  class="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-sm font-semibold text-text focus:border-focus focus:outline-none"
+                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text focus:border-focus focus:outline-none sm:min-h-8"
                 />
                 <button
                   type="button"
                   aria-label="Save Card Group title"
                   disabled={isSaving() || renameDraft().trim().length === 0}
                   onClick={() => void saveRename()}
-                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+                  class="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
                 >
                   <CheckIcon />
                 </button>
@@ -301,18 +305,18 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   type="button"
                   aria-label="Cancel Card Group rename"
                   onClick={cancelRename}
-                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
+                  class="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
                 >
                   <CloseIcon />
                 </button>
               </div>
             }
           >
-            <div class="flex min-w-0 flex-1 items-center gap-2">
+            <div class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-center gap-2">
               <Show
                 when={canManageGroup()}
                 fallback={
-                  <span class="truncate text-sm font-semibold text-text">
+                  <span class="min-w-0 wrap-anywhere text-sm font-semibold text-text">
                     {props.group.title || 'Card Group'}
                   </span>
                 }
@@ -322,7 +326,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   aria-label={`${props.group.title || 'Card Group'} — Edit Card Group title`}
                   title="Edit Card Group title"
                   onClick={startRename}
-                  class="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-semibold text-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  class="min-h-11 min-w-11 cursor-pointer wrap-anywhere px-1 rounded-sm text-left text-sm font-semibold text-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-0"
                 >
                   {props.group.title || 'Card Group'}
                 </button>
@@ -344,10 +348,10 @@ export default function CardGroupItem(props: CardGroupItemProps) {
           />
 
           <Show when={canManageGroup()}>
-          <div data-print-hide="true" class="flex items-center gap-0.5">
-            <Show when={otherColumns().length > 0}>
-              <div class="relative">
+            <div data-print-hide="true" class="flex max-w-full flex-wrap items-center gap-0.5">
+              <Show when={otherColumns().length > 0}>
                 <button
+                  ref={moveTrigger}
                   type="button"
                   aria-label="Move Card Group to..."
                   aria-haspopup="menu"
@@ -355,67 +359,71 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   title="Move Card Group to..."
                   disabled={isMoving()}
                   onClick={() => setMoveMenuOpen((prev) => !prev)}
-                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
                 >
                   <ArrowRightLeftIcon />
                 </button>
+              </Show>
 
-                <Show when={moveMenuOpen()}>
-                  <div
-                    role="menu"
-                    aria-label="Move Card Group to Column"
-                    data-board-overlay="true"
-                    class="absolute right-0 bottom-full z-30 mb-1 min-w-44 rounded-lg border border-border bg-surface p-1 shadow-md"
-                  >
-                    <p class="px-2 py-1 text-[11px] font-medium text-text-muted">
-                      Move group to...
-                    </p>
-                    <For each={otherColumns()}>
-                      {(targetColumn) => (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => void handleSelectMoveTarget(targetColumn.id)}
-                          class="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                        >
-                          <span
-                            aria-hidden="true"
-                            class={[
-                              'h-2 w-2 shrink-0 rounded-full',
-                              COLUMN_ACCENT_STYLES[targetColumn.accent].swatch,
-                            ]}
-                          />
-                          <span class="truncate">{targetColumn.title}</span>
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Show>
+              <button
+                type="button"
+                aria-label="Rename Card Group"
+                title="Rename Card Group"
+                onClick={startRename}
+                class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
+              >
+                <PencilIcon />
+              </button>
+
+              <button
+                type="button"
+                aria-label="Dissolve Card Group"
+                title="Dissolve Card Group"
+                disabled={isDissolving()}
+                onClick={() => void handleDissolve()}
+                class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-rose-700 active:bg-surface disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8 dark:hover:text-rose-300"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+
+            <Show when={moveMenuOpen()}>
+              <div class="basis-full" data-print-hide="true">
+                <div
+                  role="menu"
+                  aria-label="Move Card Group to Column"
+                  data-board-overlay="true"
+                  class="ml-auto max-h-[50dvh] w-56 max-w-full overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-md"
+                >
+                  <For each={otherColumns()}>
+                    {(targetColumn) => (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => void handleSelectMoveTarget(targetColumn.id)}
+                        class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus sm:min-h-8"
+                      >
+                        <span
+                          aria-hidden="true"
+                          class={[
+                            'h-2 w-2 shrink-0 rounded-full',
+                            COLUMN_ACCENT_STYLES[targetColumn.accent].swatch,
+                          ]}
+                        />
+                        <span class="min-w-0 wrap-anywhere">{targetColumn.title}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
             </Show>
 
-            <button
-              type="button"
-              aria-label="Rename Card Group"
-              title="Rename Card Group"
-              onClick={startRename}
-              class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-            >
-              <PencilIcon />
-            </button>
-
-            <button
-              type="button"
-              aria-label="Dissolve Card Group"
-              title="Dissolve Card Group"
-              disabled={isDissolving()}
-              onClick={() => void handleDissolve()}
-              class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-rose-700 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus dark:hover:text-rose-300"
-            >
-              <TrashIcon />
-            </button>
-          </div>
-        </Show>
+            <Show when={isSaving() || isMoving() || isDissolving()}>
+              <p role="status" class="basis-full text-xs text-text-muted">
+                {isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : 'Dissolving Card Group…'}
+              </p>
+            </Show>
+          </Show>
         </Show>
       </div>
 

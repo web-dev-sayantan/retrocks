@@ -54,15 +54,15 @@ export interface ColumnPanelProps {
   ) => void;
   onActivateColumn?: (columnId: string) => void;
   onCreateCard: (columnId: string, content: string) => Promise<string | null>;
-  onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
   ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
-  onOpenCardDetail: (cardId: string) => void;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
   onUpdateColumn: (
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
