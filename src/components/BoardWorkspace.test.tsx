@@ -717,9 +717,12 @@ describe('<BoardWorkspace />', () => {
       flush();
       expect(streams).toHaveLength(1);
       expect(streams[0].url).toBe(`/api/boards/${board.id}/live`);
+      expect(getByRole('status')).toHaveTextContent('Reconnecting');
       streams[0].receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+      expect(getByRole('status')).toHaveTextContent('Live');
       streams[0].receive({ type: 'presence:count', count: 2 });
-      expect(getByRole('status')).toHaveTextContent('2 online');
+      expect(getByText('2 online')).toBeVisible();
+      expect(getByRole('status')).toHaveTextContent(/^Live$/);
 
       fireEvent.click(getByRole('tab', { name: /To Improve/ }));
       flush();
@@ -753,7 +756,8 @@ describe('<BoardWorkspace />', () => {
 
       expect(getByRole('heading', { name: 'Recovered title' })).toBeInTheDocument();
       expect(getByText(incoming.content)).toBeInTheDocument();
-      expect(getByRole('status')).toHaveTextContent('2 online');
+      expect(getByText('2 online')).toBeVisible();
+      expect(getByRole('status')).toHaveTextContent(/^Live$/);
       expect(getByRole('tab', { name: /To Improve/ })).toHaveAttribute('aria-selected', 'true');
       expect(composer).toHaveValue('Still typing');
     } finally {
@@ -1225,6 +1229,53 @@ describe('<BoardWorkspace />', () => {
       title: 'Sprint 42 Retro',
       isFacilitator: true,
     });
+  });
+
+  it('lets Participants recover from a failed copy and return to Share after dismissal', async () => {
+    const board = makeBoardView({ isFacilitator: false });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const share = view.getByRole('button', { name: 'Share' });
+    share.focus();
+    fireEvent.click(share);
+    flush();
+    const dialog = within(view.getByRole('dialog', { name: 'Share Board' }));
+    expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus();
+    expect(dialog.getByRole('img', { name: 'Participant Link QR code' })).toBeInTheDocument();
+    expect(dialog.queryByRole('region', { name: 'Co-Facilitator Link' })).toBeNull();
+
+    const link = dialog.getByRole('textbox', { name: 'Participant Link' }) as HTMLInputElement;
+    const participantUrl = new URL(`/b/${board.id}`, window.location.origin).href;
+    expect(link).toHaveValue(participantUrl);
+    const copy = dialog.getByRole('button', { name: 'Copy Participant Link' });
+    const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard unavailable'));
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      copy.focus();
+      fireEvent.click(copy);
+      await flushPromises();
+      expect(dialog.getByRole('status')).toHaveTextContent('Copy the selected link manually.');
+      expect(link).toHaveFocus();
+      expect(link.selectionStart).toBe(0);
+      expect(link.selectionEnd).toBe(participantUrl.length);
+
+      copy.focus();
+      fireEvent.click(copy);
+      await flushPromises();
+      expect(dialog.getByRole('status')).toHaveTextContent('Participant Link copied.');
+      expect(writeText).toHaveBeenLastCalledWith(participantUrl);
+
+      fireEvent.keyDown(copy, { key: 'Escape' });
+      flush();
+      expect(view.queryByRole('dialog', { name: 'Share Board' })).toBeNull();
+      expect(share).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('renders clean missing/expired state with CTA and removes stale Board ID from localStorage Recent Boards', () => {
@@ -1724,6 +1775,69 @@ describe('<BoardWorkspace />', () => {
     expect(getByRole('textbox', { name: 'Add card to Went Well' })).toBe(composer);
   });
 
+  it('announces concurrent Board states and keeps Vote totals hidden after Cards are revealed', () => {
+    const streams: EventTarget[] = [];
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() {
+        super();
+        streams.push(this);
+      }
+      close() {}
+    });
+    const peer = makeCard({
+      id: 'peer', isMine: false, content: 'Review handoff notes', votes: null, myVotes: 2,
+    });
+    const own = makeCard({ id: 'own', content: 'Prepare the handoff', votes: null });
+    const board = makeBoardView({ isFacilitator: false, cards: [own, peer], remainingVotes: 3 });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    try {
+      flush();
+      const send = (nextBoard: BoardViewDTO) => {
+        const message: BoardLiveMessage = {
+          type: 'board:snapshot', version: nextBoard.version, serverNow: Date.now(), board: nextBoard,
+        };
+        streams[0].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+        flush();
+      };
+
+      send({
+        ...board, version: 2, isBlurred: true, blindVoting: true,
+        cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
+      });
+      const status = within(view.getByRole('group', { name: 'Board status' }));
+      expect(status.getByText('Private Mode')).toBeVisible();
+      expect(status.getByText('Blind Voting')).toBeVisible();
+      expect(view.getByText(/Private Mode is on.*Blind Voting is on/)).toHaveAttribute('aria-live', 'polite');
+      expect(view.queryByText(peer.content)).not.toBeInTheDocument();
+      expect(view.getByText(own.content)).toBeVisible();
+      fireEvent.click(within(view.getByText(own.content).closest('article')!).getByRole('button', { name: 'Card actions' }));
+      flush();
+      expect(view.getByRole('menuitem', { name: 'Edit Card' })).toBeEnabled();
+
+      send({
+        ...board, version: 3, isBlurred: true, blindVoting: true, isLocked: true,
+        cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
+      });
+      expect(status.getByText('Private Mode')).toBeVisible();
+      expect(status.getByText('Blind Voting')).toBeVisible();
+      expect(status.getByText('Locked')).toBeVisible();
+
+      send({ ...board, version: 4, blindVoting: true });
+      expect(view.getByText(peer.content)).toBeVisible();
+      expect(status.queryByText('Private Mode')).not.toBeInTheDocument();
+      expect(status.getByText('Blind Voting')).toBeVisible();
+      expect(status.queryByText('Locked')).not.toBeInTheDocument();
+      expect(view.getByText(/All Cards revealed.*Board unlocked/)).toHaveAttribute('aria-live', 'polite');
+      const peerVote = within(view.getByText(peer.content).closest('article')!).getByRole('group', { name: 'Voting' });
+      expect(peerVote).toHaveTextContent('2 yours');
+      expect(view.getByText('3 / 5 votes left')).toBeVisible();
+      expect(view.getByRole('option', { name: /Most Voted/ })).toBeDisabled();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('hides Facilitator edit/move/delete controls on redacted Cards during Private Mode', () => {
     const redactedCard = makeCard({
       id: 'card_secret',
@@ -2081,7 +2195,7 @@ describe('<BoardWorkspace />', () => {
         isFacilitator: false,
       });
 
-      const { getByRole } = render(() => (
+      const { getByRole, queryByRole } = render(() => (
         <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
       ));
       flush();
@@ -2089,12 +2203,17 @@ describe('<BoardWorkspace />', () => {
       expect(streams).toHaveLength(1);
       expect(readRecentBoards().some((item) => item.id === board.id)).toBe(true);
 
+      fireEvent.click(getByRole('button', { name: 'Share' }));
+      flush();
+      expect(getByRole('dialog', { name: 'Share Board' })).toBeInTheDocument();
+
       streams[0].emit({ type: 'board:deleted', version: 2 });
       flush();
 
       expect(
         getByRole('heading', { level: 1, name: 'Board not found or expired' }),
-      ).toBeInTheDocument();
+      ).toHaveFocus();
+      expect(queryByRole('dialog', { name: 'Share Board' })).toBeNull();
       expect(readRecentBoards().some((item) => item.id === board.id)).toBe(
         false,
       );

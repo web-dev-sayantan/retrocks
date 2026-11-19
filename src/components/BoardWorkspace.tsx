@@ -61,6 +61,7 @@ import {
   PencilIcon,
   PlusIcon,
 } from './Icons';
+import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
@@ -117,6 +118,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [nowMs, setNowMs] = createSignal(Date.now());
+  const [isLive, setIsLive] = createSignal(false);
   const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
   const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
   const timerClock = createMemo(() => {
@@ -157,7 +159,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
-  const [revealAnnouncement, setRevealAnnouncement] = createSignal('');
+  const [modeAnnouncement, setModeAnnouncement] = createSignal('');
   let optimisticCardSeq = 0;
 
   // More disclosure and Board Settings
@@ -418,26 +420,51 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   createEffect(
     () => {
       const board = workspace.board;
-      return board && { id: board.id, isBlurred: board.isBlurred };
+      return board && {
+        id: board.id,
+        isBlurred: board.isBlurred,
+        blindVoting: board.blindVoting,
+        isLocked: board.isLocked,
+      };
     },
     (board, previous) => {
-      if (!board || board.isBlurred || previous?.id !== board.id) {
-        setRevealAnnouncement('');
-      } else if (previous.isBlurred) {
-        setRevealAnnouncement('All Cards revealed.');
+      if (!board || previous?.id !== board.id) {
+        setModeAnnouncement('');
+        return;
       }
+      const changes: string[] = [];
+      if (board.isBlurred !== previous.isBlurred) {
+        changes.push(board.isBlurred ? 'Private Mode is on.' : 'All Cards revealed.');
+      }
+      if (board.blindVoting !== previous.blindVoting) {
+        changes.push(board.blindVoting ? 'Blind Voting is on.' : 'Blind Voting is off.');
+      }
+      if (board.isLocked !== previous.isLocked) {
+        changes.push(board.isLocked ? 'Board locked.' : 'Board unlocked.');
+      }
+      setModeAnnouncement(changes.join(' '));
     },
   );
 
+  let unavailableHeading: HTMLHeadingElement | undefined;
   const liveBoardId = createMemo(() => workspace.board?.id);
-  createEffect(liveBoardId, (boardId) => {
-    if (!boardId || typeof window === 'undefined') return;
+  createEffect(liveBoardId, (boardId, previousBoardId) => {
+    if (!boardId) {
+      if (previousBoardId) unavailableHeading?.focus();
+      return;
+    }
+    if (typeof window === 'undefined') return;
     const live = connectBoardLive(boardId, {
-      onReconnect: () => setOnlineCount(null),
+      onReconnect() {
+        setIsLive(false);
+        setOnlineCount(null);
+      },
       onMessage(message) {
         switch (message.type) {
           case 'board:snapshot':
+            if (message.board.id !== boardId) break;
             applyServerSnapshot(message.board, message.serverNow);
+            setIsLive(true);
             break;
           case 'board:mutation':
             applyVersionedEvents(boardId, message.version, message.events);
@@ -1398,12 +1425,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       when={workspace.board}
       fallback={
         <div class="flex min-h-dvh flex-col">
-          <header class="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur-sm">
+          <header class="border-b border-border bg-canvas">
             <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
               <a
                 href={props.homeHref ?? '/'}
                 class={[
-                  'inline-flex items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
+                  'inline-flex min-h-11 items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
                   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                 ]}
               >
@@ -1417,28 +1444,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             </div>
           </header>
 
-          <main class="mx-auto flex flex-1 max-w-lg flex-col items-center justify-center px-6 py-16 text-center">
-            <p class="text-xs font-medium tracking-wide text-text-muted uppercase tabular-nums">
-              404
-            </p>
-            <h1 class="mt-2 text-2xl font-semibold tracking-tight text-text">
-              Board not found or expired
-            </h1>
-            <p class="mt-3 text-sm text-text-muted">
-              This Board may have been deleted by its Facilitator or expired
-              after inactivity.
-            </p>
-            <a
-              href={props.homeHref ?? '/'}
-              class={[
-                'mt-6 inline-flex items-center rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-contrast',
-                'transition-opacity hover:opacity-90',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-              ]}
-            >
+          <PageMessage
+            title="Board not found or expired"
+            message="This Board may have been deleted by a Facilitator or expired after inactivity."
+            headingRef={(element) => { unavailableHeading = element; }}
+          >
+            <a href={props.homeHref ?? '/'} class="page-message-action">
               Create a new board
             </a>
-          </main>
+          </PageMessage>
         </div>
       }
     >
@@ -1451,10 +1465,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <PrintBoard board={board()} />
           </Show>
           <div aria-live="polite" aria-atomic="true" class="sr-only">
-            {revealAnnouncement()}
+            {modeAnnouncement()}
           </div>
           <header class="@container relative z-20 border-b border-border bg-canvas">
-            <div class="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 pt-3 pb-4 sm:px-6 sm:pt-5">
+            <div class="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 pt-3 pb-4 @max-[20rem]:grid-cols-[minmax(0,1fr)] sm:px-6 sm:pt-5">
               <a
                 href={props.homeHref ?? '/'}
                 aria-label="Retrocks home"
@@ -1464,7 +1478,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 Retrocks
               </a>
 
-              <div class="col-span-2 row-start-2 min-w-0 sm:col-span-1">
+              <div class="col-span-2 row-start-2 min-w-0 @max-[20rem]:col-span-1 @max-[20rem]:row-start-3 sm:col-span-1">
                 <Show
                   when={!isRenamingBoard()}
                   fallback={
@@ -1533,7 +1547,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </Show>
               </div>
 
-              <div data-print-hide="true" class="col-start-2 row-start-1 flex items-center justify-end gap-2 sm:row-span-2 sm:self-end">
+              <div data-print-hide="true" class="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-1.5 @max-[20rem]:col-start-1 @max-[20rem]:row-start-2 sm:row-span-2 sm:gap-2 sm:self-end">
                 <button
                   ref={actionItemsHeaderEntry}
                   type="button"
@@ -1594,7 +1608,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         setBoardMenuOpen(true);
                       }
                     }}
-                    class="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-sm font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle sm:min-h-9"
+                    class="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-sm font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle @max-[20rem]:px-2 sm:min-h-9"
                   >
                     <MoreHorizontalIcon />
                     <span>More</span>
@@ -1658,17 +1672,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
               </div>
 
-              <div class="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-2" aria-label="Board status">
-                <span role="status" data-print-hide="true" class="inline-flex items-center gap-1.5 text-sm text-text-muted">
-                  <span
-                    aria-hidden="true"
-                    class={[
-                      'size-1.5 rounded-full',
-                      onlineCount() === null ? 'bg-text-muted' : 'bg-emerald-600 dark:bg-emerald-400',
-                    ]}
-                  />
-                  {onlineCount() === null ? 'Reconnecting…' : `${onlineCount()} online`}
-                </span>
+              <div role="group" aria-label="Board status" class="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 @max-[20rem]:col-span-1">
+                <div data-print-hide="true" class="flex items-center gap-2 text-sm text-text-muted">
+                  <span role="status" class="inline-flex items-center gap-1.5 font-medium">
+                    <span
+                      aria-hidden="true"
+                      class={['size-1.5 shrink-0 rounded-full', isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
+                    />
+                    {isLive() ? 'Live' : 'Reconnecting…'}
+                  </span>
+                  <Show when={isLive() && onlineCount() !== null}>
+                    <span class="border-l border-border pl-2 tabular-nums">{onlineCount()} online</span>
+                  </Show>
+                </div>
                 <div data-print-hide="true">
                   <Show when={board().id} keyed>
                     {(boardId) => (
@@ -1681,38 +1697,45 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     )}
                   </Show>
                 </div>
-                <Show when={board().isLocked}>
-                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Locked</span>
-                </Show>
-                <Show when={board().isBlurred}>
-                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Private Mode</span>
-                  <span class="hidden text-sm text-text-muted sm:inline">Only you can read your Cards until they’re revealed.</span>
-                </Show>
-                <Show when={board().isFacilitator && !board().isLocked}>
-                  <button
-                    type="button"
-                    aria-keyshortcuts="B"
-                    title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
-                    disabled={isChangingPrivateMode()}
-                    onClick={() => void togglePrivateMode()}
-                    class={[
-                      'inline-flex min-h-11 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium sm:min-h-9 sm:px-3',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
-                      board().isBlurred
-                        ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
-                        : 'border-border bg-surface text-text hover:bg-surface-subtle',
-                    ]}
-                  >
-                    {board().isBlurred ? 'Reveal All' : 'Private Mode'}
-                  </button>
+                <Show when={board().isBlurred || (board().isFacilitator && !board().isLocked)}>
+                  <div class="flex max-w-full flex-wrap items-center gap-2">
+                    <Show when={board().isBlurred}>
+                      <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Private Mode</span>
+                    </Show>
+                    <Show when={board().isFacilitator && !board().isLocked}>
+                      <button
+                        type="button"
+                        data-print-hide="true"
+                        aria-keyshortcuts="B"
+                        title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
+                        disabled={isChangingPrivateMode()}
+                        onClick={() => void togglePrivateMode()}
+                        class={[
+                          'inline-flex min-h-11 min-w-11 cursor-pointer items-center rounded-lg border px-2.5 text-sm font-medium transition-colors active:opacity-80 sm:min-h-9 sm:px-3',
+                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                          board().isBlurred
+                            ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
+                            : 'border-border bg-surface text-text hover:bg-surface-subtle',
+                        ]}
+                      >
+                        {board().isBlurred ? 'Reveal All' : 'Private Mode'}
+                      </button>
+                    </Show>
+                  </div>
                 </Show>
                 <Show when={board().blindVoting}>
                   <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Blind Voting</span>
                 </Show>
+                <Show when={board().isLocked}>
+                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Locked</span>
+                </Show>
                 <Show when={board().voteLimit !== null}>
-                  <span aria-live="polite" class="text-sm text-text-muted tabular-nums">
+                  <span aria-live="polite" aria-atomic="true" class="text-sm font-medium text-text tabular-nums">
                     {voting().remainingVotes} / {board().voteLimit} votes left
                   </span>
+                </Show>
+                <Show when={board().isBlurred}>
+                  <p class="basis-full text-sm text-text-muted">Only you can read your Cards until they’re revealed.</p>
                 </Show>
               </div>
 
@@ -2135,9 +2158,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 <p class="mb-1 wrap-anywhere text-sm text-text-muted">
                   Write in <span class="font-semibold text-text">{targetCol().title}</span>
                 </p>
-                <Show when={board().isBlurred}>
-                  <p class="mb-1 text-sm text-text-muted">Only you can read your Cards until they’re revealed.</p>
-                </Show>
                 <Show when={mobileDrafts[targetCol().id]?.error}>
                   {(error) => <p role="alert" class="mb-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
                 </Show>
