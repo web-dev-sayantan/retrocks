@@ -230,11 +230,12 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - **Co-Facilitator Link** (`/b/<boardId>#f=<token>`) fetched on demand by any Facilitator with a concise security note and a **Rotate Link** action (with confirmation) to revoke leaked links.
   - **QR Code** rendered purely client-side as SVG (zero external image requests) for in-room Participants joining via phone.
 - **Exports (in More):**
-  - Exports always use the server-projected viewer snapshot — redacted Cards stay redacted while Private Mode is ON, and aggregate Vote totals stay omitted while Blind Voting is ON (no bypass flag; reveal first for a full export).
+  - Participants and Facilitators can copy, download, and print from More by keyboard or touch, including when the Board is Locked. Copy and download show progress and any failures alongside More.
+  - Exports use the server-projected viewer snapshot across all Columns. Private Mode keeps hidden Cards redacted for each viewer. Blind Voting omits aggregate Vote totals for both roles.
   - **Markdown (`.md`)** — Copy to clipboard or download; structured by Columns, Card Groups, Vote counts, comments, and a trailing Action Items checklist.
   - **CSV (`.csv`)** — Excel/Google Sheets ready with UTF-8 BOM and CSV formula-injection neutralization (prefixing leading `=`, `+`, `-`, `@`, `\t`, `\r`).
   - **JSON (`.json`)** — Complete structured Board snapshot.
-  - **Print / PDF** — Clean `@media print` stylesheet producing an ink-friendly, multi-column or stacked document via browser print dialog.
+  - **Print / Save as PDF** opens the browser print dialog with a stacked, ink-friendly document in either theme. The document includes visible Cards, Card Groups, comments, Action Item status and owners, and the viewer’s own Votes during Blind Voting. Local search and filters stay in place when the print dialog closes.
 
 ---
 
