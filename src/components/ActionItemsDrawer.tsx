@@ -222,7 +222,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
             <h2 id={titleId} class="truncate text-sm font-semibold text-text">
               Action Items
             </h2>
-            <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted tabular-nums">
+            <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text tabular-nums">
               {openCount()} open
             </span>
           </div>

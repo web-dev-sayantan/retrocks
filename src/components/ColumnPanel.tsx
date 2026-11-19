@@ -123,8 +123,13 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     canManageColumn() && props.totalColumns > 1 && !hasHiddenCards(),
   );
 
-  const streamKeys = createMemo(() =>
-    props.streamItems.map((item) => item.key),
+  const streamKeys = createMemo(
+    () => props.streamItems.map((item) => item.key),
+    {
+      equals: (prev, next) =>
+        prev.length === next.length &&
+        prev.every((key, index) => key === next[index]),
+    },
   );
   const streamItemByKey = createMemo(() => {
     const map = new Map<string, ColumnStreamItem>();
@@ -583,7 +588,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         disabled={!canDeleteColumn()}
                         title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
                         onClick={() => setConfirmingDelete(true)}
-                        class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-col-rose hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                        class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300"
                       >
                         <TrashIcon />
                         <span>Delete column</span>
@@ -682,16 +687,35 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           <For each={streamKeys()}>
             {(key) => {
               if (key.startsWith('group:')) {
-                const groupItem = createMemo(() => {
-                  const item = streamItemByKey().get(key);
-                  return item?.kind === 'group' ? item : undefined;
-                });
+                const groupItem = createMemo(
+                  () => {
+                    const item = streamItemByKey().get(key);
+                    return item?.kind === 'group' ? item : undefined;
+                  },
+                  {
+                    equals: (prev, next) =>
+                      prev === next ||
+                      (prev !== undefined &&
+                        next !== undefined &&
+                        prev.group === next.group &&
+                        prev.cards.length === next.cards.length &&
+                        prev.cards.every((card, index) => card === next.cards[index])),
+                  },
+                );
+                const groupCards = createMemo(
+                  () => groupItem()?.cards ?? [],
+                  {
+                    equals: (prev, next) =>
+                      prev.length === next.length &&
+                      prev.every((card, index) => card === next[index]),
+                  },
+                );
                 return (
                   <Show when={groupItem()}>
                     {(entry) => (
                       <CardGroupItem
                         group={entry().group}
-                        cards={entry().cards}
+                        cards={groupCards()}
                         columnCards={props.cards}
                         columnGroups={props.groups}
                         columns={props.columns}

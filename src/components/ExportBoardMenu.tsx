@@ -156,7 +156,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
             <span>Copy Markdown</span>
             <span
               aria-hidden="true"
-              class="text-[11px] font-normal text-text-muted"
+              class="text-[11px] font-normal text-text/80"
             >
               Clipboard
             </span>
@@ -172,7 +172,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
             <span>Download Markdown</span>
             <span
               aria-hidden="true"
-              class="font-mono text-[11px] font-normal text-text-muted"
+              class="font-mono text-[11px] font-normal text-text/80"
             >
               .md
             </span>
@@ -188,7 +188,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
             <span>Download CSV</span>
             <span
               aria-hidden="true"
-              class="font-mono text-[11px] font-normal text-text-muted"
+              class="font-mono text-[11px] font-normal text-text/80"
             >
               .csv
             </span>
@@ -204,7 +204,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
             <span>Download JSON</span>
             <span
               aria-hidden="true"
-              class="font-mono text-[11px] font-normal text-text-muted"
+              class="font-mono text-[11px] font-normal text-text/80"
             >
               .json
             </span>

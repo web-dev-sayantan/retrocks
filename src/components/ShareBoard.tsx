@@ -45,11 +45,13 @@ function CopyLink(props: { label: string; link: string }) {
           Copy
         </button>
       </div>
-      <Show when={status()}>
-        <p role="status" class="mt-1.5 text-xs text-text-muted">
-          {status()}
-        </p>
-      </Show>
+      <p
+        role="status"
+        aria-live="polite"
+        class={status() ? 'mt-1.5 text-xs text-text-muted' : 'sr-only'}
+      >
+        {status()}
+      </p>
     </div>
   );
 }

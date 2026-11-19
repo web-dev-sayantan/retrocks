@@ -37,6 +37,7 @@ import {
   projectBoardView,
   type BoardQuickFilter,
   type BoardSortMode,
+  type ColumnStreamItem,
 } from '../lib/board-view';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
@@ -77,6 +78,10 @@ function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
     })),
   };
 }
+
+const EMPTY_CARDS: readonly CardViewDTO[] = [];
+const EMPTY_GROUPS: readonly CardGroupDTO[] = [];
+const EMPTY_STREAM_ITEMS: readonly ColumnStreamItem[] = [];
 
 function getResponsiveGridClass(columnCount: number): string {
   if (columnCount <= 1) return 'sm:grid sm:grid-cols-1 lg:max-w-2xl';
@@ -210,14 +215,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       setOpenCardDetailId(null);
       setIsActionItemsOpen(false);
     }
-    setWorkspace((draft) => {
-      const current = draft.board;
-      if (nextBoard && current?.id === nextBoard.id) {
-        if (nextBoard.version < current.version) return;
-        if (!fromLive && nextBoard.version === current.version &&
-            nextBoard.isFacilitator === current.isFacilitator) return;
-      }
-      reconcile({ board: cloneBoardView(nextBoard) })(draft);
+    untrack(() => {
+      setWorkspace((draft) => {
+        const current = draft.board;
+        if (nextBoard && current?.id === nextBoard.id) {
+          if (nextBoard.version < current.version) return;
+          if (!fromLive && nextBoard.version === current.version &&
+              nextBoard.isFacilitator === current.isFacilitator) return;
+        }
+        reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
+      });
     });
   }
 
@@ -1117,8 +1124,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </div>
           {/* Minimal sticky Board header */}
           <header class="sticky top-0 z-20 border-b border-border bg-surface/95 backdrop-blur-sm">
-            <div class="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6">
-              <div class="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
+            <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 sm:px-6 lg:min-h-14 lg:flex-nowrap lg:py-1.5">
+              <div class="flex min-w-0 basis-full items-center gap-2.5 sm:gap-3 lg:basis-auto lg:flex-1">
                 <a
                   href={props.homeHref ?? '/'}
                   aria-label="Retrocks home"
@@ -1200,12 +1207,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         </button>
                       </Show>
                       <Show when={board().isLocked}>
-                        <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                        <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
                           Locked
                         </span>
                       </Show>
                       <Show when={board().isBlurred}>
-                        <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                        <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
                           Private Mode
                         </span>
                       </Show>
@@ -1233,7 +1240,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
               </div>
 
-              <div data-print-hide="true" class="flex shrink-0 items-center gap-2">
+              <div data-print-hide="true" class="flex flex-wrap items-center gap-1.5 sm:gap-2 lg:shrink-0 lg:flex-nowrap">
                 <Show when={board().id} keyed>
                   {(boardId) => (
                     <CountdownTimer
@@ -1285,7 +1292,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </Show>
                 <button
                   type="button"
-                  aria-label={`Action Items, ${openActionItemCount()} open`}
                   aria-keyshortcuts="A"
                   aria-haspopup="dialog"
                   aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
@@ -1298,10 +1304,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   ]}
                 >
                   <FlagIcon class="h-3.5 w-3.5" />
-                  <span class="hidden lg:inline">Action Items</span>
-                  <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text-muted tabular-nums">
+                  <span class="sr-only lg:not-sr-only">Action Items</span>{' '}
+                  <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
                     {openActionItemCount()}
-                  </span>
+                  </span>{' '}
+                  <span class="sr-only">open</span>
                 </button>
                 <Show when={board().id} keyed>
                   {(boardId) => (
@@ -1582,15 +1589,58 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               ]}
             >
               <For each={board().columns}>
-                {(column, index) => (
+                {(column, index) => {
+                  const columnCards = createMemo(
+                    () => cardsByColumn().get(column.id) ?? EMPTY_CARDS,
+                    {
+                      equals: (prev, next) =>
+                        prev.length === next.length &&
+                        prev.every((card, i) => card === next[i]),
+                    },
+                  );
+                  const columnGroups = createMemo(
+                    () => groupsByColumn().get(column.id) ?? EMPTY_GROUPS,
+                    {
+                      equals: (prev, next) =>
+                        prev.length === next.length &&
+                        prev.every((group, i) => group === next[i]),
+                    },
+                  );
+                  const columnStreamItems = createMemo(
+                    () =>
+                      boardView()?.columns.get(column.id)?.items ??
+                      EMPTY_STREAM_ITEMS,
+                    {
+                      equals: (prev, next) =>
+                        prev.length === next.length &&
+                        prev.every((item, i) => {
+                          const other = next[i];
+                          if (item.kind !== other.kind || item.key !== other.key) {
+                            return false;
+                          }
+                          if (item.kind === 'card' && other.kind === 'card') {
+                            return item.card === other.card;
+                          }
+                          if (item.kind === 'group' && other.kind === 'group') {
+                            return (
+                              item.group === other.group &&
+                              item.cards.length === other.cards.length &&
+                              item.cards.every((c, j) => c === other.cards[j])
+                            );
+                          }
+                          return false;
+                        }),
+                    },
+                  );
+                  return (
                   <ColumnPanel
                     column={column}
                     columnIndex={index()}
                     totalColumns={board().columns.length}
                     columns={board().columns}
-                    cards={cardsByColumn().get(column.id) ?? []}
-                    groups={groupsByColumn().get(column.id) ?? []}
-                    streamItems={boardView()?.columns.get(column.id)?.items ?? []}
+                    cards={columnCards()}
+                    groups={columnGroups()}
+                    streamItems={columnStreamItems()}
                     visibleCardCount={
                       boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
                     }
@@ -1628,7 +1678,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     onDragStartGroup={handleDragStartGroup}
                     onDragEndCard={handleDragEndCard}
                   />
-                )}
+                  );
+                }}
               </For>
             </div>
           </main>

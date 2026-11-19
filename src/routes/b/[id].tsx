@@ -1,6 +1,6 @@
 import { Meta, Title } from '@solidjs/meta';
 import { useParams, type RouteDefinition } from '@solidjs/router';
-import { createMemo } from 'solid-js';
+import { Show, createMemo } from 'solid-js';
 
 import BoardWorkspace from '../../components/BoardWorkspace';
 import FacilitatorLinkClaim from '../../components/FacilitatorLinkClaim';
@@ -26,11 +26,24 @@ export default function BoardRoute() {
         {board() ? `${board()!.title} — Retrocks` : 'Board Not Found — Retrocks'}
       </Title>
       <FacilitatorLinkClaim boardId={params.id ?? ''} />
-      <BoardWorkspace
-        board={board()}
-        boardId={params.id ?? ''}
-        homeHref={paths()}
-      />
+      <Show
+        when={board()}
+        fallback={
+          <BoardWorkspace
+            board={null}
+            boardId={params.id ?? ''}
+            homeHref={paths()}
+          />
+        }
+      >
+        {(resolved) => (
+          <BoardWorkspace
+            board={resolved()}
+            boardId={params.id ?? ''}
+            homeHref={paths()}
+          />
+        )}
+      </Show>
     </>
   );
 }
