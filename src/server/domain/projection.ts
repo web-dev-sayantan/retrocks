@@ -275,6 +275,9 @@ export function projectMutationEventsForViewer(
   const events: BoardEvent[] = [];
   for (const rawEvent of rawEvents) {
     switch (rawEvent.type) {
+      case 'timer:updated':
+        events.push({ ...rawEvent, timer: projected.timer });
+        break;
       case 'board:updated':
         events.push({
           type: 'board:updated',

@@ -8,6 +8,7 @@ import {
   type BoardTemplateId,
   type ColumnAccent,
 } from '../../lib/board-types';
+import { applyTimerChange } from '../domain/timer';
 import { checkPrivateCardPermission } from '../domain/card-permissions';
 import type {
   BoardMutationActor,
@@ -589,6 +590,31 @@ export class SqlBoardOperations {
             boardId,
           );
           rawEvents.push({ type: 'board:updated', version: nextVersion, patch: {} });
+          return finalize(nextVersion, now);
+        }
+
+        case 'timer:update': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can control the timer.',
+            };
+          }
+          const timer = applyTimerChange(board, command.change, now);
+          if (!timer) return finalize(board.version, board.lastActiveAt);
+
+          this.sql.run(
+            `UPDATE boards SET timer_ends_at = ?, timer_remaining_ms = ?, timer_duration_ms = ?,
+                               version = ?, last_active_at = ? WHERE id = ?`,
+            timer.endsAt,
+            timer.remainingMs,
+            timer.durationMs,
+            nextVersion,
+            now,
+            boardId,
+          );
+          rawEvents.push({ type: 'timer:updated', version: nextVersion, serverNow: now });
           return finalize(nextVersion, now);
         }
 

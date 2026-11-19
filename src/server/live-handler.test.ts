@@ -251,3 +251,62 @@ it('prunes an SSE subscriber that stops sending heartbeats', async () => {
     vi.unstubAllEnvs();
   }
 });
+
+it('broadcasts a Facilitator’s timer deadline and server time to Participants', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-19T14:00:00Z') });
+  let stream: ReturnType<typeof readLiveStream> | undefined;
+  try {
+    const { createBoardForRequest, getBoardForRequest, updateTimerForRequest } =
+      await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const origin = 'https://retrocks.app';
+    const { result: board, cookie: facilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    const boardUrl = `${origin}/b/${board.id}`;
+    const { cookie: participantCookie } = await withSession(
+      new Request(boardUrl),
+      () => getBoardForRequest(board.id),
+    );
+    const makeLiveRequest = () => handleLiveRequest(
+      board.id,
+      new Request(`${origin}/api/boards/${board.id}/live`, {
+        headers: { cookie: participantCookie! },
+      }),
+    );
+    stream = readLiveStream(await makeLiveRequest());
+    expect((await stream.until('board:snapshot')).board.timer).toEqual({
+      endsAt: null, remainingMs: null, durationMs: null,
+    });
+
+    const { result } = await withSession(
+      new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
+      () => updateTimerForRequest({ boardId: board.id, change: { action: 'start', minutes: 3 } }),
+    );
+    const timer = {
+      endsAt: Date.parse('2026-11-19T14:03:00Z'),
+      remainingMs: null,
+      durationMs: 180_000,
+    };
+    const event = {
+      type: 'timer:updated',
+      version: 2,
+      serverNow: Date.parse('2026-11-19T14:00:00Z'),
+      timer,
+    };
+    expect(result.events).toEqual([event]);
+    expect(await stream.until('board:mutation')).toEqual({
+      type: 'board:mutation', version: 2, events: [event],
+    });
+
+    await stream.close();
+    stream = readLiveStream(await makeLiveRequest());
+    expect((await stream.until('board:snapshot')).board.timer).toEqual(timer);
+  } finally {
+    await stream?.close();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  }
+});

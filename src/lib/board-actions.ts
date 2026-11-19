@@ -18,6 +18,7 @@ import type {
   SetPrivateModeInput,
   UpdateCardInput,
   UpdateColumnInput,
+  UpdateTimerInput,
 } from './schemas';
 
 /**
@@ -77,6 +78,27 @@ export async function renameBoard(
   );
   try {
     const result = await renameBoardForRequest(input);
+    return respond(result, { revalidate: [] });
+  } catch (error) {
+    if (error instanceof BoardDomainError) {
+      return respond(
+        { ok: false, code: error.code, message: error.message },
+        { revalidate: [] },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function updateTimer(
+  input: UpdateTimerInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { BoardDomainError, updateTimerForRequest } = await import(
+    '../server/services/board-service'
+  );
+  try {
+    const result = await updateTimerForRequest(input);
     return respond(result, { revalidate: [] });
   } catch (error) {
     if (error instanceof BoardDomainError) {
@@ -280,6 +302,7 @@ export async function deleteColumn(
 
 export interface BoardWorkspaceActions {
   renameBoard: (input: RenameBoardInput) => Promise<BoardMutationResponse>;
+  updateTimer: (input: UpdateTimerInput) => Promise<BoardMutationResponse>;
   setPrivateMode: (input: SetPrivateModeInput) => Promise<BoardMutationResponse>;
   createCard: (input: CreateCardInput) => Promise<BoardMutationResponse>;
   updateCard: (input: UpdateCardInput) => Promise<BoardMutationResponse>;
@@ -293,6 +316,7 @@ export interface BoardWorkspaceActions {
 
 export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
   renameBoard,
+  updateTimer,
   setPrivateMode,
   createCard,
   updateCard,
