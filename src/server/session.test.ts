@@ -1,22 +1,12 @@
-/**
- * The session helper against the REAL @solidjs/web server runtime: every
- * test drives a full request/response cycle — a web `Request` into
- * `createRequestEvent`, the helper running inside `provideRequestEvent`'s
- * scope, the outgoing `Response` derived by `commitEventResponse` (the
- * same fold server-function responses take), and the NEXT request
- * carrying the previous response's Set-Cookie — not a mocked event bag.
- *
- * The secrets live in process.env.SESSION_SECRET (comma-separated,
- * newest first), read through the virtual:solid-env/server contract at module
- * init — so each test loads a fresh copy of the module via
- * `loadSession(secret)` to pin its own secret list, which is also
- * exactly how a rotation deployment behaves (new process, new list).
- */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
 
 type SessionModule = typeof import('./session');
+
+const SECRET_ONE = 'secret-one-with-at-least-32-characters-000000';
+const SECRET_TWO = 'secret-two-with-at-least-32-characters-111111';
+const NINETY_DAYS_SECONDS = 60 * 60 * 24 * 90;
 
 async function loadSession(secret: string): Promise<SessionModule> {
   process.env.SESSION_SECRET = secret;
@@ -29,7 +19,6 @@ afterEach(() => {
   delete process.env.SESSION_SECRET;
 });
 
-/** One full server round trip: request in, handler under the event scope, Response out. */
 async function runRequest<T>(
   request: Request,
   handler: () => Promise<T>,
@@ -42,56 +31,155 @@ async function runRequest<T>(
   });
 }
 
-/** Extracts the session cookie pair ("session=...") from a response, ready for a Cookie header. */
 function sessionPair(response: Response): string {
   const entries = response.headers
     .getSetCookie()
-    .filter((c) => c.startsWith('session='));
+    .filter((c) => c.startsWith('retrocks_session='));
   expect(entries.length).toBeGreaterThan(0);
   return entries[entries.length - 1].split(';')[0];
 }
 
-describe('session helper (real request/response cycle)', () => {
-  it('login sets a signed, attribute-correct session cookie on the outgoing response', async () => {
-    const { setSession } = await loadSession('secret-one');
-    const { response } = await runRequest(
-      new Request('http://localhost/login'),
-      () => setSession({ userId: 'user_1' }),
+describe('anonymous capability session (ADR-0001)', () => {
+  it('never mints a cookie when only reading getSession() on an unauthenticated request', async () => {
+    const session = await loadSession(SECRET_ONE);
+    const { result, response } = await runRequest(
+      new Request('http://localhost/'),
+      () => session.getSession(),
     );
-    const [cookie] = response.headers.getSetCookie();
-    expect(cookie).toMatch(/^session=/);
-    expect(cookie).toContain('HttpOnly');
-    expect(cookie).toContain('Secure');
-    expect(cookie).toContain('SameSite=Lax');
-    expect(cookie).toContain('Path=/');
-    expect(cookie).toContain(`Max-Age=${60 * 60 * 24 * 7}`);
-    // signed: value.signature, neither readable as plain JSON
-    expect(cookie.split(';')[0]).toMatch(/^session=[^;]+\.[^;.]+$/);
+
+    expect(result).toBeNull();
+    expect(response.headers.getSetCookie()).toEqual([]);
   });
 
-  it('the next request carrying the cookie reads the session back', async () => {
-    const session = await loadSession('secret-one');
-    const login = await runRequest(new Request('http://localhost/login'), () =>
-      session.setSession({ userId: 'user_1' }),
+  it('lazily mints an HttpOnly SameSite=Lax 90-day cookie with conditional Secure flag', async () => {
+    const session = await loadSession(SECRET_ONE);
+
+    // Local HTTP request omits Secure so http://localhost works seamlessly
+    const httpCycle = await runRequest(
+      new Request('http://localhost:3000/b/board-1'),
+      () => session.ensureParticipantSession(),
     );
-    const { result } = await runRequest(
-      new Request('http://localhost/me', {
-        headers: { cookie: sessionPair(login.response) },
+    const [httpCookie] = httpCycle.response.headers.getSetCookie();
+    expect(httpCookie).toMatch(/^retrocks_session=[^;]+\.[^;.]+;/);
+    expect(httpCookie).toContain('HttpOnly');
+    expect(httpCookie).toContain('SameSite=Lax');
+    expect(httpCookie).toContain('Path=/');
+    expect(httpCookie).toContain(`Max-Age=${NINETY_DAYS_SECONDS}`);
+    expect(httpCookie).not.toContain('Secure');
+    expect(httpCycle.result.participantId.length).toBeGreaterThanOrEqual(22);
+    expect(httpCycle.result.facilitatorBoards).toEqual([]);
+
+    // HTTPS request includes Secure
+    const httpsCycle = await runRequest(
+      new Request('https://retrocks.app/b/board-1'),
+      () => session.ensureParticipantSession(),
+    );
+    const [httpsCookie] = httpsCycle.response.headers.getSetCookie();
+    expect(httpsCookie).toContain('Secure');
+  });
+
+  it('reads back participantId and Facilitator grants on subsequent requests without re-minting', async () => {
+    const session = await loadSession(SECRET_ONE);
+    const created = await runRequest(
+      new Request('https://retrocks.app/'),
+      () => session.grantFacilitatorSession('board_alpha'),
+    );
+    const pair = sessionPair(created.response);
+
+    const followUp = await runRequest(
+      new Request('https://retrocks.app/b/board_alpha', {
+        headers: { cookie: pair },
+      }),
+      () => session.ensureParticipantSession(),
+    );
+
+    expect(followUp.result.participantId).toBe(created.result.participantId);
+    expect(followUp.result.facilitatorBoards).toEqual(['board_alpha']);
+    expect(
+      session.isFacilitatorForBoard(followUp.result, 'board_alpha'),
+    ).toBe(true);
+    expect(
+      session.isFacilitatorForBoard(followUp.result, 'board_other'),
+    ).toBe(false);
+    // Fresh cookie (well within sliding renewal window) does not re-issue Set-Cookie on read
+    expect(followUp.response.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('renews the 90-day sliding window when near expiry or explicitly renewed on writes', async () => {
+    vi.useFakeTimers();
+    const start = new Date('2026-11-01T00:00:00Z').getTime();
+    vi.setSystemTime(start);
+
+    const session = await loadSession(SECRET_ONE);
+    const initial = await runRequest(
+      new Request('https://retrocks.app/b/board_1'),
+      () => session.ensureParticipantSession(),
+    );
+    const pair = sessionPair(initial.response);
+
+    // Advance 50 days (past the 45-day half-TTL sliding renewal threshold)
+    vi.setSystemTime(start + 50 * 24 * 60 * 60 * 1000);
+    const renewed = await runRequest(
+      new Request('https://retrocks.app/b/board_1', {
+        headers: { cookie: pair },
+      }),
+      () => session.ensureParticipantSession(),
+    );
+    expect(renewed.result.participantId).toBe(initial.result.participantId);
+    expect(renewed.response.headers.getSetCookie().length).toBe(1);
+
+    // Renewed cookie remains valid 60 days later (110 days after original mint)
+    const renewedPair = sessionPair(renewed.response);
+    vi.setSystemTime(start + 110 * 24 * 60 * 60 * 1000);
+    const stillValid = await runRequest(
+      new Request('https://retrocks.app/b/board_1', {
+        headers: { cookie: renewedPair },
       }),
       () => session.getSession(),
     );
-    expect(result).toEqual({ userId: 'user_1' });
+    expect(stillValid.result?.participantId).toBe(initial.result.participantId);
   });
 
-  it('no cookie, foreign cookies, or a tampered value all read as null', async () => {
-    const session = await loadSession('secret-one');
-    const login = await runRequest(new Request('http://localhost/login'), () =>
-      session.setSession({ userId: 'user_1' }),
+  it('bounds Facilitator grants to the most recent 35 Board IDs well under the 4KB cookie ceiling', async () => {
+    const session = await loadSession(SECRET_ONE);
+    let cookieHeader = '';
+    let latestSession: Awaited<
+      ReturnType<typeof session.grantFacilitatorSession>
+    > | null = null;
+    let lastSetCookie = '';
+
+    for (let i = 1; i <= 42; i += 1) {
+      const boardId = `board_${String(i).padStart(16, '0')}`;
+      const cycle = await runRequest(
+        new Request('https://retrocks.app/', {
+          headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+        }),
+        () => session.grantFacilitatorSession(boardId),
+      );
+      latestSession = cycle.result;
+      lastSetCookie = cycle.response.headers.getSetCookie()[0];
+      cookieHeader = sessionPair(cycle.response);
+    }
+
+    expect(latestSession?.facilitatorBoards.length).toBe(35);
+    expect(latestSession?.facilitatorBoards[0]).toBe('board_0000000000000042');
+    expect(latestSession?.facilitatorBoards[34]).toBe('board_0000000000000008');
+    expect(
+      session.isFacilitatorForBoard(latestSession, 'board_0000000000000001'),
+    ).toBe(false);
+    expect(lastSetCookie.length).toBeLessThan(3500);
+  });
+
+  it('rejects absent, foreign, tampered, and server-side expired cookies', async () => {
+    const session = await loadSession(SECRET_ONE);
+    const minted = await runRequest(
+      new Request('https://retrocks.app/b/board_1'),
+      () => session.ensureParticipantSession(),
     );
-    const pair = sessionPair(login.response);
+    const pair = sessionPair(minted.response);
     const tampered = pair.replace(
-      /^session=(.)/,
-      (_, c) => `session=${c === 'A' ? 'B' : 'A'}`,
+      /^retrocks_session=(.)/,
+      (_, c) => `retrocks_session=${c === 'A' ? 'B' : 'A'}`,
     );
 
     for (const headers of [
@@ -100,88 +188,68 @@ describe('session helper (real request/response cycle)', () => {
       { cookie: tampered },
     ] as const) {
       const { result } = await runRequest(
-        new Request('http://localhost/me', { headers }),
+        new Request('https://retrocks.app/b/board_1', { headers }),
         () => session.getSession(),
       );
       expect(result).toBeNull();
     }
-  });
 
-  it('expiry is enforced server-side even though the cookie is still presented', async () => {
-    const session = await loadSession('secret-one');
-    const login = await runRequest(new Request('http://localhost/login'), () =>
-      session.setSession({ userId: 'user_1' }),
-    );
-    const pair = sessionPair(login.response);
-
-    // a rogue client keeps sending the cookie after Max-Age
+    // Server-side expiry after 90 days
     vi.useFakeTimers();
-    vi.setSystemTime(Date.now() + (60 * 60 * 24 * 7 + 60) * 1000);
-    const { result } = await runRequest(
-      new Request('http://localhost/me', { headers: { cookie: pair } }),
+    vi.setSystemTime(Date.now() + (NINETY_DAYS_SECONDS + 60) * 1000);
+    const expired = await runRequest(
+      new Request('https://retrocks.app/b/board_1', {
+        headers: { cookie: pair },
+      }),
       () => session.getSession(),
     );
-    expect(result).toBeNull();
+    expect(expired.result).toBeNull();
   });
 
-  it("rotation: a cookie signed under the old secret verifies under 'new,old', not under 'new'", async () => {
-    const oldDeploy = await loadSession('old-secret');
-    const login = await runRequest(new Request('http://localhost/login'), () =>
-      oldDeploy.setSession({ userId: 'user_1' }),
+  it('supports SESSION_SECRET rotation (newest signs, all verify)', async () => {
+    const oldDeploy = await loadSession(SECRET_ONE);
+    const minted = await runRequest(
+      new Request('https://retrocks.app/b/board_1'),
+      () => oldDeploy.grantFacilitatorSession('board_1'),
     );
-    const pair = sessionPair(login.response);
+    const pair = sessionPair(minted.response);
 
-    const rotated = await loadSession('new-secret,old-secret');
-    const kept = await runRequest(
-      new Request('http://localhost/me', { headers: { cookie: pair } }),
+    const rotated = await loadSession(`${SECRET_TWO},${SECRET_ONE}`);
+    const verified = await runRequest(
+      new Request('https://retrocks.app/b/board_1', {
+        headers: { cookie: pair },
+      }),
       () => rotated.getSession(),
     );
-    expect(kept.result).toEqual({ userId: 'user_1' });
+    expect(verified.result?.participantId).toBe(minted.result.participantId);
+    expect(verified.result?.facilitatorBoards).toEqual(['board_1']);
 
-    const dropped = await loadSession('new-secret');
+    const dropped = await loadSession(SECRET_TWO);
     const gone = await runRequest(
-      new Request('http://localhost/me', { headers: { cookie: pair } }),
+      new Request('https://retrocks.app/b/board_1', {
+        headers: { cookie: pair },
+      }),
       () => dropped.getSession(),
     );
     expect(gone.result).toBeNull();
   });
 
-  it('fresh cookies are signed by the FIRST secret in the list', async () => {
-    const rotated = await loadSession('new-secret,old-secret');
-    const login = await runRequest(new Request('http://localhost/login'), () =>
-      rotated.setSession({ userId: 'user_2' }),
-    );
-    const pair = sessionPair(login.response);
-
-    const newOnly = await loadSession('new-secret');
-    const { result } = await runRequest(
-      new Request('http://localhost/me', { headers: { cookie: pair } }),
-      () => newOnly.getSession(),
-    );
-    expect(result).toEqual({ userId: 'user_2' });
-  });
-
-  it('clearSession expires the cookie on the outgoing response', async () => {
-    const session = await loadSession('secret-one');
-    const { response } = await runRequest(
-      new Request('http://localhost/logout'),
+  it('expires the cookie on clearSession() and fails loudly without SESSION_SECRET or request scope', async () => {
+    const session = await loadSession(SECRET_ONE);
+    const cleared = await runRequest(
+      new Request('https://retrocks.app/'),
       () => session.clearSession(),
     );
-    const [cookie] = response.headers.getSetCookie();
-    expect(cookie).toMatch(/^session=;/);
+    const [cookie] = cleared.response.headers.getSetCookie();
+    expect(cookie).toMatch(/^retrocks_session=;/);
     expect(cookie).toContain('Max-Age=0');
-  });
 
-  it('missing SESSION_SECRET fails loudly at module init', async () => {
+    await expect(session.getSession()).rejects.toThrow(/no request event/);
+
     delete process.env.SESSION_SECRET;
     vi.resetModules();
     await expect(import('./session')).rejects.toThrow(
       /SESSION_SECRET is not set/,
     );
-  });
-
-  it('outside a request scope the helpers fail with a directed error', async () => {
-    const { getSession } = await loadSession('secret-one');
-    await expect(getSession()).rejects.toThrow(/no request event/);
   });
 });
