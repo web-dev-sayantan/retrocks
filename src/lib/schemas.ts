@@ -3,6 +3,11 @@ import * as v from 'valibot';
 import {
   BOARD_TEMPLATE_IDS,
   COLUMN_ACCENTS,
+  MAX_BOARD_SUBTITLE_LENGTH,
+  MAX_BOARD_TITLE_LENGTH,
+  MAX_CARD_CONTENT_LENGTH,
+  MAX_COLUMNS_PER_BOARD,
+  MAX_COLUMN_TITLE_LENGTH,
   RETENTION_DAYS_OPTIONS,
 } from './board-types';
 
@@ -11,20 +16,40 @@ export const BoardIdSchema = v.pipe(
   v.regex(/^[A-Za-z0-9_-]{16,32}$/, 'Invalid Board ID'),
 );
 
+export const EntityIdSchema = v.pipe(
+  v.string(),
+  v.regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid ID'),
+);
+
 export const ColumnAccentSchema = v.picklist(COLUMN_ACCENTS);
 
 export const BoardTemplateIdSchema = v.picklist(BOARD_TEMPLATE_IDS);
 
-export const CreateColumnInputSchema = v.object({
-  title: v.pipe(
-    v.string(),
-    v.trim(),
-    v.minLength(1, 'Column title cannot be empty'),
-    v.maxLength(60, 'Column title must be 60 characters or fewer'),
+export const ColumnTitleSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1, 'Column title cannot be empty'),
+  v.maxLength(
+    MAX_COLUMN_TITLE_LENGTH,
+    `Column title must be ${MAX_COLUMN_TITLE_LENGTH} characters or fewer`,
   ),
+);
+
+export const CreateColumnInputSchema = v.object({
+  title: ColumnTitleSchema,
   accent: v.optional(ColumnAccentSchema, 'slate'),
   isActionColumn: v.optional(v.boolean(), false),
 });
+
+export const CardContentSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1, 'Card text cannot be empty'),
+  v.maxLength(
+    MAX_CARD_CONTENT_LENGTH,
+    `Card text must be ${MAX_CARD_CONTENT_LENGTH} characters or fewer`,
+  ),
+);
 
 export const VoteLimitSchema = v.union([
   v.literal(3),
@@ -72,3 +97,101 @@ export type CreateBoardInput = v.InferInput<typeof CreateBoardInputSchema>;
 export type ValidatedCreateBoardInput = v.InferOutput<
   typeof CreateBoardInputSchema
 >;
+
+export const RenameBoardInputSchema = v.object({
+  boardId: BoardIdSchema,
+  title: v.pipe(
+    v.string(),
+    v.trim(),
+    v.minLength(1, 'Board title cannot be empty'),
+    v.maxLength(
+      MAX_BOARD_TITLE_LENGTH,
+      `Board title must be ${MAX_BOARD_TITLE_LENGTH} characters or fewer`,
+    ),
+  ),
+  subtitle: v.optional(
+    v.pipe(
+      v.string(),
+      v.trim(),
+      v.maxLength(
+        MAX_BOARD_SUBTITLE_LENGTH,
+        `Board subtitle must be ${MAX_BOARD_SUBTITLE_LENGTH} characters or fewer`,
+      ),
+    ),
+  ),
+});
+
+export type RenameBoardInput = v.InferInput<typeof RenameBoardInputSchema>;
+
+export const CreateCardInputSchema = v.object({
+  boardId: BoardIdSchema,
+  columnId: EntityIdSchema,
+  content: CardContentSchema,
+});
+
+export type CreateCardInput = v.InferInput<typeof CreateCardInputSchema>;
+
+export const UpdateCardInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+  content: CardContentSchema,
+});
+
+export type UpdateCardInput = v.InferInput<typeof UpdateCardInputSchema>;
+
+export const MoveCardInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+  targetColumnId: EntityIdSchema,
+});
+
+export type MoveCardInput = v.InferInput<typeof MoveCardInputSchema>;
+
+export const DeleteCardInputSchema = v.object({
+  boardId: BoardIdSchema,
+  cardId: EntityIdSchema,
+});
+
+export type DeleteCardInput = v.InferInput<typeof DeleteCardInputSchema>;
+
+export const AddColumnInputSchema = v.object({
+  boardId: BoardIdSchema,
+  title: ColumnTitleSchema,
+  accent: v.optional(ColumnAccentSchema, 'slate'),
+  isActionColumn: v.optional(v.boolean(), false),
+});
+
+export type AddColumnInput = v.InferInput<typeof AddColumnInputSchema>;
+
+export const UpdateColumnInputSchema = v.object({
+  boardId: BoardIdSchema,
+  columnId: EntityIdSchema,
+  title: v.optional(ColumnTitleSchema),
+  accent: v.optional(ColumnAccentSchema),
+  isActionColumn: v.optional(v.boolean()),
+});
+
+export type UpdateColumnInput = v.InferInput<typeof UpdateColumnInputSchema>;
+
+export const ReorderColumnsInputSchema = v.object({
+  boardId: BoardIdSchema,
+  columnIds: v.pipe(
+    v.array(EntityIdSchema),
+    v.minLength(1, 'A Board requires at least 1 Column'),
+    v.maxLength(
+      MAX_COLUMNS_PER_BOARD,
+      `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns`,
+    ),
+  ),
+});
+
+export type ReorderColumnsInput = v.InferInput<
+  typeof ReorderColumnsInputSchema
+>;
+
+export const DeleteColumnInputSchema = v.object({
+  boardId: BoardIdSchema,
+  columnId: EntityIdSchema,
+});
+
+export type DeleteColumnInput = v.InferInput<typeof DeleteColumnInputSchema>;

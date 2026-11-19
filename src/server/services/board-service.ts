@@ -2,8 +2,25 @@ import 'server-only';
 import { getRequestEvent, markSafeError } from '@solidjs/web';
 import * as v from 'valibot';
 
-import type { BoardErrorCode, BoardViewDTO } from '../../lib/board-types';
-import { BoardIdSchema, CreateBoardInputSchema } from '../../lib/schemas';
+import type {
+  BoardErrorCode,
+  BoardEvent,
+  BoardMutationSuccess,
+  BoardViewDTO,
+} from '../../lib/board-types';
+import {
+  AddColumnInputSchema,
+  BoardIdSchema,
+  CreateBoardInputSchema,
+  CreateCardInputSchema,
+  DeleteCardInputSchema,
+  DeleteColumnInputSchema,
+  MoveCardInputSchema,
+  RenameBoardInputSchema,
+  ReorderColumnsInputSchema,
+  UpdateCardInputSchema,
+  UpdateColumnInputSchema,
+} from '../../lib/schemas';
 import {
   formatDefaultBoardTitle,
   getBoardTemplate,
@@ -17,8 +34,15 @@ import {
   generateTokenSalt,
   hashTokenWithSalt,
 } from '../crypto';
-import type { CreateBoardRecord } from '../db/raw-types';
-import { projectBoardForViewer } from '../domain/projection';
+import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  CreateBoardRecord,
+} from '../db/raw-types';
+import {
+  projectBoardForViewer,
+  projectMutationEventsForViewer,
+} from '../domain/projection';
 import { checkBoardCreateRateLimit } from '../rate-limit';
 import {
   ensureParticipantSession,
@@ -148,4 +172,159 @@ export async function getBoardForRequest(
   );
 
   return projectBoardForViewer(rawSnapshot, viewerParticipantHash, isFacilitator);
+}
+
+function parseMutationInput<
+  TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>,
+>(schema: TSchema, rawInput: unknown): v.InferOutput<TSchema> {
+  const parsed = v.safeParse(schema, rawInput);
+  if (!parsed.success) {
+    const firstMessage =
+      parsed.issues[0]?.message ?? 'Invalid request payload.';
+    throw new BoardDomainError('VALIDATION_ERROR', firstMessage);
+  }
+  return parsed.output;
+}
+
+async function executeBoardMutation(
+  boardId: string,
+  command: BoardMutationCommand,
+): Promise<BoardMutationSuccess> {
+  requireRequest();
+  const store = await getBoardStore();
+
+  const tokenSalt = await store.getBoardTokenSalt(boardId);
+  if (!tokenSalt) {
+    throw new BoardDomainError('BOARD_NOT_FOUND', 'Board not found or expired.');
+  }
+
+  // Sliding 90-day cookie renewal on writes (SPEC §2.1)
+  const session = await ensureParticipantSession({ renew: true });
+  const isFacilitator = isFacilitatorForBoard(session, boardId);
+  const participantHash = await hashTokenWithSalt(
+    session.participantId,
+    tokenSalt,
+  );
+  const actor: BoardMutationActor = { participantHash, isFacilitator };
+
+  const outcome = await store.mutateBoard(boardId, actor, command);
+  if (!outcome.ok) {
+    throw new BoardDomainError(outcome.code, outcome.message);
+  }
+
+  const events: BoardEvent[] = projectMutationEventsForViewer(
+    outcome.snapshot,
+    outcome.rawEvents,
+    participantHash,
+    isFacilitator,
+  );
+
+  return {
+    ok: true,
+    version: outcome.version,
+    events,
+  };
+}
+
+export async function renameBoardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(RenameBoardInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'board:rename',
+    title: input.title,
+    ...(input.subtitle !== undefined ? { subtitle: input.subtitle } : {}),
+  });
+}
+
+export async function createCardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(CreateCardInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'card:create',
+    id: generateEntityId(),
+    columnId: input.columnId,
+    content: input.content,
+  });
+}
+
+export async function updateCardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(UpdateCardInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'card:update',
+    cardId: input.cardId,
+    content: input.content,
+  });
+}
+
+export async function moveCardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(MoveCardInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'card:move',
+    cardId: input.cardId,
+    targetColumnId: input.targetColumnId,
+  });
+}
+
+export async function deleteCardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(DeleteCardInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'card:delete',
+    cardId: input.cardId,
+  });
+}
+
+export async function addColumnForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(AddColumnInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'column:add',
+    id: generateEntityId(),
+    title: input.title,
+    accent: input.accent,
+    isActionColumn: input.isActionColumn,
+  });
+}
+
+export async function updateColumnForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(UpdateColumnInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'column:update',
+    columnId: input.columnId,
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.accent !== undefined ? { accent: input.accent } : {}),
+    ...(input.isActionColumn !== undefined
+      ? { isActionColumn: input.isActionColumn }
+      : {}),
+  });
+}
+
+export async function reorderColumnsForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(ReorderColumnsInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'column:reorder',
+    columnIds: input.columnIds,
+  });
+}
+
+export async function deleteColumnForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(DeleteColumnInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'column:delete',
+    columnId: input.columnId,
+  });
 }

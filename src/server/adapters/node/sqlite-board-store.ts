@@ -1,8 +1,15 @@
 import 'server-only';
 
-import type { CreateBoardRecord, RawBoardSnapshot } from '../../db/raw-types';
+import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  BoardMutationOutcome,
+  CreateBoardRecord,
+  RawBoardSnapshot,
+} from '../../db/raw-types';
 import { SqlBoardOperations } from '../../db/sql-board-operations';
 import type { SqlParam, SqlRunResult, SqlRunner } from '../../db/sql-runner';
+import { checkBoardWriteRateLimit } from '../../rate-limit';
 import type { BoardStore } from '../types';
 
 interface NodeStatementSync {
@@ -112,6 +119,32 @@ export async function createNodeBoardStore(
       now?: number,
     ): Promise<RawBoardSnapshot | null> {
       return ops.getBoardSnapshot(boardId, now);
+    },
+    async getBoardTokenSalt(
+      boardId: string,
+      now?: number,
+    ): Promise<string | null> {
+      return ops.getBoardTokenSalt(boardId, now);
+    },
+    async mutateBoard(
+      boardId: string,
+      actor: BoardMutationActor,
+      command: BoardMutationCommand,
+      now: number = Date.now(),
+    ): Promise<BoardMutationOutcome> {
+      const limit = checkBoardWriteRateLimit(
+        boardId,
+        actor.participantHash,
+        now,
+      );
+      if (!limit.allowed) {
+        return {
+          ok: false,
+          code: 'RATE_LIMITED',
+          message: 'Too many changes in a short period. Please slow down.',
+        };
+      }
+      return ops.mutateBoard(boardId, actor, command, now);
     },
     async deleteBoard(boardId: string): Promise<boolean> {
       return ops.deleteBoard(boardId);

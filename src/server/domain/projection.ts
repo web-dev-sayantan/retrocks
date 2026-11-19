@@ -1,13 +1,17 @@
 import 'server-only';
 
 import type {
+  BoardEvent,
   BoardViewDTO,
   CardGroupDTO,
   CardViewDTO,
   ColumnDTO,
   CommentViewDTO,
 } from '../../lib/board-types';
-import type { RawBoardSnapshot } from '../db/raw-types';
+import type {
+  RawBoardMutationEvent,
+  RawBoardSnapshot,
+} from '../db/raw-types';
 
 function computePlaceholderLines(content: string): 1 | 2 | 3 {
   if (content.length <= 70) return 1;
@@ -230,4 +234,92 @@ export function projectBoardForViewer(
     groups,
     cards,
   };
+}
+
+/**
+ * Projects raw domain mutation events into viewer-scoped `BoardEvent`s using
+ * `projectBoardForViewer`, ensuring Private Mode redaction, Blind Voting
+ * totals, and viewer flags (`isMine`, `myVotes`, `myReactions`) stay consistent
+ * across HTTP responses and live WebSocket/SSE broadcasts.
+ */
+export function projectMutationEventsForViewer(
+  rawSnapshot: RawBoardSnapshot,
+  rawEvents: readonly RawBoardMutationEvent[],
+  viewerParticipantHash: string | null,
+  isFacilitator: boolean,
+): BoardEvent[] {
+  const projected = projectBoardForViewer(
+    rawSnapshot,
+    viewerParticipantHash,
+    isFacilitator,
+  );
+  const cardsById = new Map(projected.cards.map((card) => [card.id, card]));
+  const columnsById = new Map(
+    projected.columns.map((column) => [column.id, column]),
+  );
+
+  const events: BoardEvent[] = [];
+  for (const rawEvent of rawEvents) {
+    switch (rawEvent.type) {
+      case 'board:updated':
+        events.push({
+          type: 'board:updated',
+          version: rawEvent.version,
+          patch: rawEvent.patch,
+        });
+        break;
+      case 'card:upserted': {
+        const card = cardsById.get(rawEvent.cardId);
+        if (card) {
+          events.push({
+            type: 'card:upserted',
+            version: rawEvent.version,
+            card,
+          });
+        }
+        break;
+      }
+      case 'card:deleted':
+        events.push({
+          type: 'card:deleted',
+          version: rawEvent.version,
+          cardId: rawEvent.cardId,
+        });
+        break;
+      case 'column:upserted': {
+        const column = columnsById.get(rawEvent.columnId);
+        if (column) {
+          events.push({
+            type: 'column:upserted',
+            version: rawEvent.version,
+            column,
+          });
+        }
+        break;
+      }
+      case 'column:deleted':
+        events.push({
+          type: 'column:deleted',
+          version: rawEvent.version,
+          columnId: rawEvent.columnId,
+        });
+        break;
+      case 'columns:reordered':
+        events.push({
+          type: 'columns:reordered',
+          version: rawEvent.version,
+          columnIds: rawEvent.columnIds,
+        });
+        break;
+      case 'group:dissolved':
+        events.push({
+          type: 'group:dissolved',
+          version: rawEvent.version,
+          groupId: rawEvent.groupId,
+        });
+        break;
+    }
+  }
+
+  return events;
 }

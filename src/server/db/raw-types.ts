@@ -1,6 +1,11 @@
 import 'server-only';
 
-import type { BoardTemplateId, ColumnAccent } from '../../lib/board-types';
+import type {
+  BoardErrorCode,
+  BoardSettingsDTO,
+  BoardTemplateId,
+  ColumnAccent,
+} from '../../lib/board-types';
 
 export interface RawBoardRow {
   id: string;
@@ -115,3 +120,59 @@ export interface CreateBoardRecord {
   createdAt: number;
   columns: CreateBoardColumnRecord[];
 }
+
+export interface BoardMutationActor {
+  participantHash: string;
+  isFacilitator: boolean;
+}
+
+export type BoardMutationCommand =
+  | { type: 'board:rename'; title: string; subtitle?: string }
+  | { type: 'card:create'; id: string; columnId: string; content: string }
+  | { type: 'card:update'; cardId: string; content: string }
+  | { type: 'card:move'; cardId: string; targetColumnId: string }
+  | { type: 'card:delete'; cardId: string }
+  | {
+      type: 'column:add';
+      id: string;
+      title: string;
+      accent: ColumnAccent;
+      isActionColumn: boolean;
+    }
+  | {
+      type: 'column:update';
+      columnId: string;
+      title?: string;
+      accent?: ColumnAccent;
+      isActionColumn?: boolean;
+    }
+  | { type: 'column:reorder'; columnIds: string[] }
+  | { type: 'column:delete'; columnId: string };
+
+export type RawBoardMutationEvent =
+  | {
+      type: 'board:updated';
+      version: number;
+      patch: Partial<BoardSettingsDTO>;
+    }
+  | { type: 'card:upserted'; version: number; cardId: string }
+  | { type: 'card:deleted'; version: number; cardId: string }
+  | { type: 'column:upserted'; version: number; columnId: string }
+  | { type: 'column:deleted'; version: number; columnId: string }
+  | { type: 'columns:reordered'; version: number; columnIds: string[] }
+  | { type: 'group:dissolved'; version: number; groupId: string };
+
+export type BoardMutationOutcome =
+  | {
+      ok: true;
+      version: number;
+      lastActiveAt: number;
+      retentionDays: number;
+      snapshot: RawBoardSnapshot;
+      rawEvents: RawBoardMutationEvent[];
+    }
+  | {
+      ok: false;
+      code: BoardErrorCode;
+      message: string;
+    };
