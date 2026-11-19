@@ -208,6 +208,23 @@ export function MessageSquareIcon(props: IconProps) {
   );
 }
 
+export function DownloadIcon(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class ?? 'h-3.5 w-3.5'}
+    >
+      <path d="M8 2.5v7.25M5.25 7.25 8 10l2.75-2.75M2.75 11.75v1a1 1 0 0 0 1 1h8.5a1 1 0 0 0 1-1v-1" />
+    </svg>
+  );
+}
+
 export function SearchIcon(props: IconProps) {
   return (
     <svg

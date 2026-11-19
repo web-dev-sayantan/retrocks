@@ -435,7 +435,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           </span>
 
           <Show when={canManageColumn()}>
-            <div class="relative">
+            <div data-print-hide="true" class="relative">
               <button
                 type="button"
                 aria-label={`Column options for ${props.column.title}`}
@@ -593,7 +593,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
       {/* Pinned top quick inline "+ Add card" composer */}
       <Show when={!props.isLocked}>
-        <div class="border-b border-border/60 bg-canvas/50 p-3">
+        <div data-print-hide="true" class="border-b border-border/60 bg-canvas/50 p-3">
           <textarea
             ref={composerEl}
             aria-label={`Add card to ${props.column.title}`}

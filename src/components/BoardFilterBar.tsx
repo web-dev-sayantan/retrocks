@@ -55,6 +55,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
   return (
     <section
       aria-label="Search, filter, and sort Board"
+      data-print-hide="true"
       class="border-b border-border/70 bg-surface/60"
     >
       <div class="mx-auto flex max-w-[1600px] flex-col gap-2 px-4 py-2 sm:px-6 lg:flex-row lg:items-center lg:justify-between">

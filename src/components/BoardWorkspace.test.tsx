@@ -1825,6 +1825,177 @@ describe('<BoardWorkspace />', () => {
     expect(queryByText('CI reliability')).not.toBeInTheDocument();
   });
 
+  it('opens the Export menu, copies Markdown, exposes download links, prints, and closes on Escape/outside click', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+
+    try {
+      const board = makeBoardView({
+        title: 'Sprint 42 Retro',
+        subtitle: 'Checkout Team',
+        cards: [
+          makeCard({
+            id: 'card_1',
+            columnId: 'col_1',
+            content: 'Fast deploy pipeline',
+            votes: 2,
+            comments: [
+              {
+                id: 'cm_1',
+                cardId: 'card_1',
+                content: 'Down from 20m to 6m!',
+                isMine: true,
+                createdAt: Date.now() - 30_000,
+              },
+            ],
+            commentCount: 1,
+          }),
+          makeCard({
+            id: 'card_action',
+            columnId: 'col_3',
+            content: 'Automate canary rollback',
+            isActionItem: true,
+            actionDone: false,
+            actionOwner: 'Platform',
+          }),
+        ],
+      });
+
+      const { artifact } = await captureArtifact(
+        async () => {
+          const { getByRole, queryByRole } = render(() => (
+            <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+          ));
+          flush();
+
+          const exportButton = getByRole('button', { name: 'Export' });
+          fireEvent.click(exportButton);
+          flush();
+
+          const menu = getByRole('menu', { name: 'Export Board' });
+          expect(menu).toHaveAttribute('data-board-overlay', 'true');
+
+          const mdLink = within(menu).getByRole('menuitem', {
+            name: /Download Markdown/i,
+          });
+          expect(mdLink).toHaveAttribute(
+            'href',
+            `/api/boards/${board.id}/export?format=md`,
+          );
+          expect(mdLink).toHaveAttribute('download', 'sprint-42-retro.md');
+
+          const csvLink = within(menu).getByRole('menuitem', {
+            name: /Download CSV/i,
+          });
+          expect(csvLink).toHaveAttribute(
+            'href',
+            `/api/boards/${board.id}/export?format=csv`,
+          );
+          expect(csvLink).toHaveAttribute('download', 'sprint-42-retro.csv');
+
+          const jsonLink = within(menu).getByRole('menuitem', {
+            name: /Download JSON/i,
+          });
+          expect(jsonLink).toHaveAttribute(
+            'href',
+            `/api/boards/${board.id}/export?format=json`,
+          );
+          expect(jsonLink).toHaveAttribute('download', 'sprint-42-retro.json');
+
+          fireEvent.click(
+            within(menu).getByRole('menuitem', { name: 'Copy Markdown' }),
+          );
+          await flushPromises();
+          expect(writeText).toHaveBeenCalledTimes(1);
+          const copied = writeText.mock.calls[0][0] as string;
+          expect(copied).toContain('# Sprint 42 Retro');
+          expect(copied).toContain('- Fast deploy pipeline (2 votes)');
+          expect(copied).toContain('  - Comment: Down from 20m to 6m!');
+          expect(copied).toContain(
+            '- [ ] Automate canary rollback (Owner: Platform)',
+          );
+
+          // Close on Escape
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(
+            queryByRole('menu', { name: 'Export Board' }),
+          ).not.toBeInTheDocument();
+
+          // Reopen and close on outside pointerdown
+          fireEvent.click(exportButton);
+          flush();
+          expect(
+            getByRole('menu', { name: 'Export Board' }),
+          ).toBeInTheDocument();
+          fireEvent.pointerDown(document.body);
+          flush();
+          expect(
+            queryByRole('menu', { name: 'Export Board' }),
+          ).not.toBeInTheDocument();
+
+          // Reopen and trigger Print / Save as PDF
+          fireEvent.click(exportButton);
+          flush();
+          fireEvent.click(
+            getByRole('menuitem', { name: /Print \/ Save as PDF/i }),
+          );
+          flush();
+          expect(printSpy).toHaveBeenCalledTimes(1);
+          expect(
+            queryByRole('menu', { name: 'Export Board' }),
+          ).not.toBeInTheDocument();
+        },
+        { scenario: 'board-workspace-export-menu' },
+      );
+
+      expectNoDiagnostics(artifact);
+    } finally {
+      printSpy.mockRestore();
+    }
+  });
+
+  it('keeps the Export menu available for Participants when the Board is Locked', () => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    try {
+      const lockedBoard = makeBoardView({
+        isFacilitator: false,
+        isLocked: true,
+        cards: [makeCard({ content: 'Final retro takeaway' })],
+      });
+      const { getByRole } = render(() => (
+        <BoardWorkspace
+          board={lockedBoard}
+          boardId={lockedBoard.id}
+          homeHref="/"
+        />
+      ));
+      flush();
+
+      fireEvent.click(getByRole('button', { name: 'Export' }));
+      flush();
+      const menu = getByRole('menu', { name: 'Export Board' });
+      expect(
+        within(menu).getByRole('menuitem', { name: 'Copy Markdown' }),
+      ).toBeInTheDocument();
+      expect(
+        within(menu).getByRole('menuitem', { name: /Download CSV/i }),
+      ).toHaveAttribute('href', `/api/boards/${lockedBoard.id}/export?format=csv`);
+
+      fireEvent.click(
+        within(menu).getByRole('menuitem', { name: /Print \/ Save as PDF/i }),
+      );
+      flush();
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      printSpy.mockRestore();
+    }
+  });
+
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {
     const board = makeBoardView({
       cards: [makeCard()],

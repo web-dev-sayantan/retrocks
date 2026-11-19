@@ -45,6 +45,7 @@ export default function VoteControls(props: {
       <Show when={!props.isLocked}>
         <button
           type="button"
+          data-print-hide="true"
           class={[buttonClass, 'rounded-l-lg']}
           aria-label="Remove Vote"
           disabled={props.voting.pending || myVotes() === 0}
@@ -62,6 +63,7 @@ export default function VoteControls(props: {
       <Show when={!props.isLocked}>
         <button
           type="button"
+          data-print-hide="true"
           class={[buttonClass, 'rounded-r-lg']}
           aria-label="Cast Vote"
           disabled={props.voting.pending || !canCast()}

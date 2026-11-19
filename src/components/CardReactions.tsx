@@ -81,7 +81,7 @@ export default function CardReactions(props: CardReactionsProps) {
       </For>
 
       <Show when={!props.disabled}>
-        <div class="relative">
+        <div data-print-hide="true" class="relative">
           <button
             type="button"
             aria-label="Add reaction"
