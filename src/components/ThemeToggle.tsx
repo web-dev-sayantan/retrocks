@@ -7,7 +7,7 @@ import {
   type Theme,
 } from '../lib/theme';
 
-export default function ThemeToggle() {
+export default function ThemeToggle(props: { menuItem?: boolean }) {
   // Always start with 'light' to match SSR output without hydration mismatch;
   // onSettled syncs immediately with the pre-painted `data-theme` attribute.
   const [theme, setTheme] = createSignal<Theme>('light');
@@ -46,6 +46,7 @@ export default function ThemeToggle() {
     <button
       type="button"
       onClick={handleToggle}
+      role={props.menuItem ? 'menuitem' : undefined}
       aria-pressed={theme() === 'dark' ? 'true' : 'false'}
       aria-label={
         theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
@@ -53,13 +54,16 @@ export default function ThemeToggle() {
       title={
         theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
       }
-      class={[
+      class={props.menuItem ? 'board-menu-item' : [
         'inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg',
         'border border-border bg-surface text-text-muted transition-colors',
         'hover:bg-surface-subtle hover:text-text',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
       ]}
     >
+      <Show when={props.menuItem}>
+        <span>{theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}</span>
+      </Show>
       <Show
         when={theme() === 'dark'}
         fallback={
