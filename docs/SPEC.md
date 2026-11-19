@@ -74,11 +74,10 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ## 3. Feature Specification
 
 ### 3.1 Home & Instant Board Creation (`/`)
-- **Zero-clutter hero & creator:** Immediate Board creation form right above the fold — no marketing walls or signup banners.
-- **Board Metadata:**
-  - Board Title (optional; defaults to `"Sprint Retrospective — <MMM D>"`, max 120 chars).
-  - Optional short context/subtitle (max 240 chars, e.g., `"Sprint 42 · Checkout Team"`).
-- **Curated Templates** (visual mini-column previews, fully editable before creation):
+- Show **Create a board**, the optional Board title, the selected **Standard Retro** and its Column names, and one primary **Create board** action above the fold. The default flow targets creation in under five seconds.
+- The optional Board title defaults to `"Sprint Retrospective — <MMM D>"` and allows up to 120 characters.
+- **Customize board** opens the optional subtitle (up to 240 characters) and the Column editor. Selecting **Custom Board** opens the editor automatically. Add, remove, rename, reorder, choose an accent, or toggle Action Column behavior before creation. Draft values persist when disclosures close and when creation fails.
+- **Change template** shows all templates and their Column names with accent markers.
   1. **Standard Retro** — Went Well / To Improve / Action Items *(marked `isActionColumn`)*
   2. **Start / Stop / Continue** — Start Doing / Stop Doing / Continue Doing
   3. **Mad / Sad / Glad** — Mad / Sad / Glad
@@ -88,14 +87,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   7. **Six Thinking Hats** — Facts (White) / Feelings (Red) / Caution (Black) / Benefits (Yellow) / Creativity (Green) / Process (Blue)
   8. **Pros & Cons** — Pros / Cons
   9. **Custom Board** — 1 to 10 customizable Columns (add, remove, rename, drag-reorder, choose subtle pastel accent).
-- **Collapsible Advanced Options** (sensible defaults, hidden until expanded):
+- **Advanced options** shows voting, Private Mode, and expiry settings on demand.
   - Votes per Participant: `3` / `5` *(default)* / `10` / `Unlimited`
   - Max Votes per Card / Card Group: `Unlimited (stackable)` *(default)* / `1 per Card or Card Group`
   - Start in Private Mode: `Off` *(default)* / `On`
   - Auto-expiry on inactivity: `30 days` / `90 days` *(default)* / `180 days`
 - **Recent Boards (Client-Side Only):**
   - Stored strictly in `localStorage` (never transmitted to or stored on the server; stores only Board ID, title, last visited timestamp, and a non-sensitive boolean display hint — never raw tokens).
-  - Displays recently created/visited Boards with title, last visited relative time, and a one-click remove-from-history action.
+  - Appears when local history exists and lists Boards in last-visited order with a title link, relative visit time, Facilitator role where applicable, and a labeled **Remove** action. The page explains that the list is saved in this browser only.
 
 ---
 
@@ -103,7 +102,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Board header:**
   - Lead with the Board title and optional context. The Retrocks link returns home, and Facilitators can rename an unlocked Board from the title.
   - Keep the Countdown Timer and connection state near the title. Show **Live** once synced or **Reconnecting…** while updates are interrupted. Display the online count separately so changes in attendance stay quiet. Display **Private Mode**, **Blind Voting**, and **Locked** as independent labels and announce changes to those states.
-  - Keep Share and More in the header. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
+  - Keep Share and More in the header. Share has a target of at least 44 × 44 CSS pixels on phones. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
 - **Columns (1–10):**
   - Use a small accent marker, a wrapping title, and a tabular Card count. Use opaque Cards on the open Column rail.
   - Offer **+ Add Card** at the top of each desktop Column and one bottom composer on phones. The phone composer names its target Column and keeps a draft for each Column. Enter submits, Shift+Enter starts a new line, and a failed submission keeps the draft and displays its error by the composer.
@@ -221,15 +220,16 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - On Cloudflare Durable Objects, this runs via a per-Board **DO Alarm** (`ctx.storage.setAlarm`). On Node, a lightweight daily scheduled sweep deletes expired rows.
 - **Immediate Deletion & Expired Board UX:**
   - Facilitator can permanently delete a Board at any time (with explicit confirmation), broadcasting a `board:deleted` notice to connected clients and wiping storage immediately.
-  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) displays a clean *"Board not found or expired"* view with a *"Create a new board"* CTA and automatically removes that `boardId` from the browser's `localStorage` Recent Boards list.
+  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) shows **Board not found or expired**, explains deletion and inactivity expiry, and links to **Create a new board**. The screen follows the selected theme and removes that Board from Recent Boards. When an open Board becomes unavailable, dismiss its overlays and move focus to the unavailable screen heading.
 
 ---
 
 ### 3.11 Export & Sharing
 - **Share Modal:**
-  - **Participant Link** (`/b/<boardId>`) with one-click copy.
-  - **Co-Facilitator Link** (`/b/<boardId>#f=<token>`) fetched on demand by any Facilitator with a concise security note and a **Rotate Link** action (with confirmation) to revoke leaked links.
-  - **QR Code** rendered purely client-side as SVG (zero external image requests) for in-room Participants joining via phone.
+  - Show the **Participant Link** (`/b/<boardId>`) first, with a copy action and a locally generated QR code that opens the same URL.
+  - Show a separate **Co-Facilitator Link** section only to Facilitators, including on Locked Boards. Explain that it grants Facilitator access and control over Board settings. Retrieve the link on demand and confirm **Rotate Link** before replacing it and invalidating previously shared links.
+  - Announce copy, retrieval, and rotation results in the dialog. If clipboard access fails, offer to copy from the selectable link field. Keep the retrieval and rotation controls available for retry after failures.
+  - Move focus into Share when it opens, keep Board controls out of its tab order, and return focus when **Close Share** or Escape dismisses it.
 - **Exports (in More):**
   - Exports always use the server-projected viewer snapshot — redacted Cards stay redacted while Private Mode is ON, and aggregate Vote totals stay omitted while Blind Voting is ON (no bypass flag; reveal first for a full export).
   - **Markdown (`.md`)** — Copy to clipboard or download; structured by Columns, Card Groups, Vote counts, comments, and a trailing Action Items checklist.
@@ -514,7 +514,7 @@ export type BoardEvent =
    - `BoardStore` + `BoardRealtime` interfaces; Cloudflare Workers + SQLite Durable Object (`BoardRoom` + `src/worker.ts` + `wrangler.jsonc` + `@cloudflare/vite-plugin` default `pnpm dev`) and Node SQLite + SSE adapter (Vitest `server` tests & self-hosted swap).
    - Anonymous Participant & Facilitator signed cookie + AES-256-GCM facilitator token crypto (`src/server/session.ts`, 90-day sliding TTL, lazy mint on `GET /b/:id`).
    - Tailwind CSS v4 `@theme` design tokens & zero-FOUC Light/Dark theme init in `src/Document.tsx`.
-   - Home page (`/`) with template gallery, custom Column builder, advanced options, and `localStorage` Recent Boards.
+   - Home page (`/`) with default creation, disclosed template selection, a Column editor, advanced options, and local Recent Boards.
 2. **Phase 2 — Core Retro Workspace & Live Sync**
    - Board route (`/b/:id`) with streaming SSR preload, responsive desktop Columns & mobile tabbed swipe view, and Deleted/Expired Board empty state.
    - Full Column & Card CRUD (hard delete with inline confirmation), desktop drag-and-drop (cross-Column moves), mobile Move menu, live WS/SSE delta patching, reconnect resync, and deduplicated presence count.

@@ -44,7 +44,7 @@ export default function FacilitatorLinkClaim(props: { boardId: string }) {
     <Show when={error()}>
       <p
         role="alert"
-        class="border-b border-col-rose/40 bg-col-rose-tint px-4 py-2 text-sm text-text"
+        class="mx-4 mt-4 rounded-lg border border-col-rose bg-col-rose-tint px-4 py-3 text-sm text-text sm:mx-6"
       >
         {error()}
       </p>
