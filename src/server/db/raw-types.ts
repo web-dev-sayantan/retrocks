@@ -133,6 +133,14 @@ export interface BoardMutationActor {
 
 export type BoardMutationCommand =
   | { type: 'facilitator:rotate'; capability: FacilitatorCapability }
+  | {
+      type: 'voting:configure';
+      voteLimit?: number | null;
+      maxVotesPerCard?: 1 | null;
+      blindVoting?: boolean;
+    }
+  | { type: 'voting:reset' }
+  | { type: 'vote:change'; targetType: 'card'; targetId: string; delta: 1 | -1 }
   | { type: 'board:rename'; title: string; subtitle?: string }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }
@@ -156,11 +164,13 @@ export type BoardMutationCommand =
   | { type: 'column:delete'; columnId: string };
 
 export type RawBoardMutationEvent =
+  | { type: 'board:snapshot'; version: number }
   | {
       type: 'board:updated';
       version: number;
       patch: Partial<BoardSettingsDTO>;
     }
+  | { type: 'vote:updated'; version: number; targetType: 'card' | 'group'; targetId: string }
   | { type: 'card:upserted'; version: number; cardId: string }
   | { type: 'card:deleted'; version: number; cardId: string }
   | { type: 'column:upserted'; version: number; columnId: string }

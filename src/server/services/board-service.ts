@@ -174,7 +174,7 @@ export async function getBoardForRequest(
   return projectBoardForViewer(rawSnapshot, viewerParticipantHash, isFacilitator);
 }
 
-function parseMutationInput<
+export function parseMutationInput<
   TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>,
 >(schema: TSchema, rawInput: unknown): v.InferOutput<TSchema> {
   const parsed = v.safeParse(schema, rawInput);

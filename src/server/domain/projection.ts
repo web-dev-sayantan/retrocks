@@ -253,6 +253,20 @@ export function projectMutationEventsForViewer(
     viewerParticipantHash,
     isFacilitator,
   );
+  if (rawEvents.some((event) =>
+    event.type === 'board:snapshot' ||
+    (event.type === 'board:updated' &&
+      (event.patch.isBlurred !== undefined || event.patch.blindVoting !== undefined)),
+  )) {
+    // Privacy transitions change the presentation of existing Cards and Votes.
+    return [{
+      type: 'board:snapshot',
+      version: projected.version,
+      serverNow: Date.now(),
+      board: projected,
+    }];
+  }
+
   const cardsById = new Map(projected.cards.map((card) => [card.id, card]));
   const columnsById = new Map(
     projected.columns.map((column) => [column.id, column]),
@@ -261,6 +275,23 @@ export function projectMutationEventsForViewer(
   const events: BoardEvent[] = [];
   for (const rawEvent of rawEvents) {
     switch (rawEvent.type) {
+      case 'vote:updated': {
+        const target = rawEvent.targetType === 'card'
+          ? cardsById.get(rawEvent.targetId)
+          : projected.groups.find((group) => group.id === rawEvent.targetId);
+        if (target) {
+          events.push({
+            type: 'vote:updated',
+            version: rawEvent.version,
+            targetType: rawEvent.targetType,
+            targetId: rawEvent.targetId,
+            totalVotes: target.votes,
+            myVotes: target.myVotes,
+            remainingVotes: projected.remainingVotes,
+          });
+        }
+        break;
+      }
       case 'board:updated':
         events.push({
           type: 'board:updated',
@@ -319,6 +350,16 @@ export function projectMutationEventsForViewer(
         });
         break;
     }
+  }
+
+  if (rawEvents.some((event) =>
+    event.type === 'card:deleted' || event.type === 'column:deleted' || event.type === 'group:dissolved',
+  )) {
+    events.push({
+      type: 'vote:balance',
+      version: projected.version,
+      remainingVotes: projected.remainingVotes,
+    });
   }
 
   return events;

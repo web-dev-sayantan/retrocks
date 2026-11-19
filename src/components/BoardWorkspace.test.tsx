@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardWorkspaceActions } from '../lib/board-actions';
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
-import type { BoardViewDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
+import type { BoardMutationResponse, BoardViewDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
 import BoardWorkspace from './BoardWorkspace';
 
@@ -245,7 +245,14 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     };
   });
 
+  const changeVote = vi.fn<BoardWorkspaceActions['changeVote']>();
+  const updateVotingSettings = vi.fn<BoardWorkspaceActions['updateVotingSettings']>();
+  const resetVotes = vi.fn<BoardWorkspaceActions['resetVotes']>();
+
   const actions: BoardWorkspaceActions = {
+    changeVote,
+    updateVotingSettings,
+    resetVotes,
     renameBoard,
     createCard,
     updateCard,
@@ -260,6 +267,9 @@ function createFakeActions(initialBoard: BoardViewDTO): {
   return {
     actions,
     spies: {
+      changeVote,
+      updateVotingSettings,
+      resetVotes,
       renameBoard,
       createCard,
       updateCard,
@@ -284,6 +294,109 @@ beforeEach(() => {
 });
 
 describe('<BoardWorkspace />', () => {
+  it('optimistically updates the Card and toolbar balance, then restores both on rejection', async () => {
+    const card = makeCard({ isMine: false, votes: 2 });
+    const board = makeBoardView({
+      cards: [card],
+      isFacilitator: false,
+      voteLimit: 3,
+      remainingVotes: 3,
+    });
+    const { actions, spies } = createFakeActions(board);
+    const rejected = Promise.withResolvers<BoardMutationResponse>();
+    spies.changeVote.mockReturnValueOnce(rejected.promise);
+    const { getByRole, getByText, getByTitle, queryByRole } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    expect(getByText('3 / 3 votes left')).toHaveClass('tabular-nums');
+    expect(queryByRole('button', { name: 'Board Settings' })).not.toBeInTheDocument();
+    fireEvent.click(getByRole('button', { name: 'Cast Vote' }));
+    flush();
+    expect(getByText('2 / 3 votes left')).toBeInTheDocument();
+    expect(getByTitle('3 total Votes · 1 yours')).toBeInTheDocument();
+
+    rejected.resolve({ ok: false, code: 'LIMIT_EXCEEDED', message: 'Vote cap changed.' });
+    await flushPromises();
+    expect(getByRole('alert')).toHaveTextContent('Vote cap changed.');
+    expect(getByText('3 / 3 votes left')).toBeInTheDocument();
+    expect(getByTitle('2 total Votes · 0 yours')).toBeInTheDocument();
+    expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
+  });
+  it('applies voting settings immediately and resets all Votes only after confirmation', async () => {
+    const card = makeCard({ votes: 3, myVotes: 1 });
+    const board = makeBoardView({ cards: [card], remainingVotes: 4 });
+    const { actions, spies } = createFakeActions(board);
+    const blindBoard = makeBoardView({
+      version: 3,
+      cards: [{ ...card, votes: null }],
+      blindVoting: true,
+      voteLimit: 7,
+      maxVotesPerCard: 1,
+      remainingVotes: 6,
+    });
+    const resetBoard = {
+      ...blindBoard,
+      version: 4,
+      remainingVotes: 7,
+      cards: [{ ...card, votes: null, myVotes: 0 }],
+    };
+    spies.updateVotingSettings.mockResolvedValue({
+      ok: true,
+      version: 3,
+      events: [{ type: 'board:snapshot', version: 3, serverNow: Date.now(), board: blindBoard }],
+    });
+    spies.resetVotes.mockResolvedValue({
+      ok: true,
+      version: 4,
+      events: [{ type: 'board:snapshot', version: 4, serverNow: Date.now(), board: resetBoard }],
+    });
+
+    const { getByRole, getByText, queryByTitle } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+    const dialog = getByText('Board Settings', { selector: 'h2' }).closest('dialog')!;
+    dialog.showModal = () => { dialog.open = true; };
+    dialog.close = () => { dialog.open = false; };
+    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    flush();
+    const settings = within(getByRole('dialog', { name: 'Board Settings' }));
+    const voteLimit = settings.getByRole('combobox', { name: 'Vote limit' });
+    fireEvent.change(voteLimit, { target: { value: 'custom' } });
+    flush();
+    fireEvent.input(settings.getByRole('spinbutton', { name: 'Custom Vote limit' }), { target: { value: '7' } });
+    fireEvent.change(settings.getByRole('combobox', { name: 'Per-Card cap' }), { target: { value: '1' } });
+    fireEvent.click(settings.getByRole('checkbox', { name: 'Blind Voting' }));
+    flush();
+    fireEvent.click(settings.getByRole('button', { name: 'Save Settings' }));
+    await flushPromises();
+
+    expect(spies.updateVotingSettings).toHaveBeenCalledWith({
+      boardId: board.id, voteLimit: 7, maxVotesPerCard: 1, blindVoting: true,
+    });
+    expect(getByText('6 / 7 votes left')).toBeInTheDocument();
+    expect(getByText('1 yours')).toBeInTheDocument();
+    expect(queryByTitle('3 total Votes · 1 yours')).not.toBeInTheDocument();
+    expect(getByRole('button', { name: 'Cast Vote' })).toBeDisabled();
+
+    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    flush();
+    fireEvent.click(settings.getByRole('button', { name: 'Reset All Votes' }));
+    flush();
+    expect(spies.resetVotes).not.toHaveBeenCalled();
+    fireEvent.click(settings.getByRole('button', { name: 'Confirm Reset' }));
+    await flushPromises();
+
+    expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id });
+    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
+    expect(getByText('7 / 7 votes left')).toBeInTheDocument();
+    expect(getByText('0 yours')).toBeInTheDocument();
+    expect(getByRole('button', { name: 'Cast Vote' })).toBeEnabled();
+    expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
+  });
+
   it('applies live deltas and requests a new stream snapshot after a version gap without clearing the composer', () => {
     const streams: FakeEventSource[] = [];
     class FakeEventSource extends EventTarget {

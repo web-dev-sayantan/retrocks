@@ -1,6 +1,8 @@
 import { query } from '@solidjs/router';
 import { httpStatus, redirect, respond } from '@solidjs/web';
 
+import { changeVote, resetVotes, updateVotingSettings } from './voting-actions';
+
 import type {
   ActionError,
   BoardMutationResponse,
@@ -257,6 +259,9 @@ export async function deleteColumn(
 }
 
 export interface BoardWorkspaceActions {
+  changeVote: typeof changeVote;
+  updateVotingSettings: typeof updateVotingSettings;
+  resetVotes: typeof resetVotes;
   renameBoard: (input: RenameBoardInput) => Promise<BoardMutationResponse>;
   createCard: (input: CreateCardInput) => Promise<BoardMutationResponse>;
   updateCard: (input: UpdateCardInput) => Promise<BoardMutationResponse>;
@@ -269,6 +274,9 @@ export interface BoardWorkspaceActions {
 }
 
 export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
+  changeVote,
+  updateVotingSettings,
+  resetVotes,
   renameBoard,
   createCard,
   updateCard,
