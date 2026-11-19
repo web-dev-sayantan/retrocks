@@ -14,7 +14,10 @@ const buttonClass = [
 const fieldClass = 'min-h-11 w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-text focus:border-focus focus:outline-none sm:min-h-9';
 
 export default function BoardVotingSettings(props: {
-  board: Pick<BoardViewDTO, 'voteLimit' | 'maxVotesPerCard' | 'blindVoting'>;
+  board: Pick<
+    BoardViewDTO,
+    'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup'
+  >;
   onUpdate: (patch: VotingSettingsPatch) => Promise<string | null>;
   onReset: () => Promise<string | null>;
 }) {
@@ -24,6 +27,7 @@ export default function BoardVotingSettings(props: {
   const [customLimit, setCustomLimit] = createSignal('');
   const [singleVote, setSingleVote] = createSignal(false);
   const [blindVoting, setBlindVoting] = createSignal(false);
+  const [allowParticipantGroup, setAllowParticipantGroup] = createSignal(false);
   const [confirmingReset, setConfirmingReset] = createSignal(false);
   const [pending, setPending] = createSignal<'save' | 'reset' | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -39,12 +43,19 @@ export default function BoardVotingSettings(props: {
   });
 
   function openDialog() {
-    const { voteLimit, maxVotesPerCard, blindVoting } = props.board;
-    initialSettings = { voteLimit, maxVotesPerCard, blindVoting };
+    const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } =
+      props.board;
+    initialSettings = {
+      voteLimit,
+      maxVotesPerCard,
+      blindVoting,
+      allowParticipantGroup,
+    };
     setVoteLimitChoice(voteLimit === null ? 'unlimited' : VOTE_LIMIT_OPTIONS.some((option) => option === voteLimit) ? String(voteLimit) : 'custom');
     setCustomLimit(voteLimit === null ? '' : String(voteLimit));
     setSingleVote(maxVotesPerCard === 1);
     setBlindVoting(blindVoting);
+    setAllowParticipantGroup(allowParticipantGroup);
     setConfirmingReset(false);
     setError(null);
     dialog.showModal();
@@ -58,9 +69,13 @@ export default function BoardVotingSettings(props: {
     const limit = voteLimit();
     const cap = singleVote() ? 1 : null;
     const blind = blindVoting();
+    const grouping = allowParticipantGroup();
     if (initialSettings.voteLimit !== limit) patch.voteLimit = limit;
     if (initialSettings.maxVotesPerCard !== cap) patch.maxVotesPerCard = cap;
     if (initialSettings.blindVoting !== blind) patch.blindVoting = blind;
+    if (initialSettings.allowParticipantGroup !== grouping) {
+      patch.allowParticipantGroup = grouping;
+    }
     if (Object.keys(patch).length === 0) {
       dialog.close();
       return;
@@ -167,6 +182,17 @@ export default function BoardVotingSettings(props: {
                 onChange={(event) => setBlindVoting(event.currentTarget.checked)}
               />
               Blind Voting
+            </label>
+            <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium sm:min-h-9">
+              <input
+                type="checkbox"
+                class="size-4 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                checked={allowParticipantGroup()}
+                onChange={(event) =>
+                  setAllowParticipantGroup(event.currentTarget.checked)
+                }
+              />
+              Allow Participants to group Cards
             </label>
             <button
               type="submit"

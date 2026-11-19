@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 import {
   MAX_CARD_CONTENT_LENGTH,
   type ActionItemPatch,
+  type CardGroupDTO,
   type CardViewDTO,
   type ColumnDTO,
   type ReactionEmoji,
@@ -16,6 +17,7 @@ import {
   FlagIcon,
   MessageSquareIcon,
   PencilIcon,
+  PlusIcon,
   TrashIcon,
 } from './Icons';
 import VoteControls, { type WorkspaceVoting } from './VoteControls';
@@ -24,10 +26,22 @@ export interface CardItemProps {
   card: CardViewDTO;
   voting: WorkspaceVoting;
   columns: readonly ColumnDTO[];
+  columnCards: readonly CardViewDTO[];
+  columnGroups: readonly CardGroupDTO[];
+  canGroupCards: boolean;
+  canUngroup: boolean;
   isFacilitator: boolean;
   isLocked: boolean;
   isBlurred: boolean;
   nowMs: number;
+  draggingCardId: string | null;
+  draggingSourceColumnId: string | null;
+  onGroupCard: (
+    cardId: string,
+    targetType: 'card' | 'group',
+    targetId: string,
+  ) => Promise<boolean>;
+  onUngroupCard: (cardId: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
   onUpdateActionItem: (
     cardId: string,
@@ -49,6 +63,10 @@ export default function CardItem(props: CardItemProps) {
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
+  const [groupMenuOpen, setGroupMenuOpen] = createSignal(false);
+  const [isGrouping, setIsGrouping] = createSignal(false);
+  const [isUngrouping, setIsUngrouping] = createSignal(false);
+  const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
   const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
 
   const [wasRevealed, setWasRevealed] = createSignal(false);
@@ -61,6 +79,7 @@ export default function CardItem(props: CardItemProps) {
         cancelEdit();
         setConfirmingDelete(false);
         setMoveMenuOpen(false);
+        setGroupMenuOpen(false);
       }
     },
   );
@@ -76,7 +95,52 @@ export default function CardItem(props: CardItemProps) {
   );
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
-  const canDrag = createMemo(() => canMove() && !isEditing());
+
+  const groupTargets = createMemo(() => ({
+    cards: props.columnCards.filter(
+      (other) =>
+        other.id !== props.card.id &&
+        !other.redacted &&
+        other.groupId === null,
+    ),
+    groups: props.columnGroups.filter(
+      (group) => group.id !== props.card.groupId,
+    ),
+  }));
+
+  const canGroup = createMemo(
+    () =>
+      props.canGroupCards &&
+      !props.isLocked &&
+      !props.card.redacted &&
+      (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
+  );
+
+  const canDrag = createMemo(() => (canMove() || canGroup()) && !isEditing());
+
+  const draggingCard = createMemo(() => {
+    if (
+      !props.draggingCardId ||
+      props.draggingSourceColumnId !== props.card.columnId
+    ) {
+      return undefined;
+    }
+    return props.columnCards.find(
+      (card) => card.id === props.draggingCardId && !card.redacted,
+    );
+  });
+
+  const canAcceptGroupDrop = createMemo(() => {
+    const source = draggingCard();
+    return (
+      props.canGroupCards &&
+      !props.isLocked &&
+      !props.card.redacted &&
+      source !== undefined &&
+      source.id !== props.card.id &&
+      (props.card.groupId === null || source.groupId !== props.card.groupId)
+    );
+  });
 
   const relativeTimestamp = createMemo(() =>
     formatRelativeTime(props.card.createdAt, props.nowMs),
@@ -93,6 +157,7 @@ export default function CardItem(props: CardItemProps) {
     setEditDraft(props.card.content);
     setConfirmingDelete(false);
     setMoveMenuOpen(false);
+    setGroupMenuOpen(false);
     setIsEditing(true);
   }
 
@@ -165,6 +230,59 @@ export default function CardItem(props: CardItemProps) {
     }
   }
 
+  async function groupWith(
+    cardId: string,
+    targetType: 'card' | 'group',
+    targetId: string,
+  ): Promise<void> {
+    if (isGrouping()) return;
+    setIsGrouping(true);
+    setGroupMenuOpen(false);
+    try {
+      await props.onGroupCard(cardId, targetType, targetId);
+    } finally {
+      setIsGrouping(false);
+    }
+  }
+
+  async function handleUngroup(): Promise<void> {
+    if (isUngrouping()) return;
+    setIsUngrouping(true);
+    try {
+      await props.onUngroupCard(props.card.id);
+    } finally {
+      setIsUngrouping(false);
+    }
+  }
+
+  function handleGroupDragOver(event: DragEvent): void {
+    if (!canAcceptGroupDrop()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+    setIsGroupDropActive(true);
+  }
+
+  function handleGroupDragLeave(event: DragEvent): void {
+    const currentTarget = event.currentTarget as HTMLElement | null;
+    const related = event.relatedTarget as Node | null;
+    if (currentTarget && related && currentTarget.contains(related)) return;
+    setIsGroupDropActive(false);
+  }
+
+  function handleGroupDrop(event: DragEvent): void {
+    if (!canAcceptGroupDrop()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsGroupDropActive(false);
+    const source = draggingCard();
+    if (source) {
+      void groupWith(source.id, 'card', props.card.id);
+    }
+  }
+
   function handleDragStart(event: DragEvent): void {
     if (!canDrag()) {
       event.preventDefault();
@@ -188,6 +306,9 @@ export default function CardItem(props: CardItemProps) {
       draggable={canDrag() ? 'true' : 'false'}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragOver={handleGroupDragOver}
+      onDragLeave={handleGroupDragLeave}
+      onDrop={handleGroupDrop}
       class={[
         'group relative rounded-lg border border-border bg-surface p-3 shadow-2xs transition-colors',
         {
@@ -195,6 +316,7 @@ export default function CardItem(props: CardItemProps) {
             canDrag(),
           'bg-surface-subtle/60': props.card.redacted,
           'motion-safe:animate-[card-reveal_260ms_ease-out]': wasRevealed(),
+          'ring-2 ring-focus/70': isGroupDropActive(),
         },
       ]}
     >
@@ -357,6 +479,81 @@ export default function CardItem(props: CardItemProps) {
                 <MessageSquareIcon />
               </button>
 
+              <Show when={canGroup()}>
+                <div class="relative">
+                  <button
+                    type="button"
+                    aria-label="Group with..."
+                    aria-haspopup="menu"
+                    aria-expanded={groupMenuOpen() ? 'true' : 'false'}
+                    title="Group with..."
+                    disabled={isGrouping()}
+                    onClick={() => {
+                      setConfirmingDelete(false);
+                      setMoveMenuOpen(false);
+                      setGroupMenuOpen((prev) => !prev);
+                    }}
+                    class={[
+                      'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
+                      'transition-colors hover:bg-surface-subtle hover:text-text disabled:opacity-50',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    ]}
+                  >
+                    <PlusIcon />
+                  </button>
+
+                  <Show when={groupMenuOpen()}>
+                    <div
+                      role="menu"
+                      aria-label="Group card with"
+                      class="absolute right-0 bottom-full z-30 mb-1 min-w-48 rounded-lg border border-border bg-surface p-1 shadow-md"
+                    >
+                      <p class="px-2 py-1 text-[11px] font-medium text-text-muted">
+                        Group with...
+                      </p>
+                      <For each={groupTargets().cards}>
+                        {(targetCard) => (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() =>
+                              void groupWith(props.card.id, 'card', targetCard.id)
+                            }
+                            class={[
+                              'flex min-h-11 w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-xs text-text sm:min-h-8',
+                              'transition-colors hover:bg-surface-subtle',
+                              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                            ]}
+                          >
+                            <span class="truncate">{targetCard.content}</span>
+                          </button>
+                        )}
+                      </For>
+                      <For each={groupTargets().groups}>
+                        {(targetGroup) => (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() =>
+                              void groupWith(props.card.id, 'group', targetGroup.id)
+                            }
+                            class={[
+                              'flex min-h-11 w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-xs text-text sm:min-h-8',
+                              'transition-colors hover:bg-surface-subtle',
+                              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                            ]}
+                          >
+                            <span class="truncate">
+                              {targetGroup.title || 'Card Group'}
+                            </span>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+
               <Show when={!props.isLocked}>
                 <button
                   type="button"
@@ -391,7 +588,7 @@ export default function CardItem(props: CardItemProps) {
               </Show>
 
               <Show when={canManage()}>
-              <div
+                <div
                 class={[
                   'relative flex items-center gap-1 transition-opacity',
                   {
@@ -514,6 +711,7 @@ export default function CardItem(props: CardItemProps) {
                     title="Delete card"
                     onClick={() => {
                       setMoveMenuOpen(false);
+                      setGroupMenuOpen(false);
                       setConfirmingDelete(true);
                     }}
                     class={[
@@ -527,6 +725,23 @@ export default function CardItem(props: CardItemProps) {
                 </Show>
               </div>
             </Show>
+
+              <Show when={props.card.groupId !== null && props.canUngroup}>
+                <button
+                  type="button"
+                  aria-label="Ungroup card"
+                  title="Ungroup card"
+                  disabled={isUngrouping()}
+                  onClick={() => void handleUngroup()}
+                  class={[
+                    'min-h-11 cursor-pointer rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-medium text-text-muted sm:min-h-7',
+                    'transition-colors hover:bg-surface-subtle hover:text-text disabled:opacity-50',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  Ungroup
+                </button>
+              </Show>
             </div>
           </div>
         </Show>

@@ -5,12 +5,14 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
   type ActionItemPatch,
+  type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
 import type { WorkspaceVoting } from './VoteControls';
 import {
@@ -29,14 +31,17 @@ export interface ColumnPanelProps {
   totalColumns: number;
   columns: readonly ColumnDTO[];
   cards: readonly CardViewDTO[];
+  groups: readonly CardGroupDTO[];
   voting: WorkspaceVoting;
   isFacilitator: boolean;
   isLocked: boolean;
   isBlurred: boolean;
+  canGroupCards: boolean;
   nowMs: number;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
   draggingCardId: string | null;
+  draggingGroupId: string | null;
   draggingSourceColumnId: string | null;
   onCreateCard: (columnId: string, content: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
@@ -54,7 +59,20 @@ export interface ColumnPanelProps {
   ) => Promise<boolean>;
   onMoveColumn: (columnId: string, direction: -1 | 1) => Promise<boolean>;
   onDeleteColumn: (columnId: string) => Promise<boolean>;
+  onGroupCard: (
+    cardId: string,
+    targetType: 'card' | 'group',
+    targetId: string,
+  ) => Promise<boolean>;
+  onUngroupCard: (cardId: string) => Promise<boolean>;
+  onRenameCardGroup: (groupId: string, title: string) => Promise<boolean>;
+  onDissolveCardGroup: (groupId: string) => Promise<boolean>;
+  onMoveCardGroup: (
+    groupId: string,
+    targetColumnId: string,
+  ) => Promise<boolean>;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
+  onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
 }
 
@@ -83,10 +101,30 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     canManageColumn() && props.totalColumns > 1 && !hasHiddenCards(),
   );
 
+  const groupEntries = createMemo(() =>
+    props.groups
+      .map((group) => ({
+        group,
+        cards: props.cards.filter((card) => card.groupId === group.id),
+      }))
+      .filter((entry) => entry.cards.length > 0),
+  );
+  const standaloneCards = createMemo(() =>
+    props.cards.filter((card) => card.groupId === null),
+  );
+
+  function canManageGroup(group: CardGroupDTO): boolean {
+    if (!props.canGroupCards) return false;
+    if (!props.isBlurred) return true;
+    return group.cardIds.every(
+      (id) => props.cards.find((card) => card.id === id)?.isMine === true,
+    );
+  }
+
   const isEligibleDropTarget = createMemo(
     () =>
       !props.isLocked &&
-      props.draggingCardId !== null &&
+      (props.draggingCardId !== null || props.draggingGroupId !== null) &&
       props.draggingSourceColumnId !== props.column.id,
   );
 
@@ -181,12 +219,17 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function handleDragOver(event: DragEvent): void {
     if (props.isLocked) return;
+    const cardData =
+      event.dataTransfer?.getData('application/x-retrocks-card') ?? '';
+    const groupData =
+      event.dataTransfer?.getData('application/x-retrocks-group') ?? '';
+    const isGroupDrag =
+      props.draggingGroupId !== null ||
+      (!props.draggingCardId && Boolean(groupData) && !cardData);
     const cardId =
       props.draggingCardId ??
-      event.dataTransfer?.getData('application/x-retrocks-card') ??
-      event.dataTransfer?.getData('text/plain') ??
-      '';
-    if (!cardId) return;
+      (cardData || event.dataTransfer?.getData('text/plain') || '');
+    if (!isGroupDrag && !cardId) return;
     if (
       props.draggingSourceColumnId &&
       props.draggingSourceColumnId === props.column.id
@@ -213,9 +256,22 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     event.preventDefault();
     setIsDropActive(false);
     if (props.isLocked) return;
+    const cardData =
+      event.dataTransfer?.getData('application/x-retrocks-card') || '';
+    const groupData =
+      event.dataTransfer?.getData('application/x-retrocks-group') || '';
+    const groupId =
+      props.draggingGroupId ||
+      (!props.draggingCardId && groupData && !cardData ? groupData : '');
+    if (groupId) {
+      if (props.draggingSourceColumnId === props.column.id) return;
+      props.onDragEndCard();
+      void props.onMoveCardGroup(groupId, props.column.id);
+      return;
+    }
     const cardId =
       props.draggingCardId ||
-      event.dataTransfer?.getData('application/x-retrocks-card') ||
+      cardData ||
       event.dataTransfer?.getData('text/plain') ||
       '';
     if (!cardId) return;
@@ -547,16 +603,58 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             </p>
           }
         >
-          <For each={props.cards}>
+          <For each={groupEntries()}>
+            {(entry) => (
+              <CardGroupItem
+                group={entry.group}
+                cards={entry.cards}
+                columnCards={props.cards}
+                columnGroups={props.groups}
+                columns={props.columns}
+                voting={props.voting}
+                isFacilitator={props.isFacilitator}
+                isLocked={props.isLocked}
+                isBlurred={props.isBlurred}
+                canGroupCards={props.canGroupCards}
+                canManage={canManageGroup(entry.group)}
+                nowMs={props.nowMs}
+                draggingCardId={props.draggingCardId}
+                draggingSourceColumnId={props.draggingSourceColumnId}
+                onRename={props.onRenameCardGroup}
+                onDissolve={props.onDissolveCardGroup}
+                onMoveGroup={props.onMoveCardGroup}
+                onGroupCard={props.onGroupCard}
+                onUngroupCard={props.onUngroupCard}
+                onUpdateActionItem={props.onUpdateActionItem}
+                onUpdateCard={props.onUpdateCard}
+                onMoveCard={props.onMoveCard}
+                onDeleteCard={props.onDeleteCard}
+                onToggleReaction={props.onToggleReaction}
+                onOpenCardDetail={props.onOpenCardDetail}
+                onDragStartCard={props.onDragStartCard}
+                onDragEndCard={props.onDragEndCard}
+                onDragStartGroup={props.onDragStartGroup}
+              />
+            )}
+          </For>
+          <For each={standaloneCards()}>
             {(card) => (
               <CardItem
                 card={card}
                 voting={props.voting}
                 columns={props.columns}
+                columnCards={props.cards}
+                columnGroups={props.groups}
+                canGroupCards={props.canGroupCards}
+                canUngroup={props.canGroupCards && (!props.isBlurred || card.isMine)}
                 isFacilitator={props.isFacilitator}
                 isLocked={props.isLocked}
                 isBlurred={props.isBlurred}
                 nowMs={props.nowMs}
+                draggingCardId={props.draggingCardId}
+                draggingSourceColumnId={props.draggingSourceColumnId}
+                onGroupCard={props.onGroupCard}
+                onUngroupCard={props.onUngroupCard}
                 onUpdateCard={props.onUpdateCard}
                 onUpdateActionItem={props.onUpdateActionItem}
                 onMoveCard={props.onMoveCard}

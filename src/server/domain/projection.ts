@@ -384,6 +384,20 @@ export function projectMutationEventsForViewer(
           columnIds: rawEvent.columnIds,
         });
         break;
+      case 'group:upserted': {
+        const group = projected.groups.find((item) => item.id === rawEvent.groupId);
+        if (group) {
+          events.push({
+            type: 'group:upserted',
+            version: rawEvent.version,
+            group: {
+              ...group,
+              cardIds: [...group.cardIds],
+            },
+          });
+        }
+        break;
+      }
       case 'group:dissolved':
         events.push({
           type: 'group:dissolved',

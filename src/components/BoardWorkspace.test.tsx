@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardWorkspaceActions } from '../lib/board-actions';
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
-import type { BoardMutationResponse, BoardViewDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
+import type { BoardEvent, BoardMutationResponse, BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
 import BoardWorkspace from './BoardWorkspace';
 
@@ -97,6 +97,25 @@ function createFakeActions(initialBoard: BoardViewDTO): {
   const columns = new Map<string, ColumnDTO>(
     initialBoard.columns.map((c) => [c.id, { ...c }]),
   );
+  const groups = new Map<string, CardGroupDTO>(
+    initialBoard.groups.map((g) => [g.id, { ...g, cardIds: [...g.cardIds] }] as const),
+  );
+
+  const groupView = (group: CardGroupDTO): CardGroupDTO => {
+    const members = group.cardIds
+      .map((id) => cards.get(id))
+      .filter((card): card is CardViewDTO => card !== undefined);
+    return {
+      ...group,
+      cardIds: [...group.cardIds],
+      votes:
+        group.votes === null
+          ? null
+          : group.votes + members.reduce((sum, card) => sum + (card.votes ?? 0), 0),
+      myVotes:
+        group.myVotes + members.reduce((sum, card) => sum + card.myVotes, 0),
+    };
+  };
 
   const updateTimer = vi.fn<BoardWorkspaceActions['updateTimer']>();
 
@@ -207,6 +226,137 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     };
   });
 
+  const groupCards = vi.fn(async (input) => {
+    version += 1;
+    const targetCard =
+      input.targetType === 'card' ? cards.get(input.targetId) : undefined;
+    let group =
+      input.targetType === 'group'
+        ? groups.get(input.targetId)
+        : [...groups.values()].find((item) =>
+            item.cardIds.includes(input.targetId),
+          );
+    const moved = cards.get(input.cardId)!;
+    if (!group) {
+      if (!targetCard) throw new Error('Missing target Card');
+      seq += 1;
+      group = {
+        id: `group_new_${seq}`,
+        columnId: targetCard.columnId,
+        title: targetCard.content,
+        cardIds: [targetCard.id],
+        votes: 0,
+        myVotes: 0,
+        createdAt: Date.now(),
+      };
+      groups.set(group.id, group);
+      targetCard.groupId = group.id;
+    }
+    const previousGroupId = moved.groupId;
+    if (previousGroupId && previousGroupId !== group.id) {
+      const previous = groups.get(previousGroupId);
+      if (previous) {
+        previous.cardIds = previous.cardIds.filter((id) => id !== moved.id);
+        if (previous.cardIds.length < 2) {
+          for (const id of previous.cardIds) {
+            const member = cards.get(id);
+            if (member) member.groupId = null;
+          }
+          groups.delete(previousGroupId);
+        }
+      }
+    }
+    moved.groupId = group.id;
+    if (!group.cardIds.includes(moved.id)) group.cardIds.push(moved.id);
+    return {
+      ok: true as const,
+      version,
+      events: [
+        { type: 'group:upserted' as const, version, group: groupView(group) },
+        ...(targetCard && targetCard.id !== moved.id
+          ? [
+              {
+                type: 'card:upserted' as const,
+                version,
+                card: { ...targetCard },
+              },
+            ]
+          : []),
+        {
+          type: 'card:upserted' as const,
+          version,
+          card: { ...moved },
+        },
+      ],
+    };
+  });
+
+  const renameCardGroup = vi.fn(async (input) => {
+    version += 1;
+    const group = groups.get(input.groupId)!;
+    group.title = input.title.trim();
+    return {
+      ok: true as const,
+      version,
+      events: [
+        { type: 'group:upserted' as const, version, group: groupView(group) },
+      ],
+    };
+  });
+
+  const ungroupCard = vi.fn(async (input) => {
+    version += 1;
+    const card = cards.get(input.cardId)!;
+    const group = card.groupId ? groups.get(card.groupId) : undefined;
+    const events: BoardEvent[] = [];
+    card.groupId = null;
+    if (group) {
+      group.cardIds = group.cardIds.filter((id) => id !== card.id);
+      if (group.cardIds.length < 2) {
+        for (const id of group.cardIds) {
+          const member = cards.get(id);
+          if (member) member.groupId = null;
+        }
+        groups.delete(group.id);
+        events.push({ type: 'group:dissolved', version, groupId: group.id });
+      }
+    }
+    events.push({ type: 'card:upserted', version, card: { ...card } });
+    return { ok: true as const, version, events };
+  });
+
+  const dissolveCardGroup = vi.fn(async (input) => {
+    version += 1;
+    const group = groups.get(input.groupId)!;
+    for (const id of group.cardIds) {
+      const member = cards.get(id);
+      if (member) member.groupId = null;
+    }
+    groups.delete(input.groupId);
+    return {
+      ok: true as const,
+      version,
+      events: [
+        { type: 'group:dissolved' as const, version, groupId: input.groupId },
+      ],
+    };
+  });
+
+  const moveCardGroup = vi.fn(async (input) => {
+    version += 1;
+    const group = groups.get(input.groupId)!;
+    group.columnId = input.targetColumnId;
+    const events: BoardEvent[] = [
+      { type: 'group:upserted' as const, version, group: groupView(group) },
+    ];
+    for (const id of group.cardIds) {
+      const card = cards.get(id)!;
+      card.columnId = input.targetColumnId;
+      events.push({ type: 'card:upserted' as const, version, card: { ...card } });
+    }
+    return { ok: true as const, version, events };
+  });
+
   const addColumn = vi.fn(async (input) => {
     version += 1;
     seq += 1;
@@ -302,6 +452,11 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     updateColumn,
     reorderColumns,
     deleteColumn,
+    groupCards,
+    renameCardGroup,
+    ungroupCard,
+    dissolveCardGroup,
+    moveCardGroup,
   };
 
   return {
@@ -325,6 +480,11 @@ function createFakeActions(initialBoard: BoardViewDTO): {
       updateColumn,
       reorderColumns,
       deleteColumn,
+      groupCards,
+      renameCardGroup,
+      ungroupCard,
+      dissolveCardGroup,
+      moveCardGroup,
     },
   };
 }
@@ -1458,6 +1618,211 @@ describe('<BoardWorkspace />', () => {
       within(col1).queryByRole('button', { name: 'Edit card' }),
     ).toBeNull();
     expect(within(col1).queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('groups Cards from the "Group with..." menu and votes only on the Card Group header', async () => {
+    const first = makeCard({
+      id: 'card_1',
+      content: 'CI flakiness',
+      votes: 2,
+      myVotes: 1,
+    });
+    const second = makeCard({
+      id: 'card_2',
+      content: 'Flaky CI checks',
+      isMine: false,
+      votes: 1,
+    });
+    const board = makeBoardView({ cards: [first, second], isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+    const { getByRole, queryByLabelText } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    fireEvent.click(
+      within(wentWell).getAllByRole('button', { name: 'Group with...' })[0],
+    );
+    flush();
+    fireEvent.click(
+      within(wentWell).getByRole('menuitem', { name: /Flaky CI checks/ }),
+    );
+    await flushPromises();
+
+    expect(spies.groupCards).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_1',
+      targetType: 'card',
+      targetId: 'card_2',
+    });
+    expect(within(wentWell).getByLabelText('2 cards')).toBeInTheDocument();
+    expect(
+      within(wentWell).getByTitle('3 total Votes · 1 yours'),
+    ).toBeInTheDocument();
+    expect(
+      within(wentWell).getAllByRole('button', { name: 'Cast Vote' }),
+    ).toHaveLength(1);
+
+    fireEvent.click(
+      within(wentWell).getByRole('button', { name: 'Cast Vote' }),
+    );
+    await flushPromises();
+    expect(spies.changeVote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        boardId: board.id,
+        targetType: 'group',
+        delta: 1,
+      }),
+    );
+
+    fireEvent.click(
+      within(wentWell).getByRole('button', {
+        name: 'Collapse Card Group',
+      }),
+    );
+    flush();
+    expect(
+      within(wentWell).queryByText('CI flakiness'),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(wentWell).getByRole('button', {
+        name: 'Expand Card Group',
+      }),
+    );
+    flush();
+    expect(within(wentWell).getByText('CI flakiness')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(wentWell).getAllByRole('button', { name: 'Ungroup card' })[0],
+    );
+    await flushPromises();
+
+    expect(spies.ungroupCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_1',
+    });
+    expect(queryByLabelText('2 cards')).not.toBeInTheDocument();
+    expect(
+      within(wentWell).getAllByRole('button', { name: 'Cast Vote' }),
+    ).toHaveLength(2);
+  });
+
+  it('shows group management only when Participants may group, then renames, moves, and dissolves', async () => {
+    const group: CardGroupDTO = {
+      id: 'group_1',
+      columnId: 'col_1',
+      title: 'CI stability',
+      cardIds: ['card_1', 'card_2'],
+      votes: 3,
+      myVotes: 1,
+      createdAt: 1_760_000_002_000,
+    };
+    const cards = [
+      makeCard({
+        id: 'card_1',
+        columnId: 'col_1',
+        content: 'CI flakiness',
+        groupId: 'group_1',
+        votes: 1,
+        myVotes: 1,
+      }),
+      makeCard({
+        id: 'card_2',
+        columnId: 'col_1',
+        content: 'Flaky CI checks',
+        groupId: 'group_1',
+        votes: 2,
+      }),
+    ];
+    const participantBoard = makeBoardView({
+      cards,
+      groups: [group],
+      isFacilitator: false,
+      allowParticipantGroup: false,
+    });
+    const participant = createFakeActions(participantBoard);
+    const firstRender = render(() => (
+      <BoardWorkspace
+        board={participantBoard}
+        boardId={participantBoard.id}
+        actions={participant.actions}
+      />
+    ));
+    flush();
+    const participantColumn = firstRender.getByRole('region', {
+      name: 'Went Well',
+    });
+    expect(
+      within(participantColumn).queryByRole('button', {
+        name: 'Rename Card Group',
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(participantColumn).queryByRole('button', { name: 'Ungroup card' }),
+    ).not.toBeInTheDocument();
+    cleanup();
+
+    const board = makeBoardView({
+      cards,
+      groups: [group],
+      isFacilitator: false,
+      allowParticipantGroup: true,
+    });
+    const { actions, spies } = createFakeActions(board);
+    const { getByRole, getByLabelText, queryByText } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+    const wentWell = getByRole('region', { name: 'Went Well' });
+
+    fireEvent.click(
+      within(wentWell).getByRole('button', { name: 'Rename Card Group' }),
+    );
+    flush();
+    const titleInput = getByLabelText('Card Group title');
+    fireEvent.input(titleInput, { target: { value: 'CI reliability' } });
+    flush();
+    fireEvent.click(
+      getByRole('button', { name: 'Save Card Group title' }),
+    );
+    await flushPromises();
+    expect(spies.renameCardGroup).toHaveBeenCalledWith({
+      boardId: board.id,
+      groupId: 'group_1',
+      title: 'CI reliability',
+    });
+    expect(within(wentWell).getByText('CI reliability')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(wentWell).getByRole('button', {
+        name: 'Move Card Group to...',
+      }),
+    );
+    flush();
+    fireEvent.click(
+      within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
+    );
+    await flushPromises();
+    expect(spies.moveCardGroup).toHaveBeenCalledWith({
+      boardId: board.id,
+      groupId: 'group_1',
+      targetColumnId: 'col_2',
+    });
+    const toImprove = getByRole('region', { name: 'To Improve' });
+    expect(within(toImprove).getByText('CI reliability')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(toImprove).getByRole('button', {
+        name: 'Dissolve Card Group',
+      }),
+    );
+    await flushPromises();
+    expect(spies.dissolveCardGroup).toHaveBeenCalledWith({
+      boardId: board.id,
+      groupId: 'group_1',
+    });
+    expect(queryByText('CI reliability')).not.toBeInTheDocument();
   });
 
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {

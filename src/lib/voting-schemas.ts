@@ -4,7 +4,7 @@ import { BoardIdSchema, EntityIdSchema, MaxVotesPerCardSchema } from './schemas'
 
 export const ChangeVoteInputSchema = v.object({
   boardId: BoardIdSchema,
-  targetType: v.literal('card'),
+  targetType: v.picklist(['card', 'group']),
   targetId: EntityIdSchema,
   delta: v.picklist([1, -1]),
 });
@@ -20,6 +20,7 @@ export const UpdateVotingSettingsInputSchema = v.object({
   ))),
   maxVotesPerCard: v.optional(MaxVotesPerCardSchema),
   blindVoting: v.optional(v.boolean()),
+  allowParticipantGroup: v.optional(v.boolean()),
 });
 
 export type UpdateVotingSettingsInput = v.InferInput<typeof UpdateVotingSettingsInputSchema>;
