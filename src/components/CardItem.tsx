@@ -464,7 +464,7 @@ export default function CardItem(props: CardItemProps) {
               <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
             </Show>
 
-            <div class="flex items-center gap-1">
+            <div data-print-hide="true" class="flex items-center gap-1">
               <button
                 type="button"
                 aria-label="Open Card details"

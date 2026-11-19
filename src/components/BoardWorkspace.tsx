@@ -41,6 +41,7 @@ import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSett
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
+import ExportBoardMenu from './ExportBoardMenu';
 import { CheckIcon, CloseIcon, FlagIcon, PencilIcon, PlusIcon } from './Icons';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
@@ -1035,6 +1036,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           type="button"
                           aria-label="Rename Board"
                           title="Rename Board"
+                          data-print-hide="true"
                           onClick={startBoardRename}
                           class={[
                             'inline-flex min-h-9 min-w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
@@ -1058,7 +1060,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     </div>
                   </Show>
                   <div class="flex min-w-0 items-center gap-2 text-xs text-text-muted">
-                    <span role="status" class="inline-flex shrink-0 items-center gap-1.5">
+                    <span
+                      role="status"
+                      data-print-hide="true"
+                      class="inline-flex shrink-0 items-center gap-1.5"
+                    >
                       <span
                         aria-hidden="true"
                         class={[
@@ -1075,7 +1081,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
               </div>
 
-              <div class="flex shrink-0 items-center gap-2">
+              <div data-print-hide="true" class="flex shrink-0 items-center gap-2">
                 <Show when={board().id} keyed>
                   {(boardId) => (
                     <CountdownTimer
@@ -1153,6 +1159,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     />
                   )}
                 </Show>
+                <ExportBoardMenu board={board()} />
                 <ThemeToggle />
               </div>
             </div>
@@ -1162,7 +1169,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               board().blindVoting ||
               (board().isFacilitator && !board().isLocked)
             }>
-              <div class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6">
+              <div
+                data-print-hide="true"
+                class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6"
+              >
                 <Show when={board().voteLimit !== null}>
                   <span aria-live="polite" class="rounded-full border border-border bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text tabular-nums">
                     {voting().remainingVotes} / {board().voteLimit} votes left
@@ -1186,6 +1196,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             {/* Mobile (< 640px) scrollable Column Tab Bar */}
             <nav
               aria-label="Board Columns"
+              data-print-hide="true"
               class="border-t border-border/70 bg-surface sm:hidden"
             >
               <div
@@ -1257,7 +1268,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
           {/* Facilitator Add Column inline form */}
           <Show when={isAddingColumn() && board().isFacilitator && !board().isLocked}>
-            <div class="mx-auto mt-4 w-full max-w-[1600px] px-4 sm:px-6">
+            <div data-print-hide="true" class="mx-auto mt-4 w-full max-w-[1600px] px-4 sm:px-6">
               <form
                 onSubmit={(e) => void handleAddColumn(e)}
                 class="rounded-xl border border-border bg-surface p-4 shadow-2xs"
@@ -1361,6 +1372,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             class="mx-auto w-full max-w-[1600px] flex-1 px-4 pt-4 pb-28 sm:px-6 sm:py-6"
           >
             <div
+              data-board-columns="true"
               class={[
                 'gap-4',
                 getResponsiveGridClass(board().columns.length),
@@ -1442,7 +1454,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
           <Show when={!board().isLocked && activeMobileColumn()}>
             {(targetCol) => (
-              <div class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 py-2.5 backdrop-blur-sm sm:hidden">
+              <div
+                data-print-hide="true"
+                class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 py-2.5 backdrop-blur-sm sm:hidden"
+              >
                 <div class="flex items-end gap-2">
                   <textarea
                     aria-label={`Quick add card to ${targetCol().title}`}

@@ -192,7 +192,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   }
 
   return (
-    <div class="fixed inset-0 z-40">
+    <div data-print-hide="true" class="fixed inset-0 z-40">
       <div
         aria-hidden="true"
         onClick={() => props.onClose()}

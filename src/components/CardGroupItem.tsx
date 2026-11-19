@@ -222,6 +222,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       >
         <button
           type="button"
+          data-print-hide="true"
           aria-label={expanded() ? 'Collapse Card Group' : 'Expand Card Group'}
           aria-expanded={expanded() ? 'true' : 'false'}
           onClick={() => setExpanded((prev) => !prev)}
@@ -306,7 +307,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         />
 
         <Show when={props.canManage}>
-          <div class="flex items-center gap-0.5">
+          <div data-print-hide="true" class="flex items-center gap-0.5">
             <Show when={otherColumns().length > 0}>
               <div class="relative">
                 <button
