@@ -60,6 +60,7 @@ import {
   PencilIcon,
   PlusIcon,
 } from './Icons';
+import PageMessage from './PageMessage';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
 import type { WorkspaceVoting } from './VoteControls';
@@ -410,9 +411,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     },
   );
 
+  let unavailableHeading: HTMLHeadingElement | undefined;
   const liveBoardId = createMemo(() => workspace.board?.id);
-  createEffect(liveBoardId, (boardId) => {
-    if (!boardId || typeof window === 'undefined') return;
+  createEffect(liveBoardId, (boardId, previousBoardId) => {
+    if (!boardId) {
+      if (previousBoardId) unavailableHeading?.focus();
+      return;
+    }
+    if (typeof window === 'undefined') return;
     const live = connectBoardLive(boardId, {
       onReconnect: () => setOnlineCount(null),
       onMessage(message) {
@@ -1379,12 +1385,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       when={workspace.board}
       fallback={
         <div class="flex min-h-dvh flex-col">
-          <header class="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur-sm">
+          <header class="border-b border-border bg-canvas">
             <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
               <a
                 href={props.homeHref ?? '/'}
                 class={[
-                  'inline-flex items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
+                  'inline-flex min-h-11 items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
                   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                 ]}
               >
@@ -1398,28 +1404,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             </div>
           </header>
 
-          <main class="mx-auto flex flex-1 max-w-lg flex-col items-center justify-center px-6 py-16 text-center">
-            <p class="text-xs font-medium tracking-wide text-text-muted uppercase tabular-nums">
-              404
-            </p>
-            <h1 class="mt-2 text-2xl font-semibold tracking-tight text-text">
-              Board not found or expired
-            </h1>
-            <p class="mt-3 text-sm text-text-muted">
-              This Board may have been deleted by its Facilitator or expired
-              after inactivity.
-            </p>
-            <a
-              href={props.homeHref ?? '/'}
-              class={[
-                'mt-6 inline-flex items-center rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-contrast',
-                'transition-opacity hover:opacity-90',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-              ]}
-            >
+          <PageMessage
+            title="Board not found or expired"
+            message="This Board may have been deleted by a Facilitator or expired after inactivity."
+            headingRef={(element) => { unavailableHeading = element; }}
+          >
+            <a href={props.homeHref ?? '/'} class="page-message-action">
               Create a new board
             </a>
-          </main>
+          </PageMessage>
         </div>
       }
     >
