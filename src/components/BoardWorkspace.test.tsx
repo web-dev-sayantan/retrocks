@@ -1778,9 +1778,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     // Facilitator CAN also update existing Action Item in Card Detail Drawer, but cannot unflag or comment
-    const actionArticle = getByText('Automate canary rollback').closest(
-      'article',
-    )!;
+    const actionArticle = within(getByRole('main')).getByText('Automate canary rollback').closest('article')!;
     fireEvent.click(
       within(actionArticle).getByRole('button', { name: 'Open Card details' }),
     );
@@ -1814,6 +1812,30 @@ describe('<BoardWorkspace />', () => {
     });
     expect(queryByText('Locked')).toBeNull();
     expect(getByRole('button', { name: 'Private Mode' })).toBeEnabled();
+  });
+
+  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', () => {
+    const board = makeBoardView({ isLocked: true });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const entry = view.getByRole('button', { name: 'Action Items 0 open' });
+    entry.focus();
+    fireEvent.click(entry);
+    flush();
+
+    const close = view.getByRole('button', { name: 'Close Action Items' });
+    expect(close).toHaveFocus();
+    // In the browser the header entry becomes hidden at the compact layout width.
+    entry.hidden = true;
+    fireEvent.click(close);
+    flush();
+
+    expect(view.queryByRole('dialog', { name: 'Action Items' })).toBeNull();
+    expect(view.getByRole('button', { name: 'More board actions' })).toHaveFocus();
   });
 
   it('prevents non-Facilitator Participants from editing Action Items or accessing Board Settings when Locked', () => {
