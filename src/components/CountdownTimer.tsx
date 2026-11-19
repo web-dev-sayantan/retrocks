@@ -219,7 +219,7 @@ export default function CountdownTimer(props: {
   return (
     <div
       ref={root}
-      class="shrink-0 sm:relative"
+      class="shrink-0 @min-[28rem]:relative"
       onFocusOut={(event) => {
         if (open() && event.relatedTarget instanceof Node &&
             !event.currentTarget.contains(event.relatedTarget)) {
@@ -278,7 +278,7 @@ export default function CountdownTimer(props: {
           aria-labelledby={titleId}
           tabindex={-1}
           data-board-overlay
-          class="fixed inset-x-4 top-14 z-30 max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-xl border border-border bg-surface p-3.5 text-text shadow-lg focus:outline-none sm:absolute sm:inset-x-auto sm:top-full sm:left-0 sm:mt-2 sm:w-64"
+          class="fixed inset-x-4 top-14 z-30 mx-auto max-h-[calc(100dvh-4rem)] max-w-[20rem] overflow-y-auto rounded-xl border border-border bg-surface p-3.5 text-text shadow-lg focus:outline-none @min-[28rem]:absolute @min-[28rem]:inset-x-auto @min-[28rem]:top-full @min-[28rem]:left-0 @min-[28rem]:mt-2 @min-[28rem]:w-64"
         >
           <div class="flex items-center justify-between gap-2">
             <h2 id={titleId} class="text-sm font-semibold">Countdown Timer</h2>
