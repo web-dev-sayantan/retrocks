@@ -1,6 +1,13 @@
 {
   "version": 2,
   "skills": {
+    "apple-design": {
+      "source": "craftwork.design",
+      "sourceUrl": "https://craftwork.design/skills/apple-design",
+      "sourceType": "well-known",
+      "computedHash": "a78373273de67017e0b217a936d88782a2ab27ef54aa7150f0e7d30739823824",
+      "wellKnownDigest": "sha256:47683a48b9231a973c4c89fa28c57270941a6c93c09bf317d16114158b781189"
+    },
     "ask-matt": {
       "source": "mattpocock/skills",
       "commit": "5863806dd4e15c63174bee4e7515a4256792ecfa",
@@ -63,6 +70,13 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
       "computedHash": "f0820b18426a7d9a6c823a890988ba0ac70bf0fd596d30d7ef07c88558728c23"
+    },
+    "modern-web-guidance": {
+      "source": "GoogleChrome/modern-web-guidance",
+      "commit": "64a6d708f5a43f2cd3fde5d4d7db3905ba1bdf65",
+      "sourceType": "github",
+      "skillPath": "skills/modern-web-guidance/SKILL.md",
+      "computedHash": "d9f3ceba8b5c77b12ae6f852932a349843ce086d03ce76ab5e2257e7e5acd16d"
     },
     "pr": {
       "source": "mattpocock/skills",
