@@ -102,6 +102,7 @@ describe('<ActionItemsDrawer />', () => {
     const onUpdateActionItem = vi.fn(async () => true);
     const view = render(() => (
       <ActionItemsDrawer
+        open={true}
         board={makeBoard([openItem, doneItem, regularCard])}
         isLocked={false}
         onClose={() => {}}
@@ -159,6 +160,7 @@ describe('<ActionItemsDrawer />', () => {
     try {
       const { getByRole, getByText } = render(() => (
         <ActionItemsDrawer
+          open={true}
           board={makeBoard([openItem, doneItem])}
           isLocked={false}
           onClose={onClose}
@@ -187,7 +189,10 @@ describe('<ActionItemsDrawer />', () => {
       await flushPromises();
       expect(writeText).toHaveBeenLastCalledWith('- [ ] Ship the API');
 
-      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent(
+        getByRole('dialog', { name: 'Action Items' }),
+        new Event('cancel', { cancelable: true }),
+      );
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
@@ -197,6 +202,7 @@ describe('<ActionItemsDrawer />', () => {
   it('shows an empty state and disables copying when no Action Items exist', () => {
     const view = render(() => (
       <ActionItemsDrawer
+        open={true}
         board={makeBoard([regularCard])}
         isLocked={false}
         onClose={() => {}}
@@ -215,6 +221,7 @@ describe('<ActionItemsDrawer />', () => {
     const participantUpdate = vi.fn(async () => true);
     const participantView = render(() => (
       <ActionItemsDrawer
+        open={true}
         board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: false }}
         isLocked={true}
         onClose={() => {}}
@@ -234,6 +241,7 @@ describe('<ActionItemsDrawer />', () => {
     const facilitatorUpdate = vi.fn(async () => true);
     const facilitatorView = render(() => (
       <ActionItemsDrawer
+        open={true}
         board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: true }}
         isLocked={true}
         onClose={() => {}}
@@ -260,10 +268,31 @@ describe('<ActionItemsDrawer />', () => {
     });
   });
 
+  it('wraps Tab and Shift+Tab within Action Items', () => {
+    const view = render(() => (
+      <ActionItemsDrawer
+        open={true}
+        board={makeBoard([openItem])}
+        isLocked={false}
+        onClose={() => {}}
+        onUpdateActionItem={vi.fn(async () => true)}
+      />
+    ));
+    flush();
+
+    const close = view.getByRole('button', { name: 'Close Action Items' });
+    const copy = view.getByRole('button', { name: 'Copy as Markdown Checklist' });
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(copy).toHaveFocus();
+    fireEvent.keyDown(copy, { key: 'Tab' });
+    expect(close).toHaveFocus();
+  });
+
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {
     const { artifact } = await captureArtifact(() => {
       render(() => (
         <ActionItemsDrawer
+          open={true}
           board={makeBoard([openItem, doneItem])}
           isLocked={false}
           onClose={() => {}}
