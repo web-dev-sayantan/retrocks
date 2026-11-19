@@ -2516,7 +2516,7 @@ describe('<BoardWorkspace />', () => {
 
       const { artifact } = await captureArtifact(
         async () => {
-          const { getByRole, queryByRole } = render(() => (
+          const { getByRole, queryByRole, getByText } = render(() => (
             <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
           ));
           flush();
@@ -2568,7 +2568,12 @@ describe('<BoardWorkspace />', () => {
             '- [ ] Automate canary rollback (Owner: Platform)',
           );
 
-          // Close on Escape
+          expect(getByText('Markdown copied.')).toBeVisible();
+          expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+
+          // Reopen and close on Escape
+          fireEvent.click(exportButton);
+          flush();
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
           expect(
@@ -2603,6 +2608,107 @@ describe('<BoardWorkspace />', () => {
       );
 
       expectNoDiagnostics(artifact);
+    } finally {
+      printSpy.mockRestore();
+    }
+  });
+
+  it('reports an unsuccessful Board download beside More and allows a retry', async () => {
+    const request = vi.spyOn(window, 'fetch').mockResolvedValueOnce(new Response(null, { status: 503 }));
+    try {
+      const board = makeBoardView({ isFacilitator: false, isLocked: true });
+      const { getByRole, queryByRole, getByText } = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+      ));
+      flush();
+
+      const more = getByRole('button', { name: 'More board actions' });
+      fireEvent.click(more);
+      flush();
+      fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }));
+      flush();
+
+      expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+      expect(more).toHaveFocus();
+      expect(getByText('Preparing CSV download…')).toBeVisible();
+      await flushPromises();
+      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+      expect(request).toHaveBeenCalledWith(expect.stringMatching(`/api/boards/${board.id}/export\\?format=csv$`));
+
+      fireEvent.click(more);
+      flush();
+      request.mockRejectedValueOnce(new TypeError('Offline'));
+      fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }));
+      await flushPromises();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+    } finally {
+      request.mockRestore();
+    }
+  });
+
+  it.each([false, true])('prints the viewer’s Board with Private Mode and Blind Voting (Facilitator: %s)', (isFacilitator) => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {
+      window.dispatchEvent(new Event('beforeprint'));
+    });
+    try {
+      const board = makeBoardView({
+        isFacilitator,
+        isBlurred: true,
+        blindVoting: true,
+        isLocked: true,
+        groups: [{
+          id: 'group_mixed',
+          columnId: 'col_2',
+          title: 'Hidden group title',
+          redacted: true,
+          cardIds: ['mine', 'theirs'],
+          votes: 7,
+          myVotes: 0,
+          createdAt: 1,
+        }],
+        cards: [
+          makeCard({
+            id: 'mine', columnId: 'col_2', groupId: 'group_mixed',
+            content: 'Visible group member', isActionItem: true, actionOwner: 'Platform',
+            votes: null,
+          }),
+          makeCard({
+            id: 'theirs', columnId: 'col_2', groupId: 'group_mixed',
+            content: 'Hidden Card content', redacted: true, isMine: false, votes: null,
+          }),
+          makeCard({ id: 'standalone', content: 'Visible standalone Card', myVotes: 1, votes: 7 }),
+        ],
+      });
+      const { getByRole, getByLabelText, queryByLabelText } = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+      ));
+      flush();
+      const search = getByRole('searchbox', { name: 'Search Cards, Card Groups, and comments' });
+      fireEvent.input(search, { target: { value: 'Visible standalone Card' } });
+      flush();
+
+      fireEvent.click(getByRole('button', { name: 'More board actions' }));
+      flush();
+      fireEvent.click(getByRole('menuitem', { name: 'Print / Save as PDF' }));
+      flush();
+
+      const output = getByLabelText('Printable Board');
+      expect(output).toHaveTextContent('Sprint 42 Retro');
+      expect(output).toHaveTextContent('To Improve');
+      expect(output).toHaveTextContent('Visible group member');
+      expect(output).toHaveTextContent('Platform');
+      expect(output).toHaveTextContent('Visible standalone Card');
+      expect(output).toHaveTextContent('1 of your Votes');
+      expect(output).toHaveTextContent('[Hidden in Private Mode]');
+      expect(output).not.toHaveTextContent('Hidden group title');
+      expect(output).not.toHaveTextContent('Hidden Card content');
+      expect(output).not.toHaveTextContent('7 Votes');
+
+      window.dispatchEvent(new Event('afterprint'));
+      flush();
+      expect(queryByLabelText('Printable Board')).not.toBeInTheDocument();
+      expect(search).toHaveValue('Visible standalone Card');
     } finally {
       printSpy.mockRestore();
     }

@@ -6,6 +6,7 @@ import {
   createSignal,
   createStore,
   createUniqueId,
+  flush,
   onSettled,
   reconcile,
   untrack,
@@ -51,7 +52,7 @@ import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSett
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
-import ExportBoardMenu from './ExportBoardMenu';
+import ExportBoardMenu, { type ExportFeedback } from './ExportBoardMenu';
 import {
   CheckIcon,
   CloseIcon,
@@ -61,6 +62,7 @@ import {
   PlusIcon,
 } from './Icons';
 import PageMessage from './PageMessage';
+import PrintBoard from './PrintBoard';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
 import type { WorkspaceVoting } from './VoteControls';
@@ -163,6 +165,23 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   // More disclosure and Board Settings
   const boardMenuId = createUniqueId();
   const [boardMenuOpen, setBoardMenuOpen] = createSignal(false);
+  const [exportFeedback, setExportFeedback] = createSignal<ExportFeedback | null>(null);
+  const [isPrinting, setIsPrinting] = createSignal(false);
+  onSettled(() => {
+    function preparePrint(): void {
+      setIsPrinting(true);
+      flush();
+    }
+    function finishPrint(): void {
+      setIsPrinting(false);
+    }
+    window.addEventListener('beforeprint', preparePrint);
+    window.addEventListener('afterprint', finishPrint);
+    return () => {
+      window.removeEventListener('beforeprint', preparePrint);
+      window.removeEventListener('afterprint', finishPrint);
+    };
+  });
   const [isBoardSettingsOpen, setIsBoardSettingsOpen] = createSignal(false);
   let boardMenuRootEl: HTMLDivElement | undefined;
   let boardMenuTriggerEl: HTMLButtonElement | undefined;
@@ -1438,7 +1457,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       }
     >
       {(board) => (
-        <div class="board-workspace flex min-h-dvh flex-col bg-canvas">
+        <div
+          class="board-workspace flex min-h-dvh flex-col bg-canvas"
+          data-board-print-ready={isPrinting() ? "" : undefined}
+        >
+          <Show when={isPrinting()}>
+            <PrintBoard board={board()} />
+          </Show>
           <div aria-live="polite" aria-atomic="true" class="sr-only">
             {modeAnnouncement()}
           </div>
@@ -1638,9 +1663,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
                     </button>
                     <div role="separator" class="my-1 border-t border-border" />
-                    <Show when={boardMenuOpen()}>
-                      <ExportBoardMenu board={board()} onClose={() => closeBoardMenu(true)} />
-                    </Show>
+                    <ExportBoardMenu
+                      board={board()}
+                      onClose={() => closeBoardMenu(true)}
+                      onFeedback={setExportFeedback}
+                    />
                   </div>
                 </div>
               </div>
@@ -1711,6 +1738,18 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <p class="basis-full text-sm text-text-muted">Only you can read your Cards until they’re revealed.</p>
                 </Show>
               </div>
+
+              <p
+                data-print-hide="true"
+                aria-live="polite"
+                aria-atomic="true"
+                class={[
+                  'col-span-2 text-sm empty:absolute',
+                  exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
+                ]}
+              >
+                {exportFeedback()?.message}
+              </p>
             </div>
           </header>
 

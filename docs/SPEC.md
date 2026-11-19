@@ -231,11 +231,12 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - Announce copy, retrieval, and rotation results in the dialog. If clipboard access fails, offer to copy from the selectable link field. Keep the retrieval and rotation controls available for retry after failures.
   - Move focus into Share when it opens, keep Board controls out of its tab order, and return focus when **Close Share** or Escape dismisses it.
 - **Exports (in More):**
-  - Exports always use the server-projected viewer snapshot — redacted Cards stay redacted while Private Mode is ON, and aggregate Vote totals stay omitted while Blind Voting is ON (no bypass flag; reveal first for a full export).
+  - Participants and Facilitators can copy, download, and print from More by keyboard or touch, including when the Board is Locked. Copy and download show progress and any failures alongside More.
+  - Exports use the server-projected viewer snapshot across all Columns. Private Mode keeps hidden Cards redacted for each viewer. Blind Voting omits aggregate Vote totals for both roles.
   - **Markdown (`.md`)** — Copy to clipboard or download; structured by Columns, Card Groups, Vote counts, comments, and a trailing Action Items checklist.
   - **CSV (`.csv`)** — Excel/Google Sheets ready with UTF-8 BOM and CSV formula-injection neutralization (prefixing leading `=`, `+`, `-`, `@`, `\t`, `\r`).
   - **JSON (`.json`)** — Complete structured Board snapshot.
-  - **Print / PDF** — Clean `@media print` stylesheet producing an ink-friendly, multi-column or stacked document via browser print dialog.
+  - **Print / Save as PDF** opens the browser print dialog with a stacked, ink-friendly document in either theme. The document includes visible Cards, Card Groups, comments, Action Item status and owners, and the viewer’s own Votes during Blind Voting. Local search and filters stay in place when the print dialog closes.
 
 ---
 
