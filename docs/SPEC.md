@@ -74,11 +74,10 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ## 3. Feature Specification
 
 ### 3.1 Home & Instant Board Creation (`/`)
-- **Zero-clutter hero & creator:** Immediate Board creation form right above the fold — no marketing walls or signup banners.
-- **Board Metadata:**
-  - Board Title (optional; defaults to `"Sprint Retrospective — <MMM D>"`, max 120 chars).
-  - Optional short context/subtitle (max 240 chars, e.g., `"Sprint 42 · Checkout Team"`).
-- **Curated Templates** (visual mini-column previews, fully editable before creation):
+- Show **Create a board**, the optional Board title, the selected **Standard Retro** and its Column names, and one primary **Create board** action above the fold. The default flow targets creation in under five seconds.
+- The optional Board title defaults to `"Sprint Retrospective — <MMM D>"` and allows up to 120 characters.
+- **Customize board** opens the optional subtitle (up to 240 characters) and the Column editor. Selecting **Custom Board** opens the editor automatically. Add, remove, rename, reorder, choose an accent, or toggle Action Column behavior before creation. Draft values persist when disclosures close and when creation fails.
+- **Change template** shows all templates and their Column names with accent markers.
   1. **Standard Retro** — Went Well / To Improve / Action Items *(marked `isActionColumn`)*
   2. **Start / Stop / Continue** — Start Doing / Stop Doing / Continue Doing
   3. **Mad / Sad / Glad** — Mad / Sad / Glad
@@ -88,14 +87,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   7. **Six Thinking Hats** — Facts (White) / Feelings (Red) / Caution (Black) / Benefits (Yellow) / Creativity (Green) / Process (Blue)
   8. **Pros & Cons** — Pros / Cons
   9. **Custom Board** — 1 to 10 customizable Columns (add, remove, rename, drag-reorder, choose subtle pastel accent).
-- **Collapsible Advanced Options** (sensible defaults, hidden until expanded):
+- **Advanced options** shows voting, Private Mode, and expiry settings on demand.
   - Votes per Participant: `3` / `5` *(default)* / `10` / `Unlimited`
   - Max Votes per Card / Card Group: `Unlimited (stackable)` *(default)* / `1 per Card or Card Group`
   - Start in Private Mode: `Off` *(default)* / `On`
   - Auto-expiry on inactivity: `30 days` / `90 days` *(default)* / `180 days`
 - **Recent Boards (Client-Side Only):**
   - Stored strictly in `localStorage` (never transmitted to or stored on the server; stores only Board ID, title, last visited timestamp, and a non-sensitive boolean display hint — never raw tokens).
-  - Displays recently created/visited Boards with title, last visited relative time, and a one-click remove-from-history action.
+  - Appears when local history exists and lists Boards in last-visited order with a title link, relative visit time, Facilitator role where applicable, and a labeled **Remove** action. The page explains that the list is saved in this browser only.
 
 ---
 
@@ -112,8 +111,9 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - Plain text up to 1,000 characters; safely rendered with preserved line breaks, clickable auto-linked `https?://` URLs, and inline backtick code spans (zero raw HTML).
   - Subtle relative timestamp (e.g., `2m ago`) — strictly no author name or avatar.
   - Subtle `"You"` micro-indicator (visible **only** to the Card's own author) so Participants recognize their own Cards.
-  - Inline edit and hard delete with a compact inline confirmation (`Delete` → `Confirm?`).
-  - Move across Columns via drag-and-drop on desktop or `"Move to..."` menu on mobile/keyboard. Drag-and-drop is strictly for cross-Column moves and merging into Card Groups (no manual within-Column reordering).
+  - Give each Card an opaque surface, body text starting at 1 rem, and wrapping metadata for ownership, timestamps, Votes, reactions, and comment counts.
+  - **Card actions** exposes the commands available to the current Participant, including **Edit Card**, **Move to…**, **Group with…**, and **Delete Card**. Keyboard users can navigate the menu with arrow keys and return to its trigger with Escape. Editing stays inline and a failed save keeps its draft and shows the error beside it. Deletion requires inline confirmation.
+  - Drag Cards across Columns to move them or onto another Card or Card Group to group them. Manual ordering within a Column is unavailable.
 
 ---
 
@@ -157,7 +157,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ### 3.6 Card Grouping & Merging
 - Combine duplicate or related Cards into a **Card Group** inside a Column (disabled for redacted Cards while Private Mode is ON):
   - **Desktop:** Drag and drop one Card onto another Card (or onto an existing Card Group).
-  - **Mobile & Keyboard:** Open Card menu (`...`) → `"Group with..."` and select a target Card or Card Group in the Column.
+  - **Mobile & Keyboard:** Open **Card actions**, choose **Group with…**, and select a target Card or Card Group in the Column.
 - **Card Group Behavior & Voting Rules:**
   - Displays an editable **Card Group Title** (e.g., `"CI Flakiness"`), Card count badge, **combined Vote total** (sum of pre-merge member Card Votes + Votes placed directly on the Card Group), and an expand/collapse toggle.
   - **Group-Level Voting Only:** Once Cards belong to a Card Group, live voting happens **exclusively on the Card Group header** (one unified `+`/`-` control); individual member Cards do not show separate interactive vote buttons while grouped.
@@ -174,7 +174,9 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Card Comments:**
   - Lightweight anonymous discussion notes on any revealed Card (max 500 chars, up to 50 comments per Card).
   - Cards show only a minimal comment count pill (e.g., `2`) when comments exist so the Board stays uncluttered.
-  - Clicking opens a clean **Card Detail Slide-Over Drawer** (desktop) or **Bottom Sheet** (mobile) displaying the full Card, reactions, Action Item controls, and comment thread.
+  - The Card details button and comment count open a right-side drawer at 640 CSS px and wider and a bottom sheet on narrower screens. Both show the Card, reactions, Action Item controls, and comments.
+  - The modal has a scrim, explicit close, Escape dismissal, contained keyboard focus, and focus return to the opening control or Board when that control disappears. Dismissal can interrupt entry. Reduced motion removes sliding. A viewer snapshot that redacts the Card removes its content and closes the modal immediately.
+  - Posting shows pending feedback. A failed comment stays in the composer with its error and can be submitted again.
   - Authors can delete their own comments; Facilitator can delete any revealed comment (both with compact inline confirmation).
 
 ---
@@ -246,19 +248,19 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - **Light:** Warm canvas `#F7F5F0`, opaque surface `#FFFFFF`, subtle surface `#EDEAE3`, text `#202522`, muted text `#555C56`, primary action `#255B48`, focus `#414BB0`.
   - **Dark:** Charcoal canvas `#1C1E20`, opaque surface `#27292C`, subtle surface `#313337`, text `#F6F5F1`, muted text `#BFC3BF`, primary action `#ABD7C2`, focus `#AAB2FF`.
   - **Column accents:** Slate, sage, sky, amber, rose, violet, teal, and coral appear as small markers alongside labeled Column titles and tabs.
-- **Typography:** System UI stack with no font network requests. Start composer text at 1 rem and use tabular numerals for timers and counts.
+- **Typography:** System UI stack with no font network requests. Start Card and composer text at 1 rem and use tabular numerals for timers and counts.
 - **Feedback:** Controls give immediate color or opacity feedback on press and commit on activation. More stays anchored to its trigger. Column tabs and swipe update the selected Column immediately, and reduced-motion mode disables decorative motion.
 - **Zero-FOUC Theme Init:** Tiny inline script in [src/Document.tsx](../src/Document.tsx) applies `data-theme="dark" | "light"` from `localStorage` / `prefers-color-scheme` before first paint.
 
 ### 4.2 Mobile-First Responsive Behavior
-- **Desktop (`>= 1024px`):** Side-by-side Columns (3–4 Columns fill viewport width cleanly; 5+ Columns scroll horizontally with smooth snap), hover-revealed quick actions, drag-and-drop Card move & grouping, slide-over Card Detail Drawer.
+- **Desktop (`>= 1024px`):** Side-by-side Columns (3–4 Columns fill viewport width cleanly; 5+ Columns scroll horizontally with smooth snap), visible Card actions, drag-and-drop Card move & grouping, slide-over Card Detail Drawer.
 - **Tablet (`640px – 1023px`):** 2-column responsive layout or horizontal snap Columns.
 - **Mobile (`< 640px`):**
   - Share and More fit on a single controls row. Give long titles and context their own full-width lines and let active states wrap.
   - Keep the sticky **Column Tab Bar** in its own horizontal scroll region. Tabs show labels, accents, and counts. Swipe the Card stream horizontally to change Columns while preserving vertical scrolling.
   - Keep **Search** visible and place the filter chips and sort selector in a **Filter & sort** disclosure. Leave the active filter, match count, and **Clear filters** visible when the disclosure closes.
   - Show a single Column with at least 44 × 44 CSS px touch targets. Keep the composer at the bottom of the visible viewport during entry, including when the software keyboard is shown.
-  - Card detail & actions presented in native-feeling **Bottom Sheets** (no hover-only controls anywhere).
+  - Card details open in a bottom sheet. Card and Card Group commands remain available by touch with hit areas at least 44 × 44 CSS px, including reaction choices and the tappable checkbox labels.
 
 ### 4.3 Keyboard Shortcuts & Accessibility
 - **Shortcuts (disabled when focused in an input/textarea):**
@@ -512,7 +514,7 @@ export type BoardEvent =
    - `BoardStore` + `BoardRealtime` interfaces; Cloudflare Workers + SQLite Durable Object (`BoardRoom` + `src/worker.ts` + `wrangler.jsonc` + `@cloudflare/vite-plugin` default `pnpm dev`) and Node SQLite + SSE adapter (Vitest `server` tests & self-hosted swap).
    - Anonymous Participant & Facilitator signed cookie + AES-256-GCM facilitator token crypto (`src/server/session.ts`, 90-day sliding TTL, lazy mint on `GET /b/:id`).
    - Tailwind CSS v4 `@theme` design tokens & zero-FOUC Light/Dark theme init in `src/Document.tsx`.
-   - Home page (`/`) with template gallery, custom Column builder, advanced options, and `localStorage` Recent Boards.
+   - Home page (`/`) with default creation, disclosed template selection, a Column editor, advanced options, and local Recent Boards.
 2. **Phase 2 — Core Retro Workspace & Live Sync**
    - Board route (`/b/:id`) with streaming SSR preload, responsive desktop Columns & mobile tabbed swipe view, and Deleted/Expired Board empty state.
    - Full Column & Card CRUD (hard delete with inline confirmation), desktop drag-and-drop (cross-Column moves), mobile Move menu, live WS/SSE delta patching, reconnect resync, and deduplicated presence count.

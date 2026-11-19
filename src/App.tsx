@@ -18,12 +18,12 @@ function AppShell(props: ParentProps) {
       <Title>{env.VITE_APP_NAME}</Title>
       <BoardRobotsMeta pathname={location.pathname} />
       <Show when={!isBoardPathname(location.pathname)}>
-        <header class="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur-sm">
+        <header class="border-b border-border bg-surface">
           <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
             <a
               href={paths()}
               class={[
-                'inline-flex items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
+                'inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-semibold tracking-tight text-text',
                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
               ]}
             >
