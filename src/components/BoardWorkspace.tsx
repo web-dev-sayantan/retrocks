@@ -42,12 +42,17 @@ import {
   type BoardSortMode,
   type ColumnStreamItem,
 } from '../lib/board-view';
-import { RETROSPECTIVE_PRIME_DIRECTIVE, matchSecretSearch } from '../lib/easter-eggs';
+import {
+  RETROSPECTIVE_PRIME_DIRECTIVE,
+  logPrivacyColophon,
+  matchSecretSearch,
+} from '../lib/easter-eggs';
 import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import type { ServerClockSample } from '../lib/timer';
+import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
@@ -162,8 +167,24 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
+  const [isDramaticReveal, setIsDramaticReveal] = createSignal(false);
   const [modeAnnouncement, setModeAnnouncement] = createSignal('');
+  const revealChime = createTimerChime();
+  let dramaticRevealTimer: ReturnType<typeof setTimeout> | undefined;
   let optimisticCardSeq = 0;
+
+  function clearDramaticReveal(): void {
+    if (dramaticRevealTimer !== undefined) {
+      clearTimeout(dramaticRevealTimer);
+      dramaticRevealTimer = undefined;
+    }
+    setIsDramaticReveal(false);
+  }
+
+  onSettled(() => () => {
+    clearDramaticReveal();
+    revealChime.dispose();
+  });
 
   // More disclosure and Board Settings
   const boardMenuId = createUniqueId();
@@ -479,6 +500,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return () => clearInterval(intervalId);
   });
 
+  createEffect(
+    () => workspace.board !== null,
+    (hasBoard) => {
+      if (hasBoard) logPrivacyColophon();
+    },
+  );
+
   onSettled(() => {
     document.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
@@ -725,13 +753,36 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  async function togglePrivateMode(): Promise<void> {
+  async function togglePrivateMode(options?: { dramatic?: boolean }): Promise<void> {
     const board = workspace.board;
     if (!board?.isFacilitator || board.isLocked || isChangingPrivateMode()) return;
     const { id: boardId, isBlurred } = board;
+    const dramatic = isBlurred && Boolean(options?.dramatic);
+    if (dramatic && !isTimerAudioMuted()) {
+      revealChime.prepare();
+    } else if (!isBlurred) {
+      clearDramaticReveal();
+    }
     setIsChangingPrivateMode(true);
     try {
       const response = await actions().setPrivateMode({ boardId, isBlurred: !isBlurred });
+      if (dramatic && response.ok && workspace.board?.id === boardId) {
+        const prefersReducedMotion =
+          typeof window !== 'undefined' &&
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (!prefersReducedMotion) {
+          clearDramaticReveal();
+          setIsDramaticReveal(true);
+          dramaticRevealTimer = setTimeout(() => {
+            dramaticRevealTimer = undefined;
+            setIsDramaticReveal(false);
+          }, 950);
+        }
+        if (!isTimerAudioMuted()) {
+          revealChime.playRevealShimmer();
+        }
+      }
       applyMutationResponse(boardId, response);
     } finally {
       setIsChangingPrivateMode(false);
@@ -1460,6 +1511,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         <div
           class="board-workspace flex min-h-dvh flex-col bg-canvas"
           data-board-print-ready={isPrinting() ? "" : undefined}
+          data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
         >
           <Show when={isPrinting()}>
             <PrintBoard board={board()} />
@@ -1721,7 +1773,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         aria-keyshortcuts="B"
                         title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
                         disabled={isChangingPrivateMode()}
-                        onClick={() => void togglePrivateMode()}
+                        onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
                         class={[
                           'inline-flex min-h-11 min-w-11 cursor-pointer items-center rounded-lg border px-2.5 text-sm font-medium transition-colors active:opacity-80 sm:min-h-9 sm:px-3',
                           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',

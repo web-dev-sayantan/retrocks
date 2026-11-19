@@ -23,6 +23,7 @@ import VoteControls, { type WorkspaceVoting } from './VoteControls';
 export interface CardGroupItemProps {
   group: CardGroupDTO;
   cards: readonly CardViewDTO[];
+  revealIndexOffset?: number;
   columnCards: readonly CardViewDTO[];
   columnGroups: readonly CardGroupDTO[];
   columns: readonly ColumnDTO[];
@@ -443,9 +444,10 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       <Show when={expanded()}>
         <div class="flex flex-col gap-2 p-2">
           <For each={props.cards}>
-            {(card) => (
+            {(card, cardIndex) => (
               <CardItem
                 card={card}
+                revealIndex={(props.revealIndexOffset ?? 0) + cardIndex()}
                 voting={props.voting}
                 columns={props.columns}
                 columnCards={props.columnCards}
