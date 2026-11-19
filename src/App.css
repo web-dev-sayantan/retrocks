@@ -5,6 +5,16 @@
   to { filter: blur(0); opacity: 1; }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .card-revealed {
+    animation: card-reveal var(--card-reveal-duration, 260ms) ease-out var(--card-reveal-delay, 0ms) both;
+  }
+
+  .board-workspace[data-dramatic-reveal='true'] .card-revealed {
+    --card-reveal-duration: 650ms;
+  }
+}
+
 .card-detail-dialog {
   transition: display 180ms allow-discrete, overlay 180ms allow-discrete;
 }
@@ -58,7 +68,7 @@
 }
 
 /* Drive Tailwind dark:* utilities from the zero-FOUC data-theme attribute. */
-@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *, [data-theme=retro], [data-theme=retro] *));
 
 /* Semantic light theme tokens (default). */
 :root {
@@ -94,7 +104,8 @@
 }
 
 /* Semantic dark theme tokens. */
-[data-theme='dark'] {
+[data-theme='dark'],
+[data-theme='retro'] {
   --retrocks-canvas: #1c1e20;
   --retrocks-surface: #27292c;
   --retrocks-surface-subtle: #313337;
@@ -114,6 +125,46 @@
   --retrocks-col-violet: #a796dc;
   --retrocks-col-teal: #66b8b8;
   --retrocks-col-coral: #e3957f;
+}
+
+[data-theme='retro'] {
+  --retrocks-canvas: #1a1713;
+  --retrocks-surface: #251f18;
+  --retrocks-surface-subtle: #30271d;
+  --retrocks-border: #645038;
+  --retrocks-control: #a6845d;
+  --retrocks-text: #ffd693;
+  --retrocks-text-muted: #dbb67e;
+  --retrocks-accent: #ffc46b;
+  --retrocks-accent-contrast: #21180e;
+  --retrocks-focus: #ffdc9e;
+
+  font-family: var(--font-mono);
+}
+
+[data-theme='parchment'] {
+  --retrocks-canvas: #f4ead5;
+  --retrocks-surface: #fff8e8;
+  --retrocks-surface-subtle: #eae0ca;
+  --retrocks-border: #cabb9e;
+  --retrocks-control: #8a7150;
+  --retrocks-text: #302418;
+  --retrocks-text-muted: #5e4b39;
+  --retrocks-accent: #644724;
+  --retrocks-accent-contrast: #fff8e8;
+  --retrocks-focus: #784729;
+}
+
+@media screen and (prefers-reduced-motion: no-preference) {
+  html[data-theme='retro']::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    opacity: 0.02;
+    background: repeating-linear-gradient(transparent 0 2px, #000 2px 3px);
+  }
 }
 
 @theme inline {
@@ -177,6 +228,11 @@
 @layer components {
   .page-message-action {
     @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+  }
+
+  .theme-unlock-toast {
+    @apply pointer-events-none fixed inset-x-4 z-70 mx-auto w-fit rounded-xl border border-border bg-surface px-4 py-3 text-center text-sm text-text shadow-lg;
+    bottom: max(1rem, env(safe-area-inset-bottom));
   }
 
   .board-menu-item {
@@ -251,6 +307,14 @@
   [data-theme='dark'] {
     --retrocks-border: #9ca09e;
   }
+
+  [data-theme='retro'] {
+    --retrocks-border: #ba986b;
+  }
+
+  [data-theme='parchment'] {
+    --retrocks-border: #806748;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -270,6 +334,72 @@
     opacity: 0.65;
   }
 }
+
+@media (width >= 40rem) {
+  .secret-search-wide {
+    max-width: 20rem;
+  }
+}
+
+.secret-search-dot {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .secret-search-field {
+    transition: max-width 220ms ease-out;
+  }
+
+  .secret-search-pivot {
+    animation: secret-search-tilt 380ms ease-in-out;
+  }
+
+  .secret-search-pebble {
+    animation: secret-search-skip 570ms ease-out forwards;
+  }
+
+  .secret-search-dot {
+    position: absolute;
+    display: block;
+    top: 50%;
+    left: min(65%, 19rem);
+    width: 0.32rem;
+    height: 0.32rem;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--dot-accent) 55%, var(--retrocks-surface));
+    animation: secret-search-burst 550ms ease-out both;
+  }
+}
+
+@keyframes secret-search-tilt {
+  50% { transform: rotate(1.5deg); }
+}
+
+@keyframes secret-search-skip {
+  17% { transform: translate(2px, -5px) rotate(14deg); }
+  34% { transform: translate(4px, 0) rotate(23deg); }
+  50% { transform: translate(6px, -3px) rotate(38deg); }
+  67% { transform: translate(8px, 0) rotate(49deg); }
+  83% { transform: translate(10px, -2px) rotate(58deg); }
+  100% { transform: translate(12px, 0) rotate(65deg); }
+}
+
+@keyframes secret-search-burst {
+  0% { opacity: 0; transform: scale(0.45); }
+  25% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(var(--dot-x), var(--dot-y)); }
+}
+
+.secret-search-dot:nth-child(1) { --dot-accent: var(--retrocks-col-sage); --dot-x: 8px; --dot-y: -17px; }
+.secret-search-dot:nth-child(2) { --dot-accent: var(--retrocks-col-amber); --dot-x: 24px; --dot-y: -14px; }
+.secret-search-dot:nth-child(3) { --dot-accent: var(--retrocks-col-rose); --dot-x: 39px; --dot-y: -8px; }
+.secret-search-dot:nth-child(4) { --dot-accent: var(--retrocks-col-sky); --dot-x: 47px; --dot-y: 1px; }
+.secret-search-dot:nth-child(5) { --dot-accent: var(--retrocks-col-violet); --dot-x: 32px; --dot-y: 12px; }
+.secret-search-dot:nth-child(6) { --dot-accent: var(--retrocks-col-teal); --dot-x: 10px; --dot-y: 17px; }
+.secret-search-dot:nth-child(7) { --dot-accent: var(--retrocks-col-coral); --dot-x: -9px; --dot-y: 12px; }
+.secret-search-dot:nth-child(8) { --dot-accent: var(--retrocks-col-sage); --dot-x: -19px; --dot-y: 4px; }
+.secret-search-dot:nth-child(9) { --dot-accent: var(--retrocks-col-sky); --dot-x: -22px; --dot-y: -7px; }
+.secret-search-dot:nth-child(10) { --dot-accent: var(--retrocks-col-amber); --dot-x: -11px; --dot-y: -15px; }
 
 .board-print {
   display: none;
@@ -344,7 +474,9 @@
     font-size: 10pt;
   }
   :root,
-  [data-theme='dark'] {
+  [data-theme='dark'],
+  [data-theme='retro'],
+  [data-theme='parchment'] {
     --retrocks-canvas: #ffffff;
     --retrocks-surface: #ffffff;
     --retrocks-surface-subtle: #f8fafc;
@@ -353,6 +485,10 @@
     --retrocks-text-muted: #4b5563;
     --retrocks-accent: #111827;
     --retrocks-accent-contrast: #ffffff;
+  }
+
+  html[data-theme='retro'] {
+    font-family: var(--font-sans);
   }
 
   html,

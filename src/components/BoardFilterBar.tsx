@@ -17,6 +17,7 @@ export interface BoardFilterBarProps {
   blindVoting: boolean;
   hasActiveFilter: boolean;
   hasSearchQuery: boolean;
+  widenSearch?: boolean;
   matchedCardCount: number;
   totalCardCount: number;
   onQueryChange: (query: string) => void;
@@ -65,7 +66,12 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
     >
       <div class="mx-auto max-w-[1600px] px-3 py-3 sm:px-6">
         <div class="flex flex-wrap items-end gap-2 sm:items-center sm:gap-x-4">
-          <div class="min-w-[min(9rem,100%)] flex-1 sm:flex sm:max-w-72 sm:items-center sm:gap-2">
+          <div
+            class={[
+              'secret-search-field min-w-[min(9rem,100%)] flex-1 sm:flex sm:max-w-72 sm:items-center sm:gap-2',
+              { 'secret-search-wide': props.widenSearch },
+            ]}
+          >
             <label for={searchId} class="mb-1 block text-sm font-medium text-text sm:mb-0">
               Search
             </label>

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardWorkspaceActions } from '../lib/board-actions';
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import type { BoardEvent, BoardMutationResponse, BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
+import { logPrivacyColophon } from '../lib/easter-eggs';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
 import BoardWorkspace from './BoardWorkspace';
 
@@ -2880,6 +2881,108 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
+  it.each([false, true])('shows a secret search on a Board with cards: %s', async (hasCards) => {
+    const board = makeBoardView({
+      cards: hasCards ? [makeCard({ content: 'Fast deploy pipeline', isMine: false })] : [],
+    });
+    const { actions } = createFakeActions(board);
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      ));
+      flush();
+
+      const search = view.getByRole('searchbox');
+      const searchFor = (query: string) => {
+        fireEvent.input(search, { target: { value: query } });
+        flush();
+      };
+
+      searchFor('  MeEtInGs  ');
+      expect(view.getByText('No Cards matched — this search could have been an email.')).toBeInTheDocument();
+
+      searchFor('blame');
+      expect(view.getByText('No blame found here.')).toBeInTheDocument();
+      expect(view.getByText(/^“Regardless of what we discover/)).toBeInTheDocument();
+      expect(view.getByRole('link', { name: /Norm Kerth/ })).toBeInTheDocument();
+
+      searchFor('42');
+      expect(view.getByText('The answer to life, the sprint, and everything.')).toBeInTheDocument();
+      expect(view.queryByRole('link', { name: /Norm Kerth/ })).not.toBeInTheDocument();
+
+      searchFor('scope creep');
+      expect(view.getByText("Careful, don't let it grow.")).toBeInTheDocument();
+      const searchField = search.closest('.secret-search-field');
+      expect(searchField).toHaveClass('secret-search-wide');
+
+      for (const query of ['retrocks', 'rock']) {
+        searchFor(query);
+        expect(view.getByText('Retrospectives that rock.')).toBeInTheDocument();
+        expect(view.container.querySelector('svg.secret-search-pebble')).toBeInTheDocument();
+        expect(searchField).not.toHaveClass('secret-search-wide');
+      }
+
+      searchFor('pivot');
+      expect(view.getByText('Pivot!')).toBeInTheDocument();
+      const columns = view.container.querySelector('[data-board-columns]');
+      expect(columns).toHaveClass('secret-search-pivot');
+      expect(view.container.querySelector('svg.secret-search-pebble')).not.toBeInTheDocument();
+
+      for (const query of ['kudos', 'party']) {
+        searchFor(query);
+        expect(view.getByText('Kudos all around!')).toBeInTheDocument();
+        expect(view.container.querySelectorAll('.secret-search-dot')).toHaveLength(10);
+        expect(columns).not.toHaveClass('secret-search-pivot');
+      }
+
+      fireEvent.click(view.getByRole('button', { name: 'Clear search' }));
+      flush();
+      expect(search).toHaveValue('');
+      expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
+      expect(view.container.querySelectorAll('.secret-search-dot')).toHaveLength(0);
+
+      searchFor('meetings');
+      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      flush();
+      if (hasCards) {
+        expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
+      } else {
+        expect(view.getByText('No Cards matched — this search could have been an email.')).toBeInTheDocument();
+      }
+
+      fireEvent.click(view.getByRole('button', { name: 'All' }));
+      flush();
+      searchFor('more meetings');
+      expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
+    }, { scenario: 'board-workspace-secret-search' });
+    expectNoDiagnostics(artifact);
+  });
+
+  it('keeps matching Cards visible before applying any secret search', async () => {
+    const board = makeBoardView({
+      cards: [makeCard({ content: 'Kudos for the fast deployment', isMine: false })],
+    });
+    const { actions } = createFakeActions(board);
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      ));
+      flush();
+      fireEvent.input(view.getByRole('searchbox'), { target: { value: 'kudos' } });
+      flush();
+
+      expect(view.getByText('Kudos for the fast deployment')).toBeInTheDocument();
+      expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
+
+      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      flush();
+      expect(view.queryByText('Kudos for the fast deployment')).not.toBeInTheDocument();
+      expect(view.getByText('No Cards match your current search or filter.')).toBeInTheDocument();
+      expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
+    }, { scenario: 'board-workspace-secret-search-card-match' });
+    expectNoDiagnostics(artifact);
+  });
+
   it('filters Cards, Card Group titles, and live comments locally with match counts and never matches redacted Cards', () => {
     const streams: Array<EventTarget & { receive: (msg: BoardLiveMessage) => void }> = [];
     vi.stubGlobal(
@@ -3782,5 +3885,409 @@ describe('<BoardWorkspace />', () => {
       { scenario: 'optimistic-emoji-reactions' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('exposes a data-private-mode hint on redacted Cards only and keeps DevTools colophon silent in test runs', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const own = makeCard({ id: 'card_own', content: 'My visible Card', isMine: true });
+    const hidden = makeCard({
+      id: 'card_hidden',
+      content: '',
+      redacted: true,
+      placeholderLines: 2,
+      isMine: false,
+    });
+    const board = makeBoardView({ isBlurred: true, cards: [own, hidden] });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockResolvedValue({
+      ok: true,
+      version: 2,
+      events: [{
+        type: 'board:snapshot',
+        version: 2,
+        serverNow: Date.now(),
+        board: {
+          ...board,
+          version: 2,
+          isBlurred: false,
+          cards: [own, { ...hidden, content: 'Revealed Card', redacted: false }],
+        },
+      }],
+    });
+
+    try {
+      const { artifact } = await captureArtifact(async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          expect(infoSpy).not.toHaveBeenCalled();
+
+          // Explicit invocation emits the styled colophon at most once per session
+          expect(logPrivacyColophon({ force: true })).toBe(true);
+          expect(logPrivacyColophon({ force: true })).toBe(false);
+          expect(infoSpy).toHaveBeenCalledTimes(1);
+          expect(infoSpy.mock.calls[0]?.[0]).toMatch(/%cRetrocks%c.*Private Mode.*server/i);
+
+          const hiddenArticle = view.container.querySelector('[data-card-id="card_hidden"]');
+          const ownArticle = view.container.querySelector('[data-card-id="card_own"]');
+          expect(hiddenArticle).toHaveAttribute('data-private-mode', 'server-redacted-nice-try');
+          expect(ownArticle).not.toHaveAttribute('data-private-mode');
+
+          fireEvent.click(view.getByRole('button', { name: 'Reveal All' }));
+          await flushPromises();
+
+          expect(hiddenArticle).not.toHaveAttribute('data-private-mode');
+        } finally {
+          view.unmount();
+        }
+      }, { scenario: 'private-mode-dom-hint' });
+      expectNoDiagnostics(artifact);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('cycles redacted Card footer whispers on click, restores after 2200ms, and cancels timers on reveal or unmount', async () => {
+    vi.stubGlobal('EventSource', class extends EventTarget { close() {} });
+    vi.stubGlobal('WebSocket', class extends EventTarget { close() {} send() {} readyState = 1; });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const hidden = makeCard({
+      id: 'card_hidden',
+      content: '',
+      redacted: true,
+      placeholderLines: 2,
+      isMine: false,
+    });
+    const board = makeBoardView({ isBlurred: true, cards: [hidden] });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockResolvedValue({
+      ok: true,
+      version: 2,
+      events: [{
+        type: 'board:snapshot',
+        version: 2,
+        serverNow: Date.now(),
+        board: {
+          ...board,
+          version: 2,
+          isBlurred: false,
+          cards: [{ ...hidden, content: 'Now visible', redacted: false }],
+        },
+      }],
+    });
+
+    try {
+      const { artifact } = await captureArtifact(async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+          const redactedCard = view.getByLabelText('Hidden Card in Private Mode');
+          expect(within(redactedCard).getByText('Hidden until Reveal All')).toBeInTheDocument();
+
+          const seenWhispers: string[] = [];
+          for (let i = 0; i < 4; i += 1) {
+            fireEvent.click(redactedCard);
+            flush();
+            expect(within(redactedCard).queryByText('Hidden until Reveal All')).not.toBeInTheDocument();
+            const label = redactedCard.querySelector('[data-redacted-footer]')?.textContent?.trim() ?? '';
+            expect(label.length).toBeGreaterThan(0);
+            seenWhispers.push(label);
+          }
+          expect(new Set(seenWhispers).size).toBe(4);
+
+          // 5th click wraps around to the first whisper
+          fireEvent.click(redactedCard);
+          flush();
+          expect(redactedCard.querySelector('[data-redacted-footer]')?.textContent?.trim()).toBe(seenWhispers[0]);
+
+          // Still showing at 2199ms, restores at 2200ms
+          vi.advanceTimersByTime(2_199);
+          flush();
+          expect(within(redactedCard).queryByText('Hidden until Reveal All')).not.toBeInTheDocument();
+
+          vi.advanceTimersByTime(1);
+          flush();
+          expect(within(redactedCard).getByText('Hidden until Reveal All')).toBeInTheDocument();
+
+          // Clicking again and revealing immediately cancels the pending restore timer
+          const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+          const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+          try {
+            fireEvent.click(redactedCard);
+            flush();
+            const revealPeekCallIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 2_200);
+            expect(revealPeekCallIndex).not.toBe(-1);
+            const revealPeekTimerId = setTimeoutSpy.mock.results[revealPeekCallIndex]?.value;
+
+            fireEvent.click(view.getByRole('button', { name: 'Reveal All' }));
+            await flushPromises();
+            expect(view.getByText('Now visible')).toBeInTheDocument();
+            expect(clearTimeoutSpy).toHaveBeenCalledWith(revealPeekTimerId);
+          } finally {
+            setTimeoutSpy.mockRestore();
+            clearTimeoutSpy.mockRestore();
+          }
+        } finally {
+          view.unmount();
+        }
+
+        // Unmounting while a whisper timer is active cancels it cleanly
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+        const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+        const secondView = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+          fireEvent.click(secondView.getByLabelText('Hidden Card in Private Mode'));
+          flush();
+          const unmountPeekCallIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 2_200);
+          expect(unmountPeekCallIndex).not.toBe(-1);
+          const unmountPeekTimerId = setTimeoutSpy.mock.results[unmountPeekCallIndex]?.value;
+
+          secondView.unmount();
+          expect(clearTimeoutSpy).toHaveBeenCalledWith(unmountPeekTimerId);
+        } finally {
+          setTimeoutSpy.mockRestore();
+          clearTimeoutSpy.mockRestore();
+        }
+      }, { scenario: 'private-mode-redacted-whispers' });
+      expectNoDiagnostics(artifact);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('applies a capped pure-CSS stagger delay only to Cards revealed by Reveal All', async () => {
+    const baseTime = Date.now();
+    const own = makeCard({
+      id: 'card_0',
+      content: 'My own Card',
+      isMine: true,
+      redacted: false,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+    });
+    const hiddenCards = Array.from({ length: 15 }, (_, idx) =>
+      makeCard({
+        id: `card_${idx + 1}`,
+        content: '',
+        redacted: true,
+        placeholderLines: 2,
+        isMine: false,
+        createdAt: baseTime - (idx + 1) * 1_000,
+        updatedAt: baseTime - (idx + 1) * 1_000,
+      }),
+    );
+    const board = makeBoardView({
+      isBlurred: true,
+      cards: [own, ...hiddenCards],
+    });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockResolvedValue({
+      ok: true,
+      version: 2,
+      events: [{
+        type: 'board:snapshot',
+        version: 2,
+        serverNow: Date.now(),
+        board: {
+          ...board,
+          version: 2,
+          isBlurred: false,
+          cards: [
+            own,
+            ...hiddenCards.map((card, idx) => ({
+              ...card,
+              content: `Revealed ${idx + 1}`,
+              redacted: false,
+            })),
+          ],
+        },
+      }],
+    });
+
+    const { artifact } = await captureArtifact(async () => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      ));
+      try {
+        flush();
+
+        // Before Reveal All, no Card has a reveal delay custom property
+        for (const card of [own, ...hiddenCards]) {
+          const article = view.container.querySelector<HTMLElement>(`[data-card-id="${card.id}"]`)!;
+          expect(article.style.getPropertyValue('--card-reveal-delay')).toBe('');
+          expect(article).not.toHaveClass('card-revealed');
+        }
+
+        fireEvent.click(view.getByRole('button', { name: 'Reveal All' }));
+        await flushPromises();
+
+        // Viewer's own Card was already visible, so it does not get reveal stagger
+        const ownArticle = view.container.querySelector<HTMLElement>('[data-card-id="card_0"]')!;
+        expect(ownArticle.style.getPropertyValue('--card-reveal-delay')).toBe('');
+        expect(ownArticle).not.toHaveClass('card-revealed');
+
+        // Revealed Cards get min(index * 18ms, 250ms)
+        const card1 = view.container.querySelector<HTMLElement>('[data-card-id="card_1"]')!;
+        const card2 = view.container.querySelector<HTMLElement>('[data-card-id="card_2"]')!;
+        const card14 = view.container.querySelector<HTMLElement>('[data-card-id="card_14"]')!;
+        const card15 = view.container.querySelector<HTMLElement>('[data-card-id="card_15"]')!;
+        expect(card1).toHaveClass('card-revealed');
+        expect(card1.style.getPropertyValue('--card-reveal-delay')).toBe('18ms');
+        expect(card2).toHaveClass('card-revealed');
+        expect(card2.style.getPropertyValue('--card-reveal-delay')).toBe('36ms');
+        expect(card14).toHaveClass('card-revealed');
+        expect(card14.style.getPropertyValue('--card-reveal-delay')).toBe('250ms');
+        expect(card15).toHaveClass('card-revealed');
+        expect(card15.style.getPropertyValue('--card-reveal-delay')).toBe('250ms');
+      } finally {
+        view.unmount();
+      }
+    }, { scenario: 'private-mode-staggered-reveal' });
+    expectNoDiagnostics(artifact);
+  });
+
+  it('triggers transient dramatic reveal and mute-respecting Web Audio shimmer on Facilitator Shift+Click Reveal All', async () => {
+    const startNote = vi.fn();
+    class FakeAudioContext {
+      state = 'running';
+      currentTime = 0;
+      destination = {};
+      close = async () => {};
+      resume = async () => {};
+      createOscillator() {
+        return {
+          type: 'sine',
+          frequency: { value: 0 },
+          connect() {},
+          disconnect() {},
+          start: startNote,
+          stop() {},
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect() {},
+          disconnect() {},
+        };
+      }
+    }
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    vi.stubGlobal('EventSource', class extends EventTarget { close() {} });
+    vi.stubGlobal('WebSocket', class extends EventTarget { close() {} send() {} readyState = 1; });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    localStorage.clear();
+
+    const hidden = makeCard({
+      id: 'card_secret',
+      content: 'Big reveal',
+      isMine: false,
+      redacted: false,
+    });
+    const initialBoard = makeBoardView({
+      isBlurred: true,
+      isFacilitator: true,
+      cards: [{ ...hidden, content: '', redacted: true, placeholderLines: 2 }],
+    });
+    const { actions, spies } = createFakeActions(initialBoard);
+    let version = initialBoard.version;
+    spies.setPrivateMode.mockImplementation(async (input) => {
+      version += 1;
+      const cards = input.isBlurred
+        ? [{ ...hidden, content: '', redacted: true, placeholderLines: 2 }]
+        : [hidden];
+      return {
+        ok: true,
+        version,
+        events: [{
+          type: 'board:snapshot',
+          version,
+          serverNow: Date.now(),
+          board: { ...initialBoard, version, isBlurred: input.isBlurred, cards },
+        }],
+      };
+    });
+
+    try {
+      const { artifact } = await captureArtifact(async () => {
+        const view = render(() => (
+          <BoardWorkspace board={initialBoard} boardId={initialBoard.id} actions={actions} />
+        ));
+        try {
+          flush();
+          const workspaceEl = view.container.querySelector('.board-workspace')!;
+
+          // 1. Plain click on Reveal All does not trigger dramatic reveal or Web Audio
+          fireEvent.click(view.getByRole('button', { name: 'Reveal All' }));
+          await flushPromises();
+          expect(workspaceEl).not.toHaveAttribute('data-dramatic-reveal');
+          expect(startNote).not.toHaveBeenCalled();
+
+          // Re-enable Private Mode
+          fireEvent.click(view.getByRole('button', { name: 'Private Mode' }));
+          await flushPromises();
+
+          // 2. Shift + Click Reveal All enables dramatic reveal for 950ms and plays Web Audio shimmer
+          fireEvent.click(view.getByRole('button', { name: 'Reveal All' }), { shiftKey: true });
+          await flushPromises();
+          expect(workspaceEl).toHaveAttribute('data-dramatic-reveal', 'true');
+          expect(startNote).toHaveBeenCalled();
+
+          vi.advanceTimersByTime(949);
+          flush();
+          expect(workspaceEl).toHaveAttribute('data-dramatic-reveal', 'true');
+
+          vi.advanceTimersByTime(1);
+          flush();
+          expect(workspaceEl).not.toHaveAttribute('data-dramatic-reveal');
+
+          // 3. Muted timer preference suppresses Web Audio shimmer on Shift + Click
+          startNote.mockClear();
+          localStorage.setItem('retrocks-timer-muted', 'true');
+          fireEvent.click(view.getByRole('button', { name: 'Private Mode' }));
+          await flushPromises();
+          fireEvent.click(view.getByRole('button', { name: 'Reveal All' }), { shiftKey: true });
+          await flushPromises();
+          expect(workspaceEl).toHaveAttribute('data-dramatic-reveal', 'true');
+          expect(startNote).not.toHaveBeenCalled();
+
+          vi.advanceTimersByTime(950);
+          flush();
+          expect(workspaceEl).not.toHaveAttribute('data-dramatic-reveal');
+
+          // 4. prefers-reduced-motion suppresses dramatic reveal visual state and Web Audio shimmer
+          startNote.mockClear();
+          localStorage.removeItem('retrocks-timer-muted');
+          vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+            matches: query === '(prefers-reduced-motion: reduce)',
+            media: query,
+            addEventListener() {},
+            removeEventListener() {},
+          })));
+          fireEvent.click(view.getByRole('button', { name: 'Private Mode' }));
+          await flushPromises();
+          fireEvent.click(view.getByRole('button', { name: 'Reveal All' }), { shiftKey: true });
+          await flushPromises();
+          expect(workspaceEl).not.toHaveAttribute('data-dramatic-reveal');
+          expect(startNote).not.toHaveBeenCalled();
+        } finally {
+          view.unmount();
+        }
+      }, { scenario: 'private-mode-dramatic-reveal' });
+      expectNoDiagnostics(artifact);
+    } finally {
+      localStorage.clear();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 });
