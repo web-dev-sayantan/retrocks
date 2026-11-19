@@ -11,6 +11,10 @@ packages:
 # under an age policy). It should be removed once Solid 2.0 is stable —
 # at that point a caret range nearly always contains an age-satisfying
 # release and the policy can protect these packages like any other.
+allowBuilds:
+  esbuild: true
+  workerd: true
+
 minimumReleaseAgeExclude:
   - solid-js
   - '@solidjs/*'

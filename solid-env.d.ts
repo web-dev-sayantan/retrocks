@@ -21,6 +21,8 @@ declare module 'virtual:solid-env/server' {
     : string;
   const env: {
     readonly "SESSION_SECRET": __Out<__Schema["server"]["SESSION_SECRET"]>;
+    readonly "RETROCKS_RUNTIME": __Out<__Schema["server"]["RETROCKS_RUNTIME"]>;
+    readonly "DATABASE_URL": __Out<__Schema["server"]["DATABASE_URL"]>;
     readonly "VITE_APP_NAME": __Out<__Schema["client"]["VITE_APP_NAME"]>;
   };
   export { env };
