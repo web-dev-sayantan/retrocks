@@ -21,6 +21,7 @@ import {
   SetPrivateModeInputSchema,
   UpdateCardInputSchema,
   UpdateColumnInputSchema,
+  UpdateTimerInputSchema,
 } from '../../lib/schemas';
 import {
   formatDefaultBoardTitle,
@@ -245,6 +246,16 @@ export async function renameBoardForRequest(
     type: 'board:rename',
     title: input.title,
     ...(input.subtitle !== undefined ? { subtitle: input.subtitle } : {}),
+  });
+}
+
+export async function updateTimerForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(UpdateTimerInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'timer:update',
+    change: input.change,
   });
 }
 

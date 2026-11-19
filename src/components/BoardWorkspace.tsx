@@ -29,10 +29,13 @@ import {
   type ColumnAccent,
 } from '../lib/board-types';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
+import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
+import type { ServerClockSample } from '../lib/timer';
 import ColumnPanel from './ColumnPanel';
+import CountdownTimer from './CountdownTimer';
 import { CheckIcon, CloseIcon, PencilIcon, PlusIcon } from './Icons';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
@@ -78,6 +81,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   const [nowMs, setNowMs] = createSignal(Date.now());
   const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
+  const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
+  const timerClock = createMemo(() => {
+    const clock = serverClock();
+    return clock?.boardId === workspace.board?.id ? clock : null;
+  });
   let serverTimeOffsetMs = 0;
   let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
@@ -153,7 +161,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     });
   }
 
-  function syncServerClock(serverNow: number): void {
+  function syncServerClock(boardId: string, serverNow: number): void {
+    setServerClock({ boardId, serverNow, receivedAt: performance.now() });
     serverTimeOffsetMs = serverNow - Date.now();
     setNowMs(serverNow);
   }
@@ -161,7 +170,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
     const current = workspace.board;
     if (current?.id !== nextBoard.id || nextBoard.version < current.version) return;
-    syncServerClock(serverNow);
+    syncServerClock(nextBoard.id, serverNow);
     applySnapshot(nextBoard, true);
   }
 
@@ -186,7 +195,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         if (event.type === 'timer:updated') serverNow = event.serverNow;
       }
     });
-    if (serverNow !== undefined) syncServerClock(serverNow);
+    if (serverNow !== undefined) syncServerClock(boardId, serverNow);
     if (needsResync) reconnectLive?.();
   }
 
@@ -317,6 +326,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setErrorMessage(null);
     applyVersionedEvents(boardId, response.version, response.events);
     return true;
+  }
+
+  async function changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse> {
+    const response = await actions().updateTimer({ boardId, change });
+    if (response.ok) applyVersionedEvents(boardId, response.version, response.events);
+    return response;
   }
 
   function handlePrivateModeShortcut(event: KeyboardEvent): void {
@@ -812,6 +827,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </div>
 
               <div class="flex shrink-0 items-center gap-2">
+                <Show when={board().id} keyed>
+                  {(boardId) => (
+                    <CountdownTimer
+                      timer={board().timer}
+                      clock={timerClock()}
+                      canControl={board().isFacilitator && !board().isLocked}
+                      onChange={(change) => changeCountdown(boardId, change)}
+                    />
+                  )}
+                </Show>
                 <Show when={board().isFacilitator && !board().isLocked}>
                   <button
                     type="button"

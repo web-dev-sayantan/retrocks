@@ -292,6 +292,9 @@ export function projectMutationEventsForViewer(
         }
         break;
       }
+      case 'timer:updated':
+        events.push({ ...rawEvent, timer: projected.timer });
+        break;
       case 'board:updated':
         events.push({
           type: 'board:updated',

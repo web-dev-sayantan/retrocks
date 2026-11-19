@@ -10,6 +10,7 @@ import {
   MAX_COLUMN_TITLE_LENGTH,
   RETENTION_DAYS_OPTIONS,
 } from './board-types';
+import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES } from './timer';
 
 export const BoardIdSchema = v.pipe(
   v.string(),
@@ -202,3 +203,24 @@ export const DeleteColumnInputSchema = v.object({
 });
 
 export type DeleteColumnInput = v.InferInput<typeof DeleteColumnInputSchema>;
+
+const StartTimerSchema = v.object({
+  action: v.literal('start'),
+  minutes: v.pipe(
+    v.number(),
+    v.integer('Enter a whole number of minutes.'),
+    v.minValue(MIN_TIMER_MINUTES, 'Choose at least one minute.'),
+    v.maxValue(MAX_TIMER_MINUTES, 'Choose at most 60 minutes.'),
+  ),
+});
+
+export const UpdateTimerInputSchema = v.object({
+  boardId: BoardIdSchema,
+  change: v.variant('action', [
+    StartTimerSchema,
+    v.object({ action: v.picklist(['pause', 'resume', 'extend', 'dismiss']) }),
+  ]),
+});
+
+export type UpdateTimerInput = v.InferInput<typeof UpdateTimerInputSchema>;
+export type TimerChange = UpdateTimerInput['change'];

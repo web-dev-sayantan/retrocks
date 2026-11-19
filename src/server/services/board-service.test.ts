@@ -915,3 +915,117 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
     }
   });
 });
+
+describe('BoardService (shared Countdown Timer)', () => {
+  async function createTimerBoard() {
+    const service = await import('./board-service');
+    const origin = 'https://retrocks.app/';
+    const created = await runRequest(
+      new Request(origin, { method: 'POST' }),
+      () => service.createBoardForRequest({}),
+    );
+    const { id: boardId } = created.result;
+    const facilitatorCookie = extractSessionCookie(created.response);
+    const boardUrl = new URL(`/b/${boardId}`, origin);
+    const participant = await runRequest(
+      new Request(boardUrl),
+      () => service.getBoardForRequest(boardId),
+    );
+    const participantCookie = extractSessionCookie(participant.response);
+
+    return {
+      async changeTimer(change: unknown, cookie = facilitatorCookie) {
+        return (await runRequest(
+          new Request(boardUrl, { method: 'POST', headers: { cookie } }),
+          () => service.updateTimerForRequest({ boardId, change }),
+        )).result;
+      },
+      async readTimer() {
+        return (await runRequest(
+          new Request(boardUrl, { headers: { cookie: participantCookie } }),
+          () => service.getBoardForRequest(boardId),
+        )).result?.timer;
+      },
+      participantCookie,
+    };
+  }
+
+  it('keeps Paused time fixed, resumes from the server clock, extends, and dismisses', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-19T14:00:00Z') });
+    try {
+      const { changeTimer, readTimer } = await createTimerBoard();
+      await changeTimer({ action: 'start', minutes: 5 });
+
+      vi.setSystemTime(new Date('2026-11-19T14:00:45Z'));
+      expect((await changeTimer({ action: 'pause' })).events).toEqual([{
+        type: 'timer:updated',
+        version: 3,
+        serverNow: Date.parse('2026-11-19T14:00:45Z'),
+        timer: { endsAt: null, remainingMs: 255_000, durationMs: 300_000 },
+      }]);
+
+      vi.setSystemTime(new Date('2026-11-19T14:10:00Z'));
+      expect(await readTimer()).toEqual({
+        endsAt: null, remainingMs: 255_000, durationMs: 300_000,
+      });
+
+      await changeTimer({ action: 'extend' });
+      expect(await readTimer()).toEqual({
+        endsAt: null, remainingMs: 315_000, durationMs: 360_000,
+      });
+
+      await changeTimer({ action: 'resume' });
+      expect(await readTimer()).toEqual({
+        endsAt: Date.parse('2026-11-19T14:15:15Z'),
+        remainingMs: null,
+        durationMs: 360_000,
+      });
+
+      await changeTimer({ action: 'extend' });
+      expect(await readTimer()).toEqual({
+        endsAt: Date.parse('2026-11-19T14:16:15Z'),
+        remainingMs: null,
+        durationMs: 420_000,
+      });
+
+      await changeTimer({ action: 'dismiss' });
+      expect(await readTimer()).toEqual({
+        endsAt: null, remainingMs: null, durationMs: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('rejects every timer control for an ordinary Participant', async () => {
+    const { changeTimer, readTimer, participantCookie } = await createTimerBoard();
+    await changeTimer({ action: 'start', minutes: 15 });
+    const originalTimer = await readTimer();
+
+    for (const change of [
+      { action: 'start', minutes: 3 },
+      { action: 'pause' },
+      { action: 'resume' },
+      { action: 'extend' },
+      { action: 'dismiss' },
+    ]) {
+      await expect(changeTimer(change, participantCookie)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    }
+    expect(await readTimer()).toEqual(originalTimer);
+  });
+
+  it('accepts whole custom durations between one and 60 minutes', async () => {
+    const { changeTimer, readTimer } = await createTimerBoard();
+
+    for (const minutes of [0, 61, 1.5, '3', Infinity]) {
+      await expect(changeTimer({ action: 'start', minutes })).rejects.toMatchObject({
+        code: 'VALIDATION_ERROR',
+      });
+    }
+    await changeTimer({ action: 'start', minutes: 1 });
+    expect(await readTimer()).toMatchObject({ durationMs: 60_000 });
+    await changeTimer({ action: 'start', minutes: 60 });
+    expect(await readTimer()).toMatchObject({ durationMs: 3_600_000 });
+  });
+});

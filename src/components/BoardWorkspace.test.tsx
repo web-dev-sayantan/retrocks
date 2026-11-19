@@ -98,6 +98,8 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     initialBoard.columns.map((c) => [c.id, { ...c }]),
   );
 
+  const updateTimer = vi.fn<BoardWorkspaceActions['updateTimer']>();
+
   const renameBoard = vi.fn(async (input) => {
     version += 1;
     return {
@@ -256,6 +258,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     resetVotes,
     setPrivateMode,
     renameBoard,
+    updateTimer,
     createCard,
     updateCard,
     moveCard,
@@ -274,6 +277,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
       resetVotes,
       setPrivateMode,
       renameBoard,
+      updateTimer,
       createCard,
       updateCard,
       moveCard,
