@@ -7,10 +7,10 @@ import {
 } from '../lib/board-view';
 import type { TimerChange } from '../lib/schemas';
 import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES, type ServerClockSample } from '../lib/timer';
-import { createTimerChime } from '../lib/timer-chime';
+import { TIMER_MUTE_STORAGE_KEY, createTimerChime } from '../lib/timer-chime';
 import { CloseIcon } from './Icons';
 
-const MUTE_STORAGE_KEY = 'retrocks-timer-muted';
+const MUTE_STORAGE_KEY = TIMER_MUTE_STORAGE_KEY;
 const presets = [3, 5, 10, 15];
 const controlClass =
   'min-h-11 rounded-lg border border-border px-2.5 text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-9';

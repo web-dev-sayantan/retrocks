@@ -724,7 +724,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           }
         >
           <For each={streamKeys()}>
-            {(key) => {
+            {(key, streamIndex) => {
               if (key.startsWith('group:')) {
                 const groupItem = createMemo(
                   () => {
@@ -755,6 +755,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <CardGroupItem
                         group={entry().group}
                         cards={groupCards()}
+                        revealIndexOffset={props.columnIndex + streamIndex()}
                         columnCards={props.cards}
                         columnGroups={props.groups}
                         columns={props.columns}
@@ -795,6 +796,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   {(card) => (
                     <CardItem
                       card={card()}
+                      revealIndex={props.columnIndex + streamIndex()}
                       voting={props.voting}
                       columns={props.columns}
                       columnCards={props.cards}

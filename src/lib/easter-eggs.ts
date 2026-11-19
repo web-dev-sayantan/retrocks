@@ -118,3 +118,26 @@ export function matchSecretSearch(query: string) {
   const normalized = query.trim().toLowerCase();
   return SECRET_SEARCHES.find((egg) => egg.queries.some((keyword) => keyword === normalized));
 }
+
+export const REDACTED_WHISPER_DURATION_MS = 2_200;
+
+export const REDACTED_CARD_WHISPERS = [
+  'Nice try. Still hidden.',
+  'Redacted on the server.',
+  'No peeking allowed.',
+  'Wait for Reveal All.',
+] as const;
+
+let hasLoggedPrivacyColophon = false;
+
+export function logPrivacyColophon(options?: { force?: boolean }): boolean {
+  if (typeof window === 'undefined' || hasLoggedPrivacyColophon) return false;
+  if (!options?.force && import.meta.env.MODE === 'test') return false;
+  hasLoggedPrivacyColophon = true;
+  console.info(
+    '%cRetrocks%c Private Mode strips Card plaintext on the server before it ever hits the wire — nothing to peek at in DevTools.',
+    'background:#255b48;color:#ffffff;font-weight:700;padding:2px 6px;border-radius:4px',
+    'color:inherit',
+  );
+  return true;
+}

@@ -8,6 +8,10 @@ import {
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import {
+  REDACTED_CARD_WHISPERS,
+  REDACTED_WHISPER_DURATION_MS,
+} from '../lib/easter-eggs';
 import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
@@ -26,6 +30,7 @@ import VoteControls, { type WorkspaceVoting } from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;
+  revealIndex?: number;
   voting: WorkspaceVoting;
   columns: readonly ColumnDTO[];
   columnCards: readonly CardViewDTO[];
@@ -58,6 +63,9 @@ export interface CardItemProps {
 }
 
 const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-8';
+const PLACEHOLDER_LINES_1 = ['w-3/4'] as const;
+const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
+const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
 
 export default function CardItem(props: CardItemProps) {
   const [isEditing, setIsEditing] = createSignal(false);
@@ -88,18 +96,55 @@ export default function CardItem(props: CardItemProps) {
     return null;
   });
 
-  const [wasRevealed, setWasRevealed] = createSignal(false);
+  const [peekWhisper, setPeekWhisper] = createSignal<string | null>(null);
+  let peekIndex = 0;
+  let peekTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearPeekTimer(): void {
+    if (peekTimer !== undefined) {
+      clearTimeout(peekTimer);
+      peekTimer = undefined;
+    }
+  }
+
+  function handleRedactedClick(): void {
+    if (!props.card.redacted) return;
+    clearPeekTimer();
+    const whisper = REDACTED_CARD_WHISPERS[peekIndex % REDACTED_CARD_WHISPERS.length];
+    peekIndex += 1;
+    setPeekWhisper(whisper);
+    peekTimer = setTimeout(() => {
+      peekTimer = undefined;
+      setPeekWhisper(null);
+    }, REDACTED_WHISPER_DURATION_MS);
+  }
+
+  const revealState = createMemo(
+    (previous?: { redacted: boolean; revealed: boolean }) => {
+      const redacted = props.card.redacted;
+      return {
+        redacted,
+        revealed: previous?.redacted === true && !redacted,
+      };
+    },
+  );
+  const wasRevealed = () => revealState().revealed;
 
   createEffect(
     () => props.card.redacted,
-    (redacted, previous) => {
-      setWasRevealed(previous === true && !redacted);
+    (redacted) => {
       if (redacted) {
         setActionError('');
         cancelEdit();
         setConfirmingDelete(false);
         setMenuPage(null);
+      } else {
+        clearPeekTimer();
+        setPeekWhisper(null);
       }
+      return () => {
+        clearPeekTimer();
+      };
     },
   );
 
@@ -237,9 +282,9 @@ export default function CardItem(props: CardItemProps) {
 
   const placeholderLineWidths = createMemo(() => {
     const count = props.card.placeholderLines ?? 2;
-    if (count === 1) return ['w-3/4'];
-    if (count === 3) return ['w-full', 'w-11/12', 'w-2/3'];
-    return ['w-full', 'w-4/5'];
+    if (count === 1) return PLACEHOLDER_LINES_1;
+    if (count === 3) return PLACEHOLDER_LINES_3;
+    return PLACEHOLDER_LINES_2;
   });
 
   function startEdit(): void {
@@ -407,6 +452,12 @@ export default function CardItem(props: CardItemProps) {
     <article
       ref={article}
       data-card-id={props.card.id}
+      data-private-mode={props.card.redacted ? 'server-redacted-nice-try' : undefined}
+      style={
+        wasRevealed()
+          ? { '--card-reveal-delay': `${Math.min((props.revealIndex ?? 0) * 18, 250)}ms` }
+          : undefined
+      }
       draggable={canDrag() ? 'true' : 'false'}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
@@ -419,7 +470,7 @@ export default function CardItem(props: CardItemProps) {
           'cursor-grab active:cursor-grabbing hover:border-text-muted/40':
             canDrag(),
           'bg-surface-subtle': props.card.redacted,
-          'motion-safe:animate-[card-reveal_260ms_ease-out]': wasRevealed(),
+          'card-revealed': wasRevealed(),
           'ring-2 ring-focus/70': isGroupDropActive(),
         },
       ]}
@@ -427,7 +478,11 @@ export default function CardItem(props: CardItemProps) {
       <Show
         when={!props.card.redacted}
         fallback={
-          <div aria-label="Hidden Card in Private Mode" class="space-y-2 py-0.5">
+          <div
+            aria-label="Hidden Card in Private Mode"
+            onClick={handleRedactedClick}
+            class="cursor-pointer select-none space-y-2 py-0.5"
+          >
             <div class="space-y-1.5" aria-hidden="true">
               <For each={placeholderLineWidths()}>
                 {(widthClass) => (
@@ -440,9 +495,11 @@ export default function CardItem(props: CardItemProps) {
                 )}
               </For>
             </div>
-            <div class="flex items-center justify-between pt-1 text-[11px] text-text-muted">
-              <span>Hidden until Reveal All</span>
-              <time class="tabular-nums">{relativeTimestamp()}</time>
+            <div class="flex items-center justify-between gap-2 pt-1 text-[11px] text-text-muted">
+              <span data-redacted-footer="" class="min-w-0 truncate">
+                {peekWhisper() ?? 'Hidden until Reveal All'}
+              </span>
+              <time class="shrink-0 tabular-nums">{relativeTimestamp()}</time>
             </div>
           </div>
         }

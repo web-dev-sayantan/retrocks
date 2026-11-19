@@ -5,6 +5,16 @@
   to { filter: blur(0); opacity: 1; }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .card-revealed {
+    animation: card-reveal var(--card-reveal-duration, 260ms) ease-out var(--card-reveal-delay, 0ms) both;
+  }
+
+  .board-workspace[data-dramatic-reveal='true'] .card-revealed {
+    --card-reveal-duration: 650ms;
+  }
+}
+
 .card-detail-dialog {
   transition: display 180ms allow-discrete, overlay 180ms allow-discrete;
 }
