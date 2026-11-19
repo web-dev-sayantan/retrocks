@@ -1,7 +1,7 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { fireEvent, render, within } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardWorkspaceActions } from '../lib/board-actions';
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
@@ -245,7 +245,9 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     };
   });
 
+  const setPrivateMode = vi.fn<BoardWorkspaceActions['setPrivateMode']>();
   const actions: BoardWorkspaceActions = {
+    setPrivateMode,
     renameBoard,
     createCard,
     updateCard,
@@ -260,6 +262,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
   return {
     actions,
     spies: {
+      setPrivateMode,
       renameBoard,
       createCard,
       updateCard,
@@ -282,6 +285,7 @@ async function flushPromises(): Promise<void> {
 beforeEach(() => {
   localStorage.clear();
 });
+afterEach(cleanup);
 
 describe('<BoardWorkspace />', () => {
   it('applies live deltas and requests a new stream snapshot after a version gap without clearing the composer', () => {
@@ -795,6 +799,70 @@ describe('<BoardWorkspace />', () => {
     expect(
       queryByRole('heading', { level: 2, name: 'To Improve' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('toggles Private Mode and reveals all Cards through one HTTP snapshot while preserving local drafts', async () => {
+    const own = makeCard({ id: 'own', content: 'My existing Card' });
+    const hidden = [
+      makeCard({ id: 'secret1', content: 'Another Participant’s first Card', isMine: false }),
+      makeCard({ id: 'secret2', content: 'Another Participant’s second Card', isMine: false }),
+    ];
+    const board = makeBoardView({ cards: [own, ...hidden] });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockImplementation(async (input) => {
+      const version = input.isBlurred ? 3 : 4;
+      const cards = input.isBlurred
+        ? [own, ...hidden.map((card) => ({ ...card, content: '', redacted: true, placeholderLines: 2 }))]
+        : board.cards;
+      return {
+        ok: true,
+        version,
+        events: [{
+          type: 'board:snapshot',
+          version,
+          serverNow: Date.now(),
+          board: { ...board, version, cards, isBlurred: input.isBlurred },
+        }],
+      };
+    });
+    const { getByRole, getByText, queryByText, getAllByLabelText } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const ownCard = getByText(own.content).closest('article')!;
+    fireEvent.click(within(ownCard).getByRole('button', { name: 'Edit card' }));
+    flush();
+    const editor = getByRole('textbox', { name: 'Edit card text' });
+    fireEvent.input(editor, { target: { value: 'Editing my Card' } });
+    const composer = getByRole('textbox', { name: 'Add card to Went Well' });
+    fireEvent.input(composer, { target: { value: 'Composing a new Card' } });
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Private Mode' }));
+    await flushPromises();
+    expect(spies.setPrivateMode).toHaveBeenCalledWith({ boardId: board.id, isBlurred: true });
+    expect(getAllByLabelText('Hidden Card in Private Mode')).toHaveLength(2);
+    for (const card of hidden) {
+      expect(queryByText(card.content)).toBeNull();
+    }
+    expect(getByRole('button', { name: 'Reveal All' })).toBeEnabled();
+    expect(editor).toHaveValue('Editing my Card');
+    expect(composer).toHaveValue('Composing a new Card');
+
+    fireEvent.keyDown(composer, { key: 'b' });
+    await flushPromises();
+    expect(spies.setPrivateMode).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(document, { key: 'b' });
+    await flushPromises();
+    expect(spies.setPrivateMode).toHaveBeenLastCalledWith({ boardId: board.id, isBlurred: false });
+    for (const card of hidden) {
+      expect(getByText(card.content)).toBeInTheDocument();
+    }
+    expect(getByText('All Cards revealed.')).toHaveAttribute('aria-live', 'polite');
+    expect(getByRole('textbox', { name: 'Edit card text' })).toBe(editor);
+    expect(getByRole('textbox', { name: 'Add card to Went Well' })).toBe(composer);
   });
 
   it('hides Facilitator edit/move/delete controls on redacted Cards during Private Mode', () => {

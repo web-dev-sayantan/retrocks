@@ -123,6 +123,13 @@ export const RenameBoardInputSchema = v.object({
 
 export type RenameBoardInput = v.InferInput<typeof RenameBoardInputSchema>;
 
+export const SetPrivateModeInputSchema = v.object({
+  boardId: BoardIdSchema,
+  isBlurred: v.boolean(),
+});
+
+export type SetPrivateModeInput = v.InferInput<typeof SetPrivateModeInputSchema>;
+
 export const CreateCardInputSchema = v.object({
   boardId: BoardIdSchema,
   columnId: EntityIdSchema,

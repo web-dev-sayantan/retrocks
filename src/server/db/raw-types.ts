@@ -134,6 +134,7 @@ export interface BoardMutationActor {
 export type BoardMutationCommand =
   | { type: 'facilitator:rotate'; capability: FacilitatorCapability }
   | { type: 'board:rename'; title: string; subtitle?: string }
+  | { type: 'board:set-private-mode'; isBlurred: boolean }
   | { type: 'card:create'; id: string; columnId: string; content: string }
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
@@ -156,6 +157,7 @@ export type BoardMutationCommand =
   | { type: 'column:delete'; columnId: string };
 
 export type RawBoardMutationEvent =
+  | { type: 'board:snapshot'; version: number }
   | {
       type: 'board:updated';
       version: number;
