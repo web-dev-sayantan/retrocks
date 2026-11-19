@@ -101,7 +101,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ### 3.2 Board Workspace & Core Card Operations (`/b/:boardId`)
 - **Board header:**
   - Lead with the Board title and optional context. The Retrocks link returns home, and Facilitators can rename an unlocked Board from the title.
-  - Keep online presence, Countdown Timer, and active Board states near the title. Show reconnecting when live updates are interrupted. Private Mode explains who can read a Card before Reveal All.
+  - Keep the Countdown Timer and connection state near the title. Show **Live** once synced or **Reconnecting…** while updates are interrupted. Display the online count separately so changes in attendance stay quiet. Display **Private Mode**, **Blind Voting**, and **Locked** as independent labels and announce changes to those states.
   - Keep Share and More in the header. Share has a target of at least 44 × 44 CSS pixels on phones. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
 - **Columns (1–10):**
   - Use a small accent marker, a wrapping title, and a tabular Card count. Use opaque Cards on the open Column rail.
@@ -119,25 +119,25 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 
 ### 3.3 Configurable Voting & Blind Voting
 - **Voting Mechanics:**
-  - When a Vote limit is configured (e.g., 5 Votes/Participant), a clean remaining-votes pill appears in the toolbar (`3 / 5 votes left`).
+  - When a Vote limit is configured (e.g., 5 Votes/Participant), show the Participant’s remaining budget in the Board header just above the Columns (`3 / 5 votes left`).
   - Clicking `+` on a standalone Card or Card Group casts a Vote (`+1`); clicking `-` (or secondary remove action) removes one of your Votes (`-1`).
   - Supports either **stackable voting** (multiple Votes on one high-priority Card/Card Group, default) or **1-Vote-per-Card-or-Card-Group** mode, plus **Unlimited** mode (classic IdeaBoardz style).
   - Voting on other Participants' redacted Cards while Private Mode is ON is rejected server-side.
 - **Blind Voting Option:**
   - Facilitator can toggle **Blind Voting** ON/OFF so Participants aren't anchored by early leaders.
-  - While Blind Voting is active, Participants see their own cast Vote count per Card/Card Group, while aggregate totals remain redacted (`null`) server-side until Blind Voting is turned off.
+  - While Blind Voting is active, Participants see their own cast Vote count per Card/Card Group, while aggregate totals remain redacted (`null`) server-side until Blind Voting is turned off. **Reveal All** makes Card content available and leaves Blind Voting in effect, including the restriction on sorting by **Most Voted**.
 - **Facilitator Controls:** Adjust Vote budget at any time or **Reset All Votes** (with confirmation).
 
 ---
 
 ### 3.4 Private Mode (Anti-Groupthink Writing)
-- Facilitator toggles **Private Mode** ON/OFF from the header bar.
+- On an unlocked Board, the Facilitator can enable **Private Mode** in the header or select **Reveal All** beside the active **Private Mode** label. The active label explains who can read a Card before reveal.
 - **Zero-Peeking Server-Side Redaction (Including Facilitators):**
   - When `isBlurred = true`, the server **never transmits other Participants' Card plaintext** over HTTP or WebSockets/SSE — not even to a Facilitator.
   - Other Participants' Cards are sent with `redacted: true` and an approximate `placeholderLines` hint (`1 | 2 | 3`) so the UI renders clean, realistic frosted/blurred skeleton Cards without leaking text to DevTools.
   - While Private Mode is ON, every Participant (including Facilitators) can freely create, view, edit, move, and delete their **own** Cards, while actions against other Participants' redacted Cards (editing, deleting, grouping, voting, reactions, comments, flagging) are **rejected server-side** until Reveal All.
 - **Simultaneous Reveal:**
-  - Clicking **Reveal All** flips `isBlurred = false` atomically and broadcasts a fresh per-viewer snapshot to every connected client simultaneously with a smooth unblur transition.
+  - Clicking **Reveal All** flips `isBlurred = false` atomically and broadcasts a fresh per-viewer snapshot to every connected client. Replace placeholders and begin reveal motion only when the snapshot supplies visible content. When a snapshot redacts a Card, remove the content and any open detail immediately.
 
 ---
 
@@ -149,7 +149,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - Quick presets: `3m`, `5m`, `10m`, `15m`, or custom minutes (1–60m).
   - Start, Pause, Resume, `+1 min`, Reset / Dismiss.
 - **Participant Experience:**
-  - Clean timer pill in the header with subtle visual progress ring/bar.
+  - The labeled timer sits in the header with a progress bar and a visible paused state. Announce timer changes and expiration and keep ordinary countdown ticks quiet.
   - Gentle Web Audio chime when reaching `00:00` (with an individual per-user mute toggle stored in `localStorage`) plus a calm visual pulse.
 
 ---

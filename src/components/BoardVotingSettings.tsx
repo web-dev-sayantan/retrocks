@@ -168,7 +168,7 @@ export default function BoardVotingSettings(props: {
           <button
             type="button"
             aria-label="Close Board Settings"
-            class={[buttonClass, 'border border-border text-text-muted hover:bg-surface-subtle hover:text-text']}
+            class={[buttonClass, 'min-w-11 shrink-0 border border-border text-text-muted hover:bg-surface-subtle hover:text-text sm:min-w-9']}
             onClick={closeDialog}
           >
             <CloseIcon />
