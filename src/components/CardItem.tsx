@@ -9,9 +9,11 @@ import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardText from './CardText';
 import { ArrowRightLeftIcon, PencilIcon, TrashIcon } from './Icons';
+import VoteControls, { type WorkspaceVoting } from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;
+  voting: WorkspaceVoting;
   columns: readonly ColumnDTO[];
   isFacilitator: boolean;
   isLocked: boolean;
@@ -261,6 +263,10 @@ export default function CardItem(props: CardItemProps) {
               </Show>
               <time class="tabular-nums">{relativeTimestamp()}</time>
             </div>
+
+            <Show when={props.card.groupId === null}>
+              <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
+            </Show>
 
             <Show when={canManage()}>
               <div

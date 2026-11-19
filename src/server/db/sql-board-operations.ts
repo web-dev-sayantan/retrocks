@@ -28,6 +28,7 @@ import type {
 } from './raw-types';
 import { BOARD_SCHEMA_STATEMENTS } from './schema';
 import type { SqlRunner } from './sql-runner';
+import { changeVote, configureVoting } from './sql-voting-operations';
 
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -571,6 +572,33 @@ export class SqlBoardOperations {
       };
 
       switch (command.type) {
+        case 'voting:configure':
+        case 'voting:reset': {
+          if (!actor.isFacilitator) {
+            return { ok: false, code: 'FORBIDDEN', message: 'Only a Facilitator can change Voting settings or reset Votes.' };
+          }
+          if (command.type === 'voting:configure') {
+            configureVoting(this.sql, board, command);
+          } else {
+            this.sql.run('DELETE FROM votes WHERE board_id = ?', boardId);
+          }
+          bumpBoard();
+          rawEvents.push({ type: 'board:snapshot', version: nextVersion });
+          return finalize(nextVersion, now);
+        }
+        case 'vote:change': {
+          const result = changeVote(this.sql, board, actor, command, now);
+          if (!result.ok) return result;
+          bumpBoard();
+          rawEvents.push({
+            type: 'vote:updated',
+            version: nextVersion,
+            targetType: command.targetType,
+            targetId: command.targetId,
+          });
+          return finalize(nextVersion, now);
+        }
+
         case 'facilitator:rotate': {
           if (!actor.isFacilitator) {
             return {
