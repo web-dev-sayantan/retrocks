@@ -10,6 +10,7 @@ const isNodeRuntime = process.env.RETROCKS_RUNTIME === 'node';
 const useCloudflare = !isTest && !isNodeRuntime;
 
 export default defineConfig({
+  define: { 'import.meta.env.RETROCKS_LIVE_SSE': isTest || isNodeRuntime },
   // Turnkey streaming SSR around src/App.tsx + src/Document.tsx.
   // Default dev/build runs in Cloudflare Workers (workerd) with SQLite Durable Objects.
   // Set RETROCKS_RUNTIME=node (pnpm dev:node / pnpm build:node) for standalone Node.

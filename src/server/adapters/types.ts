@@ -7,6 +7,7 @@ import type {
   BoardMutationOutcome,
   CreateBoardRecord,
   FacilitatorCapability,
+  RawBoardMutationEvent,
   RawBoardSnapshot,
 } from '../db/raw-types';
 
@@ -45,20 +46,25 @@ export interface LiveViewerContext {
   isFacilitator: boolean;
 }
 
+export type BoardPublication =
+  | { snapshot: RawBoardSnapshot; events: readonly RawBoardMutationEvent[] }
+  | Extract<BoardEvent, { type: 'board:deleted' }>;
+
 /**
  * Runtime-agnostic live fan-out and presence seam (ADR-0002).
  * Implemented by Cloudflare Hibernatable WebSockets (`BoardRoom`) and Node SSE.
  */
 export interface BoardRealtime {
-  publish(
-    boardId: string,
-    event: BoardEvent,
-    rawSnapshot?: RawBoardSnapshot,
-  ): Promise<void>;
+  publish(boardId: string, publication: BoardPublication): Promise<void>;
   handleLiveConnection(
     boardId: string,
     request: Request,
     viewer: LiveViewerContext,
   ): Promise<Response>;
   getPresenceCount(boardId: string): Promise<number>;
+  recordHeartbeat?(
+    boardId: string,
+    connectionId: string,
+    viewer: LiveViewerContext,
+  ): boolean;
 }

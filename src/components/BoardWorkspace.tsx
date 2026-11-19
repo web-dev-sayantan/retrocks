@@ -14,6 +14,7 @@ import {
   defaultBoardWorkspaceActions,
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
+import { connectBoardLive } from '../lib/board-live';
 import { applyBoardEvents } from '../lib/board-store';
 import {
   COLUMN_ACCENTS,
@@ -21,6 +22,7 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMNS_PER_BOARD,
   MAX_COLUMN_TITLE_LENGTH,
+  type BoardEvent,
   type BoardMutationResponse,
   type BoardViewDTO,
   type CardViewDTO,
@@ -72,6 +74,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [nowMs, setNowMs] = createSignal(Date.now());
+  const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
+  let serverTimeOffsetMs = 0;
+  let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
 
   // Board inline rename state
@@ -101,31 +106,79 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     string | null
   >(null);
 
-  // Sync store when route prop changes to a new Board or newer server snapshot
-  createEffect(
-    () => props.board,
-    (nextBoard) => {
-      const currentMeta = untrack(() =>
-        workspace.board
-          ? { id: workspace.board.id, version: workspace.board.version }
-          : null,
-      );
-      if (
-        nextBoard &&
-        currentMeta &&
-        nextBoard.id === currentMeta.id &&
-        nextBoard.version <= currentMeta.version
-      ) {
+  function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
+    setWorkspace((draft) => {
+      const current = draft.board;
+      if (nextBoard && current?.id === nextBoard.id) {
+        if (nextBoard.version < current.version) return;
+        if (!fromLive && nextBoard.version === current.version &&
+            nextBoard.isFacilitator === current.isFacilitator) return;
+      }
+      reconcile({ board: cloneBoardView(nextBoard) })(draft);
+    });
+  }
+
+  function syncServerClock(serverNow: number): void {
+    serverTimeOffsetMs = serverNow - Date.now();
+    setNowMs(serverNow);
+  }
+
+  function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
+    let needsResync = false;
+    let serverNow: number | undefined;
+    setWorkspace((draft) => {
+      const board = draft.board;
+      if (!board || board.id !== boardId || version <= board.version) return;
+      if (version > board.version + 1) {
+        needsResync = true;
         return;
       }
-      setWorkspace(reconcile({ board: cloneBoardView(nextBoard) }));
-    },
-  );
+      applyBoardEvents(board, events);
+      board.version = version;
+      for (const event of events) {
+        if (event.type === 'timer:updated') serverNow = event.serverNow;
+      }
+    });
+    if (serverNow !== undefined) syncServerClock(serverNow);
+    if (needsResync) reconnectLive?.();
+  }
+
+  createEffect(() => props.board, (nextBoard) => applySnapshot(nextBoard));
+
+  const liveBoardId = createMemo(() => workspace.board?.id);
+  createEffect(liveBoardId, (boardId) => {
+    if (!boardId || typeof window === 'undefined') return;
+    const live = connectBoardLive(boardId, {
+      onReconnect: () => setOnlineCount(null),
+      onMessage(message) {
+        switch (message.type) {
+          case 'board:snapshot':
+            syncServerClock(message.serverNow);
+            applySnapshot(message.board, true);
+            break;
+          case 'board:mutation':
+            applyVersionedEvents(boardId, message.version, message.events);
+            break;
+          case 'presence:count':
+            setOnlineCount(message.count);
+            break;
+          case 'board:deleted':
+            applySnapshot(null);
+            break;
+        }
+      },
+    });
+    reconnectLive = live.reconnect;
+    return () => {
+      reconnectLive = undefined;
+      live.dispose();
+    };
+  });
 
   // Keep relative timestamps fresh on the client
   onSettled(() => {
     const intervalId = setInterval(() => {
-      setNowMs(Date.now());
+      setNowMs(Date.now() + serverTimeOffsetMs);
     }, 30_000);
     return () => clearInterval(intervalId);
   });
@@ -190,17 +243,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     () => (workspace.board?.columns.length ?? 0) >= 5,
   );
 
-  function applyMutationResponse(response: BoardMutationResponse): boolean {
+  function applyMutationResponse(boardId: string, response: BoardMutationResponse): boolean {
+    if (workspace.board?.id !== boardId) return false;
     if (!response.ok) {
       setErrorMessage(response.message);
       return false;
     }
     setErrorMessage(null);
-    setWorkspace((draft) => {
-      if (draft.board) {
-        applyBoardEvents(draft.board, response.events);
-      }
-    });
+    applyVersionedEvents(boardId, response.version, response.events);
     return true;
   }
 
@@ -230,7 +280,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         boardId: board.id,
         title: trimmed,
       });
-      if (applyMutationResponse(response)) {
+      if (applyMutationResponse(board.id, response)) {
         setIsRenamingBoard(false);
       }
     } finally {
@@ -261,9 +311,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       columnId,
       content,
     });
-    const ok = applyMutationResponse(response);
+    const ok = applyMutationResponse(board.id, response);
     if (ok) {
-      setNowMs(Date.now());
+      setNowMs(Date.now() + serverTimeOffsetMs);
     }
     return ok;
   }
@@ -279,7 +329,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       cardId,
       content,
     });
-    return applyMutationResponse(response);
+    return applyMutationResponse(board.id, response);
   }
 
   async function handleMoveCard(
@@ -293,7 +343,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       cardId,
       targetColumnId,
     });
-    return applyMutationResponse(response);
+    return applyMutationResponse(board.id, response);
   }
 
   async function handleDeleteCard(cardId: string): Promise<boolean> {
@@ -303,7 +353,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       boardId: board.id,
       cardId,
     });
-    return applyMutationResponse(response);
+    return applyMutationResponse(board.id, response);
   }
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
@@ -319,7 +369,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         accent: newColumnAccent(),
         isActionColumn: newColumnIsAction(),
       });
-      if (applyMutationResponse(response)) {
+      if (applyMutationResponse(board.id, response)) {
         const upserted = response.ok
           ? response.events.find((ev) => ev.type === 'column:upserted')
           : undefined;
@@ -347,7 +397,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       columnId,
       ...patch,
     });
-    return applyMutationResponse(response);
+    return applyMutationResponse(board.id, response);
   }
 
   async function handleMoveColumn(
@@ -369,7 +419,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       boardId: board.id,
       columnIds: reordered,
     });
-    return applyMutationResponse(response);
+    return applyMutationResponse(board.id, response);
   }
 
   async function handleDeleteColumn(columnId: string): Promise<boolean> {
@@ -379,7 +429,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       boardId: board.id,
       columnId,
     });
-    return applyMutationResponse(response);
+    return applyMutationResponse(board.id, response);
   }
 
   async function handleMobileQuickAdd(): Promise<void> {
@@ -594,11 +644,21 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       </Show>
                     </div>
                   </Show>
-                  <Show when={board().subtitle.length > 0}>
-                    <p class="truncate text-xs text-text-muted">
-                      {board().subtitle}
-                    </p>
-                  </Show>
+                  <div class="flex min-w-0 items-center gap-2 text-xs text-text-muted">
+                    <span role="status" class="inline-flex shrink-0 items-center gap-1.5">
+                      <span
+                        aria-hidden="true"
+                        class={[
+                          'h-1.5 w-1.5 rounded-full',
+                          onlineCount() === null ? 'bg-text-muted' : 'bg-emerald-600 dark:bg-emerald-400',
+                        ]}
+                      />
+                      {onlineCount() === null ? 'Reconnecting…' : `${onlineCount()} online`}
+                    </span>
+                    <Show when={board().subtitle.length > 0}>
+                      <p class="truncate">{board().subtitle}</p>
+                    </Show>
+                  </div>
                 </div>
               </div>
 

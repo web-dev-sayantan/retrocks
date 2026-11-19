@@ -284,6 +284,11 @@ export class SqlBoardOperations {
     });
   }
 
+  getBoardVersion(boardId: string): number | null {
+    this.ensureSchema();
+    return this.sql.get<{ version: number }>('SELECT version FROM boards WHERE id = ?', boardId)?.version ?? null;
+  }
+
   getBoardSnapshot(
     boardId: string,
     now: number = Date.now(),
