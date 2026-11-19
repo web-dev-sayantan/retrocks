@@ -122,6 +122,47 @@ describe('applyBoardEvents (reactive store patcher)', () => {
     expect(afterDelete.columns[1].cardCount).toBe(0);
   });
 
+  it('patches viewer reactions and keeps the anonymous comment thread chronological and idempotent', () => {
+    const [board, setBoard] = createStore<BoardViewDTO>({
+      ...makeInitialBoard(),
+      cards: [makeCard({
+        comments: [{ id: 'late', cardId: 'card_1', content: 'Later', isMine: false, createdAt: 300 }],
+        commentCount: 1,
+      })],
+    });
+    const early = { id: 'early', cardId: 'card_1', content: 'Earlier', isMine: true, createdAt: 100 };
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        { type: 'reaction:updated', version: 2, cardId: 'card_1', counts: { '👍': 2 }, myReactions: ['👍'] },
+        { type: 'comment:created', version: 3, cardId: 'card_1', comment: early },
+        { type: 'comment:created', version: 3, cardId: 'card_1', comment: early },
+      ]);
+    });
+    flush();
+
+    let card = snapshot(board).cards[0];
+    expect(card.reactions).toEqual({ '👍': 2 });
+    expect(card.myReactions).toEqual(['👍']);
+    expect(card.comments.map((comment) => comment.id)).toEqual(['early', 'late']);
+    expect(card.commentCount).toBe(2);
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        { type: 'reaction:updated', version: 4, cardId: 'card_1', counts: {}, myReactions: [] },
+        { type: 'comment:deleted', version: 4, cardId: 'card_1', commentId: 'late' },
+        { type: 'comment:deleted', version: 4, cardId: 'card_1', commentId: 'late' },
+      ]);
+    });
+    flush();
+
+    card = snapshot(board).cards[0];
+    expect(card.reactions).toEqual({});
+    expect(card.myReactions).toEqual([]);
+    expect(card.comments.map((comment) => comment.id)).toEqual(['early']);
+    expect(card.commentCount).toBe(1);
+  });
+
   it('patches Board rename and Column add, update, reorder, and delete', () => {
     const [board, setBoard] = createStore<BoardViewDTO>(makeInitialBoard());
 

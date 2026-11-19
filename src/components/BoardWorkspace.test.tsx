@@ -246,6 +246,9 @@ function createFakeActions(initialBoard: BoardViewDTO): {
   });
 
   const setPrivateMode = vi.fn<BoardWorkspaceActions['setPrivateMode']>();
+  const toggleReaction = vi.fn<BoardWorkspaceActions['toggleReaction']>();
+  const createComment = vi.fn<BoardWorkspaceActions['createComment']>();
+  const deleteComment = vi.fn<BoardWorkspaceActions['deleteComment']>();
   const actions: BoardWorkspaceActions = {
     setPrivateMode,
     renameBoard,
@@ -253,6 +256,9 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     updateCard,
     moveCard,
     deleteCard,
+    toggleReaction,
+    createComment,
+    deleteComment,
     addColumn,
     updateColumn,
     reorderColumns,
@@ -268,6 +274,9 @@ function createFakeActions(initialBoard: BoardViewDTO): {
       updateCard,
       moveCard,
       deleteCard,
+      toggleReaction,
+      createComment,
+      deleteComment,
       addColumn,
       updateColumn,
       reorderColumns,
@@ -358,6 +367,179 @@ describe('<BoardWorkspace />', () => {
       vi.unstubAllGlobals();
     }
     expect(streams[1].closed).toBe(true);
+  });
+
+  it('shows anonymous discussion in a Card detail, and applies reactions and comments from the live stream', async () => {
+    const streams: EventTarget[] = [];
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() {
+        super();
+        streams.push(this);
+      }
+      close() {}
+    });
+    const card = makeCard({
+      comments: [{ id: 'first', cardId: 'card_1', content: 'First comment', isMine: false, createdAt: 100 }],
+      commentCount: 1,
+    });
+    const board = makeBoardView({ cards: [card], isFacilitator: false });
+    const { actions } = createFakeActions(board);
+    const toggleReaction = vi.fn(async () => ({
+      ok: true as const,
+      version: 2,
+      events: [{
+        type: 'reaction:updated' as const, version: 2, cardId: card.id, counts: { '🎉': 1 }, myReactions: ['🎉'],
+      }],
+    }));
+    const createComment = vi.fn(async () => ({
+      ok: true as const,
+      version: 4,
+      events: [{
+        type: 'comment:created' as const,
+        version: 4,
+        cardId: card.id,
+        comment: { id: 'mine', cardId: card.id, content: 'My reply', isMine: true, createdAt: 300 },
+      }],
+    }));
+    const deleteComment = vi.fn(async () => ({
+      ok: true as const,
+      version: 5,
+      events: [{ type: 'comment:deleted' as const, version: 5, cardId: card.id, commentId: 'mine' }],
+    }));
+    Object.assign(actions, { toggleReaction, createComment, deleteComment });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    function receive(message: BoardLiveMessage) {
+      streams[0].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+      flush();
+    }
+    try {
+      flush();
+      receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+      expect(view.queryByText('First comment')).not.toBeInTheDocument();
+      fireEvent.click(view.getByRole('button', { name: 'Add reaction' }));
+      flush();
+      expect(view.getByRole('group', { name: 'Choose a reaction' }).querySelectorAll('button')).toHaveLength(6);
+      fireEvent.click(view.getByRole('button', { name: '🎉' }));
+      await flushPromises();
+      expect(toggleReaction).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, emoji: '🎉' });
+      expect(view.getByRole('button', { name: '🎉 1 reaction' })).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.click(view.getByRole('button', { name: '1 comment' }));
+      flush();
+      const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+      expect(drawer.getByText(card.content)).toBeInTheDocument();
+      expect(drawer.getByText('First comment')).toBeInTheDocument();
+      expect(drawer.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+      receive({
+        type: 'board:mutation',
+        version: 3,
+        events: [
+          { type: 'reaction:updated', version: 3, cardId: card.id, counts: { '🎉': 2 }, myReactions: ['🎉'] },
+          { type: 'comment:created', version: 3, cardId: card.id, comment: {
+            id: 'live', cardId: card.id, content: '<b>Live reply</b>', isMine: false, createdAt: 200,
+          } },
+          { type: 'comment:deleted', version: 3, cardId: card.id, commentId: 'first' },
+        ],
+      });
+      expect(drawer.getByRole('button', { name: '🎉 2 reactions' })).toHaveAttribute('aria-pressed', 'true');
+      expect(drawer.getByText('<b>Live reply</b>')).toBeInTheDocument();
+      expect(drawer.queryByText('First comment')).not.toBeInTheDocument();
+
+      const input = drawer.getByRole('textbox', { name: 'Comment' });
+      expect(input).toHaveAttribute('maxlength', '500');
+      fireEvent.input(input, { target: { value: 'My reply' } });
+      flush();
+      fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
+      await flushPromises();
+      expect(createComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, content: 'My reply' });
+      expect(drawer.getByText('My reply')).toBeInTheDocument();
+      fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
+      flush();
+      expect(deleteComment).not.toHaveBeenCalled();
+      fireEvent.click(drawer.getByRole('button', { name: 'Confirm?' }));
+      await flushPromises();
+      expect(deleteComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, commentId: 'mine' });
+      expect(drawer.queryByText('My reply')).not.toBeInTheDocument();
+
+      receive({
+        type: 'board:snapshot',
+        version: 6,
+        serverNow: 200,
+        board: {
+          ...board, version: 6, isBlurred: true,
+          cards: [{ ...card, redacted: true, isMine: false, content: '', reactions: {}, comments: [], commentCount: 0 }],
+        },
+      });
+      expect(view.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(view.queryByRole('button', { name: 'Open Card details' })).not.toBeInTheDocument();
+      expect(view.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+      expect(view.queryByText('<b>Live reply</b>')).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('allows Facilitators to delete any revealed comment with inline confirmation and closes Card details on Escape without Solid diagnostics', async () => {
+    const card = makeCard({
+      isMine: false,
+      comments: [
+        {
+          id: 'other_comment',
+          cardId: 'card_1',
+          content: 'Needs follow-up',
+          isMine: false,
+          createdAt: 100,
+        },
+      ],
+      commentCount: 1,
+    });
+    const board = makeBoardView({ cards: [card], isFacilitator: true });
+    const { actions } = createFakeActions(board);
+    const deleteComment = vi.fn(async () => ({
+      ok: true as const,
+      version: 2,
+      events: [
+        {
+          type: 'comment:deleted' as const,
+          version: 2,
+          cardId: card.id,
+          commentId: 'other_comment',
+        },
+      ],
+    }));
+    Object.assign(actions, { deleteComment });
+
+    const { artifact } = await captureArtifact(async () => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      ));
+      try {
+        flush();
+        fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
+        flush();
+        const drawer = within(
+          view.getByRole('dialog', { name: 'Card details' }),
+        );
+        expect(drawer.getByText('Needs follow-up')).toBeInTheDocument();
+        fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
+        flush();
+        fireEvent.click(drawer.getByRole('button', { name: 'Confirm?' }));
+        await flushPromises();
+        expect(deleteComment).toHaveBeenCalledWith({
+          boardId: board.id,
+          cardId: card.id,
+          commentId: 'other_comment',
+        });
+        expect(drawer.queryByText('Needs follow-up')).not.toBeInTheDocument();
+
+        fireEvent.keyDown(document, { key: 'Escape' });
+        flush();
+        expect(view.queryByRole('dialog')).not.toBeInTheDocument();
+      } finally {
+        view.unmount();
+      }
+    });
+    expectNoDiagnostics(artifact);
   });
 
   it('renders sticky header, Columns with 3px pastel accent bar and Card count badge, and records Recent Board', () => {

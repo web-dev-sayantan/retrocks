@@ -4,11 +4,18 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   type CardViewDTO,
   type ColumnDTO,
+  type ReactionEmoji,
 } from '../lib/board-types';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import CardReactions from './CardReactions';
 import CardText from './CardText';
-import { ArrowRightLeftIcon, PencilIcon, TrashIcon } from './Icons';
+import {
+  ArrowRightLeftIcon,
+  MessageSquareIcon,
+  PencilIcon,
+  TrashIcon,
+} from './Icons';
 
 export interface CardItemProps {
   card: CardViewDTO;
@@ -20,6 +27,8 @@ export interface CardItemProps {
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
+  onOpenCardDetail: (cardId: string) => void;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
 }
@@ -247,6 +256,16 @@ export default function CardItem(props: CardItemProps) {
             <CardText text={props.card.content} />
           </div>
 
+          <div class="mt-2">
+            <CardReactions
+              cardId={props.card.id}
+              reactions={props.card.reactions}
+              myReactions={props.card.myReactions}
+              disabled={props.isLocked}
+              onToggleReaction={props.onToggleReaction}
+            />
+          </div>
+
           <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2">
             <div class="flex items-center gap-1.5 text-[11px] text-text-muted">
               <Show when={props.card.isMine}>
@@ -259,10 +278,40 @@ export default function CardItem(props: CardItemProps) {
                   Action Item
                 </span>
               </Show>
+              <Show when={props.card.commentCount > 0}>
+                <button
+                  type="button"
+                  aria-label={`${props.card.commentCount} ${props.card.commentCount === 1 ? 'comment' : 'comments'}`}
+                  onClick={() => props.onOpenCardDetail(props.card.id)}
+                  class={[
+                    'inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-subtle/70 px-2 py-0.5 text-[11px] font-medium text-text-muted sm:min-h-6',
+                    'transition-colors hover:border-text-muted/50 hover:text-text',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  <MessageSquareIcon class="h-3 w-3" />
+                  <span class="tabular-nums">{props.card.commentCount}</span>
+                </button>
+              </Show>
               <time class="tabular-nums">{relativeTimestamp()}</time>
             </div>
 
-            <Show when={canManage()}>
+            <div class="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Open Card details"
+                title="Open Card details"
+                onClick={() => props.onOpenCardDetail(props.card.id)}
+                class={[
+                  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
+                  'transition-colors hover:bg-surface-subtle hover:text-text',
+                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                ]}
+              >
+                <MessageSquareIcon />
+              </button>
+
+              <Show when={canManage()}>
               <div
                 class={[
                   'relative flex items-center gap-1 transition-opacity',
@@ -399,6 +448,7 @@ export default function CardItem(props: CardItemProps) {
                 </Show>
               </div>
             </Show>
+            </div>
           </div>
         </Show>
       </Show>
