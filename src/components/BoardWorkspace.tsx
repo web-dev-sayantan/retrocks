@@ -238,6 +238,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     null,
   );
 
+  const [isCardDetailOpen, setIsCardDetailOpen] = createSignal(false);
+  let cardDetailTrigger: HTMLButtonElement | undefined;
+  let boardMain: HTMLElement | undefined;
+
   // Action Items Drawer state
   const [isActionItemsOpen, setIsActionItemsOpen] = createSignal(false);
   let actionItemsHeaderEntry: HTMLButtonElement | undefined;
@@ -287,6 +291,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       setIsRenamingBoard(false);
       setIsAddingColumn(false);
       setOpenCardDetailId(null);
+      setIsCardDetailOpen(false);
       setIsActionItemsOpen(false);
       setBoardMenuOpen(false);
       setIsBoardSettingsOpen(false);
@@ -570,6 +575,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     ({ id, card }) => {
       if (id !== null && card === null) {
         setOpenCardDetailId(null);
+        setIsCardDetailOpen(false);
       }
     },
   );
@@ -843,15 +849,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   async function handleUpdateCard(
     cardId: string,
     content: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || !canManageCard(board, cardId)) return false;
-    const response = await actions().updateCard({
-      boardId: board.id,
-      cardId,
-      content,
-    });
-    return applyMutationResponse(board.id, response);
+    if (!board || !canManageCard(board, cardId)) return 'This Card can no longer be edited.';
+    try {
+      const response = await actions().updateCard({ boardId: board.id, cardId, content });
+      if (!response.ok) return response.message;
+      return applyMutationResponse(board.id, response) ? null : 'This Card can no longer be edited.';
+    } catch {
+      return 'Could not save the Card. Try again.';
+    }
   }
 
   async function handleUpdateActionItem(
@@ -1013,13 +1020,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   async function handleToggleReaction(
     cardId: string,
     emoji: ReactionEmoji,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
     if (!board || board.isLocked || cardId.startsWith('optimistic:')) {
-      return false;
+      return 'This Card can no longer receive reactions.';
     }
     const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
+    if (!card || card.redacted) return 'This Card can no longer receive reactions.';
 
     const boardId = board.id;
     const hadReaction = card.myReactions.includes(emoji);
@@ -1033,59 +1040,72 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       });
       if (!response.ok) {
         applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
+        return response.message;
       }
-      return applyMutationResponse(boardId, response);
+      applyMutationResponse(boardId, response);
+      return null;
     } catch {
       applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
-      if (workspace.board?.id === boardId) {
-        setErrorMessage('Could not update reaction. Try again.');
-      }
-      return false;
+      return 'Could not update reaction. Try again.';
     }
   }
 
   async function handleCreateComment(
     cardId: string,
     content: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || board.isLocked) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
-    const response = await actions().createComment({
-      boardId: board.id,
-      cardId,
-      content,
-    });
-    const ok = applyMutationResponse(board.id, response);
-    if (ok) {
-      setNowMs(Date.now() + serverTimeOffsetMs);
+    const card = board?.cards.find((item) => item.id === cardId);
+    if (!board || board.isLocked || !card || card.redacted) {
+      return 'This Card can no longer receive comments.';
     }
-    return ok;
+    try {
+      const response = await actions().createComment({ boardId: board.id, cardId, content });
+      if (!response.ok) return response.message;
+      if (applyMutationResponse(board.id, response)) {
+        setNowMs(Date.now() + serverTimeOffsetMs);
+      }
+      return null;
+    } catch {
+      return 'Could not post comment. Try again.';
+    }
   }
 
   async function handleDeleteComment(
     cardId: string,
     commentId: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || board.isLocked) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
-    const response = await actions().deleteComment({
-      boardId: board.id,
-      cardId,
-      commentId,
-    });
-    return applyMutationResponse(board.id, response);
+    const card = board?.cards.find((item) => item.id === cardId);
+    if (!board || board.isLocked || !card || card.redacted) {
+      return 'This comment can no longer be deleted.';
+    }
+    try {
+      const response = await actions().deleteComment({ boardId: board.id, cardId, commentId });
+      if (!response.ok) return response.message;
+      applyMutationResponse(board.id, response);
+      return null;
+    } catch {
+      return 'Could not delete comment. Try again.';
+    }
   }
 
-  function handleOpenCardDetail(cardId: string): void {
+  function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
     const board = workspace.board;
     if (!board || cardId.startsWith('optimistic:')) return;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return;
+    cardDetailTrigger = trigger;
     setOpenCardDetailId(cardId);
+    setIsCardDetailOpen(true);
+  }
+
+  function restoreCardDetailFocus(): void {
+    if (cardDetailTrigger?.isConnected) {
+      cardDetailTrigger.focus({ preventScroll: true });
+      if (document.activeElement === cardDetailTrigger) return;
+    }
+    boardMain?.focus({ preventScroll: true });
   }
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
@@ -1890,6 +1910,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
           {/* Responsive Columns workspace (single-column + swipe on mobile, grid/snap on tablet & desktop) */}
           <main
+            ref={boardMain}
+            tabindex={-1}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={() => { swipeStart = undefined; }}
@@ -2023,16 +2045,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </main>
 
           {/* Card Detail Drawer / Bottom Sheet */}
-          <Show when={openDetailCard()}>
-            {(card) => (
+          <Show when={openDetailCard() && openCardDetailId()} keyed>
+            {(_id) => (
               <CardDetailDrawer
-                card={card()}
+                card={openDetailCard()!}
                 column={openDetailColumn()}
                 isFacilitator={board().isFacilitator}
                 isLocked={board().isLocked}
                 isBlurred={board().isBlurred}
                 nowMs={nowMs()}
-                onClose={() => setOpenCardDetailId(null)}
+                isOpen={isCardDetailOpen()}
+                onClose={() => setIsCardDetailOpen(false)}
+                onExit={() => setOpenCardDetailId(null)}
+                restoreFocus={restoreCardDetailFocus}
                 onUpdateActionItem={handleUpdateActionItem}
                 onToggleReaction={handleToggleReaction}
                 onCreateComment={handleCreateComment}

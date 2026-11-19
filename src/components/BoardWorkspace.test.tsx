@@ -867,10 +867,86 @@ describe('<BoardWorkspace />', () => {
       expect(view.queryByRole('button', { name: 'Open Card details' })).not.toBeInTheDocument();
       expect(view.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
       expect(view.queryByText('<b>Live reply</b>')).not.toBeInTheDocument();
+      expect(view.queryByText(card.content)).not.toBeInTheDocument();
+      await Promise.resolve();
+      expect(view.getByRole('main')).toHaveFocus();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
     }
+  });
+
+  it('retains a failed comment in Card details and clears it after a successful retry', async () => {
+    const card = makeCard();
+    const board = makeBoardView({ cards: [card] });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+    const comment = drawer.getByRole('textbox', { name: 'Comment' });
+    fireEvent.input(comment, { target: { value: 'Keep my reply' } });
+    flush();
+
+    let rejectComment!: (response: BoardMutationResponse) => void;
+    spies.createComment.mockImplementationOnce(() => new Promise((resolve) => { rejectComment = resolve; }));
+    fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
+    flush();
+    expect(drawer.getByRole('button', { name: /Posting/ })).toBeDisabled();
+    rejectComment({ ok: false, code: 'RATE_LIMITED', message: 'Try posting again shortly.' });
+    await flushPromises();
+    expect(drawer.getByRole('alert')).toHaveTextContent('Try posting again shortly.');
+    expect(comment).toHaveValue('Keep my reply');
+
+    spies.createComment.mockResolvedValueOnce({
+      ok: true,
+      version: 2,
+      events: [{
+        type: 'comment:created',
+        version: 2,
+        cardId: card.id,
+        comment: { id: 'comment_1', cardId: card.id, content: 'Keep my reply', isMine: true, createdAt: 300 },
+      }],
+    });
+    fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
+    await flushPromises();
+    expect(drawer.getByText('Keep my reply')).toBeInTheDocument();
+    expect(comment).toHaveValue('');
+    expect(drawer.queryByRole('alert')).toBeNull();
+  });
+
+  it('contains focus in Card details and restores it after Escape or explicit close', () => {
+    const card = makeCard({ comments: [], commentCount: 1 });
+    const board = makeBoardView({ cards: [card] });
+    const { actions } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+
+    const comments = view.getByRole('button', { name: '1 comment' });
+    fireEvent.click(comments);
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+    const close = drawer.getByRole('button', { name: 'Close Card details' });
+    const comment = drawer.getByRole('textbox', { name: 'Comment' });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(comment).toHaveFocus();
+    fireEvent.keyDown(comment, { key: 'Tab' });
+    expect(close).toHaveFocus();
+
+    fireEvent.keyDown(close, { key: 'Escape' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(comments).toHaveFocus();
+
+    const open = view.getByRole('button', { name: 'Open Card details' });
+    fireEvent.click(open);
+    flush();
+    fireEvent.click(view.getByRole('button', { name: 'Close Card details' }));
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(open).toHaveFocus();
   });
 
   it('allows Facilitators to delete any revealed comment with inline confirmation and closes Card details on Escape without Solid diagnostics', async () => {
@@ -984,11 +1060,9 @@ describe('<BoardWorkspace />', () => {
       const cardArticle = view
         .getByText('Pair on flaky tests')
         .closest('article')!;
-      fireEvent.click(
-        within(cardArticle).getByRole('button', {
-          name: 'Flag as Action Item',
-        }),
-      );
+      fireEvent.click(within(cardArticle).getByRole('button', { name: 'Card actions' }));
+      flush();
+      fireEvent.click(within(cardArticle).getByRole('menuitem', { name: 'Flag as Action Item' }));
       await flushPromises();
       expect(spies.updateActionItem).toHaveBeenCalledWith({
         boardId: board.id,
@@ -1331,21 +1405,44 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const wentWell = getByRole('region', { name: 'Went Well' });
-    // Only myCard shows "You" badge and author action buttons
+    const mine = within(within(wentWell).getByText(myCard.content).closest('article')!);
+    const teammate = within(within(wentWell).getByText(otherCard.content).closest('article')!);
+    const menuTrigger = mine.getByRole('button', { name: 'Card actions' });
     expect(within(wentWell).getAllByText('You')).toHaveLength(1);
-    expect(
-      within(wentWell).getAllByRole('button', { name: 'Edit card' }),
-    ).toHaveLength(1);
 
-    // Inline edit myCard
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Edit card' }));
+    fireEvent.click(teammate.getByRole('button', { name: 'Card actions' }));
     flush();
-    const editBox = within(wentWell).getByLabelText(
-      'Edit card text',
-    ) as HTMLTextAreaElement;
+    const teammateMenu = within(teammate.getByRole('menu', { name: 'Card actions' }));
+    expect(teammateMenu.getAllByRole('menuitem').map((item) => item.textContent?.trim()))
+      .toEqual(['Flag as Action Item']);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    flush();
+    expect(teammate.queryByRole('menu')).toBeNull();
+    expect(teammate.getByRole('button', { name: 'Card actions' })).toHaveFocus();
+
+    fireEvent.keyDown(menuTrigger, { key: 'ArrowDown' });
+    flush();
+    const edit = mine.getByRole('menuitem', { name: 'Edit Card' });
+    expect(edit).toHaveFocus();
+    fireEvent.keyDown(edit, { key: 'ArrowDown' });
+    expect(mine.getByRole('menuitem', { name: 'Move to…' })).toHaveFocus();
+    fireEvent.click(edit);
+    flush();
+    const editBox = mine.getByRole('textbox', { name: 'Edit card text' });
+    expect(editBox).toHaveFocus();
     fireEvent.input(editBox, { target: { value: 'Refined retro note' } });
     flush();
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Save' }));
+
+    let rejectEdit!: (response: BoardMutationResponse) => void;
+    spies.updateCard.mockImplementationOnce(() => new Promise((resolve) => { rejectEdit = resolve; }));
+    fireEvent.click(mine.getByRole('button', { name: 'Save' }));
+    flush();
+    expect(mine.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    rejectEdit({ ok: false, code: 'VALIDATION_ERROR', message: 'Could not save this edit.' });
+    await flushPromises();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not save this edit.');
+    expect(editBox).toHaveValue('Refined retro note');
+    fireEvent.click(mine.getByRole('button', { name: 'Save' }));
     await flushPromises();
 
     expect(spies.updateCard).toHaveBeenCalledWith({
@@ -1356,7 +1453,10 @@ describe('<BoardWorkspace />', () => {
     expect(within(wentWell).getByText('Refined retro note')).toBeInTheDocument();
 
     // Move myCard across Columns using "Move to..." menu
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Move to...' }));
+    expect(mine.getByRole('button', { name: 'Card actions' })).toHaveFocus();
+    fireEvent.click(mine.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(mine.getByRole('menuitem', { name: 'Move to…' }));
     flush();
     fireEvent.click(
       within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
@@ -1396,7 +1496,10 @@ describe('<BoardWorkspace />', () => {
     });
 
     // Inline delete confirmation: Delete -> Confirm?
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Delete' }));
+    const movedBack = within(within(wentWell).getByText('Refined retro note').closest('article')!);
+    fireEvent.click(movedBack.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(movedBack.getByRole('menuitem', { name: 'Delete Card' }));
     flush();
     expect(spies.deleteCard).not.toHaveBeenCalled();
 
@@ -1584,7 +1687,9 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const ownCard = getByText(own.content).closest('article')!;
-    fireEvent.click(within(ownCard).getByRole('button', { name: 'Edit card' }));
+    fireEvent.click(within(ownCard).getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(within(ownCard).getByRole('menuitem', { name: 'Edit Card' }));
     flush();
     const editor = getByRole('textbox', { name: 'Edit card text' });
     fireEvent.input(editor, { target: { value: 'Editing my Card' } });
@@ -1607,6 +1712,7 @@ describe('<BoardWorkspace />', () => {
     await flushPromises();
     expect(spies.setPrivateMode).toHaveBeenCalledTimes(1);
 
+    getByRole('button', { name: 'Reveal All' }).focus();
     fireEvent.keyDown(document, { key: 'b' });
     await flushPromises();
     expect(spies.setPrivateMode).toHaveBeenLastCalledWith({ boardId: board.id, isBlurred: false });
@@ -1650,9 +1756,8 @@ describe('<BoardWorkspace />', () => {
 
     const col1 = getByRole('region', { name: 'Went Well' });
     expect(
-      within(col1).queryByRole('button', { name: 'Edit card' }),
+      within(col1).queryByRole('button', { name: 'Card actions' }),
     ).toBeNull();
-    expect(within(col1).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
   it('lets a Facilitator Lock and Unlock the Board while keeping Action Item follow-up enabled and disabling content edits', async () => {
@@ -1729,11 +1834,8 @@ describe('<BoardWorkspace />', () => {
     expect(queryByLabelText('Add card to Went Well')).toBeNull();
     expect(queryByRole('button', { name: 'Cast Vote' })).toBeNull();
     expect(queryByRole('button', { name: 'Remove Vote' })).toBeNull();
-    expect(queryByRole('button', { name: 'Edit card' })).toBeNull();
-    expect(queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(queryByRole('button', { name: 'Card actions' })).toBeNull();
     expect(queryByRole('button', { name: 'Add reaction' })).toBeNull();
-    expect(queryByRole('button', { name: 'Flag as Action Item' })).toBeNull();
-    expect(queryByRole('button', { name: 'Unflag Action Item' })).toBeNull();
     fireEvent.click(getByRole('button', { name: 'More board actions' }));
     flush();
     expect(getByRole('menuitem', { name: 'Board Settings' })).toBeEnabled();
@@ -2066,9 +2168,10 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const wentWell = getByRole('region', { name: 'Went Well' });
-    fireEvent.click(
-      within(wentWell).getAllByRole('button', { name: 'Group with...' })[0],
-    );
+    const firstCard = within(within(wentWell).getByText(first.content).closest('article')!);
+    fireEvent.click(firstCard.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(firstCard.getByRole('menuitem', { name: 'Group with…' }));
     flush();
     fireEvent.click(
       within(wentWell).getByRole('menuitem', { name: /Flaky CI checks/ }),
@@ -2118,9 +2221,10 @@ describe('<BoardWorkspace />', () => {
     flush();
     expect(within(wentWell).getByText('CI flakiness')).toBeInTheDocument();
 
-    fireEvent.click(
-      within(wentWell).getAllByRole('button', { name: 'Ungroup card' })[0],
-    );
+    const groupedFirstCard = within(within(wentWell).getByText(first.content).closest('article')!);
+    fireEvent.click(groupedFirstCard.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(groupedFirstCard.getByRole('menuitem', { name: 'Ungroup Card' }));
     await flushPromises();
 
     expect(spies.ungroupCard).toHaveBeenCalledWith({
@@ -2183,9 +2287,10 @@ describe('<BoardWorkspace />', () => {
         name: 'Rename Card Group',
       }),
     ).not.toBeInTheDocument();
-    expect(
-      within(participantColumn).queryByRole('button', { name: 'Ungroup card' }),
-    ).not.toBeInTheDocument();
+    const memberCard = within(within(participantColumn).getByText(cards[0].content).closest('article')!);
+    fireEvent.click(memberCard.getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(memberCard.queryByRole('menuitem', { name: 'Ungroup Card' })).not.toBeInTheDocument();
     cleanup();
 
     const board = makeBoardView({
