@@ -20,8 +20,11 @@ export default function RecentBoardsList() {
 
   return (
     <Show when={entries().length > 0}>
-      <section aria-labelledby="recent-boards-heading" class="mt-8 border-t border-border pt-6 sm:mt-10">
-        <h2 id="recent-boards-heading" class="text-xl font-semibold tracking-tight text-text">
+      <section
+        aria-labelledby="recent-boards-heading"
+        class="mt-8 min-w-0 border-t border-border pt-6 sm:mt-10 lg:mt-0 lg:border-t-0 lg:pt-1"
+      >
+        <h2 id="recent-boards-heading" class="text-xl font-semibold tracking-tight text-text lg:text-2xl">
           Recent Boards
         </h2>
         <p class="mt-1 text-sm text-text-muted">Saved in this browser only.</p>

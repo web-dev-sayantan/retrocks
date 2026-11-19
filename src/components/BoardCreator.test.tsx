@@ -270,6 +270,14 @@ describe('<RecentBoardsList /> & localStorage persistence', () => {
       'board_fedcba9876543210',
     ]);
     expect(localStorage.getItem(RECENT_BOARDS_STORAGE_KEY)).not.toContain('token');
+
+    fireEvent.click(getByRole('button', {
+      name: 'Remove Sprint 41 Retro from Recent Boards',
+    }));
+    flush();
+
+    expect(queryByRole('region', { name: 'Recent Boards' })).toBeNull();
+    expect(getByRole('button', { name: 'Create board' })).toBeEnabled();
   });
 
   it('mounts and removes Recent Boards entries with zero Solid 2.0 reactivity diagnostics', async () => {

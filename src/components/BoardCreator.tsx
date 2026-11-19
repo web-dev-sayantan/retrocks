@@ -261,7 +261,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} novalidate>
+    <form class="min-w-0" onSubmit={handleSubmit} novalidate>
       <h1 class="text-3xl font-semibold tracking-tight text-text sm:text-4xl">
         Create a board
       </h1>
@@ -281,43 +281,33 @@ export default function BoardCreator(props: BoardCreatorProps) {
         />
       </div>
 
-      <div class="mt-4 space-y-2 rounded-xl border border-border bg-surface px-4 py-3">
-        <h2 class="text-base font-semibold text-text">{getBoardTemplate(templateId()).name}</h2>
-        <ColumnPreview columns={columns} />
-      </div>
-
-      <Show when={errorMessage()}>
-        {(msg) => (
-          <p
-            role="alert"
-            class="mt-4 rounded-lg border border-col-rose bg-col-rose-tint px-3 py-2 text-base text-text"
+      <div class="mt-4">
+        <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border border-border bg-surface px-3 py-2">
+          <h2 class="text-base font-semibold text-text [overflow-wrap:anywhere]">
+            {getBoardTemplate(templateId()).name}
+          </h2>
+          <button
+            ref={(element) => { templateToggle = element; }}
+            type="button"
+            aria-label="Change template"
+            aria-expanded={templatesOpen() ? 'true' : 'false'}
+            aria-controls={templatesOpen() ? 'board-templates' : undefined}
+            onClick={() => setTemplatesOpen((open) => !open)}
+            class={[
+              'min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-2 text-sm font-medium text-text-muted',
+              'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle aria-expanded:bg-surface-subtle aria-expanded:text-text',
+              'sm:col-start-2 sm:row-span-2 sm:row-start-1',
+              focusClass,
+            ]}
           >
-            {msg()}
-          </p>
-        )}
-      </Show>
-      <button
-        type="submit"
-        disabled={submitting()}
-        class={[
-          'mt-4 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-5 py-2 text-base font-semibold text-accent-contrast sm:w-auto',
-          'transition-opacity hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60',
-          focusClass,
-        ]}
-      >
-        {submitting() ? 'Creating board…' : 'Create board'}
-      </button>
-
-      <div class="mt-5 space-y-1">
-        <DisclosureButton
-          panelId="board-templates"
-          label="Change template"
-          open={templatesOpen()}
-          onClick={() => setTemplatesOpen((open) => !open)}
-          buttonRef={(element) => { templateToggle = element; }}
-        />
+            Change
+          </button>
+          <div class="col-span-2 pb-1 sm:col-span-1 sm:col-start-1 sm:row-start-2">
+            <ColumnPreview columns={columns} />
+          </div>
+        </div>
         <Show when={templatesOpen()}>
-          <div id="board-templates" class="grid gap-2 sm:grid-cols-2">
+          <div id="board-templates" class="mt-2 grid gap-2 sm:grid-cols-2">
             <For each={BOARD_TEMPLATES}>
               {(template) => (
                 <button
@@ -343,7 +333,29 @@ export default function BoardCreator(props: BoardCreatorProps) {
         </Show>
       </div>
 
-      <div class="mt-1 space-y-1 border-t border-border pt-1">
+      <Show when={errorMessage()}>
+        {(msg) => (
+          <p
+            role="alert"
+            class="mt-4 rounded-lg border border-col-rose bg-col-rose-tint px-3 py-2 text-base text-text"
+          >
+            {msg()}
+          </p>
+        )}
+      </Show>
+      <button
+        type="submit"
+        disabled={submitting()}
+        class={[
+          'mt-4 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-5 py-2 text-base font-semibold text-accent-contrast sm:w-auto',
+          'transition-opacity hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60',
+          focusClass,
+        ]}
+      >
+        {submitting() ? 'Creating board…' : 'Create board'}
+      </button>
+
+      <div class="mt-5 space-y-1">
         <DisclosureButton
           panelId="board-customize"
           label="Customize board"
