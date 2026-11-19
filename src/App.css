@@ -136,3 +136,80 @@
     opacity: 0.65;
   }
 }
+
+/* Ink-friendly Print / Save as PDF layout (SPEC §3.11) */
+@media print {
+  :root,
+  [data-theme='dark'] {
+    --retrocks-canvas: #ffffff;
+    --retrocks-surface: #ffffff;
+    --retrocks-surface-subtle: #f8fafc;
+    --retrocks-border: #d1d5db;
+    --retrocks-text: #111827;
+    --retrocks-text-muted: #4b5563;
+    --retrocks-accent: #111827;
+    --retrocks-accent-contrast: #ffffff;
+  }
+
+  html,
+  body {
+    min-height: auto !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  header {
+    position: static !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    border-bottom: 1px solid #d1d5db !important;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 12pt 0 !important;
+  }
+
+  [data-print-hide='true'],
+  [data-board-overlay],
+  dialog,
+  [role='menu'],
+  [role='dialog'],
+  [role='alert'] {
+    display: none !important;
+  }
+
+  /* Ensure all Columns render cleanly even on narrow print/PDF pages */
+  [data-board-columns='true'] {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important;
+    gap: 12pt !important;
+    overflow: visible !important;
+    padding-bottom: 0 !important;
+  }
+
+  [data-column-id] {
+    display: flex !important;
+    width: auto !important;
+    min-width: 0 !important;
+    box-shadow: none !important;
+    border-color: #d1d5db !important;
+    background: #ffffff !important;
+    break-inside: avoid-column;
+    page-break-inside: avoid;
+  }
+
+  [data-column-accent-bar='true'] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  [data-group-id],
+  [data-card-id] {
+    box-shadow: none !important;
+    border-color: #d1d5db !important;
+    background: #ffffff !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

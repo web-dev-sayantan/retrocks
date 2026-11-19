@@ -26,20 +26,30 @@ import {
   type BoardEvent,
   type BoardMutationResponse,
   type BoardViewDTO,
+  type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
   type ReactionEmoji,
 } from '../lib/board-types';
+import {
+  hasOpenBoardOverlay,
+  isTypingInEditableElement,
+  projectBoardView,
+  type BoardQuickFilter,
+  type BoardSortMode,
+} from '../lib/board-view';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import type { ServerClockSample } from '../lib/timer';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
+import BoardFilterBar from './BoardFilterBar';
 import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
+import ExportBoardMenu from './ExportBoardMenu';
 import { CheckIcon, CloseIcon, FlagIcon, PencilIcon, PlusIcon } from './Icons';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
@@ -149,6 +159,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // Desktop drag-and-drop Card state
   const [draggingCardId, setDraggingCardId] = createSignal<string | null>(null);
+  const [draggingGroupId, setDraggingGroupId] = createSignal<string | null>(null);
   const [draggingSourceColumnId, setDraggingSourceColumnId] = createSignal<
     string | null
   >(null);
@@ -166,6 +177,30 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         (card) => card.isActionItem && !card.actionDone,
       ).length ?? 0,
   );
+
+  // Viewer-local Search, Quick Filter & Sort state (never persisted/broadcast)
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const [quickFilter, setQuickFilter] = createSignal<BoardQuickFilter>('all');
+  const [sortMode, setSortMode] = createSignal<BoardSortMode>('newest');
+  let searchInputEl: HTMLInputElement | undefined;
+  let mobileComposerEl: HTMLTextAreaElement | undefined;
+  const columnComposers = new Map<string, HTMLTextAreaElement>();
+
+  function resetFilters(): void {
+    setSearchQuery('');
+    setQuickFilter('all');
+  }
+
+  function registerColumnComposer(
+    columnId: string,
+    el: HTMLTextAreaElement | null,
+  ): void {
+    if (el) {
+      columnComposers.set(columnId, el);
+    } else {
+      columnComposers.delete(columnId);
+    }
+  }
 
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     if (nextBoard === null) {
@@ -243,6 +278,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   createEffect(
+    () => props.boardId,
+    (nextId, previousId) => {
+      if (previousId !== undefined && nextId !== previousId) {
+        setSearchQuery('');
+        setQuickFilter('all');
+        setSortMode('newest');
+      }
+    },
+  );
+
+  createEffect(
     () => {
       const board = workspace.board;
       return board && { id: board.id, isBlurred: board.isBlurred };
@@ -294,11 +340,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   onSettled(() => {
-    document.addEventListener('keydown', handlePrivateModeShortcut);
-    document.addEventListener('keydown', handleActionItemsShortcut);
+    document.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
-      document.removeEventListener('keydown', handlePrivateModeShortcut);
-      document.removeEventListener('keydown', handleActionItemsShortcut);
+      document.removeEventListener('keydown', handleGlobalKeyDown);
     };
   });
 
@@ -358,6 +402,31 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return grouped;
   });
 
+  const groupsByColumn = createMemo(() => {
+    const grouped = new Map<string, CardGroupDTO[]>();
+    const board = workspace.board;
+    if (!board) return grouped;
+    for (const group of board.groups) {
+      let list = grouped.get(group.columnId);
+      if (!list) {
+        list = [];
+        grouped.set(group.columnId, list);
+      }
+      list.push(group);
+    }
+    return grouped;
+  });
+
+  const boardView = createMemo(() => {
+    const board = workspace.board;
+    if (!board) return null;
+    return projectBoardView(board, {
+      query: searchQuery(),
+      filter: quickFilter(),
+      sortMode: sortMode(),
+    });
+  });
+
   const isHorizontalSnap = createMemo(
     () => (workspace.board?.columns.length ?? 0) >= 5,
   );
@@ -404,31 +473,72 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return response;
   }
 
-  function handlePrivateModeShortcut(event: KeyboardEvent): void {
-    if (
-      event.defaultPrevented || event.repeat || event.isComposing ||
-      event.altKey || event.ctrlKey || event.metaKey || event.key.toLowerCase() !== 'b'
-    ) return;
-    if (event.target instanceof Element &&
-        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+  function handleGlobalKeyDown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) return;
+
+    if (event.key === 'Escape') {
+      const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+      if (openDialog) {
+        event.preventDefault();
+        openDialog.close();
+        return;
+      }
+      if (isAddingColumn()) {
+        event.preventDefault();
+        setIsAddingColumn(false);
+      }
+      return;
+    }
+
+    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (isTypingInEditableElement(event)) return;
 
     const board = workspace.board;
-    if (!board?.isFacilitator || board.isLocked) return;
-    event.preventDefault();
-    void togglePrivateMode();
-  }
+    if (!board) return;
 
-  function handleActionItemsShortcut(event: KeyboardEvent): void {
-    if (
-      event.defaultPrevented || event.repeat || event.isComposing ||
-      event.altKey || event.ctrlKey || event.metaKey ||
-      event.key.toLowerCase() !== 'a' || isActionItemsOpen()
-    ) return;
-    if (event.target instanceof Element &&
-        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
-    if (document.querySelector('dialog[open], [aria-modal="true"], [data-board-overlay]')) return;
-    event.preventDefault();
-    setIsActionItemsOpen(true);
+    if (event.key === '/') {
+      if (hasOpenBoardOverlay()) return;
+      if (searchInputEl?.isConnected) {
+        event.preventDefault();
+        searchInputEl.focus();
+        searchInputEl.select();
+      }
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === 'n') {
+      if (board.isLocked || hasOpenBoardOverlay()) return;
+      const targetCol = activeMobileColumn();
+      const composer = targetCol ? columnComposers.get(targetCol.id) : undefined;
+      if (composer?.isConnected) {
+        event.preventDefault();
+        composer.focus();
+        composer.scrollIntoView?.({ block: 'nearest' });
+      } else if (mobileComposerEl?.isConnected) {
+        event.preventDefault();
+        mobileComposerEl.focus();
+      }
+      return;
+    }
+
+    if (key === 'a') {
+      if (isActionItemsOpen()) {
+        event.preventDefault();
+        setIsActionItemsOpen(false);
+        return;
+      }
+      if (hasOpenBoardOverlay()) return;
+      event.preventDefault();
+      setIsActionItemsOpen(true);
+      return;
+    }
+
+    if (key === 'b') {
+      if (hasOpenBoardOverlay() || !board.isFacilitator || board.isLocked) return;
+      event.preventDefault();
+      void togglePrivateMode();
+    }
   }
 
   async function togglePrivateMode(): Promise<void> {
@@ -577,6 +687,86 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return applyMutationResponse(board.id, response);
   }
 
+  function canManageGrouping(board: BoardViewDTO): boolean {
+    return !board.isLocked &&
+      (board.isFacilitator || board.allowParticipantGroup);
+  }
+
+  function canManageGroup(
+    board: BoardViewDTO,
+    group: CardGroupDTO,
+  ): boolean {
+    if (!canManageGrouping(board)) return false;
+    if (!board.isBlurred) return true;
+    return group.cardIds.every(
+      (id) => board.cards.find((card) => card.id === id)?.isMine === true,
+    );
+  }
+
+  async function handleGroupCard(
+    cardId: string,
+    targetType: 'card' | 'group',
+    targetId: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().groupCards({
+      boardId: board.id,
+      cardId,
+      targetType,
+      targetId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleRenameCardGroup(
+    groupId: string,
+    title: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().renameCardGroup({
+      boardId: board.id,
+      groupId,
+      title,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleUngroupCard(cardId: string): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().ungroupCard({
+      boardId: board.id,
+      cardId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleDissolveCardGroup(groupId: string): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().dissolveCardGroup({
+      boardId: board.id,
+      groupId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
+  async function handleMoveCardGroup(
+    groupId: string,
+    targetColumnId: string,
+  ): Promise<boolean> {
+    const board = workspace.board;
+    if (!board || !canManageGrouping(board)) return false;
+    const response = await actions().moveCardGroup({
+      boardId: board.id,
+      groupId,
+      targetColumnId,
+    });
+    return applyMutationResponse(board.id, response);
+  }
+
   async function handleToggleReaction(
     cardId: string,
     emoji: ReactionEmoji,
@@ -713,12 +903,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return applyMutationResponse(board.id, response);
   }
 
-  async function handleChangeVote(targetId: string, delta: ChangeVoteInput['delta']): Promise<void> {
+  async function handleChangeVote(
+    targetType: 'card' | 'group',
+    targetId: string,
+    delta: ChangeVoteInput['delta'],
+  ): Promise<void> {
     const board = workspace.board;
     if (!board || board.isLocked || voteInFlight) return;
 
     const boardId = board.id;
-    const input = { boardId, targetType: 'card', targetId, delta } as const;
+    const input = { boardId, targetType, targetId, delta } as const;
     voteInFlight = true;
     setPendingVote({ ...input, baseVersion: board.version });
     try {
@@ -847,11 +1041,23 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const board = workspace.board;
     if (!board || !canManageCard(board, cardId)) return;
     setDraggingCardId(cardId);
+    setDraggingGroupId(null);
+    setDraggingSourceColumnId(sourceColumnId);
+  }
+
+  function handleDragStartGroup(groupId: string, sourceColumnId: string): void {
+    const board = workspace.board;
+    if (!board) return;
+    const group = board.groups.find((item) => item.id === groupId);
+    if (!group || !canManageGroup(board, group)) return;
+    setDraggingCardId(null);
+    setDraggingGroupId(groupId);
     setDraggingSourceColumnId(sourceColumnId);
   }
 
   function handleDragEndCard(): void {
     setDraggingCardId(null);
+    setDraggingGroupId(null);
     setDraggingSourceColumnId(null);
   }
 
@@ -982,6 +1188,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           type="button"
                           aria-label="Rename Board"
                           title="Rename Board"
+                          data-print-hide="true"
                           onClick={startBoardRename}
                           class={[
                             'inline-flex min-h-9 min-w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
@@ -1005,7 +1212,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     </div>
                   </Show>
                   <div class="flex min-w-0 items-center gap-2 text-xs text-text-muted">
-                    <span role="status" class="inline-flex shrink-0 items-center gap-1.5">
+                    <span
+                      role="status"
+                      data-print-hide="true"
+                      class="inline-flex shrink-0 items-center gap-1.5"
+                    >
                       <span
                         aria-hidden="true"
                         class={[
@@ -1022,7 +1233,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
               </div>
 
-              <div class="flex shrink-0 items-center gap-2">
+              <div data-print-hide="true" class="flex shrink-0 items-center gap-2">
                 <Show when={board().id} keyed>
                   {(boardId) => (
                     <CountdownTimer
@@ -1100,6 +1311,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     />
                   )}
                 </Show>
+                <ExportBoardMenu board={board()} />
                 <ThemeToggle />
               </div>
             </div>
@@ -1109,7 +1321,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               board().blindVoting ||
               board().isFacilitator
             }>
-              <div class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6">
+              <div
+                data-print-hide="true"
+                class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6"
+              >
                 <Show when={board().voteLimit !== null}>
                   <span aria-live="polite" class="rounded-full border border-border bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text tabular-nums">
                     {voting().remainingVotes} / {board().voteLimit} votes left
@@ -1135,6 +1350,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             {/* Mobile (< 640px) scrollable Column Tab Bar */}
             <nav
               aria-label="Board Columns"
+              data-print-hide="true"
               class="border-t border-border/70 bg-surface sm:hidden"
             >
               <div
@@ -1173,7 +1389,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       />
                       <span class="max-w-32 truncate">{column.title}</span>
                       <span class="rounded-full bg-surface px-1.5 py-0.5 text-[11px] text-text-muted tabular-nums">
-                        {column.cardCount}
+                        {boardView()?.hasActiveFilter
+                          ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
+                          : column.cardCount}
                       </span>
                     </button>
                   )}
@@ -1181,6 +1399,30 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </div>
             </nav>
           </header>
+
+          {/* Viewer-local Search, Quick Filter & Sort toolbar */}
+          <Show when={boardView()}>
+            {(view) => (
+              <BoardFilterBar
+                query={searchQuery()}
+                filter={quickFilter()}
+                requestedSortMode={sortMode()}
+                effectiveSortMode={view().effectiveSortMode}
+                blindVoting={board().blindVoting}
+                hasActiveFilter={view().hasActiveFilter}
+                hasSearchQuery={view().hasSearchQuery}
+                matchedCardCount={view().matchedCardCount}
+                totalCardCount={view().totalCardCount}
+                onQueryChange={setSearchQuery}
+                onFilterChange={setQuickFilter}
+                onSortChange={setSortMode}
+                onResetFilters={resetFilters}
+                onSearchInputRef={(el) => {
+                  searchInputEl = el;
+                }}
+              />
+            )}
+          </Show>
 
           {/* Inline dismissible error feedback */}
           <Show when={errorMessage()}>
@@ -1206,7 +1448,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
           {/* Facilitator Add Column inline form */}
           <Show when={isAddingColumn() && board().isFacilitator && !board().isLocked}>
-            <div class="mx-auto mt-4 w-full max-w-[1600px] px-4 sm:px-6">
+            <div data-print-hide="true" class="mx-auto mt-4 w-full max-w-[1600px] px-4 sm:px-6">
               <form
                 onSubmit={(e) => void handleAddColumn(e)}
                 class="rounded-xl border border-border bg-surface p-4 shadow-2xs"
@@ -1309,7 +1551,31 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             onTouchEnd={handleTouchEnd}
             class="mx-auto w-full max-w-[1600px] flex-1 px-4 pt-4 pb-28 sm:px-6 sm:py-6"
           >
+            <Show
+              when={
+                boardView()?.hasActiveFilter &&
+                (boardView()?.totalCardCount ?? 0) > 0 &&
+                (boardView()?.matchedCardCount ?? 0) === 0
+              }
+            >
+              <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+                <p>No Cards match your current search or filter.</p>
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  class={[
+                    'inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
+                    'transition-colors hover:bg-canvas',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  Clear filters
+                </button>
+              </div>
+            </Show>
+
             <div
+              data-board-columns="true"
               class={[
                 'gap-4',
                 getResponsiveGridClass(board().columns.length),
@@ -1323,15 +1589,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     totalColumns={board().columns.length}
                     columns={board().columns}
                     cards={cardsByColumn().get(column.id) ?? []}
+                    groups={groupsByColumn().get(column.id) ?? []}
+                    streamItems={boardView()?.columns.get(column.id)?.items ?? []}
+                    visibleCardCount={
+                      boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
+                    }
+                    hasActiveFilter={boardView()?.hasActiveFilter ?? false}
                     voting={voting()}
                     isFacilitator={board().isFacilitator}
                     isLocked={board().isLocked}
                     isBlurred={board().isBlurred}
+                    canGroupCards={canManageGrouping(board())}
                     nowMs={nowMs()}
                     isMobileActive={resolvedActiveColumnIndex() === index()}
                     isHorizontalSnap={isHorizontalSnap()}
                     draggingCardId={draggingCardId()}
+                    draggingGroupId={draggingGroupId()}
                     draggingSourceColumnId={draggingSourceColumnId()}
+                    onResetFilters={resetFilters}
+                    onRegisterComposer={registerColumnComposer}
+                    onActivateColumn={(colId) => setActiveColumnId(colId)}
                     onCreateCard={handleCreateCard}
                     onUpdateCard={handleUpdateCard}
                     onUpdateActionItem={handleUpdateActionItem}
@@ -1342,7 +1619,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     onUpdateColumn={handleUpdateColumn}
                     onMoveColumn={handleMoveColumn}
                     onDeleteColumn={handleDeleteColumn}
+                    onGroupCard={handleGroupCard}
+                    onUngroupCard={handleUngroupCard}
+                    onRenameCardGroup={handleRenameCardGroup}
+                    onDissolveCardGroup={handleDissolveCardGroup}
+                    onMoveCardGroup={handleMoveCardGroup}
                     onDragStartCard={handleDragStartCard}
+                    onDragStartGroup={handleDragStartGroup}
                     onDragEndCard={handleDragEndCard}
                   />
                 )}
@@ -1382,9 +1665,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
           <Show when={!board().isLocked && activeMobileColumn()}>
             {(targetCol) => (
-              <div class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 py-2.5 backdrop-blur-sm sm:hidden">
+              <div
+                data-print-hide="true"
+                class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 py-2.5 backdrop-blur-sm sm:hidden"
+              >
                 <div class="flex items-end gap-2">
                   <textarea
+                    ref={(el) => {
+                      mobileComposerEl = el;
+                    }}
                     aria-label={`Quick add card to ${targetCol().title}`}
                     placeholder={`Add a card to ${targetCol().title}...`}
                     value={mobileDraft()}

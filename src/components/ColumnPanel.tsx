@@ -5,12 +5,15 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
   type ActionItemPatch,
+  type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import type { ColumnStreamItem } from '../lib/board-view';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
 import type { WorkspaceVoting } from './VoteControls';
 import {
@@ -29,15 +32,27 @@ export interface ColumnPanelProps {
   totalColumns: number;
   columns: readonly ColumnDTO[];
   cards: readonly CardViewDTO[];
+  groups: readonly CardGroupDTO[];
+  streamItems: readonly ColumnStreamItem[];
+  visibleCardCount: number;
+  hasActiveFilter: boolean;
   voting: WorkspaceVoting;
   isFacilitator: boolean;
   isLocked: boolean;
   isBlurred: boolean;
+  canGroupCards: boolean;
   nowMs: number;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
   draggingCardId: string | null;
+  draggingGroupId: string | null;
   draggingSourceColumnId: string | null;
+  onResetFilters: () => void;
+  onRegisterComposer?: (
+    columnId: string,
+    el: HTMLTextAreaElement | null,
+  ) => void;
+  onActivateColumn?: (columnId: string) => void;
   onCreateCard: (columnId: string, content: string) => Promise<boolean>;
   onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
   onUpdateActionItem: (
@@ -54,7 +69,20 @@ export interface ColumnPanelProps {
   ) => Promise<boolean>;
   onMoveColumn: (columnId: string, direction: -1 | 1) => Promise<boolean>;
   onDeleteColumn: (columnId: string) => Promise<boolean>;
+  onGroupCard: (
+    cardId: string,
+    targetType: 'card' | 'group',
+    targetId: string,
+  ) => Promise<boolean>;
+  onUngroupCard: (cardId: string) => Promise<boolean>;
+  onRenameCardGroup: (groupId: string, title: string) => Promise<boolean>;
+  onDissolveCardGroup: (groupId: string) => Promise<boolean>;
+  onMoveCardGroup: (
+    groupId: string,
+    targetColumnId: string,
+  ) => Promise<boolean>;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
+  onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
 }
 
@@ -95,10 +123,55 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     canManageColumn() && props.totalColumns > 1 && !hasHiddenCards(),
   );
 
+  const streamKeys = createMemo(() =>
+    props.streamItems.map((item) => item.key),
+  );
+  const streamItemByKey = createMemo(() => {
+    const map = new Map<string, ColumnStreamItem>();
+    for (const item of props.streamItems) {
+      map.set(item.key, item);
+    }
+    return map;
+  });
+
+  createEffect(menuOpen, (isOpen) => {
+    if (!isOpen) return;
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMenuOpen(false);
+        setConfirmingDelete(false);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  });
+
+  let composerEl: HTMLTextAreaElement | undefined;
+
+  createEffect(
+    () => (props.isLocked ? null : props.column.id),
+    (columnId) => {
+      if (!columnId || !composerEl) return;
+      props.onRegisterComposer?.(columnId, composerEl);
+      return () => {
+        props.onRegisterComposer?.(columnId, null);
+      };
+    },
+  );
+
+  function canManageGroup(group: CardGroupDTO): boolean {
+    if (!props.canGroupCards) return false;
+    if (!props.isBlurred) return true;
+    return group.cardIds.every(
+      (id) => props.cards.find((card) => card.id === id)?.isMine === true,
+    );
+  }
+
   const isEligibleDropTarget = createMemo(
     () =>
       !props.isLocked &&
-      props.draggingCardId !== null &&
+      (props.draggingCardId !== null || props.draggingGroupId !== null) &&
       props.draggingSourceColumnId !== props.column.id,
   );
 
@@ -193,12 +266,17 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function handleDragOver(event: DragEvent): void {
     if (props.isLocked) return;
+    const cardData =
+      event.dataTransfer?.getData('application/x-retrocks-card') ?? '';
+    const groupData =
+      event.dataTransfer?.getData('application/x-retrocks-group') ?? '';
+    const isGroupDrag =
+      props.draggingGroupId !== null ||
+      (!props.draggingCardId && Boolean(groupData) && !cardData);
     const cardId =
       props.draggingCardId ??
-      event.dataTransfer?.getData('application/x-retrocks-card') ??
-      event.dataTransfer?.getData('text/plain') ??
-      '';
-    if (!cardId) return;
+      (cardData || event.dataTransfer?.getData('text/plain') || '');
+    if (!isGroupDrag && !cardId) return;
     if (
       props.draggingSourceColumnId &&
       props.draggingSourceColumnId === props.column.id
@@ -225,9 +303,22 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     event.preventDefault();
     setIsDropActive(false);
     if (props.isLocked) return;
+    const cardData =
+      event.dataTransfer?.getData('application/x-retrocks-card') || '';
+    const groupData =
+      event.dataTransfer?.getData('application/x-retrocks-group') || '';
+    const groupId =
+      props.draggingGroupId ||
+      (!props.draggingCardId && groupData && !cardData ? groupData : '');
+    if (groupId) {
+      if (props.draggingSourceColumnId === props.column.id) return;
+      props.onDragEndCard();
+      void props.onMoveCardGroup(groupId, props.column.id);
+      return;
+    }
     const cardId =
       props.draggingCardId ||
-      event.dataTransfer?.getData('application/x-retrocks-card') ||
+      cardData ||
       event.dataTransfer?.getData('text/plain') ||
       '';
     if (!cardId) return;
@@ -240,6 +331,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     <section
       aria-label={props.column.title}
       data-column-id={props.column.id}
+      onFocusIn={() => props.onActivateColumn?.(props.column.id)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -336,14 +428,20 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
         <div class="flex shrink-0 items-center gap-1.5">
           <span
-            aria-label={`${props.column.cardCount} cards`}
+            aria-label={
+              props.hasActiveFilter
+                ? `${props.visibleCardCount} of ${props.column.cardCount} cards`
+                : `${props.column.cardCount} cards`
+            }
             class="inline-flex min-w-6 items-center justify-center rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium text-text-muted tabular-nums"
           >
-            {props.column.cardCount}
+            {props.hasActiveFilter
+              ? `${props.visibleCardCount}/${props.column.cardCount}`
+              : props.column.cardCount}
           </span>
 
           <Show when={canManageColumn()}>
-            <div class="relative">
+            <div data-print-hide="true" class="relative">
               <button
                 type="button"
                 aria-label={`Column options for ${props.column.title}`}
@@ -366,6 +464,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 <div
                   role="menu"
                   aria-label={`Options for ${props.column.title}`}
+                  data-board-overlay="true"
                   class="absolute top-full right-0 z-30 mt-1 w-56 rounded-xl border border-border bg-surface p-2 shadow-lg"
                 >
                   <button
@@ -500,8 +599,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
       {/* Pinned top quick inline "+ Add card" composer */}
       <Show when={!props.isLocked}>
-        <div class="border-b border-border/60 bg-canvas/50 p-3">
+        <div data-print-hide="true" class="border-b border-border/60 bg-canvas/50 p-3">
           <textarea
+            ref={composerEl}
             aria-label={`Add card to ${props.column.title}`}
             placeholder="+ Add card"
             value={cardDraft()}
@@ -552,33 +652,115 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       {/* Column Card stream body */}
       <div class="flex flex-1 flex-col gap-2.5 p-3">
         <Show
-          when={props.cards.length > 0}
+          when={props.streamItems.length > 0}
           fallback={
-            <p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-              No Cards yet
-            </p>
+            <Show
+              when={props.hasActiveFilter && props.cards.length > 0}
+              fallback={
+                <p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                  No Cards yet
+                </p>
+              }
+            >
+              <div class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                <p>No matching Cards in this Column</p>
+                <button
+                  type="button"
+                  onClick={() => props.onResetFilters()}
+                  class={[
+                    'mt-2 inline-flex min-h-11 cursor-pointer items-center rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text sm:min-h-8',
+                    'transition-colors hover:bg-surface-subtle',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  Reset filters
+                </button>
+              </div>
+            </Show>
           }
         >
-          <For each={props.cards}>
-            {(card) => (
-              <CardItem
-                card={card}
-                voting={props.voting}
-                columns={props.columns}
-                isFacilitator={props.isFacilitator}
-                isLocked={props.isLocked}
-                isBlurred={props.isBlurred}
-                nowMs={props.nowMs}
-                onUpdateCard={props.onUpdateCard}
-                onUpdateActionItem={props.onUpdateActionItem}
-                onMoveCard={props.onMoveCard}
-                onDeleteCard={props.onDeleteCard}
-                onToggleReaction={props.onToggleReaction}
-                onOpenCardDetail={props.onOpenCardDetail}
-                onDragStartCard={props.onDragStartCard}
-                onDragEndCard={props.onDragEndCard}
-              />
-            )}
+          <For each={streamKeys()}>
+            {(key) => {
+              if (key.startsWith('group:')) {
+                const groupItem = createMemo(() => {
+                  const item = streamItemByKey().get(key);
+                  return item?.kind === 'group' ? item : undefined;
+                });
+                return (
+                  <Show when={groupItem()}>
+                    {(entry) => (
+                      <CardGroupItem
+                        group={entry().group}
+                        cards={entry().cards}
+                        columnCards={props.cards}
+                        columnGroups={props.groups}
+                        columns={props.columns}
+                        voting={props.voting}
+                        isFacilitator={props.isFacilitator}
+                        isLocked={props.isLocked}
+                        isBlurred={props.isBlurred}
+                        canGroupCards={props.canGroupCards}
+                        canManage={canManageGroup(entry().group)}
+                        nowMs={props.nowMs}
+                        draggingCardId={props.draggingCardId}
+                        draggingSourceColumnId={props.draggingSourceColumnId}
+                        onRename={props.onRenameCardGroup}
+                        onDissolve={props.onDissolveCardGroup}
+                        onMoveGroup={props.onMoveCardGroup}
+                        onGroupCard={props.onGroupCard}
+                        onUngroupCard={props.onUngroupCard}
+                        onUpdateActionItem={props.onUpdateActionItem}
+                        onUpdateCard={props.onUpdateCard}
+                        onMoveCard={props.onMoveCard}
+                        onDeleteCard={props.onDeleteCard}
+                        onToggleReaction={props.onToggleReaction}
+                        onOpenCardDetail={props.onOpenCardDetail}
+                        onDragStartCard={props.onDragStartCard}
+                        onDragEndCard={props.onDragEndCard}
+                        onDragStartGroup={props.onDragStartGroup}
+                      />
+                    )}
+                  </Show>
+                );
+              }
+              const cardItem = createMemo(() => {
+                const item = streamItemByKey().get(key);
+                return item?.kind === 'card' ? item.card : undefined;
+              });
+              return (
+                <Show when={cardItem()}>
+                  {(card) => (
+                    <CardItem
+                      card={card()}
+                      voting={props.voting}
+                      columns={props.columns}
+                      columnCards={props.cards}
+                      columnGroups={props.groups}
+                      canGroupCards={props.canGroupCards}
+                      canUngroup={
+                        props.canGroupCards && (!props.isBlurred || card().isMine)
+                      }
+                      isFacilitator={props.isFacilitator}
+                      isLocked={props.isLocked}
+                      isBlurred={props.isBlurred}
+                      nowMs={props.nowMs}
+                      draggingCardId={props.draggingCardId}
+                      draggingSourceColumnId={props.draggingSourceColumnId}
+                      onGroupCard={props.onGroupCard}
+                      onUngroupCard={props.onUngroupCard}
+                      onUpdateCard={props.onUpdateCard}
+                      onUpdateActionItem={props.onUpdateActionItem}
+                      onMoveCard={props.onMoveCard}
+                      onDeleteCard={props.onDeleteCard}
+                      onToggleReaction={props.onToggleReaction}
+                      onOpenCardDetail={props.onOpenCardDetail}
+                      onDragStartCard={props.onDragStartCard}
+                      onDragEndCard={props.onDragEndCard}
+                    />
+                  )}
+                </Show>
+              );
+            }}
           </For>
         </Show>
       </div>

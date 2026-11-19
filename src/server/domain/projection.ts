@@ -171,8 +171,8 @@ export function projectBoardForViewer(
       isActionItem: isRedacted ? false : card.isActionItem,
       actionDone: isRedacted ? false : card.actionDone,
       actionOwner: isRedacted ? '' : card.actionOwner,
-      votes: board.blindVoting ? null : totalVotes,
-      myVotes,
+      votes: board.blindVoting || isRedacted ? null : totalVotes,
+      myVotes: isRedacted ? 0 : myVotes,
       reactions: isRedacted ? {} : (reactionsByCard.get(card.id) ?? {}),
       myReactions: isRedacted ? [] : (myReactionsByCard.get(card.id) ?? []),
       commentCount: rawComments.length,
@@ -384,6 +384,20 @@ export function projectMutationEventsForViewer(
           columnIds: rawEvent.columnIds,
         });
         break;
+      case 'group:upserted': {
+        const group = projected.groups.find((item) => item.id === rawEvent.groupId);
+        if (group) {
+          events.push({
+            type: 'group:upserted',
+            version: rawEvent.version,
+            group: {
+              ...group,
+              cardIds: [...group.cardIds],
+            },
+          });
+        }
+        break;
+      }
       case 'group:dissolved':
         events.push({
           type: 'group:dissolved',

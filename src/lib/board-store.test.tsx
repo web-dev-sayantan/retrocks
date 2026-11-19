@@ -163,6 +163,106 @@ describe('applyBoardEvents (reactive store patcher)', () => {
     expect(card.commentCount).toBe(1);
   });
 
+  it('patches Card Group create, rename, Column move, and dissolve across member Cards', () => {
+    const first = makeCard({ id: 'card_1' });
+    const second = makeCard({ id: 'card_2' });
+    const [board, setBoard] = createStore<BoardViewDTO>({
+      ...makeInitialBoard(),
+      columns: makeInitialBoard().columns.map((column) => ({
+        ...column,
+        cardCount: column.id === 'col_1' ? 2 : 0,
+      })),
+      cards: [first, second],
+    });
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        {
+          type: 'group:upserted',
+          version: 2,
+          group: {
+            id: 'group_1',
+            columnId: 'col_1',
+            title: 'CI stability',
+            cardIds: ['card_1', 'card_2'],
+            votes: 3,
+            myVotes: 1,
+            createdAt: 1_760_000_002_000,
+          },
+        },
+        {
+          type: 'card:upserted',
+          version: 2,
+          card: { ...first, groupId: 'group_1' },
+        },
+        {
+          type: 'card:upserted',
+          version: 2,
+          card: { ...second, groupId: 'group_1' },
+        },
+      ]);
+    });
+    flush();
+
+    let next = snapshot(board);
+    expect(next.groups).toEqual([
+      expect.objectContaining({
+        id: 'group_1',
+        title: 'CI stability',
+        votes: 3,
+        myVotes: 1,
+      }),
+    ]);
+    expect(next.cards.map((card) => card.groupId)).toEqual([
+      'group_1',
+      'group_1',
+    ]);
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        {
+          type: 'group:upserted',
+          version: 3,
+          group: {
+            ...next.groups[0],
+            columnId: 'col_2',
+            title: 'CI reliability',
+          },
+        },
+        {
+          type: 'card:upserted',
+          version: 3,
+          card: { ...next.cards[0], columnId: 'col_2' },
+        },
+        {
+          type: 'card:upserted',
+          version: 3,
+          card: { ...next.cards[1], columnId: 'col_2' },
+        },
+      ]);
+    });
+    flush();
+
+    next = snapshot(board);
+    expect(next.groups[0]).toMatchObject({
+      columnId: 'col_2',
+      title: 'CI reliability',
+    });
+    expect(next.cards.map((card) => card.columnId)).toEqual(['col_2', 'col_2']);
+    expect(next.columns.map((column) => column.cardCount)).toEqual([0, 2]);
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        { type: 'group:dissolved', version: 4, groupId: 'group_1' },
+      ]);
+    });
+    flush();
+
+    next = snapshot(board);
+    expect(next.groups).toEqual([]);
+    expect(next.cards.map((card) => card.groupId)).toEqual([null, null]);
+  });
+
   it('patches Board rename and Column add, update, reorder, and delete', () => {
     const [board, setBoard] = createStore<BoardViewDTO>(makeInitialBoard());
 

@@ -1,6 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
 import type { BoardMutationResponse, TimerStateDTO } from '../lib/board-types';
+import {
+  hasOpenBoardOverlay,
+  isTypingInEditableElement,
+} from '../lib/board-view';
 import type { TimerChange } from '../lib/schemas';
 import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES, type ServerClockSample } from '../lib/timer';
 import { createTimerChime } from '../lib/timer-chime';
@@ -10,7 +14,6 @@ const MUTE_STORAGE_KEY = 'retrocks-timer-muted';
 const presets = [3, 5, 10, 15];
 const controlClass =
   'min-h-11 rounded-lg border border-border px-2.5 text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-9';
-const overlaySelector = 'dialog[open], [aria-modal="true"], [data-board-overlay]';
 
 function formatCountdown(remainingMs: number): string {
   const totalSeconds = Math.ceil(remainingMs / 1_000);
@@ -129,11 +132,15 @@ export default function CountdownTimer(props: {
         closePanel(true);
         return;
       }
-      if (!props.canControl || open() || event.repeat || event.key.toLowerCase() !== 't' ||
-          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      const target = event.target;
-      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
-      if (document.querySelector(overlaySelector)) return;
+      if (!props.canControl || event.repeat || event.key.toLowerCase() !== 't' ||
+          event.altKey || event.ctrlKey || event.metaKey) return;
+      if (isTypingInEditableElement(event)) return;
+      if (open()) {
+        event.preventDefault();
+        closePanel(true);
+        return;
+      }
+      if (hasOpenBoardOverlay()) return;
       event.preventDefault();
       setOpen(true);
     }

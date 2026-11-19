@@ -18,12 +18,17 @@ import type {
   DeleteCardInput,
   DeleteColumnInput,
   DeleteCommentInput,
+  DissolveCardGroupInput,
+  GroupCardsInput,
+  MoveCardGroupInput,
   MoveCardInput,
   RenameBoardInput,
+  RenameCardGroupInput,
   ReorderColumnsInput,
   SetBoardLockInput,
   SetPrivateModeInput,
   ToggleReactionInput,
+  UngroupCardInput,
   UpdateActionItemInput,
   UpdateCardInput,
   UpdateColumnInput,
@@ -270,6 +275,56 @@ export async function deleteColumn(
   return respondToBoardMutation(() => deleteColumnForRequest(input));
 }
 
+export async function groupCards(
+  input: GroupCardsInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { groupCardsForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => groupCardsForRequest(input));
+}
+
+export async function renameCardGroup(
+  input: RenameCardGroupInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { renameCardGroupForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => renameCardGroupForRequest(input));
+}
+
+export async function ungroupCard(
+  input: UngroupCardInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { ungroupCardForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => ungroupCardForRequest(input));
+}
+
+export async function dissolveCardGroup(
+  input: DissolveCardGroupInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { dissolveCardGroupForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => dissolveCardGroupForRequest(input));
+}
+
+export async function moveCardGroup(
+  input: MoveCardGroupInput,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { moveCardGroupForRequest } = await import(
+    '../server/services/grouping-service'
+  );
+  return respondToBoardMutation(() => moveCardGroupForRequest(input));
+}
+
 export interface BoardWorkspaceActions {
   changeVote: typeof changeVote;
   updateVotingSettings: typeof updateVotingSettings;
@@ -293,6 +348,11 @@ export interface BoardWorkspaceActions {
   updateColumn: (input: UpdateColumnInput) => Promise<BoardMutationResponse>;
   reorderColumns: (input: ReorderColumnsInput) => Promise<BoardMutationResponse>;
   deleteColumn: (input: DeleteColumnInput) => Promise<BoardMutationResponse>;
+  groupCards: (input: GroupCardsInput) => Promise<BoardMutationResponse>;
+  renameCardGroup: (input: RenameCardGroupInput) => Promise<BoardMutationResponse>;
+  ungroupCard: (input: UngroupCardInput) => Promise<BoardMutationResponse>;
+  dissolveCardGroup: (input: DissolveCardGroupInput) => Promise<BoardMutationResponse>;
+  moveCardGroup: (input: MoveCardGroupInput) => Promise<BoardMutationResponse>;
 }
 
 export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
@@ -316,4 +376,9 @@ export const defaultBoardWorkspaceActions: BoardWorkspaceActions = {
   updateColumn,
   reorderColumns,
   deleteColumn,
+  groupCards,
+  renameCardGroup,
+  ungroupCard,
+  dissolveCardGroup,
+  moveCardGroup,
 };

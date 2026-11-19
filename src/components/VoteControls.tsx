@@ -10,7 +10,11 @@ export interface WorkspaceVoting {
   maxVotesPerCard: number | null;
   pending: boolean;
   optimisticVote: { targetId: string; delta: VoteDelta } | null;
-  onChange: (targetId: string, delta: VoteDelta) => void;
+  onChange: (
+    targetType: 'card' | 'group',
+    targetId: string,
+    delta: VoteDelta,
+  ) => void;
 }
 
 const buttonClass = [
@@ -21,6 +25,7 @@ const buttonClass = [
 
 export default function VoteControls(props: {
   target: Pick<CardViewDTO, 'id' | 'myVotes' | 'votes'>;
+  targetType?: 'card' | 'group';
   voting: WorkspaceVoting;
   isLocked: boolean;
 }) {
@@ -40,10 +45,11 @@ export default function VoteControls(props: {
       <Show when={!props.isLocked}>
         <button
           type="button"
+          data-print-hide="true"
           class={[buttonClass, 'rounded-l-lg']}
           aria-label="Remove Vote"
           disabled={props.voting.pending || myVotes() === 0}
-          onClick={() => props.voting.onChange(props.target.id, -1)}
+          onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, -1)}
         >
           −
         </button>
@@ -57,10 +63,11 @@ export default function VoteControls(props: {
       <Show when={!props.isLocked}>
         <button
           type="button"
+          data-print-hide="true"
           class={[buttonClass, 'rounded-r-lg']}
           aria-label="Cast Vote"
           disabled={props.voting.pending || !canCast()}
-          onClick={() => props.voting.onChange(props.target.id, 1)}
+          onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, 1)}
         >
           +
         </button>

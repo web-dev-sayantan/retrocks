@@ -1450,6 +1450,7 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
   async function createLifecycleFixture() {
     const service = await import('./board-service');
     const voting = await import('./voting-service');
+    const grouping = await import('./grouping-service');
     const { createBoardWriteRateLimiter, setBoardWriteRateLimiterForTests } =
       await import('../rate-limit');
     setBoardWriteRateLimiterForTests(
@@ -1502,6 +1503,23 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
       board.columns[0].id,
       'Pair on flaky tests',
     );
+    const secondCard = await createCard(
+      author,
+      board.columns[0].id,
+      'Split slow e2e suite',
+    );
+    const grouped = await as(facilitatorCookie, () =>
+      grouping.groupCardsForRequest({
+        boardId: board.id,
+        cardId: secondCard.id,
+        targetType: 'card',
+        targetId: normalCard.id,
+      }),
+    );
+    const groupEvent = grouped.events.find((ev) => ev.type === 'group:upserted');
+    if (groupEvent?.type !== 'group:upserted') {
+      throw new Error('Expected a Card Group');
+    }
     const comment = await as(author, () =>
       service.createCommentForRequest({
         boardId: board.id,
@@ -1522,6 +1540,7 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
     return {
       service,
       voting,
+      grouping,
       board,
       facilitatorCookie,
       author,
@@ -1529,6 +1548,8 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
       as,
       actionCard,
       normalCard,
+      secondCard,
+      groupId: groupEvent.group.id,
       commentId: commentEvent.comment.id,
       lock,
     };
@@ -1588,12 +1609,14 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
     const {
       service,
       voting,
+      grouping,
       board,
       facilitatorCookie,
       reader,
       as,
       actionCard,
       normalCard,
+      groupId,
       commentId,
       lock,
     } = await createLifecycleFixture();
@@ -1824,6 +1847,28 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
           boardId: board.id,
           cardId: normalCard.id,
           isActionItem: true,
+        }),
+      () =>
+        grouping.renameCardGroupForRequest({
+          boardId: board.id,
+          groupId,
+          title: 'Blocked group rename',
+        }),
+      () =>
+        grouping.ungroupCardForRequest({
+          boardId: board.id,
+          cardId: normalCard.id,
+        }),
+      () =>
+        grouping.dissolveCardGroupForRequest({
+          boardId: board.id,
+          groupId,
+        }),
+      () =>
+        grouping.moveCardGroupForRequest({
+          boardId: board.id,
+          groupId,
+          targetColumnId: board.columns[1].id,
         }),
       () =>
         service.updateActionItemForRequest({
