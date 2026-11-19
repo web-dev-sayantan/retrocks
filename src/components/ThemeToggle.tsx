@@ -47,7 +47,8 @@ export default function ThemeToggle(props: { menuItem?: boolean }) {
       type="button"
       onClick={handleToggle}
       role={props.menuItem ? 'menuitem' : undefined}
-      aria-pressed={theme() === 'dark' ? 'true' : 'false'}
+      tabindex={props.menuItem ? -1 : undefined}
+      aria-pressed={props.menuItem ? undefined : theme() === 'dark' ? 'true' : 'false'}
       aria-label={
         theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
       }

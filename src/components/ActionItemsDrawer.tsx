@@ -15,6 +15,7 @@ import {
 } from '../lib/action-items';
 import {
   MAX_ACTION_OWNER_LENGTH,
+  type ActionItemPatch,
   type BoardViewDTO,
   type CardViewDTO,
 } from '../lib/board-types';
@@ -35,7 +36,7 @@ export interface ActionItemsDrawerProps {
   onRestoreFocus?: (previousFocus: HTMLElement | null) => void;
   onUpdateActionItem: (
     cardId: string,
-    patch: { isActionItem?: boolean; actionDone?: boolean; actionOwner?: string },
+    patch: ActionItemPatch,
   ) => Promise<boolean>;
 }
 
@@ -49,6 +50,8 @@ function ActionItemRow(props: {
     untrack(() => props.card.actionOwner),
   );
   const [isSaving, setIsSaving] = createSignal(false);
+  const [error, setError] = createSignal('');
+  let saving = false;
 
   createEffect(
     () => props.card.actionOwner,
@@ -57,20 +60,41 @@ function ActionItemRow(props: {
     },
   );
 
-  async function saveOwner(): Promise<void> {
-    if (!props.canEdit || isSaving()) return;
-    const trimmed = ownerDraft().trim();
-    if (trimmed === props.card.actionOwner) {
-      setOwnerDraft(props.card.actionOwner);
-      return;
-    }
+  async function update(patch: ActionItemPatch, failureMessage: string): Promise<boolean> {
+    if (!props.canEdit || saving) return false;
+    saving = true;
     setIsSaving(true);
+    setError('');
     try {
-      const ok = await props.onUpdate(props.card.id, { actionOwner: trimmed });
-      setOwnerDraft(ok ? trimmed : props.card.actionOwner);
+      if (await props.onUpdate(props.card.id, patch)) return true;
+    } catch {
+      // Report rejected requests alongside unsuccessful mutation responses.
     } finally {
+      saving = false;
       setIsSaving(false);
     }
+    setError(failureMessage);
+    return false;
+  }
+
+  async function saveOwner(value: string): Promise<void> {
+    if (!props.canEdit || saving) return;
+    const trimmed = value.trim();
+    if (trimmed === props.card.actionOwner) {
+      setOwnerDraft(trimmed);
+      return;
+    }
+    if (await update({ actionOwner: trimmed }, 'Could not save the owner. Try again.')) {
+      setOwnerDraft(trimmed);
+    }
+  }
+
+  async function changeDone(checkbox: HTMLInputElement): Promise<void> {
+    const ok = await update(
+      { actionDone: checkbox.checked },
+      'Could not update Done. Try again.',
+    );
+    if (!ok && checkbox.isConnected) checkbox.checked = props.card.actionDone;
   }
 
   return (
@@ -80,13 +104,9 @@ function ActionItemRow(props: {
           <input
             type="checkbox"
             checked={props.card.actionDone}
-            disabled={!props.canEdit}
+            disabled={!props.canEdit || isSaving()}
             aria-label={`Mark ${props.card.content} as Done`}
-            onChange={(event) =>
-              void props.onUpdate(props.card.id, {
-                actionDone: event.currentTarget.checked,
-              })
-            }
+            onChange={(event) => void changeDone(event.currentTarget)}
             class="size-5 cursor-inherit rounded border-border accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
           />
         </label>
@@ -109,23 +129,36 @@ function ActionItemRow(props: {
               placeholder="Owner (optional)"
               value={ownerDraft()}
               maxlength={MAX_ACTION_OWNER_LENGTH}
-              disabled={!props.canEdit || isSaving()}
+              disabled={!props.canEdit}
+              readonly={isSaving()}
               onInput={(event) => setOwnerDraft(event.currentTarget.value)}
-              onBlur={() => void saveOwner()}
+              onBlur={(event) => void saveOwner(event.currentTarget.value)}
               onKeyDown={(event) => {
+                if (event.isComposing || saving) return;
+                const input = event.currentTarget;
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  void saveOwner();
-                } else if (event.key === 'Escape') {
-                  setOwnerDraft(props.card.actionOwner);
+                  void saveOwner(input.value);
+                } else if (event.key === 'Escape' && input.value !== props.card.actionOwner) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  input.value = props.card.actionOwner;
+                  setOwnerDraft(input.value);
+                  setError('');
                 }
               }}
               class={[
                 'min-h-11 w-40 max-w-full rounded-md border border-control bg-surface px-2 py-1 text-base text-text sm:min-h-9 sm:text-sm',
-                'placeholder:text-text-muted focus:border-focus focus:outline-none disabled:opacity-50',
+                'placeholder:text-text-muted focus:border-focus focus:outline-none read-only:opacity-50 disabled:opacity-50',
               ]}
             />
           </div>
+          <Show when={isSaving()}>
+            <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
+          </Show>
+          <Show when={error()}>
+            <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">{error()}</p>
+          </Show>
         </div>
       </div>
     </li>

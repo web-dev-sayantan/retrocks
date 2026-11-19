@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { For, Show, createMemo, createSignal } from 'solid-js';
 
 import { REACTION_EMOJIS, type ReactionEmoji } from '../lib/board-types';
 import { SmilePlusIcon } from './Icons';
@@ -20,18 +20,13 @@ export default function CardReactions(props: CardReactionsProps) {
   const [reactionError, setReactionError] = createSignal<string | null>(null);
   let pickerTrigger: HTMLButtonElement | undefined;
 
-  createEffect(pickerOpen, (isOpen) => {
-    if (!isOpen) return;
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setPickerOpen(false);
-        pickerTrigger?.focus();
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  });
+  function handlePickerKeyDown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || event.isComposing || !pickerOpen()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPickerOpen(false);
+    pickerTrigger?.focus();
+  }
 
   const activeReactions = createMemo(() => {
     const counts = props.reactions;
@@ -60,7 +55,7 @@ export default function CardReactions(props: CardReactionsProps) {
   }
 
   return (
-    <div class="relative flex flex-wrap items-center gap-1.5">
+    <div onKeyDown={handlePickerKeyDown} class="relative flex flex-wrap items-center gap-1.5">
       <For each={activeReactions()}>
         {(item) => (
           <button

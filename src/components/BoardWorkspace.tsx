@@ -41,6 +41,7 @@ import {
   type BoardSortMode,
   type ColumnStreamItem,
 } from '../lib/board-view';
+import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
@@ -191,23 +192,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setBoardMenuOpen(false);
     if (restoreFocus) {
       boardMenuTriggerEl?.focus();
-    }
-  }
-
-  function handleBoardMenuKeyDown(event: KeyboardEvent): void {
-    const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role=menuitem]')]
-      .filter((item) => !item.matches(':disabled') && !item.hidden && item.getClientRects().length > 0);
-    const currentIndex = items.findIndex((item) => item === document.activeElement);
-    let nextItem: HTMLElement | undefined;
-    switch (event.key) {
-      case 'Home': nextItem = items[0]; break;
-      case 'End': nextItem = items.at(-1); break;
-      case 'ArrowDown': nextItem = items[(currentIndex + 1) % items.length]; break;
-      case 'ArrowUp': nextItem = items[(currentIndex - 1 + items.length) % items.length]; break;
-    }
-    if (nextItem) {
-      event.preventDefault();
-      nextItem.focus();
     }
   }
 
@@ -388,7 +372,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   createEffect(boardMenuOpen, (isOpen) => {
     if (!isOpen) return;
-    boardMenuEl?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    getEnabledMenuItems(boardMenuEl)[0]?.focus();
     function handlePointerDown(event: PointerEvent): void {
       if (
         event.target instanceof Node &&
@@ -647,6 +631,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     if (event.defaultPrevented || event.isComposing) return;
 
     if (event.key === 'Escape') {
+      if (isCardDetailOpen()) {
+        // Events inside the drawer are handled there after its nested controls.
+        if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
+        event.preventDefault();
+        setIsCardDetailOpen(false);
+        return;
+      }
       if (isActionItemsOpen()) {
         event.preventDefault();
         setIsActionItemsOpen(false);
@@ -929,7 +920,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       cardId,
       ...patch,
     });
-    return applyMutationResponse(board.id, response);
+    return response.ok && applyMutationResponse(board.id, response);
   }
 
   async function handleMoveCard(
@@ -1598,6 +1589,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     aria-haspopup="menu"
                     aria-expanded={boardMenuOpen() ? 'true' : 'false'}
                     aria-controls={boardMenuId}
+                    onPointerDown={(event) => {
+                      // Let the click close More before focus leaves the menu.
+                      if (boardMenuOpen()) event.preventDefault();
+                    }}
                     onClick={() => {
                       if (boardMenuOpen()) closeBoardMenu(true);
                       else setBoardMenuOpen(true);
@@ -1621,7 +1616,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     role="menu"
                     aria-label="More board actions"
                     data-board-overlay={boardMenuOpen() ? 'true' : undefined}
-                    onKeyDown={handleBoardMenuKeyDown}
+                    onKeyDown={handleMenuNavigation}
+                    onFocusOut={(event) => {
+                      if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                        closeBoardMenu(false);
+                      }
+                    }}
                     class="absolute top-full right-0 z-30 mt-2 max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-border bg-surface p-2 shadow-lg"
                   >
                     <ThemeToggle menuItem />
@@ -1629,6 +1629,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <button
                         type="button"
                         role="menuitem"
+                        tabindex={-1}
                         aria-haspopup="dialog"
                         class="board-menu-item"
                         onClick={() => {
@@ -1643,6 +1644,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <button
                         type="button"
                         role="menuitem"
+                        tabindex={-1}
                         class="board-menu-item sm:hidden"
                         onClick={openAddColumn}
                       >
@@ -1652,6 +1654,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     <button
                       type="button"
                       role="menuitem"
+                        tabindex={-1}
                       aria-haspopup="dialog"
                       class="board-menu-item @min-[26rem]:hidden"
                       onClick={() => {
@@ -2095,12 +2098,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 <button
                   type="button"
                   data-print-hide="true"
-                  aria-label="Add a Column"
                   onClick={openAddColumn}
                   class="hidden w-fit shrink-0 items-center gap-1.5 self-start rounded-lg border border-dashed border-border px-3 py-2 text-sm font-medium text-text-muted hover:bg-surface active:bg-surface-subtle sm:inline-flex sm:min-h-11"
                 >
                   <PlusIcon />
-                  <span>Add column</span>
+                  <span>Add a Column</span>
                 </button>
               </Show>
             </div>

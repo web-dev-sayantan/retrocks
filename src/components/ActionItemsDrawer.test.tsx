@@ -150,6 +150,54 @@ describe('<ActionItemsDrawer />', () => {
     expect(drawer.getByLabelText('Mark Write runbook as Done')).toBeChecked();
   });
 
+  it('keeps a failed owner draft and rolls back a failed Done change so both can be retried', async () => {
+    let completeOwnerSave!: (ok: boolean) => void;
+    const onUpdate = vi.fn<() => Promise<boolean>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { completeOwnerSave = resolve; }))
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error('Disconnected'))
+      .mockResolvedValueOnce(true);
+    const view = render(() => (
+      <ActionItemsDrawer
+        open={true}
+        board={makeBoard([openItem])}
+        isLocked={false}
+        onClose={() => {}}
+        onUpdateActionItem={onUpdate}
+      />
+    ));
+    flush();
+
+    const drawer = within(view.getByRole('dialog', { name: 'Action Items' }));
+    const owner = drawer.getByLabelText('Owner for Ship the API');
+    const done = drawer.getByLabelText('Mark Ship the API as Done');
+    fireEvent.input(owner, { target: { value: 'API squad' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Enter' });
+    fireEvent.keyDown(owner, { key: 'Enter' });
+    flush();
+    expect(done).toBeDisabled();
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    completeOwnerSave(false);
+    await flushPromises();
+
+    expect(owner).toHaveValue('API squad');
+    expect(drawer.getByRole('alert')).toHaveTextContent('Could not save the owner');
+    fireEvent.keyDown(owner, { key: 'Enter' });
+    await flushPromises();
+    expect(onUpdate).toHaveBeenLastCalledWith('open', { actionOwner: 'API squad' });
+    expect(drawer.queryByRole('alert')).toBeNull();
+
+    fireEvent.click(done);
+    await flushPromises();
+    expect(done).not.toBeChecked();
+    expect(drawer.getByRole('alert')).toHaveTextContent('Could not update Done');
+    fireEvent.click(done);
+    await flushPromises();
+    expect(onUpdate).toHaveBeenLastCalledWith('open', { actionDone: true });
+    expect(drawer.queryByRole('alert')).toBeNull();
+  });
+
   it('copies the filtered list as a Markdown checklist, focuses the close button, and closes on Escape', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', {

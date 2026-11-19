@@ -596,7 +596,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                               type="button"
                               disabled={isDeletingColumn() || !canDeleteColumn()}
                               onClick={() => void handleConfirmDeleteColumn()}
-                              class="min-h-9 flex-1 cursor-pointer rounded-md bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+                              class="min-h-11 min-w-11 flex-1 cursor-pointer rounded-md bg-col-rose sm:min-h-9 px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
                             >
                               {isDeletingColumn()
                                 ? 'Deleting...'
@@ -606,7 +606,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                               type="button"
                               disabled={isDeletingColumn()}
                               onClick={() => setConfirmingDelete(false)}
-                              class="min-h-11 cursor-pointer sm:min-h-9 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text"
+                              class="min-h-11 min-w-11 cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text sm:min-h-9"
                             >
                               Cancel
                             </button>

@@ -105,6 +105,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
       <button
         type="button"
         role="menuitem"
+        tabindex={-1}
         onClick={() => void handleCopyMarkdown()}
         class="board-menu-item"
       >
@@ -118,6 +119,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
         {(download) => (
           <a
             role="menuitem"
+            tabindex={-1}
             href={buildExportUrl(props.board.id, download.format)}
             download={buildExportFilename(props.board.title, download.format)}
             onClick={(event) => void handleDownload(event, download.label)}
@@ -133,7 +135,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
 
       <div class="my-1 border-t border-border" role="separator" />
 
-      <button type="button" role="menuitem" onClick={handlePrint} class="board-menu-item">
+      <button type="button" role="menuitem" tabindex={-1} onClick={handlePrint} class="board-menu-item">
         Print / Save as PDF
       </button>
 

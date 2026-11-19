@@ -920,6 +920,45 @@ describe('<BoardWorkspace />', () => {
     expect(drawer.queryByRole('alert')).toBeNull();
   });
 
+  it('handles Escape within Card details before dismissing the drawer', async () => {
+    const card = makeCard({ isActionItem: true, actionOwner: 'Platform' });
+    const board = makeBoardView({ cards: [card] });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+
+    const trigger = view.getByRole('button', { name: 'Open Card details' });
+    fireEvent.click(trigger);
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+    const picker = drawer.getByRole('button', { name: 'Add reaction' });
+    fireEvent.click(picker);
+    flush();
+    const choice = within(drawer.getByRole('group', { name: 'Choose a reaction' }))
+      .getByRole('button', { name: '🎉' });
+    choice.focus();
+    fireEvent.keyDown(choice, { key: 'Escape' });
+    flush();
+    expect(drawer.queryByRole('group', { name: 'Choose a reaction' })).toBeNull();
+    expect(picker).toHaveFocus();
+
+    const owner = drawer.getByRole('textbox', { name: 'Action owner' });
+    owner.focus();
+    fireEvent.input(owner, { target: { value: 'Draft owner' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    // A subsequent blur in the same frame cannot save the discarded draft.
+    picker.focus();
+    await flushPromises();
+    expect(owner).toHaveValue('Platform');
+    expect(spies.updateActionItem).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(picker, { key: 'Escape' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
   it('contains focus in Card details and restores it after Escape or explicit close', () => {
     const card = makeCard({ comments: [], commentCount: 1 });
     const board = makeBoardView({ cards: [card] });
@@ -1406,6 +1445,53 @@ describe('<BoardWorkspace />', () => {
       'aria-selected',
       'true',
     );
+  });
+
+  it('shows failed Card mutations beside their controls and leaves them available to retry', async () => {
+    const card = makeCard({ content: 'My card', isMine: true });
+    const target = makeCard({ id: 'target', content: 'Group target' });
+    const board = makeBoardView({ cards: [card, target], allowParticipantGroup: true });
+    const { actions, spies } = createFakeActions(board);
+    spies.moveCard.mockRejectedValueOnce(new Error('Disconnected'));
+    spies.groupCards.mockResolvedValueOnce({
+      ok: false, code: 'VALIDATION_ERROR', message: 'Grouping failed.',
+    });
+    spies.deleteCard.mockRejectedValueOnce(new Error('Disconnected'));
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const mine = within(view.getByText(card.content).closest('article')!);
+    const trigger = mine.getByRole('button', { name: 'Card actions' });
+    function select(name: string) {
+      fireEvent.click(mine.getByRole('menuitem', { name }));
+      flush();
+    }
+
+    fireEvent.click(trigger);
+    flush();
+    select('Move to…');
+    select('To Improve');
+    await flushPromises();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not move the Card.');
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(trigger);
+    flush();
+    select('Group with…');
+    select('Group target');
+    await flushPromises();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not group the Card.');
+
+    fireEvent.click(trigger);
+    flush();
+    select('Delete Card');
+    const confirm = mine.getByRole('button', { name: 'Confirm?' });
+    fireEvent.click(confirm);
+    await flushPromises();
+    expect(confirm).toBeEnabled();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.');
+    fireEvent.click(confirm);
+    await flushPromises();
+    expect(view.queryByText(card.content)).toBeNull();
   });
 
   it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and inline Delete -> Confirm? confirmation', async () => {
@@ -2443,11 +2529,21 @@ describe('<BoardWorkspace />', () => {
     });
     expect(within(wentWell).getByText('CI reliability')).toBeInTheDocument();
 
-    fireEvent.click(
-      within(wentWell).getByRole('button', {
-        name: 'Move Card Group to...',
-      }),
-    );
+    const moveGroup = within(wentWell).getByRole('button', { name: 'Move Card Group to...' });
+    let rejectMove!: (response: BoardMutationResponse) => void;
+    spies.moveCardGroup.mockImplementationOnce(() => new Promise((resolve) => { rejectMove = resolve; }));
+    fireEvent.click(moveGroup);
+    flush();
+    fireEvent.click(within(wentWell).getByRole('menuitem', { name: /To Improve/i }));
+    flush();
+    expect(moveGroup).toBeDisabled();
+    rejectMove({ ok: false, code: 'VALIDATION_ERROR', message: 'Move was rejected.' });
+    await flushPromises();
+    expect(within(wentWell).getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
+    expect(moveGroup).toBeEnabled();
+    expect(moveGroup).toHaveFocus();
+
+    fireEvent.click(moveGroup);
     flush();
     fireEvent.click(
       within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
@@ -3449,6 +3545,33 @@ describe('<BoardWorkspace />', () => {
       { scenario: 'redacted-card-group-ui' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('lets Tab leave More in either direction without adding actions to the tab order', () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const trigger = view.getByRole('button', { name: 'More board actions' });
+    const next = view.getByRole('searchbox');
+
+    for (const shiftKey of [false, true]) {
+      fireEvent.click(trigger);
+      flush();
+      const menu = within(view.getByRole('menu', { name: 'More board actions' }));
+      const items = menu.getAllByRole('menuitem');
+      expect(items.every((item) => item.tabIndex === -1)).toBe(true);
+      expect(items[0]).toHaveFocus();
+      fireEvent.keyDown(items[0], { key: 'End' });
+      expect(items.at(-1)).toHaveFocus();
+      expect(fireEvent.keyDown(items.at(-1)!, { key: 'Tab', shiftKey })).toBe(true);
+
+      const destination = shiftKey ? trigger : next;
+      destination.focus();
+      flush();
+      expect(destination).toHaveFocus();
+      expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    }
   });
 
   it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {
