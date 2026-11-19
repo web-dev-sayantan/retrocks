@@ -5,6 +5,7 @@ import type {
   BoardMutationCommand,
   BoardMutationOutcome,
   CreateBoardRecord,
+  FacilitatorCapability,
   RawBoardSnapshot,
 } from '../../db/raw-types';
 import { SqlBoardOperations } from '../../db/sql-board-operations';
@@ -125,6 +126,12 @@ export async function createNodeBoardStore(
       now?: number,
     ): Promise<string | null> {
       return ops.getBoardTokenSalt(boardId, now);
+    },
+    async getFacilitatorCapability(
+      boardId: string,
+      now?: number,
+    ): Promise<FacilitatorCapability | null> {
+      return ops.getFacilitatorCapability(boardId, now);
     },
     async mutateBoard(
       boardId: string,

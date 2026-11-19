@@ -30,6 +30,7 @@ import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import ColumnPanel from './ColumnPanel';
 import { CheckIcon, CloseIcon, PencilIcon, PlusIcon } from './Icons';
+import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
 
 export interface BoardWorkspaceProps {
@@ -622,6 +623,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     <span class="hidden sm:inline">+ Add column</span>
                     <span class="sm:hidden">Column</span>
                   </button>
+                </Show>
+                <Show when={board().id} keyed>
+                  {(boardId) => (
+                    <ShareBoard
+                      boardId={boardId}
+                      isFacilitator={board().isFacilitator}
+                    />
+                  )}
                 </Show>
                 <ThemeToggle />
               </div>

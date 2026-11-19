@@ -3,6 +3,7 @@ import { useParams, type RouteDefinition } from '@solidjs/router';
 import { createMemo } from 'solid-js';
 
 import BoardWorkspace from '../../components/BoardWorkspace';
+import FacilitatorLinkClaim from '../../components/FacilitatorLinkClaim';
 import { getBoard } from '../../lib/board-actions';
 import { paths } from '../../router';
 
@@ -24,6 +25,7 @@ export default function BoardRoute() {
       <Title>
         {board() ? `${board()!.title} — Retrocks` : 'Board Not Found — Retrocks'}
       </Title>
+      <FacilitatorLinkClaim boardId={params.id ?? ''} />
       <BoardWorkspace
         board={board()}
         boardId={params.id ?? ''}
