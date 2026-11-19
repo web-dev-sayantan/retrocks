@@ -1,12 +1,22 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import type { CreateBoardRecord, RawBoardSnapshot } from '../../db/raw-types';
+import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  BoardMutationOutcome,
+  CreateBoardRecord,
+  RawBoardSnapshot,
+} from '../../db/raw-types';
 import {
   SqlBoardOperations,
   computeBoardExpiryAt,
   isBoardExpired,
 } from '../../db/sql-board-operations';
 import type { SqlParam, SqlRunResult, SqlRunner } from '../../db/sql-runner';
+import {
+  createBoardWriteRateLimiter,
+  type BoardWriteRateLimiter,
+} from '../../rate-limit';
 
 function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
   const sql = storage.sql;
@@ -44,10 +54,12 @@ function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
  */
 export class BoardRoom extends DurableObject<Cloudflare.Env> {
   private readonly ops: SqlBoardOperations;
+  private readonly writeLimiter: BoardWriteRateLimiter;
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
     this.ops = new SqlBoardOperations(wrapDurableObjectSql(ctx.storage));
+    this.writeLimiter = createBoardWriteRateLimiter();
   }
 
   async createBoard(record: CreateBoardRecord): Promise<RawBoardSnapshot> {
@@ -67,6 +79,37 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
       return null;
     }
     return snapshot;
+  }
+
+  async getBoardTokenSalt(
+    boardId: string,
+    now?: number,
+  ): Promise<string | null> {
+    return this.ops.getBoardTokenSalt(boardId, now);
+  }
+
+  async mutateBoard(
+    boardId: string,
+    actor: BoardMutationActor,
+    command: BoardMutationCommand,
+    now: number = Date.now(),
+  ): Promise<BoardMutationOutcome> {
+    const limit = this.writeLimiter.check(boardId, actor.participantHash, now);
+    if (!limit.allowed) {
+      return {
+        ok: false,
+        code: 'RATE_LIMITED',
+        message: 'Too many changes in a short period. Please slow down.',
+      };
+    }
+
+    const outcome = this.ops.mutateBoard(boardId, actor, command, now);
+    if (outcome.ok) {
+      await this.ctx.storage.setAlarm(
+        computeBoardExpiryAt(outcome.lastActiveAt, outcome.retentionDays),
+      );
+    }
+    return outcome;
   }
 
   async deleteBoard(boardId: string): Promise<boolean> {

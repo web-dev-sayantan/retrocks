@@ -1,13 +1,38 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { render } from '@solidjs/testing-library';
+import { fireEvent, render, within } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BoardViewDTO } from '../lib/board-types';
+import type { BoardWorkspaceActions } from '../lib/board-actions';
+import type { BoardViewDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
 import BoardWorkspace from './BoardWorkspace';
 
-function makeBoardView(): BoardViewDTO {
+function makeCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
+  const now = Date.now() - 120_000; // 2m ago
+  return {
+    id: 'card_1',
+    columnId: 'col_1',
+    groupId: null,
+    content: 'Fast deploy pipeline',
+    redacted: false,
+    isMine: true,
+    isActionItem: false,
+    actionDone: false,
+    actionOwner: '',
+    votes: 0,
+    myVotes: 0,
+    reactions: {},
+    myReactions: [],
+    commentCount: 0,
+    comments: [],
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function makeBoardView(overrides?: Partial<BoardViewDTO>): BoardViewDTO {
   const now = Date.now();
   return {
     id: 'board_0123456789abcdef',
@@ -55,7 +80,202 @@ function makeBoardView(): BoardViewDTO {
     ],
     groups: [],
     cards: [],
+    ...overrides,
   };
+}
+
+function createFakeActions(initialBoard: BoardViewDTO): {
+  actions: BoardWorkspaceActions;
+  spies: Record<keyof BoardWorkspaceActions, ReturnType<typeof vi.fn>>;
+} {
+  let version = initialBoard.version;
+  let seq = 1;
+  const cards = new Map<string, CardViewDTO>(
+    initialBoard.cards.map((c) => [c.id, { ...c }]),
+  );
+  const columns = new Map<string, ColumnDTO>(
+    initialBoard.columns.map((c) => [c.id, { ...c }]),
+  );
+
+  const renameBoard = vi.fn(async (input) => {
+    version += 1;
+    return {
+      ok: true as const,
+      version,
+      events: [
+        {
+          type: 'board:updated' as const,
+          version,
+          patch: { title: input.title.trim() },
+        },
+      ],
+    };
+  });
+
+  const createCard = vi.fn(async (input) => {
+    version += 1;
+    seq += 1;
+    const col = columns.get(input.columnId);
+    const card = makeCard({
+      id: `card_new_${seq}`,
+      columnId: input.columnId,
+      content: input.content.trim(),
+      isMine: true,
+      isActionItem: Boolean(col?.isActionColumn),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    cards.set(card.id, card);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'card:upserted' as const, version, card }],
+    };
+  });
+
+  const updateCard = vi.fn(async (input) => {
+    version += 1;
+    const existing = cards.get(input.cardId)!;
+    const updated: CardViewDTO = {
+      ...existing,
+      content: input.content.trim(),
+      updatedAt: Date.now(),
+    };
+    cards.set(updated.id, updated);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'card:upserted' as const, version, card: updated }],
+    };
+  });
+
+  const moveCard = vi.fn(async (input) => {
+    version += 1;
+    const existing = cards.get(input.cardId)!;
+    const moved: CardViewDTO = {
+      ...existing,
+      columnId: input.targetColumnId,
+      updatedAt: Date.now(),
+    };
+    cards.set(moved.id, moved);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'card:upserted' as const, version, card: moved }],
+    };
+  });
+
+  const deleteCard = vi.fn(async (input) => {
+    version += 1;
+    cards.delete(input.cardId);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'card:deleted' as const, version, cardId: input.cardId }],
+    };
+  });
+
+  const addColumn = vi.fn(async (input) => {
+    version += 1;
+    seq += 1;
+    const column: ColumnDTO = {
+      id: `col_new_${seq}`,
+      title: input.title.trim(),
+      accent: input.accent ?? 'slate',
+      position: columns.size,
+      isActionColumn: Boolean(input.isActionColumn),
+      cardCount: 0,
+    };
+    columns.set(column.id, column);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'column:upserted' as const, version, column }],
+    };
+  });
+
+  const updateColumn = vi.fn(async (input) => {
+    version += 1;
+    const existing = columns.get(input.columnId)!;
+    const updated: ColumnDTO = {
+      ...existing,
+      ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+      ...(input.accent !== undefined ? { accent: input.accent } : {}),
+      ...(input.isActionColumn !== undefined
+        ? { isActionColumn: input.isActionColumn }
+        : {}),
+    };
+    columns.set(updated.id, updated);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'column:upserted' as const, version, column: updated }],
+    };
+  });
+
+  const reorderColumns = vi.fn(async (input) => {
+    version += 1;
+    return {
+      ok: true as const,
+      version,
+      events: [
+        {
+          type: 'columns:reordered' as const,
+          version,
+          columnIds: input.columnIds,
+        },
+      ],
+    };
+  });
+
+  const deleteColumn = vi.fn(async (input) => {
+    version += 1;
+    columns.delete(input.columnId);
+    return {
+      ok: true as const,
+      version,
+      events: [
+        {
+          type: 'column:deleted' as const,
+          version,
+          columnId: input.columnId,
+        },
+      ],
+    };
+  });
+
+  const actions: BoardWorkspaceActions = {
+    renameBoard,
+    createCard,
+    updateCard,
+    moveCard,
+    deleteCard,
+    addColumn,
+    updateColumn,
+    reorderColumns,
+    deleteColumn,
+  };
+
+  return {
+    actions,
+    spies: {
+      renameBoard,
+      createCard,
+      updateCard,
+      moveCard,
+      deleteCard,
+      addColumn,
+      updateColumn,
+      reorderColumns,
+      deleteColumn,
+    },
+  };
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  flush();
 }
 
 beforeEach(() => {
@@ -77,13 +297,21 @@ describe('<BoardWorkspace />', () => {
     expect(getByText('Checkout Team')).toBeInTheDocument();
 
     // Columns with pastel 3px accent bars & Card count badges
-    expect(getByText('Went Well')).toBeInTheDocument();
-    expect(getByText('To Improve')).toBeInTheDocument();
-    expect(getByText('Action Items')).toBeInTheDocument();
+    expect(
+      getByRole('heading', { level: 2, name: 'Went Well' }),
+    ).toBeInTheDocument();
+    expect(
+      getByRole('heading', { level: 2, name: 'To Improve' }),
+    ).toBeInTheDocument();
+    expect(
+      getByRole('heading', { level: 2, name: 'Action Items' }),
+    ).toBeInTheDocument();
     expect(
       document.querySelectorAll('[data-column-accent-bar="true"]').length,
     ).toBe(3);
-    expect(getByText('3')).toBeInTheDocument();
+
+    const wentWellRegion = getByRole('region', { name: 'Went Well' });
+    expect(within(wentWellRegion).getByText('3')).toBeInTheDocument();
 
     // Recorded into localStorage Recent Boards
     const recent = readRecentBoards();
@@ -117,8 +345,426 @@ describe('<BoardWorkspace />', () => {
     expect(remaining.map((b) => b.id)).toEqual(['board_still_alive_1234']);
   });
 
+  it('supports quick inline "+ Add card" composer (Enter/Cmd+Enter submit, Shift+Enter newline) and mobile bottom quick-add', async () => {
+    const board = makeBoardView({
+      columns: [
+        {
+          id: 'col_1',
+          title: 'Went Well',
+          accent: 'sage',
+          position: 0,
+          isActionColumn: false,
+          cardCount: 0,
+        },
+        {
+          id: 'col_2',
+          title: 'To Improve',
+          accent: 'rose',
+          position: 1,
+          isActionColumn: false,
+          cardCount: 0,
+        },
+      ],
+      cards: [],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByLabelText, getByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const composer = getByLabelText(
+      'Add card to Went Well',
+    ) as HTMLTextAreaElement;
+    fireEvent.input(composer, {
+      target: {
+        value: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
+      },
+    });
+    flush();
+
+    // Shift+Enter does NOT submit
+    fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true });
+    await flushPromises();
+    expect(spies.createCard).not.toHaveBeenCalled();
+
+    // Enter submits the Card
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await flushPromises();
+
+    expect(spies.createCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      columnId: 'col_1',
+      content: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
+    });
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    expect(within(wentWell).getByText('v2')).toBeInTheDocument();
+    expect(
+      within(wentWell).getByRole('link', { name: 'https://retrocks.app/docs' }),
+    ).toHaveAttribute('target', '_blank');
+    expect(within(wentWell).getByText('You')).toBeInTheDocument();
+    expect(within(wentWell).getByText('Just now')).toBeInTheDocument();
+
+    // Switch mobile tab to "To Improve" and submit via mobile bottom quick-add bar
+    const tab2 = getByRole('tab', { name: /To Improve/i });
+    fireEvent.click(tab2);
+    flush();
+    expect(tab2).toHaveAttribute('aria-selected', 'true');
+
+    const mobileComposer = getByLabelText(
+      'Quick add card to To Improve',
+    ) as HTMLTextAreaElement;
+    fireEvent.input(mobileComposer, {
+      target: { value: 'Reduce flaky CI retries' },
+    });
+    flush();
+    fireEvent.keyDown(mobileComposer, { key: 'Enter', ctrlKey: true });
+    await flushPromises();
+
+    expect(spies.createCard).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      columnId: 'col_2',
+      content: 'Reduce flaky CI retries',
+    });
+    const toImprove = getByRole('region', { name: 'To Improve' });
+    expect(
+      within(toImprove).getByText('Reduce flaky CI retries'),
+    ).toBeInTheDocument();
+
+    // Horizontal swipe right returns to the previous Column ("Went Well")
+    const main = getByRole('main');
+    fireEvent.touchStart(main, {
+      changedTouches: [{ clientX: 60, clientY: 120 }],
+    });
+    fireEvent.touchEnd(main, {
+      changedTouches: [{ clientX: 200, clientY: 125 }],
+    });
+    flush();
+    expect(getByRole('tab', { name: /Went Well/i })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and inline Delete -> Confirm? confirmation', async () => {
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      content: 'My retro note',
+      isMine: true,
+    });
+    const otherCard = makeCard({
+      id: 'card_other',
+      columnId: 'col_1',
+      content: 'Teammate note',
+      isMine: false,
+    });
+    const board = makeBoardView({
+      isFacilitator: false,
+      columns: [
+        {
+          id: 'col_1',
+          title: 'Went Well',
+          accent: 'sage',
+          position: 0,
+          isActionColumn: false,
+          cardCount: 2,
+        },
+        {
+          id: 'col_2',
+          title: 'To Improve',
+          accent: 'rose',
+          position: 1,
+          isActionColumn: false,
+          cardCount: 0,
+        },
+      ],
+      cards: [myCard, otherCard],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole, queryByText } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    // Only myCard shows "You" badge and author action buttons
+    expect(within(wentWell).getAllByText('You')).toHaveLength(1);
+    expect(
+      within(wentWell).getAllByRole('button', { name: 'Edit card' }),
+    ).toHaveLength(1);
+
+    // Inline edit myCard
+    fireEvent.click(within(wentWell).getByRole('button', { name: 'Edit card' }));
+    flush();
+    const editBox = within(wentWell).getByLabelText(
+      'Edit card text',
+    ) as HTMLTextAreaElement;
+    fireEvent.input(editBox, { target: { value: 'Refined retro note' } });
+    flush();
+    fireEvent.click(within(wentWell).getByRole('button', { name: 'Save' }));
+    await flushPromises();
+
+    expect(spies.updateCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_mine',
+      content: 'Refined retro note',
+    });
+    expect(within(wentWell).getByText('Refined retro note')).toBeInTheDocument();
+
+    // Move myCard across Columns using "Move to..." menu
+    fireEvent.click(within(wentWell).getByRole('button', { name: 'Move to...' }));
+    flush();
+    fireEvent.click(
+      within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
+    );
+    await flushPromises();
+
+    expect(spies.moveCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_mine',
+      targetColumnId: 'col_2',
+    });
+    const toImprove = getByRole('region', { name: 'To Improve' });
+    expect(
+      within(toImprove).getByText('Refined retro note'),
+    ).toBeInTheDocument();
+
+    // Move back via native HTML5 Drag and Drop
+    const draggableCard = within(toImprove)
+      .getByText('Refined retro note')
+      .closest('[data-card-id="card_mine"]') as HTMLElement;
+    expect(draggableCard).toHaveAttribute('draggable', 'true');
+    const dataTransfer = {
+      setData: vi.fn(),
+      getData: vi.fn(() => 'card_mine'),
+      effectAllowed: 'move',
+      dropEffect: 'move',
+    };
+    fireEvent.dragStart(draggableCard, { dataTransfer });
+    fireEvent.dragOver(wentWell, { dataTransfer });
+    fireEvent.drop(wentWell, { dataTransfer });
+    await flushPromises();
+
+    expect(spies.moveCard).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: 'card_mine',
+      targetColumnId: 'col_1',
+    });
+
+    // Inline delete confirmation: Delete -> Confirm?
+    fireEvent.click(within(wentWell).getByRole('button', { name: 'Delete' }));
+    flush();
+    expect(spies.deleteCard).not.toHaveBeenCalled();
+
+    const confirmBtn = within(wentWell).getByRole('button', {
+      name: 'Confirm?',
+    });
+    fireEvent.click(confirmBtn);
+    await flushPromises();
+
+    expect(spies.deleteCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_mine',
+    });
+    expect(queryByText('Refined retro note')).not.toBeInTheDocument();
+  });
+
+  it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with non-empty confirmation)', async () => {
+    const existingCard = makeCard({
+      id: 'card_in_col2',
+      columnId: 'col_2',
+      content: 'Needs improvement',
+      isMine: false,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      columns: [
+        {
+          id: 'col_1',
+          title: 'Went Well',
+          accent: 'sage',
+          position: 0,
+          isActionColumn: false,
+          cardCount: 0,
+        },
+        {
+          id: 'col_2',
+          title: 'To Improve',
+          accent: 'rose',
+          position: 1,
+          isActionColumn: false,
+          cardCount: 1,
+        },
+      ],
+      cards: [existingCard],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByLabelText, getByRole, queryByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    // Inline rename Board
+    fireEvent.click(getByRole('button', { name: 'Rename Board' }));
+    flush();
+    const boardTitleInput = getByLabelText('Board title') as HTMLInputElement;
+    fireEvent.input(boardTitleInput, {
+      target: { value: 'Sprint 43 Retro' },
+    });
+    flush();
+    fireEvent.keyDown(boardTitleInput, { key: 'Enter' });
+    await flushPromises();
+
+    expect(spies.renameBoard).toHaveBeenCalledWith({
+      boardId: board.id,
+      title: 'Sprint 43 Retro',
+    });
+    expect(
+      getByRole('heading', { level: 1, name: 'Sprint 43 Retro' }),
+    ).toBeInTheDocument();
+
+    // Add Column
+    fireEvent.click(getByRole('button', { name: /\+ Add column/i }));
+    flush();
+    const newColInput = getByLabelText('New column title') as HTMLInputElement;
+    fireEvent.input(newColInput, { target: { value: 'Kudos' } });
+    flush();
+    fireEvent.click(getByRole('button', { name: 'Add column' }));
+    await flushPromises();
+
+    expect(spies.addColumn).toHaveBeenCalledWith({
+      boardId: board.id,
+      title: 'Kudos',
+      accent: 'slate',
+      isActionColumn: false,
+    });
+    expect(
+      getByRole('heading', { level: 2, name: 'Kudos' }),
+    ).toBeInTheDocument();
+
+    // Open Column settings for "To Improve", change accent to "amber"
+    const col2Region = getByRole('region', { name: 'To Improve' });
+    fireEvent.click(
+      within(col2Region).getByRole('button', {
+        name: 'Column options for To Improve',
+      }),
+    );
+    flush();
+    fireEvent.click(
+      within(col2Region).getByRole('button', { name: 'Accent Amber' }),
+    );
+    await flushPromises();
+    expect(spies.updateColumn).toHaveBeenCalledWith({
+      boardId: board.id,
+      columnId: 'col_2',
+      accent: 'amber',
+    });
+
+    // Reorder Column left
+    fireEvent.click(
+      within(col2Region).getByRole('button', {
+        name: 'Column options for To Improve',
+      }),
+    );
+    flush();
+    fireEvent.click(
+      within(col2Region).getByRole('button', { name: 'Move left' }),
+    );
+    await flushPromises();
+    expect(spies.reorderColumns).toHaveBeenCalledWith({
+      boardId: board.id,
+      columnIds: ['col_2', 'col_1', 'col_new_2'],
+    });
+
+    // Delete non-empty Column -> requires confirmation showing Card count
+    fireEvent.click(
+      within(col2Region).getByRole('button', {
+        name: 'Column options for To Improve',
+      }),
+    );
+    flush();
+    fireEvent.click(
+      within(col2Region).getByRole('button', { name: 'Delete column' }),
+    );
+    flush();
+    expect(spies.deleteColumn).not.toHaveBeenCalled();
+    expect(within(col2Region).getByText(/1 card/i)).toBeInTheDocument();
+
+    fireEvent.click(
+      within(col2Region).getByRole('button', { name: 'Confirm delete' }),
+    );
+    await flushPromises();
+
+    expect(spies.deleteColumn).toHaveBeenCalledWith({
+      boardId: board.id,
+      columnId: 'col_2',
+    });
+    expect(
+      queryByRole('heading', { level: 2, name: 'To Improve' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides Facilitator edit/move/delete controls on redacted Cards during Private Mode', () => {
+    const redactedCard = makeCard({
+      id: 'card_secret',
+      columnId: 'col_1',
+      content: '',
+      redacted: true,
+      placeholderLines: 2,
+      isMine: false,
+    });
+    const board = makeBoardView({
+      isBlurred: true,
+      isFacilitator: true,
+      columns: [
+        {
+          id: 'col_1',
+          title: 'Went Well',
+          accent: 'sage',
+          position: 0,
+          isActionColumn: false,
+          cardCount: 1,
+        },
+      ],
+      cards: [redactedCard],
+    });
+
+    const { getByRole } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+    ));
+    flush();
+
+    const col1 = getByRole('region', { name: 'Went Well' });
+    expect(
+      within(col1).queryByRole('button', { name: 'Edit card' }),
+    ).toBeNull();
+    expect(within(col1).queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {
-    const board = makeBoardView();
+    const board = makeBoardView({
+      cards: [makeCard()],
+    });
     const { artifact } = await captureArtifact(
       () => {
         render(() => (

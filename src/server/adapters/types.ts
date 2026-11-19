@@ -1,7 +1,13 @@
 import 'server-only';
 
 import type { BoardEvent } from '../../lib/board-types';
-import type { CreateBoardRecord, RawBoardSnapshot } from '../db/raw-types';
+import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  BoardMutationOutcome,
+  CreateBoardRecord,
+  RawBoardSnapshot,
+} from '../db/raw-types';
 
 /**
  * Runtime-agnostic persistence seam (ADR-0002).
@@ -14,6 +20,13 @@ export interface BoardStore {
     boardId: string,
     now?: number,
   ): Promise<RawBoardSnapshot | null>;
+  getBoardTokenSalt(boardId: string, now?: number): Promise<string | null>;
+  mutateBoard(
+    boardId: string,
+    actor: BoardMutationActor,
+    command: BoardMutationCommand,
+    now?: number,
+  ): Promise<BoardMutationOutcome>;
   deleteBoard(boardId: string): Promise<boolean>;
   touchActivity(boardId: string, now?: number): Promise<void>;
   updateFacilitatorTokenEncryption(

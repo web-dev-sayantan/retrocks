@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CreateBoardRecord } from '../db/raw-types';
-import { createInMemoryRateLimiter, checkBoardCreateRateLimit } from '../rate-limit';
+import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  CreateBoardRecord,
+} from '../db/raw-types';
+import {
+  checkBoardCreateRateLimit,
+  createBoardWriteRateLimiter,
+  createInMemoryRateLimiter,
+} from '../rate-limit';
 import { runWithCloudflareEnv } from './cloudflare-context';
 import { createCloudflareBoardStore } from './cloudflare/cloudflare-board-store';
 import { createNodeBoardStore } from './node/sqlite-board-store';
@@ -111,6 +119,17 @@ describe('CloudflareBoardStore (Durable Object RPC seam)', () => {
       getBoardSnapshot: vi.fn((id: string, now?: number) =>
         backingStore.getBoardSnapshot(id, now),
       ),
+      getBoardTokenSalt: vi.fn((id: string, now?: number) =>
+        backingStore.getBoardTokenSalt(id, now),
+      ),
+      mutateBoard: vi.fn(
+        (
+          id: string,
+          actor: BoardMutationActor,
+          command: BoardMutationCommand,
+          now?: number,
+        ) => backingStore.mutateBoard(id, actor, command, now),
+      ),
       deleteBoard: vi.fn((id: string) => backingStore.deleteBoard(id)),
       touchActivity: vi.fn((id: string, now?: number) =>
         backingStore.touchActivity(id, now),
@@ -134,7 +153,36 @@ describe('CloudflareBoardStore (Durable Object RPC seam)', () => {
     const fetched = await cfStore.getBoardSnapshot(record.id, record.createdAt + 500);
     expect(fetched?.board.title).toBe(record.title);
 
+    const salt = await cfStore.getBoardTokenSalt(record.id, record.createdAt + 600);
+    expect(salt).toBe(record.tokenSalt);
+
+    const mutated = await cfStore.mutateBoard(
+      record.id,
+      { participantHash: 'hash_abc', isFacilitator: true },
+      {
+        type: 'card:create',
+        id: 'card_rpc_1',
+        columnId: 'col_a',
+        content: 'Created via DO RPC seam',
+      },
+      record.createdAt + 700,
+    );
+    expect(mutated.ok).toBe(true);
+    expect(stub.mutateBoard).toHaveBeenCalledTimes(1);
+
     backingStore.close();
+  });
+
+  it('enforces per-Board write rate limits keyed by participantHash', () => {
+    const limiter = createBoardWriteRateLimiter({ limit: 2, windowMs: 60_000 });
+    expect(limiter.check('board_1', 'hash_a', 1000).allowed).toBe(true);
+    expect(limiter.check('board_1', 'hash_a', 2000).allowed).toBe(true);
+    expect(limiter.check('board_1', 'hash_a', 3000).allowed).toBe(false);
+    // Different board or different participantHash is allowed
+    expect(limiter.check('board_2', 'hash_a', 3000).allowed).toBe(true);
+    expect(limiter.check('board_1', 'hash_b', 3000).allowed).toBe(true);
+    // After window passes, hash_a is allowed again
+    expect(limiter.check('board_1', 'hash_a', 62_000).allowed).toBe(true);
   });
 });
 

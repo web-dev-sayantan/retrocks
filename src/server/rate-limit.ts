@@ -128,3 +128,93 @@ export async function checkBoardCreateRateLimit(
 
   return defaultInMemoryLimiter.check(request);
 }
+
+export interface BoardWriteRateLimiter {
+  check(boardId: string, participantHash: string, now?: number): RateLimitResult;
+  reset(): void;
+  getActiveKeySnapshotForTests(): string[];
+}
+
+const DEFAULT_BOARD_WRITE_LIMIT = 60;
+const DEFAULT_BOARD_WRITE_WINDOW_MS = 60_000;
+
+/**
+ * In-memory per-Board write rate limiter keyed strictly by `participantHash`
+ * (zero IP addresses, zero persistence — SPEC §8).
+ * Held per-DO inside `BoardRoom` on Cloudflare Workers and per-store on Node.
+ */
+export function createBoardWriteRateLimiter(options?: {
+  limit?: number;
+  windowMs?: number;
+}): BoardWriteRateLimiter {
+  const limit = options?.limit ?? DEFAULT_BOARD_WRITE_LIMIT;
+  const windowMs = options?.windowMs ?? DEFAULT_BOARD_WRITE_WINDOW_MS;
+  const buckets = new Map<string, number[]>();
+
+  function pruneStale(now: number): void {
+    const cutoff = now - windowMs;
+    for (const [key, timestamps] of buckets) {
+      const fresh = timestamps.filter((ts) => ts > cutoff);
+      if (fresh.length === 0) {
+        buckets.delete(key);
+      } else {
+        buckets.set(key, fresh);
+      }
+    }
+  }
+
+  return {
+    check(
+      boardId: string,
+      participantHash: string,
+      now: number = Date.now(),
+    ): RateLimitResult {
+      const cutoff = now - windowMs;
+      const key = `${boardId}:${participantHash}`;
+
+      if (buckets.size >= MAX_TRACKED_KEYS) {
+        pruneStale(now);
+      }
+
+      const timestamps = (buckets.get(key) ?? []).filter((ts) => ts > cutoff);
+      if (timestamps.length >= limit) {
+        buckets.set(key, timestamps);
+        return { allowed: false };
+      }
+
+      timestamps.push(now);
+      buckets.set(key, timestamps);
+      return { allowed: true };
+    },
+    reset(): void {
+      buckets.clear();
+    },
+    getActiveKeySnapshotForTests(): string[] {
+      return [...buckets.keys()];
+    },
+  };
+}
+
+const defaultWriteLimiter = createBoardWriteRateLimiter();
+let testWriteLimiterOverride: BoardWriteRateLimiter | null = null;
+
+export function setBoardWriteRateLimiterForTests(
+  limiter: BoardWriteRateLimiter | null,
+): void {
+  testWriteLimiterOverride = limiter;
+}
+
+export function resetDefaultWriteRateLimiterForTests(): void {
+  defaultWriteLimiter.reset();
+}
+
+export function checkBoardWriteRateLimit(
+  boardId: string,
+  participantHash: string,
+  now?: number,
+): RateLimitResult {
+  if (testWriteLimiterOverride) {
+    return testWriteLimiterOverride.check(boardId, participantHash, now);
+  }
+  return defaultWriteLimiter.check(boardId, participantHash, now);
+}

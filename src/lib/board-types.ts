@@ -34,10 +34,19 @@ export type MaxVotesPerCardOption = (typeof MAX_VOTES_PER_CARD_OPTIONS)[number];
 export const RETENTION_DAYS_OPTIONS = [30, 90, 180] as const;
 export type RetentionDaysOption = (typeof RETENTION_DAYS_OPTIONS)[number];
 
+export const MAX_COLUMNS_PER_BOARD = 10;
+export const MAX_CARDS_PER_BOARD = 500;
+export const MAX_CARD_CONTENT_LENGTH = 1000;
+export const MAX_BOARD_TITLE_LENGTH = 120;
+export const MAX_BOARD_SUBTITLE_LENGTH = 240;
+export const MAX_COLUMN_TITLE_LENGTH = 60;
+
 export type BoardErrorCode =
   | 'VALIDATION_ERROR'
   | 'RATE_LIMITED'
   | 'BOARD_NOT_FOUND'
+  | 'NOT_FOUND'
+  | 'LIMIT_EXCEEDED'
   | 'FORBIDDEN'
   | 'BOARD_LOCKED'
   | 'INTERNAL_ERROR';
@@ -47,6 +56,14 @@ export type ActionError = {
   code: BoardErrorCode;
   message: string;
 };
+
+export type BoardMutationSuccess = {
+  ok: true;
+  version: number;
+  events: BoardEvent[];
+};
+
+export type BoardMutationResponse = BoardMutationSuccess | ActionError;
 
 export interface ColumnDTO {
   id: string;

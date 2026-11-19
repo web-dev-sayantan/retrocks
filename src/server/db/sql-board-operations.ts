@@ -1,8 +1,19 @@
 import 'server-only';
 
-import type { BoardTemplateId, ColumnAccent } from '../../lib/board-types';
+import {
+  MAX_CARDS_PER_BOARD,
+  MAX_CARD_CONTENT_LENGTH,
+  MAX_COLUMNS_PER_BOARD,
+  type BoardSettingsDTO,
+  type BoardTemplateId,
+  type ColumnAccent,
+} from '../../lib/board-types';
 import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  BoardMutationOutcome,
   CreateBoardRecord,
+  RawBoardMutationEvent,
   RawBoardRow,
   RawBoardSnapshot,
   RawCardGroupRow,
@@ -379,5 +390,643 @@ export class SqlBoardOperations {
       now,
     );
     return changes;
+  }
+
+  getBoardTokenSalt(boardId: string, now: number = Date.now()): string | null {
+    this.ensureSchema();
+    const row = this.sql.get<{
+      token_salt: string;
+      last_active_at: number;
+      retention_days: number;
+    }>(
+      'SELECT token_salt, last_active_at, retention_days FROM boards WHERE id = ?',
+      boardId,
+    );
+    if (!row) {
+      return null;
+    }
+    if (
+      isBoardExpired(
+        { lastActiveAt: row.last_active_at, retentionDays: row.retention_days },
+        now,
+      )
+    ) {
+      this.deleteBoard(boardId);
+      return null;
+    }
+    return row.token_salt;
+  }
+
+  private maybeDissolveSmallGroup(
+    boardId: string,
+    groupId: string,
+    version: number,
+    rawEvents: RawBoardMutationEvent[],
+  ): void {
+    const row = this.sql.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND group_id = ?',
+      boardId,
+      groupId,
+    );
+    if ((row?.count ?? 0) < 2) {
+      this.sql.run(
+        'UPDATE cards SET group_id = NULL WHERE board_id = ? AND group_id = ?',
+        boardId,
+        groupId,
+      );
+      this.sql.run(
+        `DELETE FROM votes WHERE board_id = ? AND target_type = 'group' AND target_id = ?`,
+        boardId,
+        groupId,
+      );
+      this.sql.run(
+        'DELETE FROM card_groups WHERE board_id = ? AND id = ?',
+        boardId,
+        groupId,
+      );
+      rawEvents.push({ type: 'group:dissolved', version, groupId });
+    }
+  }
+
+  private checkCardManagePermission(
+    board: RawBoardRow,
+    card: CardDbRow,
+    actor: BoardMutationActor,
+    verb: 'edit' | 'move' | 'delete',
+  ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
+    const isMine = card.author_token_hash === actor.participantHash;
+    if (isMine) {
+      return { ok: true };
+    }
+    if (!actor.isFacilitator) {
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: `You can only ${verb} your own Cards.`,
+      };
+    }
+    if (board.isBlurred) {
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: `Cannot ${verb} another Participant's Card while Private Mode is active.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  mutateBoard(
+    boardId: string,
+    actor: BoardMutationActor,
+    command: BoardMutationCommand,
+    now: number = Date.now(),
+  ): BoardMutationOutcome {
+    this.ensureSchema();
+
+    return this.sql.transaction((): BoardMutationOutcome => {
+      const boardRow = this.sql.get<BoardDbRow>(
+        'SELECT * FROM boards WHERE id = ?',
+        boardId,
+      );
+      if (!boardRow) {
+        return {
+          ok: false,
+          code: 'BOARD_NOT_FOUND',
+          message: 'Board not found or expired.',
+        };
+      }
+
+      const board = mapBoardRow(boardRow);
+      if (isBoardExpired(board, now)) {
+        this.deleteBoard(boardId);
+        return {
+          ok: false,
+          code: 'BOARD_NOT_FOUND',
+          message: 'Board not found or expired.',
+        };
+      }
+
+      if (board.isLocked) {
+        return {
+          ok: false,
+          code: 'BOARD_LOCKED',
+          message: 'This Board is Locked and cannot be edited.',
+        };
+      }
+
+      const nextVersion = board.version + 1;
+      const rawEvents: RawBoardMutationEvent[] = [];
+
+      const finalize = (
+        version: number,
+        lastActiveAt: number,
+      ): BoardMutationOutcome => {
+        const snapshot = this.getBoardSnapshot(boardId, now);
+        if (!snapshot) {
+          return {
+            ok: false,
+            code: 'BOARD_NOT_FOUND',
+            message: 'Board not found or expired.',
+          };
+        }
+        return {
+          ok: true,
+          version,
+          lastActiveAt,
+          retentionDays: snapshot.board.retentionDays,
+          snapshot,
+          rawEvents,
+        };
+      };
+
+      const bumpBoard = (): void => {
+        this.sql.run(
+          'UPDATE boards SET version = ?, last_active_at = ? WHERE id = ?',
+          nextVersion,
+          now,
+          boardId,
+        );
+      };
+
+      switch (command.type) {
+        case 'board:rename': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can rename the Board.',
+            };
+          }
+          const patch: Partial<BoardSettingsDTO> = { title: command.title };
+          if (command.subtitle !== undefined) {
+            patch.subtitle = command.subtitle;
+            this.sql.run(
+              'UPDATE boards SET title = ?, subtitle = ?, version = ?, last_active_at = ? WHERE id = ?',
+              command.title,
+              command.subtitle,
+              nextVersion,
+              now,
+              boardId,
+            );
+          } else {
+            this.sql.run(
+              'UPDATE boards SET title = ?, version = ?, last_active_at = ? WHERE id = ?',
+              command.title,
+              nextVersion,
+              now,
+              boardId,
+            );
+          }
+          rawEvents.push({
+            type: 'board:updated',
+            version: nextVersion,
+            patch,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'card:create': {
+          const column = this.sql.get<ColumnDbRow>(
+            'SELECT * FROM columns WHERE board_id = ? AND id = ?',
+            boardId,
+            command.columnId,
+          );
+          if (!column) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Column not found.',
+            };
+          }
+
+          const cardCountRow = this.sql.get<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM cards WHERE board_id = ?',
+            boardId,
+          );
+          if ((cardCountRow?.count ?? 0) >= MAX_CARDS_PER_BOARD) {
+            return {
+              ok: false,
+              code: 'LIMIT_EXCEEDED',
+              message: `This Board has reached the maximum of ${MAX_CARDS_PER_BOARD} Cards.`,
+            };
+          }
+
+          if (
+            command.content.length === 0 ||
+            command.content.length > MAX_CARD_CONTENT_LENGTH
+          ) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: `Card text must be between 1 and ${MAX_CARD_CONTENT_LENGTH} characters.`,
+            };
+          }
+
+          this.sql.run(
+            `INSERT INTO cards (
+              id, board_id, column_id, group_id, content,
+              author_token_hash, is_action_item, action_done, action_owner,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, 0, '', ?, ?)`,
+            command.id,
+            boardId,
+            command.columnId,
+            command.content,
+            actor.participantHash,
+            column.is_action_column === 1 ? 1 : 0,
+            now,
+            now,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'card:upserted',
+            version: nextVersion,
+            cardId: command.id,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'card:update': {
+          const card = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!card) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Card not found.',
+            };
+          }
+
+          const perm = this.checkCardManagePermission(
+            board,
+            card,
+            actor,
+            'edit',
+          );
+          if (!perm.ok) {
+            return perm;
+          }
+
+          if (
+            command.content.length === 0 ||
+            command.content.length > MAX_CARD_CONTENT_LENGTH
+          ) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: `Card text must be between 1 and ${MAX_CARD_CONTENT_LENGTH} characters.`,
+            };
+          }
+
+          this.sql.run(
+            'UPDATE cards SET content = ?, updated_at = ? WHERE board_id = ? AND id = ?',
+            command.content,
+            now,
+            boardId,
+            command.cardId,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'card:upserted',
+            version: nextVersion,
+            cardId: command.cardId,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'card:move': {
+          const card = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!card) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Card not found.',
+            };
+          }
+
+          const perm = this.checkCardManagePermission(
+            board,
+            card,
+            actor,
+            'move',
+          );
+          if (!perm.ok) {
+            return perm;
+          }
+
+          const targetColumn = this.sql.get<ColumnDbRow>(
+            'SELECT * FROM columns WHERE board_id = ? AND id = ?',
+            boardId,
+            command.targetColumnId,
+          );
+          if (!targetColumn) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Target Column not found.',
+            };
+          }
+
+          if (card.column_id === command.targetColumnId) {
+            rawEvents.push({
+              type: 'card:upserted',
+              version: board.version,
+              cardId: card.id,
+            });
+            return finalize(board.version, board.lastActiveAt);
+          }
+
+          const previousGroupId = card.group_id;
+          this.sql.run(
+            'UPDATE cards SET column_id = ?, group_id = NULL, updated_at = ? WHERE board_id = ? AND id = ?',
+            command.targetColumnId,
+            now,
+            boardId,
+            command.cardId,
+          );
+          if (previousGroupId) {
+            this.maybeDissolveSmallGroup(
+              boardId,
+              previousGroupId,
+              nextVersion,
+              rawEvents,
+            );
+          }
+          bumpBoard();
+          rawEvents.push({
+            type: 'card:upserted',
+            version: nextVersion,
+            cardId: command.cardId,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'card:delete': {
+          const card = this.sql.get<CardDbRow>(
+            'SELECT * FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (!card) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Card not found.',
+            };
+          }
+
+          const perm = this.checkCardManagePermission(
+            board,
+            card,
+            actor,
+            'delete',
+          );
+          if (!perm.ok) {
+            return perm;
+          }
+
+          const previousGroupId = card.group_id;
+          this.sql.run(
+            `DELETE FROM votes WHERE board_id = ? AND target_type = 'card' AND target_id = ?`,
+            boardId,
+            command.cardId,
+          );
+          this.sql.run(
+            'DELETE FROM cards WHERE board_id = ? AND id = ?',
+            boardId,
+            command.cardId,
+          );
+          if (previousGroupId) {
+            this.maybeDissolveSmallGroup(
+              boardId,
+              previousGroupId,
+              nextVersion,
+              rawEvents,
+            );
+          }
+          bumpBoard();
+          rawEvents.push({
+            type: 'card:deleted',
+            version: nextVersion,
+            cardId: command.cardId,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'column:add': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can add Columns.',
+            };
+          }
+
+          const countRow = this.sql.get<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM columns WHERE board_id = ?',
+            boardId,
+          );
+          const currentCount = countRow?.count ?? 0;
+          if (currentCount >= MAX_COLUMNS_PER_BOARD) {
+            return {
+              ok: false,
+              code: 'LIMIT_EXCEEDED',
+              message: `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns.`,
+            };
+          }
+
+          this.sql.run(
+            `INSERT INTO columns (id, board_id, title, accent, position, is_action_column)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            command.id,
+            boardId,
+            command.title,
+            command.accent,
+            currentCount,
+            command.isActionColumn ? 1 : 0,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'column:upserted',
+            version: nextVersion,
+            columnId: command.id,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'column:update': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can edit Columns.',
+            };
+          }
+
+          const column = this.sql.get<ColumnDbRow>(
+            'SELECT * FROM columns WHERE board_id = ? AND id = ?',
+            boardId,
+            command.columnId,
+          );
+          if (!column) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Column not found.',
+            };
+          }
+
+          const nextTitle = command.title ?? column.title;
+          const nextAccent = command.accent ?? column.accent;
+          const nextIsAction =
+            command.isActionColumn !== undefined
+              ? command.isActionColumn
+                ? 1
+                : 0
+              : column.is_action_column;
+
+          this.sql.run(
+            'UPDATE columns SET title = ?, accent = ?, is_action_column = ? WHERE board_id = ? AND id = ?',
+            nextTitle,
+            nextAccent,
+            nextIsAction,
+            boardId,
+            command.columnId,
+          );
+          bumpBoard();
+          rawEvents.push({
+            type: 'column:upserted',
+            version: nextVersion,
+            columnId: command.columnId,
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'column:reorder': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can reorder Columns.',
+            };
+          }
+
+          const existingColumns = this.sql.all<{ id: string }>(
+            'SELECT id FROM columns WHERE board_id = ? ORDER BY position ASC',
+            boardId,
+          );
+          const existingIds = new Set(existingColumns.map((c) => c.id));
+          const providedUnique = new Set(command.columnIds);
+
+          if (
+            command.columnIds.length !== existingIds.size ||
+            providedUnique.size !== existingIds.size ||
+            command.columnIds.some((id) => !existingIds.has(id))
+          ) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: 'Column order must include every Column on the Board exactly once.',
+            };
+          }
+
+          for (let i = 0; i < command.columnIds.length; i += 1) {
+            this.sql.run(
+              'UPDATE columns SET position = ? WHERE board_id = ? AND id = ?',
+              i,
+              boardId,
+              command.columnIds[i],
+            );
+          }
+          bumpBoard();
+          rawEvents.push({
+            type: 'columns:reordered',
+            version: nextVersion,
+            columnIds: [...command.columnIds],
+          });
+          return finalize(nextVersion, now);
+        }
+
+        case 'column:delete': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can delete Columns.',
+            };
+          }
+
+          const existingColumns = this.sql.all<{ id: string }>(
+            'SELECT id FROM columns WHERE board_id = ? ORDER BY position ASC',
+            boardId,
+          );
+          if (!existingColumns.some((c) => c.id === command.columnId)) {
+            return {
+              ok: false,
+              code: 'NOT_FOUND',
+              message: 'Column not found.',
+            };
+          }
+          if (existingColumns.length <= 1) {
+            return {
+              ok: false,
+              code: 'VALIDATION_ERROR',
+              message: 'A Board must have at least 1 Column.',
+            };
+          }
+
+          // Clean up polymorphic votes targeting cards or groups in this Column
+          this.sql.run(
+            `DELETE FROM votes
+             WHERE board_id = ? AND target_type = 'card'
+               AND target_id IN (SELECT id FROM cards WHERE board_id = ? AND column_id = ?)`,
+            boardId,
+            boardId,
+            command.columnId,
+          );
+          this.sql.run(
+            `DELETE FROM votes
+             WHERE board_id = ? AND target_type = 'group'
+               AND target_id IN (SELECT id FROM card_groups WHERE board_id = ? AND column_id = ?)`,
+            boardId,
+            boardId,
+            command.columnId,
+          );
+
+          this.sql.run(
+            'DELETE FROM columns WHERE board_id = ? AND id = ?',
+            boardId,
+            command.columnId,
+          );
+
+          const remaining = existingColumns.filter(
+            (c) => c.id !== command.columnId,
+          );
+          for (let i = 0; i < remaining.length; i += 1) {
+            this.sql.run(
+              'UPDATE columns SET position = ? WHERE board_id = ? AND id = ?',
+              i,
+              boardId,
+              remaining[i].id,
+            );
+          }
+
+          bumpBoard();
+          rawEvents.push({
+            type: 'column:deleted',
+            version: nextVersion,
+            columnId: command.columnId,
+          });
+          return finalize(nextVersion, now);
+        }
+      }
+    });
   }
 }

@@ -1,6 +1,12 @@
 import 'server-only';
 
-import type { CreateBoardRecord, RawBoardSnapshot } from '../../db/raw-types';
+import type {
+  BoardMutationActor,
+  BoardMutationCommand,
+  BoardMutationOutcome,
+  CreateBoardRecord,
+  RawBoardSnapshot,
+} from '../../db/raw-types';
 import type { BoardStore } from '../types';
 
 export interface BoardRoomRpcStub {
@@ -9,6 +15,13 @@ export interface BoardRoomRpcStub {
     boardId: string,
     now?: number,
   ): Promise<RawBoardSnapshot | null>;
+  getBoardTokenSalt(boardId: string, now?: number): Promise<string | null>;
+  mutateBoard(
+    boardId: string,
+    actor: BoardMutationActor,
+    command: BoardMutationCommand,
+    now?: number,
+  ): Promise<BoardMutationOutcome>;
   deleteBoard(boardId: string): Promise<boolean>;
   touchActivity(boardId: string, now?: number): Promise<void>;
   updateFacilitatorTokenEncryption(
@@ -38,6 +51,17 @@ export function createCloudflareBoardStore(
       now?: number,
     ): Promise<RawBoardSnapshot | null> {
       return stubFor(boardId).getBoardSnapshot(boardId, now);
+    },
+    getBoardTokenSalt(boardId: string, now?: number): Promise<string | null> {
+      return stubFor(boardId).getBoardTokenSalt(boardId, now);
+    },
+    mutateBoard(
+      boardId: string,
+      actor: BoardMutationActor,
+      command: BoardMutationCommand,
+      now?: number,
+    ): Promise<BoardMutationOutcome> {
+      return stubFor(boardId).mutateBoard(boardId, actor, command, now);
     },
     deleteBoard(boardId: string): Promise<boolean> {
       return stubFor(boardId).deleteBoard(boardId);
