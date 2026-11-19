@@ -1840,4 +1840,535 @@ describe('<BoardWorkspace />', () => {
     );
     expectNoDiagnostics(artifact);
   });
+
+  it('filters Cards, Card Group titles, and live comments locally with match counts and never matches redacted Cards', () => {
+    const streams: Array<EventTarget & { receive: (msg: BoardLiveMessage) => void }> = [];
+    vi.stubGlobal(
+      'EventSource',
+      class extends EventTarget {
+        constructor() {
+          super();
+          streams.push(this);
+        }
+        close() {}
+        receive(message: BoardLiveMessage) {
+          this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+          flush();
+        }
+      },
+    );
+
+    const group: CardGroupDTO = {
+      id: 'group_ci',
+      columnId: 'col_1',
+      title: 'Pipeline Stability',
+      cardIds: ['c_g1', 'c_g2'],
+      votes: 3,
+      myVotes: 0,
+      createdAt: 2_000,
+    };
+    const board = makeBoardView({
+      isBlurred: true,
+      groups: [group],
+      cards: [
+        makeCard({ id: 'c_1', columnId: 'col_1', content: 'Fast checkout deploy', isMine: true, createdAt: 3_000 }),
+        makeCard({
+          id: 'c_2',
+          columnId: 'col_2',
+          content: 'Database schema review',
+          isMine: true,
+          comments: [
+            { id: 'cm_1', cardId: 'c_2', content: 'Add rollback plan', isMine: true, createdAt: 1_500 },
+          ],
+          commentCount: 1,
+          createdAt: 1_000,
+        }),
+        makeCard({ id: 'c_g1', columnId: 'col_1', groupId: 'group_ci', content: 'Flaky e2e test', isMine: true, createdAt: 1_800 }),
+        makeCard({ id: 'c_g2', columnId: 'col_1', groupId: 'group_ci', content: 'Retries saved build', isMine: true, createdAt: 1_900 }),
+        makeCard({
+          id: 'c_hidden',
+          columnId: 'col_2',
+          content: '',
+          redacted: true,
+          placeholderLines: 2,
+          isMine: false,
+          comments: [],
+          commentCount: 0,
+          createdAt: 2_500,
+        }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    try {
+      flush();
+      streams[0].receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+
+      const search = view.getByRole('searchbox', {
+        name: /Search Cards, Card Groups, and comments/i,
+      }) as HTMLInputElement;
+
+      // Search by comment text
+      fireEvent.input(search, { target: { value: 'rollback' } });
+      flush();
+      expect(view.getByText('1 match (1 of 5 cards)')).toBeInTheDocument();
+      expect(view.getByText('Database schema review')).toBeInTheDocument();
+      expect(view.queryByText('Fast checkout deploy')).not.toBeInTheDocument();
+      expect(view.queryByLabelText('Hidden Card in Private Mode')).not.toBeInTheDocument();
+
+      // Search by Card Group title
+      fireEvent.input(search, { target: { value: 'Pipeline Stability' } });
+      flush();
+      expect(view.getByText('2 matches (2 of 5 cards)')).toBeInTheDocument();
+      expect(view.getByText('Flaky e2e test')).toBeInTheDocument();
+      expect(view.getByText('Retries saved build')).toBeInTheDocument();
+
+      // Live comment:created updates search matches immediately
+      fireEvent.input(search, { target: { value: 'canary' } });
+      flush();
+      expect(view.getByText('0 matches (0 of 5 cards)')).toBeInTheDocument();
+      expect(
+        view.getByText(/No Cards match your current search or filter/i),
+      ).toBeInTheDocument();
+
+      streams[0].receive({
+        type: 'board:mutation',
+        version: 2,
+        events: [
+          {
+            type: 'comment:created',
+            version: 2,
+            cardId: 'c_1',
+            comment: {
+              id: 'cm_live',
+              cardId: 'c_1',
+              content: 'Run canary check first',
+              isMine: false,
+              createdAt: 4_000,
+            },
+          },
+        ],
+      });
+      expect(view.getByText('1 match (1 of 5 cards)')).toBeInTheDocument();
+      expect(view.getByText('Fast checkout deploy')).toBeInTheDocument();
+
+      // Live comment:deleted removes match immediately
+      streams[0].receive({
+        type: 'board:mutation',
+        version: 3,
+        events: [
+          {
+            type: 'comment:deleted',
+            version: 3,
+            cardId: 'c_1',
+            commentId: 'cm_live',
+          },
+        ],
+      });
+      expect(view.getByText('0 matches (0 of 5 cards)')).toBeInTheDocument();
+
+      // Clear search button restores all Cards
+      fireEvent.click(view.getByRole('button', { name: 'Clear search' }));
+      flush();
+      expect(search).toHaveValue('');
+      expect(view.getByText('Fast checkout deploy')).toBeInTheDocument();
+      expect(view.getByLabelText('Hidden Card in Private Mode')).toBeInTheDocument();
+
+      // Escape inside search input clears and blurs cleanly
+      search.focus();
+      fireEvent.input(search, { target: { value: 'deploy' } });
+      flush();
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: 'Escape' });
+      flush();
+      expect(search).toHaveValue('');
+      expect(search).not.toHaveFocus();
+
+      // Purely client-side: zero server mutations called
+      for (const spy of Object.values(spies)) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('switches viewer-local Sort modes (Newest, Oldest, Most Voted) across Cards and Card Groups and falls back cleanly during Blind Voting', () => {
+    const streams: Array<EventTarget & { receive: (msg: BoardLiveMessage) => void }> = [];
+    vi.stubGlobal(
+      'EventSource',
+      class extends EventTarget {
+        constructor() {
+          super();
+          streams.push(this);
+        }
+        close() {}
+        receive(message: BoardLiveMessage) {
+          this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+          flush();
+        }
+      },
+    );
+
+    const group: CardGroupDTO = {
+      id: 'group_mid',
+      columnId: 'col_1',
+      title: 'Deploy friction',
+      cardIds: ['c_g1', 'c_g2'],
+      votes: 5,
+      myVotes: 0,
+      createdAt: 2_000,
+    };
+    const board = makeBoardView({
+      groups: [group],
+      cards: [
+        makeCard({ id: 'c_old', columnId: 'col_1', content: 'Oldest highest voted', votes: 9, createdAt: 1_000 }),
+        makeCard({ id: 'c_new', columnId: 'col_1', content: 'Newest lowest voted', votes: 1, createdAt: 3_000 }),
+        makeCard({ id: 'c_g1', columnId: 'col_1', groupId: 'group_mid', content: 'Slow build', createdAt: 1_200 }),
+        makeCard({ id: 'c_g2', columnId: 'col_1', groupId: 'group_mid', content: 'Flaky staging', createdAt: 1_400 }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    try {
+      flush();
+      streams[0].receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+
+      const getTopLevelStreamIds = (): string[] => {
+        const col = view.getByRole('region', { name: 'Went Well' });
+        const stream = col.querySelector(':scope > div:last-child')!;
+        return [...stream.children].map((el) => {
+          const groupId = el.getAttribute('data-group-id');
+          if (groupId) return `group:${groupId}`;
+          return `card:${el.getAttribute('data-card-id')}`;
+        });
+      };
+
+      const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+      expect(sortSelect).toHaveValue('newest');
+      expect(getTopLevelStreamIds()).toEqual(['card:c_new', 'group:group_mid', 'card:c_old']);
+
+      // Switch to Oldest
+      fireEvent.change(sortSelect, { target: { value: 'oldest' } });
+      flush();
+      expect(getTopLevelStreamIds()).toEqual(['card:c_old', 'group:group_mid', 'card:c_new']);
+
+      // Switch to Most Voted -> interleaves Cards and Card Groups by total Votes descending
+      fireEvent.change(sortSelect, { target: { value: 'most-voted' } });
+      flush();
+      expect(getTopLevelStreamIds()).toEqual(['card:c_old', 'group:group_mid', 'card:c_new']);
+
+      // Enable Blind Voting via live snapshot -> Most Voted disabled & falls back cleanly to Newest
+      streams[0].receive({
+        type: 'board:snapshot',
+        version: 2,
+        serverNow: 200,
+        board: {
+          ...board,
+          version: 2,
+          blindVoting: true,
+          groups: [{ ...group, votes: null }],
+          cards: board.cards.map((card) => ({ ...card, votes: null })),
+        },
+      });
+      expect(sortSelect).toHaveValue('newest');
+      const mostVotedOption = within(sortSelect).getByRole('option', {
+        name: /Most Voted/i,
+      });
+      expect(mostVotedOption).toBeDisabled();
+      expect(
+        view.getByText('Most Voted paused during Blind Voting'),
+      ).toBeInTheDocument();
+      expect(getTopLevelStreamIds()).toEqual(['card:c_new', 'group:group_mid', 'card:c_old']);
+
+      // Purely local: zero server writes
+      for (const spy of Object.values(spies)) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('composes Quick Filter chips (All, Mine, Voted, Action Items) with Search and Sort and renders distinct empty-filter states', () => {
+    const groupVoted: CardGroupDTO = {
+      id: 'group_voted',
+      columnId: 'col_1',
+      title: 'Release cadence',
+      cardIds: ['c_gv1', 'c_gv2'],
+      votes: 4,
+      myVotes: 1,
+      createdAt: 2_500,
+    };
+    const board = makeBoardView({
+      columns: [
+        { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 4 },
+        { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 1 },
+        { id: 'col_3', title: 'Action Items', accent: 'sky', position: 2, isActionColumn: true, cardCount: 0 },
+      ],
+      groups: [groupVoted],
+      cards: [
+        makeCard({ id: 'c_mine', columnId: 'col_1', content: 'My solo card', isMine: true, myVotes: 0, isActionItem: false, createdAt: 1_000 }),
+        makeCard({ id: 'c_action', columnId: 'col_1', content: 'Document on-call playbook', isMine: false, myVotes: 2, isActionItem: true, votes: 7, createdAt: 2_000 }),
+        makeCard({ id: 'c_gv1', columnId: 'col_1', groupId: 'group_voted', content: 'Weekly train', isMine: false, myVotes: 0, isActionItem: false, createdAt: 1_500 }),
+        makeCard({ id: 'c_gv2', columnId: 'col_1', groupId: 'group_voted', content: 'Automated changelog', isMine: true, myVotes: 0, isActionItem: true, createdAt: 1_600 }),
+        makeCard({ id: 'c_col2', columnId: 'col_2', content: 'Teammate note', isMine: false, myVotes: 0, isActionItem: false, createdAt: 1_700 }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const filterGroup = within(view.getByRole('group', { name: 'Filter cards' }));
+    expect(filterGroup.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+
+    // Filter: Mine -> shows my standalone card + group containing my card; col_2 shows distinct empty-filter state while empty col_3 still says "No Cards yet"
+    fireEvent.click(filterGroup.getByRole('button', { name: 'Mine' }));
+    flush();
+    expect(filterGroup.getByRole('button', { name: 'Mine' })).toHaveAttribute('aria-pressed', 'true');
+    expect(view.getByText('2 of 5 cards')).toBeInTheDocument();
+    expect(view.getByText('My solo card')).toBeInTheDocument();
+    expect(view.getByText('Automated changelog')).toBeInTheDocument();
+    expect(view.queryByText('Weekly train')).not.toBeInTheDocument();
+    expect(view.queryByText('Teammate note')).not.toBeInTheDocument();
+
+    const toImprove = view.getByRole('region', { name: 'To Improve' });
+    expect(within(toImprove).getByText('No matching Cards in this Column')).toBeInTheDocument();
+    const actionItemsCol = view.getByRole('region', { name: 'Action Items' });
+    expect(within(actionItemsCol).getByText('No Cards yet')).toBeInTheDocument();
+
+    // Filter: Voted -> shows standalone voted Card and Card Group with group.myVotes > 0
+    fireEvent.click(filterGroup.getByRole('button', { name: 'Voted' }));
+    flush();
+    expect(view.getByText('3 of 5 cards')).toBeInTheDocument();
+    expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
+    expect(view.getByText('Weekly train')).toBeInTheDocument();
+    expect(view.getByText('Automated changelog')).toBeInTheDocument();
+    expect(view.queryByText('My solo card')).not.toBeInTheDocument();
+
+    // Filter: Action Items composed with Search
+    fireEvent.click(filterGroup.getByRole('button', { name: 'Action Items' }));
+    flush();
+    expect(view.getByText('2 of 5 cards')).toBeInTheDocument();
+    expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
+    expect(view.getByText('Automated changelog')).toBeInTheDocument();
+
+    const search = view.getByRole('searchbox', {
+      name: /Search Cards, Card Groups, and comments/i,
+    });
+    fireEvent.input(search, { target: { value: 'playbook' } });
+    flush();
+    expect(view.getByText('1 match (1 of 5 cards)')).toBeInTheDocument();
+    expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
+    expect(view.queryByText('Automated changelog')).not.toBeInTheDocument();
+
+    // Reset filters from per-Column empty-filter state restores everything
+    fireEvent.click(within(toImprove).getByRole('button', { name: 'Reset filters' }));
+    flush();
+    expect(filterGroup.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    expect(search).toHaveValue('');
+    expect(view.getByText('Teammate note')).toBeInTheDocument();
+
+    for (const spy of Object.values(spies)) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
+
+  it('handles global keyboard shortcuts (/, N, A, B, T, Esc), suppresses them inside editable inputs, and emits zero Solid 2.0 diagnostics', async () => {
+    const board = makeBoardView({
+      isFacilitator: true,
+      cards: [
+        makeCard({ id: 'card_1', columnId: 'col_1', content: 'Deploy checks', isActionItem: true }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockImplementation(async (input) => ({
+      ok: true,
+      version: input.isBlurred ? 2 : 3,
+      events: [
+        {
+          type: 'board:snapshot',
+          version: input.isBlurred ? 2 : 3,
+          serverNow: Date.now(),
+          board: { ...board, version: input.isBlurred ? 2 : 3, isBlurred: input.isBlurred },
+        },
+      ],
+    }));
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          // "/" focuses search bar and prevents default
+          const searchInput = view.getByRole('searchbox', {
+            name: /Search Cards, Card Groups, and comments/i,
+          }) as HTMLInputElement;
+          const slashEvent = new KeyboardEvent('keydown', {
+            key: '/',
+            bubbles: true,
+            cancelable: true,
+          });
+          document.dispatchEvent(slashEvent);
+          flush();
+          expect(slashEvent.defaultPrevented).toBe(true);
+          expect(searchInput).toHaveFocus();
+
+          // Shortcuts suppressed while focused inside <input>
+          fireEvent.keyDown(searchInput, { key: 'a' });
+          fireEvent.keyDown(searchInput, { key: 'b' });
+          fireEvent.keyDown(searchInput, { key: 't' });
+          fireEvent.keyDown(searchInput, { key: 'n' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+          expect(spies.setPrivateMode).not.toHaveBeenCalled();
+          expect(searchInput).toHaveFocus();
+
+          // Escape blurs search input cleanly
+          fireEvent.keyDown(searchInput, { key: 'Escape' });
+          flush();
+          expect(searchInput).not.toHaveFocus();
+
+          // "N" focuses first/active Column's "+ Add card" composer
+          const col1Composer = view.getByRole('textbox', { name: 'Add card to Went Well' });
+          fireEvent.keyDown(document.body, { key: 'n' });
+          flush();
+          expect(col1Composer).toHaveFocus();
+
+          // Shortcuts suppressed while focused inside <textarea>
+          fireEvent.keyDown(col1Composer, { key: '/' });
+          fireEvent.keyDown(col1Composer, { key: 'a' });
+          flush();
+          expect(col1Composer).toHaveFocus();
+          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+          (col1Composer as HTMLElement).blur();
+
+          // Switching active Column tab makes "N" focus that tab's composer
+          fireEvent.click(view.getByRole('tab', { name: /To Improve/i }));
+          flush();
+          fireEvent.keyDown(document.body, { key: 'N' });
+          flush();
+          const col2Composer = view.getByRole('textbox', { name: 'Add card to To Improve' });
+          expect(col2Composer).toHaveFocus();
+          (col2Composer as HTMLElement).blur();
+
+          // Shortcuts suppressed inside <select> and contentEditable
+          const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+          sortSelect.focus();
+          fireEvent.keyDown(sortSelect, { key: 'a' });
+          fireEvent.keyDown(sortSelect, { key: 't' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+          sortSelect.blur();
+
+          const editable = document.createElement('div');
+          editable.setAttribute('contenteditable', 'true');
+          document.body.appendChild(editable);
+          try {
+            fireEvent.keyDown(editable, { key: 'a' });
+            fireEvent.keyDown(editable, { key: 'n' });
+            fireEvent.keyDown(editable, { key: 't' });
+            flush();
+            expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+            expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+          } finally {
+            editable.remove();
+          }
+
+          // "A" opens and toggles closed the Action Items Drawer
+          fireEvent.keyDown(document.body, { key: 'a' });
+          flush();
+          expect(view.getByRole('dialog', { name: 'Action Items' })).toBeInTheDocument();
+          // While overlay is open, "/" and "N" and "B" and "T" are ignored
+          fireEvent.keyDown(document.body, { key: '/' });
+          fireEvent.keyDown(document.body, { key: 'n' });
+          fireEvent.keyDown(document.body, { key: 'b' });
+          fireEvent.keyDown(document.body, { key: 't' });
+          flush();
+          expect(searchInput).not.toHaveFocus();
+          expect(spies.setPrivateMode).not.toHaveBeenCalled();
+          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+          // Pressing "A" again toggles Action Items Drawer closed
+          fireEvent.keyDown(document.body, { key: 'a' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+
+          // "T" opens and toggles closed the Countdown Timer popover
+          fireEvent.keyDown(document.body, { key: 't' });
+          flush();
+          expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toBeInTheDocument();
+          fireEvent.keyDown(document.body, { key: 't' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+
+          // "B" toggles Private Mode for Facilitators
+          fireEvent.keyDown(document.body, { key: 'b' });
+          await flushPromises();
+          expect(spies.setPrivateMode).toHaveBeenCalledWith({ boardId: board.id, isBlurred: true });
+
+          // "Esc" closes Share Board <dialog> and Column options popover
+          const shareDialog = view.getByText('Share Board', { selector: 'h2' }).closest('dialog')!;
+          shareDialog.showModal = () => { shareDialog.open = true; };
+          shareDialog.close = () => { shareDialog.open = false; };
+          fireEvent.click(view.getByRole('button', { name: 'Share' }));
+          flush();
+          expect(shareDialog.open).toBe(true);
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(shareDialog.open).toBe(false);
+
+          const wentWell = view.getByRole('region', { name: 'Went Well' });
+          fireEvent.click(within(wentWell).getByRole('button', { name: 'Column options for Went Well' }));
+          flush();
+          expect(within(wentWell).getByRole('menu', { name: 'Options for Went Well' })).toBeInTheDocument();
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(within(wentWell).queryByRole('menu', { name: 'Options for Went Well' })).not.toBeInTheDocument();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'board-workspace-shortcuts' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('ignores N shortcut on a Locked Board while keeping / Search active', () => {
+    const board = makeBoardView({
+      isLocked: true,
+      cards: [makeCard({ id: 'card_1', content: 'Locked retrospective card' })],
+    });
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} />
+    ));
+    flush();
+
+    const nEvent = new KeyboardEvent('keydown', { key: 'n', bubbles: true, cancelable: true });
+    document.dispatchEvent(nEvent);
+    flush();
+    expect(nEvent.defaultPrevented).toBe(false);
+
+    const searchInput = view.getByRole('searchbox', {
+      name: /Search Cards, Card Groups, and comments/i,
+    });
+    fireEvent.keyDown(document.body, { key: '/' });
+    flush();
+    expect(searchInput).toHaveFocus();
+  });
 });
