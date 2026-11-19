@@ -51,6 +51,11 @@ export const securityHeadersMiddleware: StartMiddleware = async (
   const { pathname } = new URL(event.request.url);
   if (isBoardPathname(pathname)) {
     headers.set('x-robots-tag', 'noindex, nofollow');
+    if (event.request.method === 'GET' && /^\/b\/[^/]+\/?$/.test(pathname)) {
+      // The async Board read sets the Participant cookie and missing-Board status.
+      // Wait for both before committing the initial page headers.
+      event.renderMode = 'async';
+    }
   }
 
   return next();
