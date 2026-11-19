@@ -1,0 +1,233 @@
+import 'server-only';
+
+import type {
+  BoardViewDTO,
+  CardGroupDTO,
+  CardViewDTO,
+  ColumnDTO,
+  CommentViewDTO,
+} from '../../lib/board-types';
+import type { RawBoardSnapshot } from '../db/raw-types';
+
+function computePlaceholderLines(content: string): 1 | 2 | 3 {
+  if (content.length <= 70) return 1;
+  if (content.length <= 180) return 2;
+  return 3;
+}
+
+/**
+ * Pure, runtime-agnostic viewer projection (SPEC §6 Redacted DTO Contract).
+ *
+ * Explicitly constructs every DTO object from an allowlist of safe fields so
+ * hashes, salts, and encrypted secrets can never escape the server boundary.
+ * Enforces zero-peeking Private Mode redaction (even for Facilitators) and
+ * Blind Voting aggregate total redaction.
+ */
+export function projectBoardForViewer(
+  raw: RawBoardSnapshot,
+  viewerParticipantHash: string | null,
+  isFacilitator: boolean,
+): BoardViewDTO {
+  const { board } = raw;
+
+  // Tally votes per target and total votes cast by the viewer.
+  const cardTotalVotes = new Map<string, number>();
+  const cardMyVotes = new Map<string, number>();
+  const groupTotalVotes = new Map<string, number>();
+  const groupMyVotes = new Map<string, number>();
+  let viewerTotalVotes = 0;
+
+  for (const vote of raw.votes) {
+    const isViewerVote =
+      viewerParticipantHash !== null &&
+      vote.voterTokenHash === viewerParticipantHash;
+
+    if (isViewerVote) {
+      viewerTotalVotes += vote.count;
+    }
+
+    if (vote.targetType === 'card') {
+      cardTotalVotes.set(
+        vote.targetId,
+        (cardTotalVotes.get(vote.targetId) ?? 0) + vote.count,
+      );
+      if (isViewerVote) {
+        cardMyVotes.set(
+          vote.targetId,
+          (cardMyVotes.get(vote.targetId) ?? 0) + vote.count,
+        );
+      }
+    } else {
+      groupTotalVotes.set(
+        vote.targetId,
+        (groupTotalVotes.get(vote.targetId) ?? 0) + vote.count,
+      );
+      if (isViewerVote) {
+        groupMyVotes.set(
+          vote.targetId,
+          (groupMyVotes.get(vote.targetId) ?? 0) + vote.count,
+        );
+      }
+    }
+  }
+
+  // Group reactions per card.
+  const reactionsByCard = new Map<string, Record<string, number>>();
+  const myReactionsByCard = new Map<string, string[]>();
+  for (const reaction of raw.reactions) {
+    let counts = reactionsByCard.get(reaction.cardId);
+    if (!counts) {
+      counts = {};
+      reactionsByCard.set(reaction.cardId, counts);
+    }
+    counts[reaction.emoji] = (counts[reaction.emoji] ?? 0) + 1;
+
+    if (
+      viewerParticipantHash !== null &&
+      reaction.reactorTokenHash === viewerParticipantHash
+    ) {
+      let mine = myReactionsByCard.get(reaction.cardId);
+      if (!mine) {
+        mine = [];
+        myReactionsByCard.set(reaction.cardId, mine);
+      }
+      if (!mine.includes(reaction.emoji)) {
+        mine.push(reaction.emoji);
+      }
+    }
+  }
+
+  // Group comments per card.
+  const commentsByCard = new Map<string, CommentViewDTO[]>();
+  for (const comment of raw.comments) {
+    let list = commentsByCard.get(comment.cardId);
+    if (!list) {
+      list = [];
+      commentsByCard.set(comment.cardId, list);
+    }
+    list.push({
+      id: comment.id,
+      cardId: comment.cardId,
+      content: comment.content,
+      isMine:
+        viewerParticipantHash !== null &&
+        comment.authorTokenHash === viewerParticipantHash,
+      createdAt: comment.createdAt,
+    });
+  }
+
+  // Count cards per column and track member cards per group.
+  const cardCountByColumn = new Map<string, number>();
+  const cardIdsByGroup = new Map<string, string[]>();
+  for (const card of raw.cards) {
+    cardCountByColumn.set(
+      card.columnId,
+      (cardCountByColumn.get(card.columnId) ?? 0) + 1,
+    );
+    if (card.groupId !== null) {
+      let ids = cardIdsByGroup.get(card.groupId);
+      if (!ids) {
+        ids = [];
+        cardIdsByGroup.set(card.groupId, ids);
+      }
+      ids.push(card.id);
+    }
+  }
+
+  const columns: ColumnDTO[] = [...raw.columns]
+    .sort((a, b) => a.position - b.position)
+    .map((column) => ({
+      id: column.id,
+      title: column.title,
+      accent: column.accent,
+      position: column.position,
+      isActionColumn: column.isActionColumn,
+      cardCount: cardCountByColumn.get(column.id) ?? 0,
+    }));
+
+  const cards: CardViewDTO[] = raw.cards.map((card) => {
+    const isMine =
+      viewerParticipantHash !== null &&
+      card.authorTokenHash === viewerParticipantHash;
+    const isRedacted = board.isBlurred && !isMine;
+    const rawComments = isRedacted ? [] : (commentsByCard.get(card.id) ?? []);
+    const totalVotes = cardTotalVotes.get(card.id) ?? 0;
+    const myVotes = cardMyVotes.get(card.id) ?? 0;
+
+    return {
+      id: card.id,
+      columnId: card.columnId,
+      groupId: card.groupId,
+      content: isRedacted ? '' : card.content,
+      redacted: isRedacted,
+      ...(isRedacted
+        ? { placeholderLines: computePlaceholderLines(card.content) }
+        : {}),
+      isMine,
+      isActionItem: isRedacted ? false : card.isActionItem,
+      actionDone: isRedacted ? false : card.actionDone,
+      actionOwner: isRedacted ? '' : card.actionOwner,
+      votes: board.blindVoting ? null : totalVotes,
+      myVotes,
+      reactions: isRedacted ? {} : (reactionsByCard.get(card.id) ?? {}),
+      myReactions: isRedacted ? [] : (myReactionsByCard.get(card.id) ?? []),
+      commentCount: rawComments.length,
+      comments: rawComments,
+      createdAt: card.createdAt,
+      updatedAt: card.updatedAt,
+    };
+  });
+
+  const groups: CardGroupDTO[] = raw.groups.map((group) => {
+    const memberCardIds = cardIdsByGroup.get(group.id) ?? [];
+    let combinedTotal = groupTotalVotes.get(group.id) ?? 0;
+    let combinedMine = groupMyVotes.get(group.id) ?? 0;
+
+    for (const cardId of memberCardIds) {
+      combinedTotal += cardTotalVotes.get(cardId) ?? 0;
+      combinedMine += cardMyVotes.get(cardId) ?? 0;
+    }
+
+    return {
+      id: group.id,
+      columnId: group.columnId,
+      title: group.title,
+      cardIds: memberCardIds,
+      votes: board.blindVoting ? null : combinedTotal,
+      myVotes: combinedMine,
+      createdAt: group.createdAt,
+    };
+  });
+
+  const remainingVotes =
+    board.voteLimit === null
+      ? null
+      : Math.max(0, board.voteLimit - viewerTotalVotes);
+
+  return {
+    id: board.id,
+    title: board.title,
+    subtitle: board.subtitle,
+    templateId: board.templateId,
+    isBlurred: board.isBlurred,
+    blindVoting: board.blindVoting,
+    isLocked: board.isLocked,
+    allowParticipantGroup: board.allowParticipantGroup,
+    voteLimit: board.voteLimit,
+    maxVotesPerCard: board.maxVotesPerCard,
+    remainingVotes,
+    isFacilitator,
+    timer: {
+      endsAt: board.timerEndsAt,
+      remainingMs: board.timerRemainingMs,
+      durationMs: board.timerDurationMs,
+    },
+    version: board.version,
+    retentionDays: board.retentionDays,
+    createdAt: board.createdAt,
+    lastActiveAt: board.lastActiveAt,
+    columns,
+    groups,
+    cards,
+  };
+}
