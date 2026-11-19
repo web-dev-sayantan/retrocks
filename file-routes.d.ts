@@ -41,34 +41,30 @@ declare module "virtual:file-routes" {
       $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/[...404]"), Extract<"route", keyof typeof import("./src/routes/[...404]")>>>;
     },
     {
-      path: "/api/users";
+      path: "/api/boards/:id/export";
       page: false;
-      $GET: FileRouteLazyRef<Pick<typeof import("./src/routes/api/users"), Extract<"GET", keyof typeof import("./src/routes/api/users")>>>;
-      $HEAD: FileRouteLazyRef<Pick<typeof import("./src/routes/api/users"), Extract<"GET", keyof typeof import("./src/routes/api/users")>>>;
+      $GET: FileRouteLazyRef<Pick<typeof import("./src/routes/api/boards/[id]/export"), Extract<"GET", keyof typeof import("./src/routes/api/boards/[id]/export")>>>;
+      $HEAD: FileRouteLazyRef<Pick<typeof import("./src/routes/api/boards/[id]/export"), Extract<"GET", keyof typeof import("./src/routes/api/boards/[id]/export")>>>;
       $$route?: undefined;
+    },
+    {
+      path: "/api/boards/:id/live";
+      page: false;
+      $GET: FileRouteLazyRef<Pick<typeof import("./src/routes/api/boards/[id]/live"), Extract<"GET", keyof typeof import("./src/routes/api/boards/[id]/live")>>>;
+      $POST: FileRouteLazyRef<Pick<typeof import("./src/routes/api/boards/[id]/live"), Extract<"POST", keyof typeof import("./src/routes/api/boards/[id]/live")>>>;
+      $HEAD: FileRouteLazyRef<Pick<typeof import("./src/routes/api/boards/[id]/live"), Extract<"GET", keyof typeof import("./src/routes/api/boards/[id]/live")>>>;
+      $$route?: undefined;
+    },
+    {
+      path: "/b/:id";
+      page: true;
+      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/b/[id]"), Extract<"default", keyof typeof import("./src/routes/b/[id]")>>>;
+      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/b/[id]"), Extract<"route", keyof typeof import("./src/routes/b/[id]")>>>;
     },
     {
       path: "/";
       page: true;
       $component: FileRouteLazyRef<Pick<typeof import("./src/routes/index"), Extract<"default", keyof typeof import("./src/routes/index")>>>;
-      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/index"), Extract<"route", keyof typeof import("./src/routes/index")>>>;
-    },
-    {
-      path: "/users";
-      page: true;
-      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/users"), Extract<"default", keyof typeof import("./src/routes/users")>>>;
-      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/users"), Extract<"route", keyof typeof import("./src/routes/users")>>>;
-    },
-    {
-      path: "/users/:id";
-      page: true;
-      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/users/[id]"), Extract<"default", keyof typeof import("./src/routes/users/[id]")>>>;
-      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/users/[id]"), Extract<"route", keyof typeof import("./src/routes/users/[id]")>>>;
-    },
-    {
-      path: "/users/";
-      page: true;
-      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/users/index"), Extract<"default", keyof typeof import("./src/routes/users/index")>>>;
       $$route?: undefined;
     }
   ];
@@ -81,7 +77,7 @@ declare module "virtual:file-routes" {
       id: "/";
       page: true;
       $component: FileRouteLazyRef<Pick<typeof import("./src/routes/index"), Extract<"default", keyof typeof import("./src/routes/index")>>>;
-      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/index"), Extract<"route", keyof typeof import("./src/routes/index")>>>;
+      $$route?: undefined;
       children?: undefined;
     },
     {
@@ -93,29 +89,12 @@ declare module "virtual:file-routes" {
       children?: undefined;
     },
     {
-      path: "/users";
-      id: "/users";
+      path: "/b/:id";
+      id: "/b/:id";
       page: true;
-      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/users"), Extract<"default", keyof typeof import("./src/routes/users")>>>;
-      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/users"), Extract<"route", keyof typeof import("./src/routes/users")>>>;
-      children: readonly [
-        {
-          path: "/";
-          id: "/";
-          page: true;
-          $component: FileRouteLazyRef<Pick<typeof import("./src/routes/users/index"), Extract<"default", keyof typeof import("./src/routes/users/index")>>>;
-          $$route?: undefined;
-          children?: undefined;
-        },
-        {
-          path: "/:id";
-          id: "/:id";
-          page: true;
-          $component: FileRouteLazyRef<Pick<typeof import("./src/routes/users/[id]"), Extract<"default", keyof typeof import("./src/routes/users/[id]")>>>;
-          $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/users/[id]"), Extract<"route", keyof typeof import("./src/routes/users/[id]")>>>;
-          children?: undefined;
-        }
-      ];
+      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/b/[id]"), Extract<"default", keyof typeof import("./src/routes/b/[id]")>>>;
+      $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/b/[id]"), Extract<"route", keyof typeof import("./src/routes/b/[id]")>>>;
+      children?: undefined;
     }
   ];
 }

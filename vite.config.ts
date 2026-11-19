@@ -1,40 +1,35 @@
-import tailwindcss from '@tailwindcss/vite';
-import { fileURLToPath } from 'node:url';
-import { fileRoutes } from 'filesystem-routing/vite';
-import { defineConfig } from 'vitest/config';
+import { cloudflare } from '@cloudflare/vite-plugin';
 import solid from '@solidjs/vite-plugin';
+import tailwindcss from '@tailwindcss/vite';
+import { fileRoutes } from 'filesystem-routing/vite';
+import { fileURLToPath } from 'node:url';
+import { defineConfig } from 'vitest/config';
+
+const isTest = Boolean(process.env.VITEST);
+const isNodeRuntime = process.env.RETROCKS_RUNTIME === 'node';
+const useCloudflare = !isTest && !isNodeRuntime;
 
 export default defineConfig({
-  // Turnkey streaming SSR: no index.html and no entry files — the plugin
-  // generates the entries around src/App.tsx, wrapped in src/Document.tsx.
-  // `vite build` emits client assets to dist/client and the request handler
-  // to dist/server, plus the Node server (dist/server/node.js) `npm start` runs.
+  define: { 'import.meta.env.RETROCKS_LIVE_SSE': isTest || isNodeRuntime },
+  // Turnkey streaming SSR around src/App.tsx + src/Document.tsx.
+  // Default dev/build runs in Cloudflare Workers (workerd) with SQLite Durable Objects.
+  // Set RETROCKS_RUNTIME=node (pnpm dev:node / pnpm build:node) for standalone Node.
   plugins: [
+    ...(useCloudflare
+      ? [cloudflare({ viteEnvironment: { name: 'ssr' } })]
+      : []),
     solid({
       start: {
         middleware: './src/middleware.ts',
-        // Emit dist/server/node.js: a ready-to-run Node server (static
-        // assets + the handler). Other platforms import dist/server/server.js.
-        nodeServer: true,
-        // Typed env is on by convention: ./env.ts is probed automatically.
-        // (Set the top-level `env: false` option to opt out.)
+        ...(isNodeRuntime ? { nodeServer: true } : {}),
       },
-      // Set to false for a static shell + API server: pages render on the
-      // client while server functions, sessions, and API routes keep working.
       ssr: true,
-      // Dev-only: capture control at /__solid/diagnostics (see AGENTS.md).
       diagnostics: true,
-      // The serverSetup module runs in the handler graph before any dispatch:
-      // it registers the router's single-flight collector.
       serverFunctions: { serverSetup: './src/server-config.ts' },
-      // `extensions` makes @solidjs/vite-plugin also compile the `?pick=` route
-      // modules the fileRoutes plugin emits (their ids end in a query string).
       extensions: ['.jsx', '.tsx'],
     }),
-    // `httpMethods` also scans route modules for GET/POST/... exports (API
-    // routes); handler modules never enter the client bundle.
     fileRoutes({ httpMethods: true, types: true }),
-    tailwindcss()
+    tailwindcss(),
   ],
   server: {
     port: 3000,

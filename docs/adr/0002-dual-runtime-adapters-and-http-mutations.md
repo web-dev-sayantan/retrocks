@@ -4,7 +4,7 @@ status: accepted
 
 # Dual-Runtime Adapter Seam and HTTP-Write / Push-Read Split
 
-Retrocks runs primarily on Cloudflare Workers with SQLite-backed Durable Objects (one `BoardRoom` DO per board, powering default `pnpm dev` via `@cloudflare/vite-plugin` and production deployment), while keeping a Node + local SQLite + SSE implementation behind two narrow server interfaces (`BoardStore` and `BoardRealtime`). All domain logic, Valibot validation, permission checks, and redaction live in runtime-agnostic services above this seam, and all state mutations travel over Solid `'use server'` HTTP functions rather than WebSocket RPC — leaving WebSockets (Cloudflare) and SSE (Node) strictly for server-to-client live fan-out and presence.
+Retrocks runs primarily on Cloudflare Workers with SQLite-backed Durable Objects (one `BoardRoom` DO per board, powering default `pnpm dev` via `@cloudflare/vite-plugin` and production deployment), while keeping a Node + local SQLite + SSE implementation behind two narrow server interfaces (`BoardStore` and `BoardRealtime`). Atomic domain mutations and transactional invariant guards live in the shared runtime-agnostic `SqlBoardOperations` core executed inside each adapter's transaction (`BoardRoom` DO single-transaction and `NodeBoardStore` SQLite transaction), while request services above the seam own authentication, Valibot input validation, viewer projection/redaction, and live broadcast coordination. All state mutations travel over Solid `'use server'` HTTP functions rather than WebSocket RPC — leaving WebSockets (Cloudflare) and SSE (Node) strictly for server-to-client live fan-out and presence.
 
 ## Considered Options
 
