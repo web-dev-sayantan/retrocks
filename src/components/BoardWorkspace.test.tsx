@@ -152,6 +152,35 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     };
   });
 
+  const updateActionItem = vi.fn(async (input) => {
+    version += 1;
+    const existing = cards.get(input.cardId)!;
+    const updated: CardViewDTO = {
+      ...existing,
+      ...(input.isActionItem !== undefined
+        ? {
+            isActionItem: input.isActionItem,
+            ...(input.isActionItem
+              ? {}
+              : { actionDone: false, actionOwner: '' }),
+          }
+        : {}),
+      ...(input.actionDone !== undefined
+        ? { actionDone: input.actionDone }
+        : {}),
+      ...(input.actionOwner !== undefined
+        ? { actionOwner: input.actionOwner }
+        : {}),
+      updatedAt: Date.now(),
+    };
+    cards.set(updated.id, updated);
+    return {
+      ok: true as const,
+      version,
+      events: [{ type: 'card:upserted' as const, version, card: updated }],
+    };
+  });
+
   const moveCard = vi.fn(async (input) => {
     version += 1;
     const existing = cards.get(input.cardId)!;
@@ -263,6 +292,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     updateTimer,
     createCard,
     updateCard,
+    updateActionItem,
     moveCard,
     deleteCard,
     toggleReaction,
@@ -285,6 +315,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
       updateTimer,
       createCard,
       updateCard,
+      updateActionItem,
       moveCard,
       deleteCard,
       toggleReaction,
@@ -708,6 +739,183 @@ describe('<BoardWorkspace />', () => {
       }
     });
     expectNoDiagnostics(artifact);
+  });
+
+  it('flags Action Items from the Card menu, syncs the open badge live, and opens the Action Items Drawer via A', async () => {
+    const streams: EventTarget[] = [];
+    vi.stubGlobal(
+      'EventSource',
+      class extends EventTarget {
+        constructor() {
+          super();
+          streams.push(this);
+        }
+        close() {}
+      },
+    );
+    const regular = makeCard({
+      id: 'regular',
+      content: 'Pair on flaky tests',
+      isMine: false,
+    });
+    const action = makeCard({
+      id: 'action',
+      columnId: 'col_3',
+      content: 'Ship canary',
+      isMine: false,
+      isActionItem: true,
+    });
+    const board = makeBoardView({
+      isFacilitator: false,
+      cards: [regular, action],
+    });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    function receive(message: BoardLiveMessage) {
+      streams[0].dispatchEvent(
+        new MessageEvent('message', { data: JSON.stringify(message) }),
+      );
+      flush();
+    }
+    try {
+      flush();
+      receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+      expect(
+        view.getByRole('button', { name: 'Action Items, 1 open' }),
+      ).toBeInTheDocument();
+
+      const cardArticle = view
+        .getByText('Pair on flaky tests')
+        .closest('article')!;
+      fireEvent.click(
+        within(cardArticle).getByRole('button', {
+          name: 'Flag as Action Item',
+        }),
+      );
+      await flushPromises();
+      expect(spies.updateActionItem).toHaveBeenCalledWith({
+        boardId: board.id,
+        cardId: 'regular',
+        isActionItem: true,
+      });
+      expect(
+        view.getByRole('button', { name: 'Action Items, 2 open' }),
+      ).toBeInTheDocument();
+
+      const refreshedArticle = view
+        .getByText('Pair on flaky tests')
+        .closest('article')!;
+      const doneCheckbox = within(refreshedArticle).getByLabelText(
+        'Mark Pair on flaky tests as Done',
+      );
+      fireEvent.click(doneCheckbox);
+      await flushPromises();
+      expect(spies.updateActionItem).toHaveBeenLastCalledWith({
+        boardId: board.id,
+        cardId: 'regular',
+        actionDone: true,
+      });
+      expect(
+        view.getByRole('button', { name: 'Action Items, 1 open' }),
+      ).toBeInTheDocument();
+
+      receive({
+        type: 'board:mutation',
+        version: 4,
+        events: [
+          {
+            type: 'card:upserted',
+            version: 4,
+            card: { ...action, actionDone: true },
+          },
+        ],
+      });
+      expect(
+        view.getByRole('button', { name: 'Action Items, 0 open' }),
+      ).toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: 'a' });
+      flush();
+      const drawer = within(
+        view.getByRole('dialog', { name: 'Action Items' }),
+      );
+      expect(drawer.getByText('Pair on flaky tests')).toBeInTheDocument();
+      expect(drawer.getByText('Ship canary')).toBeInTheDocument();
+      expect(drawer.getByRole('button', { name: 'Done (2)' })).toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+      flush();
+      expect(
+        view.queryByRole('dialog', { name: 'Action Items' }),
+      ).not.toBeInTheDocument();
+
+      const composer = view.getByRole('textbox', {
+        name: 'Add card to Went Well',
+      });
+      fireEvent.keyDown(composer, { key: 'a' });
+      flush();
+      expect(
+        view.queryByRole('dialog', { name: 'Action Items' }),
+      ).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('flags, completes, and tags an Action Item from the Card detail drawer', async () => {
+    const card = makeCard({ id: 'detail_card', content: 'Write the runbook' });
+    const board = makeBoardView({ cards: [card] });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+
+    fireEvent.click(drawer.getByLabelText('Flag as Action Item'));
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'detail_card',
+      isActionItem: true,
+    });
+
+    fireEvent.click(drawer.getByLabelText('Done'));
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: 'detail_card',
+      actionDone: true,
+    });
+
+    const owner = drawer.getByLabelText('Action owner');
+    expect(owner).toHaveAttribute('maxlength', '40');
+    fireEvent.input(owner, { target: { value: 'Platform' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Enter' });
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: 'detail_card',
+      actionOwner: 'Platform',
+    });
+    expect(drawer.getByLabelText('Action owner')).toHaveValue('Platform');
+
+    fireEvent.click(drawer.getByLabelText('Action Item'));
+    await flushPromises();
+    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: 'detail_card',
+      isActionItem: false,
+    });
+    expect(drawer.queryByLabelText('Done')).not.toBeInTheDocument();
+    expect(drawer.queryByLabelText('Action owner')).not.toBeInTheDocument();
   });
 
   it('renders sticky header, Columns with 3px pastel accent bar and Card count badge, and records Recent Board', () => {

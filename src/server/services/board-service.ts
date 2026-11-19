@@ -22,6 +22,7 @@ import {
   ReorderColumnsInputSchema,
   SetPrivateModeInputSchema,
   ToggleReactionInputSchema,
+  UpdateActionItemInputSchema,
   UpdateCardInputSchema,
   UpdateColumnInputSchema,
   UpdateTimerInputSchema,
@@ -292,6 +293,25 @@ export async function updateCardForRequest(
     type: 'card:update',
     cardId: input.cardId,
     content: input.content,
+  });
+}
+
+export async function updateActionItemForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(UpdateActionItemInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'card:set-action',
+    cardId: input.cardId,
+    ...(input.isActionItem !== undefined
+      ? { isActionItem: input.isActionItem }
+      : {}),
+    ...(input.actionDone !== undefined
+      ? { actionDone: input.actionDone }
+      : {}),
+    ...(input.actionOwner !== undefined
+      ? { actionOwner: input.actionOwner }
+      : {}),
   });
 }
 

@@ -1061,6 +1061,274 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
   });
 });
 
+describe('BoardService (Action Items)', () => {
+  async function createActionFixture() {
+    const service = await import('./board-service');
+    const created = await runRequest(
+      new Request('https://retrocks.app/', { method: 'POST' }),
+      () => service.createBoardForRequest({}),
+    );
+    const board = created.result;
+    const facilitatorCookie = extractSessionCookie(created.response);
+    const join = async () => {
+      const visited = await runRequest(
+        new Request(`https://retrocks.app/b/${board.id}`),
+        () => service.getBoardForRequest(board.id),
+      );
+      return extractSessionCookie(visited.response);
+    };
+    const author = await join();
+    const reader = await join();
+    const as = <T>(cookie: string, handler: () => Promise<T>) =>
+      runRequest(
+        new Request(`https://retrocks.app/b/${board.id}`, {
+          method: 'POST',
+          headers: { cookie },
+        }),
+        handler,
+      ).then(({ result }) => result);
+    const createCard = async (
+      cookie: string,
+      columnId: string,
+      content: string,
+    ) => {
+      const result = await as(cookie, () =>
+        service.createCardForRequest({ boardId: board.id, columnId, content }),
+      );
+      const event = result.events[0];
+      if (event?.type !== 'card:upserted') throw new Error('Expected a Card');
+      return event.card;
+    };
+    return {
+      service,
+      board,
+      facilitatorCookie,
+      author,
+      reader,
+      as,
+      createCard,
+    };
+  }
+
+  it('auto-flags Action Column Cards and lets any Participant flag, complete, tag, and unflag a revealed Card', async () => {
+    const { service, board, author, reader, as, createCard } =
+      await createActionFixture();
+
+    const autoFlagged = await createCard(
+      author,
+      board.columns[2].id,
+      'Automate canary rollback',
+    );
+    expect(autoFlagged).toMatchObject({
+      isActionItem: true,
+      actionDone: false,
+      actionOwner: '',
+    });
+
+    const card = await createCard(
+      author,
+      board.columns[0].id,
+      'Pair on flaky tests',
+    );
+    expect(card.isActionItem).toBe(false);
+
+    // Any Participant can flag another Participant's revealed Card.
+    const flagged = await as(reader, () =>
+      service.updateActionItemForRequest({
+        boardId: board.id,
+        cardId: card.id,
+        isActionItem: true,
+      }),
+    );
+    expect(flagged.events[0]).toMatchObject({
+      type: 'card:upserted',
+      card: {
+        id: card.id,
+        isActionItem: true,
+        actionDone: false,
+        actionOwner: '',
+      },
+    });
+
+    const completed = await as(reader, () =>
+      service.updateActionItemForRequest({
+        boardId: board.id,
+        cardId: card.id,
+        actionDone: true,
+        actionOwner: '  Platform  ',
+      }),
+    );
+    expect(completed.events[0]).toMatchObject({
+      type: 'card:upserted',
+      card: {
+        id: card.id,
+        isActionItem: true,
+        actionDone: true,
+        actionOwner: 'Platform',
+      },
+    });
+
+    const authorView = await as(author, () =>
+      service.getBoardForRequest(board.id),
+    );
+    expect(authorView?.cards.find((item) => item.id === card.id)).toMatchObject({
+      isActionItem: true,
+      actionDone: true,
+      actionOwner: 'Platform',
+    });
+
+    const unflagged = await as(reader, () =>
+      service.updateActionItemForRequest({
+        boardId: board.id,
+        cardId: card.id,
+        isActionItem: false,
+      }),
+    );
+    expect(unflagged.events[0]).toMatchObject({
+      type: 'card:upserted',
+      card: {
+        id: card.id,
+        isActionItem: false,
+        actionDone: false,
+        actionOwner: '',
+      },
+    });
+  });
+
+  it('rejects Action Item changes on another Participant’s redacted Card while Private Mode is ON', async () => {
+    const { service, board, facilitatorCookie, author, reader, as, createCard } =
+      await createActionFixture();
+    const card = await createCard(
+      author,
+      board.columns[0].id,
+      'Secret reflection',
+    );
+    await as(facilitatorCookie, () =>
+      service.setPrivateModeForRequest({ boardId: board.id, isBlurred: true }),
+    );
+
+    for (const cookie of [reader, facilitatorCookie]) {
+      for (const patch of [
+        { isActionItem: true },
+        { actionDone: true },
+        { actionOwner: 'Platform' },
+      ]) {
+        await expect(
+          as(cookie, () =>
+            service.updateActionItemForRequest({
+              boardId: board.id,
+              cardId: card.id,
+              ...patch,
+            }),
+          ),
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      }
+    }
+
+    // The author can still manage their own Card while Private Mode is ON.
+    await expect(
+      as(author, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: card.id,
+          isActionItem: true,
+        }),
+      ),
+    ).resolves.toMatchObject({
+      events: [
+        { type: 'card:upserted', card: { id: card.id, isActionItem: true } },
+      ],
+    });
+
+    await as(facilitatorCookie, () =>
+      service.setPrivateModeForRequest({ boardId: board.id, isBlurred: false }),
+    );
+    await expect(
+      as(reader, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: card.id,
+          actionOwner: 'API squad',
+        }),
+      ),
+    ).resolves.toMatchObject({
+      events: [
+        { type: 'card:upserted', card: { actionOwner: 'API squad' } },
+      ],
+    });
+  });
+
+  it('validates owner length and blank owners, and edits action fields only on Action Items', async () => {
+    const { service, board, author, as, createCard } =
+      await createActionFixture();
+    const card = await createCard(author, board.columns[0].id, 'Follow-up');
+
+    await expect(
+      as(author, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: card.id,
+          isActionItem: true,
+          actionOwner: 'a'.repeat(41),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('40'),
+    });
+    await expect(
+      as(author, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: card.id,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(
+      as(author, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: card.id,
+          actionDone: true,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    const flagged = await as(author, () =>
+      service.updateActionItemForRequest({
+        boardId: board.id,
+        cardId: card.id,
+        isActionItem: true,
+        actionOwner: 'x'.repeat(40),
+      }),
+    );
+    expect(flagged.events[0]).toMatchObject({
+      card: { actionOwner: 'x'.repeat(40) },
+    });
+
+    const blankOwner = await as(author, () =>
+      service.updateActionItemForRequest({
+        boardId: board.id,
+        cardId: card.id,
+        actionOwner: '   ',
+      }),
+    );
+    expect(blankOwner.events[0]).toMatchObject({
+      card: { actionOwner: '' },
+    });
+
+    await expect(
+      as(author, () =>
+        service.updateActionItemForRequest({
+          boardId: board.id,
+          cardId: 'missing_card',
+          isActionItem: true,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
 describe('BoardService (shared Countdown Timer)', () => {
   async function createTimerBoard() {
     const service = await import('./board-service');

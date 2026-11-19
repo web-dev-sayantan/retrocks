@@ -150,6 +150,13 @@ export type BoardMutationCommand =
   | { type: 'card:update'; cardId: string; content: string }
   | { type: 'card:move'; cardId: string; targetColumnId: string }
   | { type: 'card:delete'; cardId: string }
+  | {
+      type: 'card:set-action';
+      cardId: string;
+      isActionItem?: boolean;
+      actionDone?: boolean;
+      actionOwner?: string;
+    }
   | { type: 'reaction:toggle'; cardId: string; emoji: ReactionEmoji }
   | { type: 'comment:create'; cardId: string; id: string; content: string }
   | { type: 'comment:delete'; cardId: string; commentId: string }
