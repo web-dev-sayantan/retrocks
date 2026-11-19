@@ -416,6 +416,130 @@ describe('handleExportRequest()', () => {
     expect(hiddenRow).toContain(',[Hidden in Private Mode],Yes,,,,,,');
   });
 
+  it('redacts Private Mode Card Group title and Vote totals across MD, CSV, and JSON exports for other Participants and Facilitators', async () => {
+    const boardService = await import('./services/board-service');
+    const groupingService = await import('./services/grouping-service');
+    const votingService = await import('./services/voting-service');
+    const { handleExportRequest } = await import('./export-handler');
+    const origin = 'https://retrocks.app';
+
+    const { result: board, cookie: facilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () =>
+        boardService.createBoardForRequest({
+          title: 'Private Group Export Test',
+          isBlurred: true,
+        }),
+    );
+    const boardUrl = `${origin}/b/${board.id}`;
+    const post = <T>(cookie: string, run: () => Promise<T>) =>
+      withSession(
+        new Request(boardUrl, { method: 'POST', headers: { cookie } }),
+        run,
+      ).then((r) => r.result);
+
+    await post(facilitatorCookie!, () =>
+      votingService.updateVotingSettingsForRequest({
+        boardId: board.id,
+        allowParticipantGroup: true,
+      }),
+    );
+
+    const { cookie: participantACookie } = await withSession(
+      new Request(boardUrl),
+      () => boardService.getBoardForRequest(board.id),
+    );
+    const { cookie: participantBCookie } = await withSession(
+      new Request(boardUrl),
+      () => boardService.getBoardForRequest(board.id),
+    );
+
+    const secretGroupTitle = 'CONFIDENTIAL_MERGED_THEME_999';
+    const cardA1 = await post(participantACookie!, () =>
+      boardService.createCardForRequest({
+        boardId: board.id,
+        columnId: board.columns[0].id,
+        content: secretGroupTitle,
+      }),
+    );
+    const cardA1Id = cardA1.events[0].type === 'card:upserted' ? cardA1.events[0].card.id : '';
+    const cardA2 = await post(participantACookie!, () =>
+      boardService.createCardForRequest({
+        boardId: board.id,
+        columnId: board.columns[0].id,
+        content: 'CONFIDENTIAL_SECOND_CARD_999',
+      }),
+    );
+    const cardA2Id = cardA2.events[0].type === 'card:upserted' ? cardA2.events[0].card.id : '';
+
+    const merged = await post(participantACookie!, () =>
+      groupingService.groupCardsForRequest({
+        boardId: board.id,
+        cardId: cardA2Id,
+        targetType: 'card',
+        targetId: cardA1Id,
+      }),
+    );
+    const groupEvent = merged.events.find((e) => e.type === 'group:upserted');
+    const groupId = groupEvent?.type === 'group:upserted' ? groupEvent.group.id : '';
+
+    await post(participantACookie!, () =>
+      votingService.changeVoteForRequest({
+        boardId: board.id,
+        targetType: 'group',
+        targetId: groupId,
+        delta: 1,
+      }),
+    );
+    await post(participantACookie!, () =>
+      votingService.changeVoteForRequest({
+        boardId: board.id,
+        targetType: 'group',
+        targetId: groupId,
+        delta: 1,
+      }),
+    );
+
+    // Neither Participant B nor Facilitator sees the group's title or votes in MD/CSV/JSON
+    for (const viewerCookie of [participantBCookie!, facilitatorCookie!]) {
+      const [mdText, csvText, jsonText] = await Promise.all(
+        (['md', 'csv', 'json'] as const).map(async (format) => {
+          const res = await handleExportRequest(
+            board.id,
+            new Request(`${origin}/api/boards/${board.id}/export?format=${format}`, {
+              headers: { cookie: viewerCookie },
+            }),
+          );
+          expect(res.status).toBe(200);
+          return res.text();
+        }),
+      );
+
+      for (const payload of [mdText, csvText, jsonText]) {
+        expect(payload).not.toContain(secretGroupTitle);
+        expect(payload).not.toContain('CONFIDENTIAL_SECOND_CARD_999');
+      }
+
+      expect(mdText).toContain('### [Hidden in Private Mode]\n');
+      expect(mdText).not.toContain('2 votes');
+
+      const csvLines = csvText.replace(/^\uFEFF/, '').trim().split('\r\n');
+      expect(csvLines[1]).toContain(',[Hidden in Private Mode],[Hidden in Private Mode],Yes,,,,,,');
+
+      const jsonData = JSON.parse(jsonText) as {
+        groups: Array<{ id: string; title: string; redacted: boolean; votes: number | null }>;
+      };
+      expect(jsonData.groups).toEqual([
+        expect.objectContaining({
+          id: groupId,
+          redacted: true,
+          title: '',
+          votes: null,
+        }),
+      ]);
+    }
+  });
+
   it('omits aggregate Vote totals in MD, CSV, and JSON while Blind Voting is ON even for the Facilitator', async () => {
     const boardService = await import('./services/board-service');
     const votingService = await import('./services/voting-service');

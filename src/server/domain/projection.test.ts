@@ -8,7 +8,10 @@ import {
   getBoardTemplate,
 } from '../../lib/templates';
 import type { RawBoardSnapshot } from '../db/raw-types';
-import { projectBoardForViewer } from './projection';
+import {
+  projectBoardForViewer,
+  projectMutationEventsForViewer,
+} from './projection';
 
 function makeRawSnapshot(overrides?: Partial<RawBoardSnapshot>): RawBoardSnapshot {
   const now = 1_760_000_000_000;
@@ -248,5 +251,110 @@ describe('projectBoardForViewer()', () => {
     expect(mine.votes).toBeNull();
     expect(mine.myVotes).toBe(2);
     expect(dto.remainingVotes).toBe(3);
+  });
+
+  it('redacts Private Mode Card Groups in SSR snapshots and live group:upserted events for non-authors including Facilitators', () => {
+    const now = 1_760_000_000_000;
+    const raw = makeRawSnapshot({
+      groups: [
+        {
+          id: 'group_secret',
+          boardId: 'board_0123456789abcdef',
+          columnId: 'col_1',
+          title: 'Secret merged incident theme',
+          createdAt: now + 10,
+        },
+      ],
+      cards: [
+        {
+          id: 'card_b1',
+          boardId: 'board_0123456789abcdef',
+          columnId: 'col_1',
+          groupId: 'group_secret',
+          content: 'Secret merged incident theme',
+          authorTokenHash: 'hash_viewer_b',
+          isActionItem: false,
+          actionDone: false,
+          actionOwner: '',
+          createdAt: now + 1,
+          updatedAt: now + 1,
+        },
+        {
+          id: 'card_b2',
+          boardId: 'board_0123456789abcdef',
+          columnId: 'col_1',
+          groupId: 'group_secret',
+          content: 'Second private card from B',
+          authorTokenHash: 'hash_viewer_b',
+          isActionItem: false,
+          actionDone: false,
+          actionOwner: '',
+          createdAt: now + 2,
+          updatedAt: now + 2,
+        },
+      ],
+      votes: [
+        {
+          boardId: 'board_0123456789abcdef',
+          targetType: 'group',
+          targetId: 'group_secret',
+          voterTokenHash: 'hash_viewer_b',
+          count: 2,
+          updatedAt: now + 12,
+        },
+      ],
+    });
+    raw.board.isBlurred = true;
+
+    // Author (viewer B) sees their own Card Group title and votes normally
+    const authorDto = projectBoardForViewer(raw, 'hash_viewer_b', false);
+    expect(authorDto.groups).toEqual([
+      expect.objectContaining({
+        id: 'group_secret',
+        title: 'Secret merged incident theme',
+        redacted: false,
+        votes: 2,
+        myVotes: 2,
+      }),
+    ]);
+
+    // Facilitator (viewer A) and another Participant (viewer C) MUST NOT see title or votes
+    for (const [viewerHash, isFac] of [
+      ['hash_viewer_a', true] as const,
+      ['hash_viewer_c', false] as const,
+    ]) {
+      const viewerDto = projectBoardForViewer(raw, viewerHash, isFac);
+      expect(JSON.stringify(viewerDto)).not.toContain('Secret merged incident theme');
+      expect(viewerDto.groups).toEqual([
+        expect.objectContaining({
+          id: 'group_secret',
+          title: '',
+          redacted: true,
+          votes: null,
+          myVotes: 0,
+        }),
+      ]);
+
+      const liveEvents = projectMutationEventsForViewer(
+        raw,
+        [{ type: 'group:upserted', version: 2, groupId: 'group_secret' }],
+        viewerHash,
+        isFac,
+      );
+      expect(JSON.stringify(liveEvents)).not.toContain('Secret merged incident theme');
+      expect(liveEvents).toEqual([
+        {
+          type: 'group:upserted',
+          version: 2,
+          group: expect.objectContaining({
+            id: 'group_secret',
+            title: '',
+            redacted: true,
+            votes: null,
+            myVotes: 0,
+          }),
+        },
+      ]);
+    }
   });
 });

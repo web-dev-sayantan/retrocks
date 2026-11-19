@@ -439,4 +439,114 @@ describe('applyBoardEvents (reactive store patcher)', () => {
     );
     expectNoDiagnostics(artifact);
   });
+
+  it('updates a 3-Card Group in place when a member leaves and preserves accurate Card Votes after group decrement + dissolve', async () => {
+    const { artifact } = await captureArtifact(
+      () => {
+        const card1 = makeCard({ id: 'card_1', groupId: 'group_1', votes: 1, myVotes: 1 });
+        const card2 = makeCard({ id: 'card_2', groupId: 'group_1', votes: 1, myVotes: 1 });
+        const card3 = makeCard({ id: 'card_3', groupId: 'group_1', votes: 0, myVotes: 0 });
+        const [board, setBoard] = createStore<BoardViewDTO>({
+          ...makeInitialBoard(),
+          remainingVotes: 3,
+          columns: makeInitialBoard().columns.map((column) => ({
+            ...column,
+            cardCount: column.id === 'col_1' ? 3 : 0,
+          })),
+          groups: [
+            {
+              id: 'group_1',
+              columnId: 'col_1',
+              title: 'Merged theme',
+              redacted: false,
+              cardIds: ['card_1', 'card_2', 'card_3'],
+              votes: 2,
+              myVotes: 2,
+              createdAt: 1_760_000_002_000,
+            },
+          ],
+          cards: [card1, card2, card3],
+        });
+
+        // 1. Ungrouping card_3 emits group:upserted + card:upserted; store updates cleanly
+        setBoard((draft) => {
+          applyBoardEvents(draft, [
+            {
+              type: 'group:upserted',
+              version: 2,
+              group: {
+                id: 'group_1',
+                columnId: 'col_1',
+                title: 'Merged theme',
+                redacted: false,
+                cardIds: ['card_1', 'card_2'],
+                votes: 2,
+                myVotes: 2,
+                createdAt: 1_760_000_002_000,
+              },
+            },
+            {
+              type: 'card:upserted',
+              version: 2,
+              card: { ...card3, groupId: null },
+            },
+          ]);
+        });
+        flush();
+
+        let current = snapshot(board);
+        expect(current.groups[0].cardIds).toEqual(['card_1', 'card_2']);
+        expect(current.cards.find((c) => c.id === 'card_3')?.groupId).toBeNull();
+
+        // 2. Group -1 removes grandfathered vote on card_2, emitting both group and card vote:updated
+        setBoard((draft) => {
+          applyBoardEvents(draft, [
+            {
+              type: 'vote:updated',
+              version: 3,
+              targetType: 'group',
+              targetId: 'group_1',
+              totalVotes: 1,
+              myVotes: 1,
+              remainingVotes: 4,
+            },
+            {
+              type: 'vote:updated',
+              version: 3,
+              targetType: 'card',
+              targetId: 'card_2',
+              totalVotes: 0,
+              myVotes: 0,
+              remainingVotes: 4,
+            },
+          ]);
+        });
+        flush();
+
+        // 3. Dissolving the group in the same session displays exact remaining Card Votes (card_1: 1, card_2: 0)
+        setBoard((draft) => {
+          applyBoardEvents(draft, [
+            { type: 'group:dissolved', version: 4, groupId: 'group_1' },
+            { type: 'vote:balance', version: 4, remainingVotes: 4 },
+          ]);
+        });
+        flush();
+
+        current = snapshot(board);
+        expect(current.groups).toEqual([]);
+        expect(current.cards.find((c) => c.id === 'card_1')).toMatchObject({
+          groupId: null,
+          votes: 1,
+          myVotes: 1,
+        });
+        expect(current.cards.find((c) => c.id === 'card_2')).toMatchObject({
+          groupId: null,
+          votes: 0,
+          myVotes: 0,
+        });
+      },
+      { scenario: 'board-store-group-shrink-and-vote-dissolve' },
+    );
+    expectNoDiagnostics(artifact);
+  });
 });

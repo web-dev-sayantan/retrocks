@@ -161,15 +161,6 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
     return deleted;
   }
 
-  async touchActivity(boardId: string, now: number = Date.now()): Promise<void> {
-    const updated = this.ops.touchActivity(boardId, now);
-    if (updated) {
-      await this.ctx.storage.setAlarm(
-        computeBoardExpiryAt(updated.lastActiveAt, updated.retentionDays),
-      );
-    }
-  }
-
   async updateFacilitatorTokenEncryption(
     boardId: string,
     encryptedToken: string,

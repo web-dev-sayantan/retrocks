@@ -1,12 +1,12 @@
 import { query } from '@solidjs/router';
 import { httpStatus, redirect, respond } from '@solidjs/web';
 
+import { respondToBoardMutation } from './action-response';
 import { changeVote, resetVotes, updateVotingSettings } from './voting-actions';
 
 import type {
   ActionError,
   BoardMutationResponse,
-  BoardMutationSuccess,
   BoardViewDTO,
 } from './board-types';
 import type {
@@ -34,24 +34,6 @@ import type {
   UpdateColumnInput,
   UpdateTimerInput,
 } from './schemas';
-
-async function respondToBoardMutation(
-  run: () => Promise<BoardMutationSuccess>,
-): Promise<BoardMutationResponse> {
-  const { BoardDomainError } = await import('../server/services/board-service');
-  try {
-    return respond(await run(), { revalidate: [] });
-  } catch (error) {
-    if (error instanceof BoardDomainError) {
-      httpStatus(error.status);
-      return respond(
-        { ok: false, code: error.code, message: error.message },
-        { status: error.status, revalidate: [] },
-      );
-    }
-    throw error;
-  }
-}
 
 /**
  * Loads a viewer-projected Board snapshot for `/b/:id`.

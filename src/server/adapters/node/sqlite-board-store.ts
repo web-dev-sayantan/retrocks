@@ -185,9 +185,6 @@ export async function createNodeBoardStore(
     async deleteBoard(boardId: string): Promise<boolean> {
       return ops.deleteBoard(boardId);
     },
-    async touchActivity(boardId: string, now?: number): Promise<void> {
-      ops.touchActivity(boardId, now);
-    },
     async updateFacilitatorTokenEncryption(
       boardId: string,
       encryptedToken: string,

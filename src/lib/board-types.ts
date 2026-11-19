@@ -120,6 +120,7 @@ export interface CardGroupDTO {
   id: string;
   columnId: string;
   title: string;
+  redacted?: boolean;
   cardIds: string[];
   votes: number | null;
   myVotes: number;

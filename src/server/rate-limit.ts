@@ -42,16 +42,7 @@ async function deriveTransientRateLimitKey(request: Request): Promise<string> {
   return sha256Hex(`${ephemeralSalt}:${address}`);
 }
 
-/**
- * In-memory sliding-window rate limiter used in Node deployments and Vitest.
- * Keys are salted SHA-256 hashes held strictly in RAM — never persisted.
- */
-export function createInMemoryRateLimiter(options?: {
-  limit?: number;
-  windowMs?: number;
-}): InMemoryRateLimiter {
-  const limit = options?.limit ?? DEFAULT_LIMIT;
-  const windowMs = options?.windowMs ?? DEFAULT_WINDOW_MS;
+function createSlidingWindowLimiter(limit: number, windowMs: number) {
   const buckets = new Map<string, number[]>();
 
   function pruneStale(now: number): void {
@@ -67,11 +58,8 @@ export function createInMemoryRateLimiter(options?: {
   }
 
   return {
-    async check(request: Request): Promise<RateLimitResult> {
-      const now = Date.now();
+    checkKey(key: string, now: number = Date.now()): RateLimitResult {
       const cutoff = now - windowMs;
-      const key = await deriveTransientRateLimitKey(request);
-
       if (buckets.size >= MAX_TRACKED_KEYS) {
         pruneStale(now);
       }
@@ -91,6 +79,33 @@ export function createInMemoryRateLimiter(options?: {
     },
     getActiveKeySnapshotForTests(): string[] {
       return [...buckets.keys()];
+    },
+  };
+}
+
+/**
+ * In-memory sliding-window rate limiter used in Node deployments and Vitest.
+ * Keys are salted SHA-256 hashes held strictly in RAM — never persisted.
+ */
+export function createInMemoryRateLimiter(options?: {
+  limit?: number;
+  windowMs?: number;
+}): InMemoryRateLimiter {
+  const windowLimiter = createSlidingWindowLimiter(
+    options?.limit ?? DEFAULT_LIMIT,
+    options?.windowMs ?? DEFAULT_WINDOW_MS,
+  );
+
+  return {
+    async check(request: Request): Promise<RateLimitResult> {
+      const key = await deriveTransientRateLimitKey(request);
+      return windowLimiter.checkKey(key, Date.now());
+    },
+    reset(): void {
+      windowLimiter.reset();
+    },
+    getActiveKeySnapshotForTests(): string[] {
+      return windowLimiter.getActiveKeySnapshotForTests();
     },
   };
 }
@@ -147,21 +162,10 @@ export function createBoardWriteRateLimiter(options?: {
   limit?: number;
   windowMs?: number;
 }): BoardWriteRateLimiter {
-  const limit = options?.limit ?? DEFAULT_BOARD_WRITE_LIMIT;
-  const windowMs = options?.windowMs ?? DEFAULT_BOARD_WRITE_WINDOW_MS;
-  const buckets = new Map<string, number[]>();
-
-  function pruneStale(now: number): void {
-    const cutoff = now - windowMs;
-    for (const [key, timestamps] of buckets) {
-      const fresh = timestamps.filter((ts) => ts > cutoff);
-      if (fresh.length === 0) {
-        buckets.delete(key);
-      } else {
-        buckets.set(key, fresh);
-      }
-    }
-  }
+  const windowLimiter = createSlidingWindowLimiter(
+    options?.limit ?? DEFAULT_BOARD_WRITE_LIMIT,
+    options?.windowMs ?? DEFAULT_BOARD_WRITE_WINDOW_MS,
+  );
 
   return {
     check(
@@ -169,28 +173,13 @@ export function createBoardWriteRateLimiter(options?: {
       participantHash: string,
       now: number = Date.now(),
     ): RateLimitResult {
-      const cutoff = now - windowMs;
-      const key = `${boardId}:${participantHash}`;
-
-      if (buckets.size >= MAX_TRACKED_KEYS) {
-        pruneStale(now);
-      }
-
-      const timestamps = (buckets.get(key) ?? []).filter((ts) => ts > cutoff);
-      if (timestamps.length >= limit) {
-        buckets.set(key, timestamps);
-        return { allowed: false };
-      }
-
-      timestamps.push(now);
-      buckets.set(key, timestamps);
-      return { allowed: true };
+      return windowLimiter.checkKey(`${boardId}:${participantHash}`, now);
     },
     reset(): void {
-      buckets.clear();
+      windowLimiter.reset();
     },
     getActiveKeySnapshotForTests(): string[] {
-      return [...buckets.keys()];
+      return windowLimiter.getActiveKeySnapshotForTests();
     },
   };
 }

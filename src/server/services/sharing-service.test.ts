@@ -127,6 +127,30 @@ it('retrieves the same Co-Facilitator Link after SESSION_SECRET rotation', async
 
   expect(after).toBe(before);
   expect(response.headers.get('cache-control')).toBe('no-store');
+
+  // The stored ciphertext was lazily re-encrypted under the new primary secret,
+  // so it remains decryptable even after the old secret is retired.
+  vi.stubEnv('SESSION_SECRET', 'a-new-sharing-session-secret-for-rotation');
+  vi.resetModules();
+  const { setBoardStoreForTests: setStoreAfterRetire } = await import(
+    '../adapters/runtime'
+  );
+  setStoreAfterRetire(store);
+  const { getFacilitatorLinkForRequest: getLinkAfterRetire } = await import(
+    './sharing-service'
+  );
+  const { claimFacilitatorRoleForRequest: claimAfterRetire } = await import(
+    './sharing-service'
+  );
+  const { response: newSessionResponse } = await runRequest(() =>
+    claimAfterRetire({ boardId, token: before.split('#f=')[1] }),
+  );
+  const newCookie = newSessionResponse.headers.getSetCookie()[0].split(';')[0];
+  const { result: afterRetire } = await runRequest(
+    () => getLinkAfterRetire(boardId),
+    newCookie,
+  );
+  expect(afterRetire).toBe(before);
 });
 
 it('lets a Facilitator rotate a Locked Board link and revokes prior links', async () => {

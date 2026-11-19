@@ -51,6 +51,7 @@ export interface BoardExportJson {
     id: string;
     columnId: string;
     title: string;
+    redacted: boolean;
     cardIds: string[];
     votes: number | null;
   }>;
@@ -114,6 +115,13 @@ function getSortedColumns(board: BoardViewDTO): ColumnDTO[] {
   return [...board.columns].sort((a, b) => a.position - b.position);
 }
 
+function isGroupRedacted(
+  group: CardGroupDTO,
+  memberCards: readonly CardViewDTO[],
+): boolean {
+  return Boolean(group.redacted) || memberCards.some((card) => card.redacted);
+}
+
 function getGroupVisibleVotes(
   board: BoardViewDTO,
   group: CardGroupDTO,
@@ -122,7 +130,7 @@ function getGroupVisibleVotes(
   if (board.blindVoting || group.votes === null) {
     return null;
   }
-  if (memberCards.some((card) => card.redacted)) {
+  if (isGroupRedacted(group, memberCards)) {
     return null;
   }
   return group.votes;
@@ -199,8 +207,13 @@ export function formatBoardMarkdown(board: BoardViewDTO): string {
     }
 
     for (const { group, cards: memberCards } of columnGroups) {
-      const groupTitle = group.title.trim() || 'Card Group';
-      const groupVotes = getGroupVisibleVotes(board, group, memberCards);
+      const groupRedacted = isGroupRedacted(group, memberCards);
+      const groupTitle = groupRedacted
+        ? REDACTED_CARD_PLACEHOLDER
+        : group.title.trim() || 'Card Group';
+      const groupVotes = groupRedacted
+        ? null
+        : getGroupVisibleVotes(board, group, memberCards);
       lines.push('');
       lines.push(`### ${groupTitle}${formatVotesSuffix(groupVotes)}`);
       lines.push('');
@@ -316,7 +329,13 @@ export function formatBoardCsv(board: BoardViewDTO): string {
 
     for (const card of orderedCards) {
       const group = card.groupId ? groupsById.get(card.groupId) ?? null : null;
-      const groupTitle = group ? group.title.trim() || 'Card Group' : '';
+      const groupMembers = group ? (cardsByGroupId.get(group.id) ?? []) : [];
+      const groupRedacted = group ? isGroupRedacted(group, groupMembers) : false;
+      const groupTitle = group
+        ? groupRedacted
+          ? REDACTED_CARD_PLACEHOLDER
+          : group.title.trim() || 'Card Group'
+        : '';
 
       if (card.redacted) {
         rows.push([
@@ -428,13 +447,18 @@ export function buildBoardExportJson(
     };
   });
 
-  const exportedGroups: BoardExportJson['groups'] = board.groups.map((group) => ({
-    id: group.id,
-    columnId: group.columnId,
-    title: group.title,
-    cardIds: [...group.cardIds],
-    votes: getGroupVisibleVotes(board, group, cardsByGroupId.get(group.id) ?? []),
-  }));
+  const exportedGroups: BoardExportJson['groups'] = board.groups.map((group) => {
+    const memberCards = cardsByGroupId.get(group.id) ?? [];
+    const redacted = isGroupRedacted(group, memberCards);
+    return {
+      id: group.id,
+      columnId: group.columnId,
+      title: redacted ? '' : group.title,
+      redacted,
+      cardIds: [...group.cardIds],
+      votes: redacted ? null : getGroupVisibleVotes(board, group, memberCards),
+    };
+  });
 
   const actionItems: BoardExportJson['actionItems'] = [];
   for (const column of columns) {

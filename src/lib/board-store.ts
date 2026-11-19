@@ -109,6 +109,7 @@ function patchCardDraft(target: CardViewDTO, next: CardViewDTO): void {
 function patchGroupDraft(target: CardGroupDTO, next: CardGroupDTO): void {
   if (target.columnId !== next.columnId) target.columnId = next.columnId;
   if (target.title !== next.title) target.title = next.title;
+  if (target.redacted !== next.redacted) target.redacted = next.redacted;
   if (target.votes !== next.votes) target.votes = next.votes;
   if (target.myVotes !== next.myVotes) target.myVotes = next.myVotes;
   if (target.createdAt !== next.createdAt) target.createdAt = next.createdAt;

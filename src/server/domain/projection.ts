@@ -182,8 +182,29 @@ export function projectBoardForViewer(
     };
   });
 
+  const projectedCardsById = new Map(cards.map((card) => [card.id, card]));
+
   const groups: CardGroupDTO[] = raw.groups.map((group) => {
     const memberCardIds = cardIdsByGroup.get(group.id) ?? [];
+    const isGroupRedacted =
+      board.isBlurred &&
+      memberCardIds.some(
+        (cardId) => projectedCardsById.get(cardId)?.redacted === true,
+      );
+
+    if (isGroupRedacted) {
+      return {
+        id: group.id,
+        columnId: group.columnId,
+        title: '',
+        redacted: true,
+        cardIds: memberCardIds,
+        votes: null,
+        myVotes: 0,
+        createdAt: group.createdAt,
+      };
+    }
+
     let combinedTotal = groupTotalVotes.get(group.id) ?? 0;
     let combinedMine = groupMyVotes.get(group.id) ?? 0;
 
@@ -196,6 +217,7 @@ export function projectBoardForViewer(
       id: group.id,
       columnId: group.columnId,
       title: group.title,
+      redacted: false,
       cardIds: memberCardIds,
       votes: board.blindVoting ? null : combinedTotal,
       myVotes: combinedMine,

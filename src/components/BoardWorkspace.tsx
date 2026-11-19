@@ -5,6 +5,7 @@ import {
   createMemo,
   createSignal,
   createStore,
+  createUniqueId,
   onSettled,
   reconcile,
   untrack,
@@ -14,6 +15,11 @@ import {
   defaultBoardWorkspaceActions,
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
+import {
+  buildExportFilename,
+  buildExportUrl,
+  formatBoardMarkdown,
+} from '../lib/board-export';
 import { connectBoardLive } from '../lib/board-live';
 import { applyBoardEvents } from '../lib/board-store';
 import {
@@ -51,7 +57,14 @@ import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import ExportBoardMenu from './ExportBoardMenu';
-import { CheckIcon, CloseIcon, FlagIcon, PencilIcon, PlusIcon } from './Icons';
+import {
+  CheckIcon,
+  CloseIcon,
+  FlagIcon,
+  MoreHorizontalIcon,
+  PencilIcon,
+  PlusIcon,
+} from './Icons';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
 import type { WorkspaceVoting } from './VoteControls';
@@ -140,6 +153,22 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
   const [revealAnnouncement, setRevealAnnouncement] = createSignal('');
+  let optimisticCardSeq = 0;
+
+  // Mobile (< 640px) header overflow menu state
+  const mobileMenuId = createUniqueId();
+  const [mobileMenuOpen, setMobileMenuOpen] = createSignal(false);
+  const [mobileCopyStatus, setMobileCopyStatus] = createSignal('');
+  let mobileMenuRootEl: HTMLDivElement | undefined;
+  let mobileMenuTriggerEl: HTMLButtonElement | undefined;
+
+  function closeMobileMenu(restoreFocus: boolean): void {
+    setMobileMenuOpen(false);
+    setMobileCopyStatus('');
+    if (restoreFocus) {
+      mobileMenuTriggerEl?.focus();
+    }
+  }
 
   // Board inline rename state
   const [isRenamingBoard, setIsRenamingBoard] = createSignal(false);
@@ -214,6 +243,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       setIsAddingColumn(false);
       setOpenCardDetailId(null);
       setIsActionItemsOpen(false);
+      setMobileMenuOpen(false);
+      setMobileCopyStatus('');
     }
     untrack(() => {
       setWorkspace((draft) => {
@@ -283,6 +314,21 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       }
     },
   );
+
+  createEffect(mobileMenuOpen, (isOpen) => {
+    if (!isOpen) return;
+    function handlePointerDown(event: PointerEvent): void {
+      if (
+        event.target instanceof Node &&
+        mobileMenuRootEl &&
+        !mobileMenuRootEl.contains(event.target)
+      ) {
+        closeMobileMenu(false);
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  });
 
   createEffect(
     () => props.boardId,
@@ -490,6 +536,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         openDialog.close();
         return;
       }
+      if (mobileMenuOpen()) {
+        event.preventDefault();
+        closeMobileMenu(true);
+        return;
+      }
       if (isAddingColumn()) {
         event.preventDefault();
         setIsAddingColumn(false);
@@ -562,6 +613,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function canManageCard(board: BoardViewDTO, cardId: string): boolean {
+    if (cardId.startsWith('optimistic:')) return false;
     const card = board.cards.find((item) => item.id === cardId);
     return !board.isLocked && !!card && !card.redacted &&
       (card.isMine || (board.isFacilitator && !board.isBlurred));
@@ -613,22 +665,107 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
+  function removeOptimisticCard(boardId: string, tempId: string): void {
+    setWorkspace((draft) => {
+      const current = draft.board;
+      if (!current || current.id !== boardId) return;
+      const idx = current.cards.findIndex((item) => item.id === tempId);
+      if (idx === -1) return;
+      const [removed] = current.cards.splice(idx, 1);
+      const col = current.columns.find((c) => c.id === removed.columnId);
+      if (col) col.cardCount = Math.max(0, col.cardCount - 1);
+    });
+  }
+
   async function handleCreateCard(
     columnId: string,
     content: string,
   ): Promise<boolean> {
     const board = workspace.board;
-    if (!board) return false;
-    const response = await actions().createCard({
-      boardId: board.id,
+    const trimmed = content.trim();
+    if (!board || board.isLocked || trimmed.length === 0) return false;
+    const column = board.columns.find((col) => col.id === columnId);
+    if (!column) return false;
+
+    const boardId = board.id;
+    optimisticCardSeq += 1;
+    const tempId = `optimistic:card:${optimisticCardSeq}`;
+    const createdAt = Date.now() + serverTimeOffsetMs;
+    const optimisticCard: CardViewDTO = {
+      id: tempId,
       columnId,
-      content,
+      groupId: null,
+      content: trimmed,
+      redacted: false,
+      isMine: true,
+      isActionItem: column.isActionColumn,
+      actionDone: false,
+      actionOwner: '',
+      votes: board.blindVoting ? null : 0,
+      myVotes: 0,
+      reactions: {},
+      myReactions: [],
+      commentCount: 0,
+      comments: [],
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    setWorkspace((draft) => {
+      const current = draft.board;
+      if (!current || current.id !== boardId) return;
+      current.cards.push(optimisticCard);
+      const col = current.columns.find((c) => c.id === columnId);
+      if (col) col.cardCount += 1;
     });
-    const ok = applyMutationResponse(board.id, response);
-    if (ok) {
-      setNowMs(Date.now() + serverTimeOffsetMs);
+    setNowMs(createdAt);
+
+    try {
+      const response = await actions().createCard({
+        boardId,
+        columnId,
+        content,
+      });
+      if (response.ok) {
+        const upserted = response.events.find(
+          (ev) => ev.type === 'card:upserted',
+        );
+        if (upserted && upserted.type === 'card:upserted') {
+          setWorkspace((draft) => {
+            const current = draft.board;
+            if (!current || current.id !== boardId) return;
+            if (current.cards.some((item) => item.id === upserted.card.id)) {
+              const idx = current.cards.findIndex((item) => item.id === tempId);
+              if (idx !== -1) {
+                const [removed] = current.cards.splice(idx, 1);
+                const col = current.columns.find((c) => c.id === removed.columnId);
+                if (col) col.cardCount = Math.max(0, col.cardCount - 1);
+              }
+              return;
+            }
+            const placeholder = current.cards.find((item) => item.id === tempId);
+            if (placeholder) {
+              placeholder.id = upserted.card.id;
+            }
+          });
+        } else {
+          removeOptimisticCard(boardId, tempId);
+        }
+      } else {
+        removeOptimisticCard(boardId, tempId);
+      }
+      const ok = applyMutationResponse(boardId, response);
+      if (ok) {
+        setNowMs(Date.now() + serverTimeOffsetMs);
+      }
+      return ok;
+    } catch {
+      removeOptimisticCard(boardId, tempId);
+      if (workspace.board?.id === boardId) {
+        setErrorMessage('Could not create Card. Try again.');
+      }
+      return false;
     }
-    return ok;
   }
 
   async function handleUpdateCard(
@@ -703,7 +840,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     board: BoardViewDTO,
     group: CardGroupDTO,
   ): boolean {
-    if (!canManageGrouping(board)) return false;
+    if (!canManageGrouping(board) || group.redacted) return false;
     if (!board.isBlurred) return true;
     return group.cardIds.every(
       (id) => board.cards.find((card) => card.id === id)?.isMine === true,
@@ -774,20 +911,65 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return applyMutationResponse(board.id, response);
   }
 
+  function applyOptimisticReactionDelta(
+    boardId: string,
+    cardId: string,
+    emoji: ReactionEmoji,
+    adding: boolean,
+  ): void {
+    setWorkspace((draft) => {
+      const current = draft.board;
+      if (!current || current.id !== boardId) return;
+      const target = current.cards.find((item) => item.id === cardId);
+      if (!target) return;
+      const existingIdx = target.myReactions.indexOf(emoji);
+      const currentCount = target.reactions[emoji] ?? 0;
+      if (adding) {
+        if (existingIdx === -1) target.myReactions.push(emoji);
+        target.reactions[emoji] = currentCount + 1;
+      } else {
+        if (existingIdx !== -1) target.myReactions.splice(existingIdx, 1);
+        if (currentCount <= 1) {
+          delete target.reactions[emoji];
+        } else {
+          target.reactions[emoji] = currentCount - 1;
+        }
+      }
+    });
+  }
+
   async function handleToggleReaction(
     cardId: string,
     emoji: ReactionEmoji,
   ): Promise<boolean> {
     const board = workspace.board;
-    if (!board || board.isLocked) return false;
+    if (!board || board.isLocked || cardId.startsWith('optimistic:')) {
+      return false;
+    }
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return false;
-    const response = await actions().toggleReaction({
-      boardId: board.id,
-      cardId,
-      emoji,
-    });
-    return applyMutationResponse(board.id, response);
+
+    const boardId = board.id;
+    const hadReaction = card.myReactions.includes(emoji);
+    applyOptimisticReactionDelta(boardId, cardId, emoji, !hadReaction);
+
+    try {
+      const response = await actions().toggleReaction({
+        boardId,
+        cardId,
+        emoji,
+      });
+      if (!response.ok) {
+        applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
+      }
+      return applyMutationResponse(boardId, response);
+    } catch {
+      applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
+      if (workspace.board?.id === boardId) {
+        setErrorMessage('Could not update reaction. Try again.');
+      }
+      return false;
+    }
   }
 
   async function handleCreateComment(
@@ -828,7 +1010,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   function handleOpenCardDetail(cardId: string): void {
     const board = workspace.board;
-    if (!board) return;
+    if (!board || cardId.startsWith('optimistic:')) return;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return;
     setOpenCardDetailId(cardId);
@@ -916,7 +1098,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     delta: ChangeVoteInput['delta'],
   ): Promise<void> {
     const board = workspace.board;
-    if (!board || board.isLocked || voteInFlight) return;
+    if (!board || board.isLocked || voteInFlight || targetId.startsWith('optimistic:')) return;
 
     const boardId = board.id;
     const input = { boardId, targetType, targetId, delta } as const;
@@ -1124,8 +1306,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </div>
           {/* Minimal sticky Board header */}
           <header class="sticky top-0 z-20 border-b border-border bg-surface/95 backdrop-blur-sm">
-            <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 sm:px-6 lg:min-h-14 lg:flex-nowrap lg:py-1.5">
-              <div class="flex min-w-0 basis-full items-center gap-2.5 sm:gap-3 lg:basis-auto lg:flex-1">
+            <div class="mx-auto flex max-w-[1600px] items-center justify-between gap-x-2 gap-y-2 px-3 py-2 sm:flex-wrap sm:gap-x-3 sm:px-6 lg:min-h-14 lg:flex-nowrap lg:py-1.5">
+              <div class="flex min-w-0 flex-1 items-center gap-2 sm:basis-full sm:gap-3 lg:basis-auto">
                 <a
                   href={props.homeHref ?? '/'}
                   aria-label="Retrocks home"
@@ -1240,76 +1422,79 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
               </div>
 
-              <div data-print-hide="true" class="flex flex-wrap items-center gap-1.5 sm:gap-2 lg:shrink-0 lg:flex-nowrap">
-                <Show when={board().id} keyed>
-                  {(boardId) => (
-                    <CountdownTimer
-                      timer={board().timer}
-                      clock={timerClock()}
-                      canControl={board().isFacilitator && !board().isLocked}
-                      onChange={(change) => changeCountdown(boardId, change)}
-                    />
-                  )}
-                </Show>
-                <Show when={board().isFacilitator && !board().isLocked}>
-                  <button
-                    type="button"
-                    aria-keyshortcuts="B"
-                    title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
-                    disabled={isChangingPrivateMode()}
-                    onClick={() => void togglePrivateMode()}
-                    class={[
-                      'inline-flex min-h-11 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium sm:min-h-9 sm:px-3',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
-                      board().isBlurred
-                        ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
-                        : 'border-border bg-surface text-text hover:bg-surface-subtle',
-                    ]}
+              <div data-print-hide="true" class="flex shrink-0 items-center gap-1.5 sm:flex-wrap sm:gap-2 lg:flex-nowrap">
+                <div class="hidden items-center gap-1.5 sm:flex sm:flex-wrap sm:gap-2 lg:flex-nowrap">
+                  <Show when={board().id} keyed>
+                    {(boardId) => (
+                      <CountdownTimer
+                        timer={board().timer}
+                        clock={timerClock()}
+                        canControl={board().isFacilitator && !board().isLocked}
+                        onChange={(change) => changeCountdown(boardId, change)}
+                      />
+                    )}
+                  </Show>
+                  <Show when={board().isFacilitator && !board().isLocked}>
+                    <button
+                      type="button"
+                      aria-keyshortcuts="B"
+                      title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
+                      disabled={isChangingPrivateMode()}
+                      onClick={() => void togglePrivateMode()}
+                      class={[
+                        'inline-flex min-h-11 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium sm:min-h-9 sm:px-3',
+                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                        board().isBlurred
+                          ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
+                          : 'border-border bg-surface text-text hover:bg-surface-subtle',
+                      ]}
+                    >
+                      {board().isBlurred ? 'Reveal All' : 'Private Mode'}
+                    </button>
+                  </Show>
+                  <Show
+                    when={
+                      board().isFacilitator &&
+                      !board().isLocked &&
+                      board().columns.length < MAX_COLUMNS_PER_BOARD
+                    }
                   >
-                    {board().isBlurred ? 'Reveal All' : 'Private Mode'}
-                  </button>
-                </Show>
-                <Show
-                  when={
-                    board().isFacilitator &&
-                    !board().isLocked &&
-                    board().columns.length < MAX_COLUMNS_PER_BOARD
-                  }
-                >
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingColumn((prev) => !prev)}
+                      class={[
+                        'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-9',
+                        'transition-colors hover:bg-surface-subtle',
+                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      ]}
+                    >
+                      <PlusIcon class="h-3.5 w-3.5" />
+                      <span class="hidden sm:inline">+ Add column</span>
+                      <span class="sm:hidden">Column</span>
+                    </button>
+                  </Show>
                   <button
                     type="button"
-                    onClick={() => setIsAddingColumn((prev) => !prev)}
+                    aria-keyshortcuts="A"
+                    aria-haspopup="dialog"
+                    aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
+                    title="Action Items (A)"
+                    onClick={() => setIsActionItemsOpen((open) => !open)}
                     class={[
-                      'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-9',
+                      'inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text sm:min-h-9 sm:px-3',
                       'transition-colors hover:bg-surface-subtle',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
                   >
-                    <PlusIcon class="h-3.5 w-3.5" />
-                    <span class="hidden sm:inline">+ Add column</span>
-                    <span class="sm:hidden">Column</span>
+                    <FlagIcon class="h-3.5 w-3.5" />
+                    <span class="sr-only lg:not-sr-only">Action Items</span>{' '}
+                    <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
+                      {openActionItemCount()}
+                    </span>{' '}
+                    <span class="sr-only">open</span>
                   </button>
-                </Show>
-                <button
-                  type="button"
-                  aria-keyshortcuts="A"
-                  aria-haspopup="dialog"
-                  aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
-                  title="Action Items (A)"
-                  onClick={() => setIsActionItemsOpen((open) => !open)}
-                  class={[
-                    'inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text sm:min-h-9 sm:px-3',
-                    'transition-colors hover:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  <FlagIcon class="h-3.5 w-3.5" />
-                  <span class="sr-only lg:not-sr-only">Action Items</span>{' '}
-                  <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
-                    {openActionItemCount()}
-                  </span>{' '}
-                  <span class="sr-only">open</span>
-                </button>
+                </div>
+
                 <Show when={board().id} keyed>
                   {(boardId) => (
                     <ShareBoard
@@ -1318,8 +1503,198 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     />
                   )}
                 </Show>
-                <ExportBoardMenu board={board()} />
-                <ThemeToggle />
+
+                <div class="hidden items-center gap-2 sm:flex">
+                  <ExportBoardMenu board={board()} />
+                  <ThemeToggle />
+                </div>
+
+                {/* Mobile (< 640px) compact overflow menu for secondary Board controls */}
+                <div ref={mobileMenuRootEl} class="relative sm:hidden">
+                  <button
+                    ref={mobileMenuTriggerEl}
+                    type="button"
+                    aria-label="More board actions"
+                    aria-haspopup="menu"
+                    aria-expanded={mobileMenuOpen() ? 'true' : 'false'}
+                    aria-controls={mobileMenuOpen() ? mobileMenuId : undefined}
+                    onClick={() => {
+                      if (mobileMenuOpen()) {
+                        closeMobileMenu(true);
+                      } else {
+                        setMobileCopyStatus('');
+                        setMobileMenuOpen(true);
+                      }
+                    }}
+                    class={[
+                      'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-text',
+                      'transition-colors hover:bg-surface-subtle',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    ]}
+                  >
+                    <MoreHorizontalIcon />
+                  </button>
+
+                  <Show when={mobileMenuOpen()}>
+                    <div
+                      id={mobileMenuId}
+                      role="menu"
+                      aria-label="More board actions"
+                      data-board-overlay="true"
+                      class="fixed inset-x-3 top-14 z-30 max-h-[calc(100dvh-4.5rem)] space-y-1 overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg sm:hidden"
+                    >
+                      <div class="flex items-center justify-between gap-2 border-b border-border/70 px-1 pb-2">
+                        <Show when={board().id} keyed>
+                          {(boardId) => (
+                            <CountdownTimer
+                              timer={board().timer}
+                              clock={timerClock()}
+                              canControl={board().isFacilitator && !board().isLocked}
+                              onChange={(change) => changeCountdown(boardId, change)}
+                            />
+                          )}
+                        </Show>
+                        <ThemeToggle />
+                      </div>
+
+                      <Show when={board().isFacilitator && !board().isLocked}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={isChangingPrivateMode()}
+                          onClick={() => {
+                            closeMobileMenu(false);
+                            void togglePrivateMode();
+                          }}
+                          class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
+                        >
+                          <span>{board().isBlurred ? 'Reveal All' : 'Private Mode'}</span>
+                        </button>
+                      </Show>
+
+                      <Show
+                        when={
+                          board().isFacilitator &&
+                          !board().isLocked &&
+                          board().columns.length < MAX_COLUMNS_PER_BOARD
+                        }
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            closeMobileMenu(false);
+                            setIsAddingColumn((prev) => !prev);
+                          }}
+                          class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                        >
+                          <PlusIcon class="h-3.5 w-3.5" />
+                          <span>Add column</span>
+                        </button>
+                      </Show>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          closeMobileMenu(false);
+                          setIsActionItemsOpen(true);
+                        }}
+                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                      >
+                        <span class="inline-flex items-center gap-2">
+                          <FlagIcon class="h-3.5 w-3.5" />
+                          <span>Action Items</span>
+                        </span>
+                        <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
+                          {openActionItemCount()}
+                        </span>
+                      </button>
+
+                      <div class="my-1 border-t border-border/70" role="separator" />
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          const markdown = formatBoardMarkdown(board());
+                          void navigator.clipboard
+                            .writeText(markdown)
+                            .then(() => setMobileCopyStatus('Copied Markdown!'))
+                            .catch(() =>
+                              setMobileCopyStatus('Could not copy to the clipboard.'),
+                            );
+                        }}
+                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                      >
+                        <span>Copy Markdown</span>
+                        <span aria-hidden="true" class="text-[11px] font-normal text-text-muted">
+                          Clipboard
+                        </span>
+                      </button>
+
+                      <a
+                        role="menuitem"
+                        href={buildExportUrl(board().id, 'md')}
+                        download={buildExportFilename(board().title, 'md')}
+                        onClick={() => closeMobileMenu(false)}
+                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                      >
+                        <span>Download Markdown</span>
+                        <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
+                          .md
+                        </span>
+                      </a>
+
+                      <a
+                        role="menuitem"
+                        href={buildExportUrl(board().id, 'csv')}
+                        download={buildExportFilename(board().title, 'csv')}
+                        onClick={() => closeMobileMenu(false)}
+                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                      >
+                        <span>Download CSV</span>
+                        <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
+                          .csv
+                        </span>
+                      </a>
+
+                      <a
+                        role="menuitem"
+                        href={buildExportUrl(board().id, 'json')}
+                        download={buildExportFilename(board().title, 'json')}
+                        onClick={() => closeMobileMenu(false)}
+                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                      >
+                        <span>Download JSON</span>
+                        <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
+                          .json
+                        </span>
+                      </a>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          closeMobileMenu(false);
+                          window.print();
+                        }}
+                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                      >
+                        <span>Print / Save as PDF</span>
+                      </button>
+
+                      <Show when={mobileCopyStatus()}>
+                        <p
+                          role="status"
+                          class="border-t border-border/70 px-2.5 pt-2 pb-1 text-[11px] font-medium text-text-muted"
+                        >
+                          {mobileCopyStatus()}
+                        </p>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
               </div>
             </div>
 

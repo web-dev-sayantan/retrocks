@@ -101,11 +101,15 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     );
   });
 
+  const isRedacted = createMemo(() => Boolean(props.group.redacted));
+  const canManageGroup = createMemo(() => props.canManage && !isRedacted());
+
   const canAcceptDrop = createMemo(() => {
     const card = draggingCard();
     return (
       props.canGroupCards &&
       !props.isLocked &&
+      !isRedacted() &&
       card !== undefined &&
       !props.group.cardIds.includes(card.id)
     );
@@ -172,7 +176,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   }
 
   function handleDragStart(event: DragEvent): void {
-    if (!props.canManage || props.isLocked) {
+    if (!canManageGroup() || props.isLocked) {
       event.preventDefault();
       return;
     }
@@ -226,14 +230,14 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       ]}
     >
       <div
-        draggable={props.canManage && !props.isLocked ? 'true' : 'false'}
+        draggable={canManageGroup() && !props.isLocked ? 'true' : 'false'}
         onDragStart={handleDragStart}
         onDragEnd={() => props.onDragEndCard()}
         class={[
           'flex flex-wrap items-center gap-2 rounded-t-xl border-b border-border/70 bg-surface-subtle/70 px-2.5 py-2',
           {
             'cursor-grab active:cursor-grabbing':
-              props.canManage && !props.isLocked,
+              canManageGroup() && !props.isLocked,
           },
         ]}
       >
@@ -256,74 +260,90 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         </button>
 
         <Show
-          when={!isRenaming()}
+          when={!isRedacted()}
           fallback={
-            <div class="flex min-w-0 flex-1 items-center gap-1">
-              <input
-                type="text"
-                aria-label="Card Group title"
-                value={renameDraft()}
-                maxlength={MAX_GROUP_TITLE_LENGTH}
-                onInput={(event) => setRenameDraft(event.currentTarget.value)}
-                onKeyDown={handleRenameKeyDown}
-                class="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-sm font-semibold text-text focus:border-focus focus:outline-none"
-              />
-              <button
-                type="button"
-                aria-label="Save Card Group title"
-                disabled={isSaving() || renameDraft().trim().length === 0}
-                onClick={() => void saveRename()}
-                class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+            <div class="flex min-w-0 flex-1 items-center gap-2">
+              <span class="truncate text-xs font-medium text-text-muted italic">
+                Hidden until Reveal All
+              </span>
+              <span
+                aria-label={`${props.cards.length} cards`}
+                class="inline-flex shrink-0 items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-muted tabular-nums"
               >
-                <CheckIcon />
-              </button>
-              <button
-                type="button"
-                aria-label="Cancel Card Group rename"
-                onClick={cancelRename}
-                class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
-              >
-                <CloseIcon />
-              </button>
+                {props.cards.length} {props.cards.length === 1 ? 'card' : 'cards'}
+              </span>
             </div>
           }
         >
-          <div class="flex min-w-0 flex-1 items-center gap-2">
-            <Show
-              when={props.canManage}
-              fallback={
-                <span class="truncate text-sm font-semibold text-text">
-                  {props.group.title || 'Card Group'}
-                </span>
-              }
-            >
-              <button
-                type="button"
-                aria-label={`${props.group.title || 'Card Group'} — Edit Card Group title`}
-                title="Edit Card Group title"
-                onClick={startRename}
-                class="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-semibold text-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          <Show
+            when={!isRenaming()}
+            fallback={
+              <div class="flex min-w-0 flex-1 items-center gap-1">
+                <input
+                  type="text"
+                  aria-label="Card Group title"
+                  value={renameDraft()}
+                  maxlength={MAX_GROUP_TITLE_LENGTH}
+                  onInput={(event) => setRenameDraft(event.currentTarget.value)}
+                  onKeyDown={handleRenameKeyDown}
+                  class="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-sm font-semibold text-text focus:border-focus focus:outline-none"
+                />
+                <button
+                  type="button"
+                  aria-label="Save Card Group title"
+                  disabled={isSaving() || renameDraft().trim().length === 0}
+                  onClick={() => void saveRename()}
+                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+                >
+                  <CheckIcon />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel Card Group rename"
+                  onClick={cancelRename}
+                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            }
+          >
+            <div class="flex min-w-0 flex-1 items-center gap-2">
+              <Show
+                when={canManageGroup()}
+                fallback={
+                  <span class="truncate text-sm font-semibold text-text">
+                    {props.group.title || 'Card Group'}
+                  </span>
+                }
               >
-                {props.group.title || 'Card Group'}
-              </button>
-            </Show>
-            <span
-              aria-label={`${props.cards.length} cards`}
-              class="inline-flex shrink-0 items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-muted tabular-nums"
-            >
-              {props.cards.length} {props.cards.length === 1 ? 'card' : 'cards'}
-            </span>
-          </div>
-        </Show>
+                <button
+                  type="button"
+                  aria-label={`${props.group.title || 'Card Group'} — Edit Card Group title`}
+                  title="Edit Card Group title"
+                  onClick={startRename}
+                  class="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-semibold text-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                >
+                  {props.group.title || 'Card Group'}
+                </button>
+              </Show>
+              <span
+                aria-label={`${props.cards.length} cards`}
+                class="inline-flex shrink-0 items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-muted tabular-nums"
+              >
+                {props.cards.length} {props.cards.length === 1 ? 'card' : 'cards'}
+              </span>
+            </div>
+          </Show>
 
-        <VoteControls
-          target={props.group}
-          targetType="group"
-          voting={props.voting}
-          isLocked={props.isLocked}
-        />
+          <VoteControls
+            target={props.group}
+            targetType="group"
+            voting={props.voting}
+            isLocked={props.isLocked}
+          />
 
-        <Show when={props.canManage}>
+          <Show when={canManageGroup()}>
           <div data-print-hide="true" class="flex items-center gap-0.5">
             <Show when={otherColumns().length > 0}>
               <div class="relative">
@@ -396,6 +416,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             </button>
           </div>
         </Show>
+        </Show>
       </div>
 
       <Show when={expanded()}>
@@ -409,7 +430,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 columnCards={props.columnCards}
                 columnGroups={props.columnGroups}
                 canGroupCards={props.canGroupCards}
-                canUngroup={props.canManage}
+                canUngroup={canManageGroup()}
                 isFacilitator={props.isFacilitator}
                 isLocked={props.isLocked}
                 isBlurred={props.isBlurred}

@@ -99,8 +99,8 @@ export function cardMatchesQuickFilter(
       return card.isMine;
     case 'voted':
       return group !== null
-        ? group.myVotes > 0 || card.myVotes > 0
-        : card.myVotes > 0;
+        ? (!group.redacted && group.myVotes > 0) || (!card.redacted && card.myVotes > 0)
+        : !card.redacted && card.myVotes > 0;
     case 'action-items':
       return !card.redacted && card.isActionItem;
   }
@@ -188,6 +188,7 @@ export function projectBoardView(
 
       const groupTitleMatches =
         hasSearchQuery &&
+        !group.redacted &&
         group.title.toLowerCase().includes(normalizedQuery);
       const visibleMembers =
         !hasSearchQuery || groupTitleMatches
