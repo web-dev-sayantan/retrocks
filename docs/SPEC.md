@@ -74,11 +74,10 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ## 3. Feature Specification
 
 ### 3.1 Home & Instant Board Creation (`/`)
-- **Zero-clutter hero & creator:** Immediate Board creation form right above the fold — no marketing walls or signup banners.
-- **Board Metadata:**
-  - Board Title (optional; defaults to `"Sprint Retrospective — <MMM D>"`, max 120 chars).
-  - Optional short context/subtitle (max 240 chars, e.g., `"Sprint 42 · Checkout Team"`).
-- **Curated Templates** (visual mini-column previews, fully editable before creation):
+- Show **Create a board**, the optional Board title, the selected **Standard Retro** and its Column names, and one primary **Create board** action above the fold. The default flow targets creation in under five seconds.
+- The optional Board title defaults to `"Sprint Retrospective — <MMM D>"` and allows up to 120 characters.
+- **Customize board** opens the optional subtitle (up to 240 characters) and the Column editor. Selecting **Custom Board** opens the editor automatically. Add, remove, rename, reorder, choose an accent, or toggle Action Column behavior before creation. Draft values persist when disclosures close and when creation fails.
+- **Change template** shows all templates and their Column names with accent markers.
   1. **Standard Retro** — Went Well / To Improve / Action Items *(marked `isActionColumn`)*
   2. **Start / Stop / Continue** — Start Doing / Stop Doing / Continue Doing
   3. **Mad / Sad / Glad** — Mad / Sad / Glad
@@ -88,56 +87,57 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   7. **Six Thinking Hats** — Facts (White) / Feelings (Red) / Caution (Black) / Benefits (Yellow) / Creativity (Green) / Process (Blue)
   8. **Pros & Cons** — Pros / Cons
   9. **Custom Board** — 1 to 10 customizable Columns (add, remove, rename, drag-reorder, choose subtle pastel accent).
-- **Collapsible Advanced Options** (sensible defaults, hidden until expanded):
+- **Advanced options** shows voting, Private Mode, and expiry settings on demand.
   - Votes per Participant: `3` / `5` *(default)* / `10` / `Unlimited`
   - Max Votes per Card / Card Group: `Unlimited (stackable)` *(default)* / `1 per Card or Card Group`
   - Start in Private Mode: `Off` *(default)* / `On`
   - Auto-expiry on inactivity: `30 days` / `90 days` *(default)* / `180 days`
 - **Recent Boards (Client-Side Only):**
   - Stored strictly in `localStorage` (never transmitted to or stored on the server; stores only Board ID, title, last visited timestamp, and a non-sensitive boolean display hint — never raw tokens).
-  - Displays recently created/visited Boards with title, last visited relative time, and a one-click remove-from-history action.
+  - Appears when local history exists and lists Boards in last-visited order with a title link, relative visit time, Facilitator role where applicable, and a labeled **Remove** action. The page explains that the list is saved in this browser only.
 
 ---
 
 ### 3.2 Board Workspace & Core Card Operations (`/b/:boardId`)
-- **Minimal Sticky Header:**
-  - Retrocks mark (links home) + inline-editable Board Title (Facilitator) + subtle `Locked` badge when Locked.
-  - Live presence indicator: subtle green dot + deduplicated anonymous Participant count (e.g., `6 online`). Shows reconnecting state visibly if offline.
-  - Compact controls: Countdown Timer pill, Private Mode / Reveal All toggle (Facilitator), Action Items drawer button (with open count badge), Share button, Export menu, Board Settings (Facilitator), Theme toggle.
+- **Board header:**
+  - Lead with the Board title and optional context. The Retrocks link returns home, and Facilitators can rename an unlocked Board from the title.
+  - Keep the Countdown Timer and connection state near the title. Show **Live** once synced or **Reconnecting…** while updates are interrupted. Display the online count separately so changes in attendance stay quiet. Display **Private Mode**, **Blind Voting**, and **Locked** as independent labels and announce changes to those states.
+  - Keep Share and More in the header. Share has a target of at least 44 × 44 CSS pixels on phones. More holds theme, export, and Board Settings for Facilitators. Show Action Items and its open count once. Place it in the header with at least 26 rem of available header width (416 CSS px at the default text size) and in More at narrower widths. Keep the Board title and status labels on separate, wrapping rows on phones.
 - **Columns (1–10):**
-  - Displays Column title, subtle 3px pastel top accent bar, and Card count badge.
-  - Quick inline **"+ Add card"** composer pinned at the top of each Column (`Enter` or `Cmd/Ctrl+Enter` to submit, `Shift+Enter` for newline).
-  - Facilitator can add Columns (up to 10), rename inline, reorder Columns, change accent palette, or delete a Column (confirmation required if non-empty).
+  - Use a small accent marker, a wrapping title, and a tabular Card count. Use opaque Cards on the open Column rail.
+  - Offer **+ Add Card** at the top of each desktop Column and one bottom composer on phones. The phone composer names its target Column and keeps a draft for each Column. Enter submits, Shift+Enter starts a new line, and a failed submission keeps the draft and displays its error by the composer.
+  - Facilitators of unlocked Boards can add Columns at the end of the desktop rail or from More on phones. Rename, reorder, accent, and delete controls stay with each Column. Deletion requires confirmation.
 - **Cards:**
   - Plain text up to 1,000 characters; safely rendered with preserved line breaks, clickable auto-linked `https?://` URLs, and inline backtick code spans (zero raw HTML).
   - Subtle relative timestamp (e.g., `2m ago`) — strictly no author name or avatar.
   - Subtle `"You"` micro-indicator (visible **only** to the Card's own author) so Participants recognize their own Cards.
-  - Inline edit and hard delete with a compact inline confirmation (`Delete` → `Confirm?`).
-  - Move across Columns via drag-and-drop on desktop or `"Move to..."` menu on mobile/keyboard. Drag-and-drop is strictly for cross-Column moves and merging into Card Groups (no manual within-Column reordering).
+  - Give each Card an opaque surface, body text starting at 1 rem, and wrapping metadata for ownership, timestamps, Votes, reactions, and comment counts.
+  - **Card actions** exposes the commands available to the current Participant, including **Edit Card**, **Move to…**, **Group with…**, and **Delete Card**. Keyboard users can navigate the menu with arrow keys and return to its trigger with Escape. Editing stays inline and a failed save keeps its draft and shows the error beside it. Deletion requires inline confirmation.
+  - Drag Cards across Columns to move them or onto another Card or Card Group to group them. Manual ordering within a Column is unavailable.
 
 ---
 
 ### 3.3 Configurable Voting & Blind Voting
 - **Voting Mechanics:**
-  - When a Vote limit is configured (e.g., 5 Votes/Participant), a clean remaining-votes pill appears in the toolbar (`3 / 5 votes left`).
+  - When a Vote limit is configured (e.g., 5 Votes/Participant), show the Participant’s remaining budget in the Board header just above the Columns (`3 / 5 votes left`).
   - Clicking `+` on a standalone Card or Card Group casts a Vote (`+1`); clicking `-` (or secondary remove action) removes one of your Votes (`-1`).
   - Supports either **stackable voting** (multiple Votes on one high-priority Card/Card Group, default) or **1-Vote-per-Card-or-Card-Group** mode, plus **Unlimited** mode (classic IdeaBoardz style).
   - Voting on other Participants' redacted Cards while Private Mode is ON is rejected server-side.
 - **Blind Voting Option:**
   - Facilitator can toggle **Blind Voting** ON/OFF so Participants aren't anchored by early leaders.
-  - While Blind Voting is active, Participants see their own cast Vote count per Card/Card Group, while aggregate totals remain redacted (`null`) server-side until Blind Voting is turned off.
+  - While Blind Voting is active, Participants see their own cast Vote count per Card/Card Group, while aggregate totals remain redacted (`null`) server-side until Blind Voting is turned off. **Reveal All** makes Card content available and leaves Blind Voting in effect, including the restriction on sorting by **Most Voted**.
 - **Facilitator Controls:** Adjust Vote budget at any time or **Reset All Votes** (with confirmation).
 
 ---
 
 ### 3.4 Private Mode (Anti-Groupthink Writing)
-- Facilitator toggles **Private Mode** ON/OFF from the header bar.
+- On an unlocked Board, the Facilitator can enable **Private Mode** in the header or select **Reveal All** beside the active **Private Mode** label. The active label explains who can read a Card before reveal.
 - **Zero-Peeking Server-Side Redaction (Including Facilitators):**
   - When `isBlurred = true`, the server **never transmits other Participants' Card plaintext** over HTTP or WebSockets/SSE — not even to a Facilitator.
   - Other Participants' Cards are sent with `redacted: true` and an approximate `placeholderLines` hint (`1 | 2 | 3`) so the UI renders clean, realistic frosted/blurred skeleton Cards without leaking text to DevTools.
   - While Private Mode is ON, every Participant (including Facilitators) can freely create, view, edit, move, and delete their **own** Cards, while actions against other Participants' redacted Cards (editing, deleting, grouping, voting, reactions, comments, flagging) are **rejected server-side** until Reveal All.
 - **Simultaneous Reveal:**
-  - Clicking **Reveal All** flips `isBlurred = false` atomically and broadcasts a fresh per-viewer snapshot to every connected client simultaneously with a smooth unblur transition.
+  - Clicking **Reveal All** flips `isBlurred = false` atomically and broadcasts a fresh per-viewer snapshot to every connected client. Replace placeholders and begin reveal motion only when the snapshot supplies visible content. When a snapshot redacts a Card, remove the content and any open detail immediately.
 
 ---
 
@@ -149,7 +149,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - Quick presets: `3m`, `5m`, `10m`, `15m`, or custom minutes (1–60m).
   - Start, Pause, Resume, `+1 min`, Reset / Dismiss.
 - **Participant Experience:**
-  - Clean timer pill in the header with subtle visual progress ring/bar.
+  - The labeled timer sits in the header with a progress bar and a visible paused state. Announce timer changes and expiration and keep ordinary countdown ticks quiet.
   - Gentle Web Audio chime when reaching `00:00` (with an individual per-user mute toggle stored in `localStorage`) plus a calm visual pulse.
 
 ---
@@ -157,7 +157,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ### 3.6 Card Grouping & Merging
 - Combine duplicate or related Cards into a **Card Group** inside a Column (disabled for redacted Cards while Private Mode is ON):
   - **Desktop:** Drag and drop one Card onto another Card (or onto an existing Card Group).
-  - **Mobile & Keyboard:** Open Card menu (`...`) → `"Group with..."` and select a target Card or Card Group in the Column.
+  - **Mobile & Keyboard:** Open **Card actions**, choose **Group with…**, and select a target Card or Card Group in the Column.
 - **Card Group Behavior & Voting Rules:**
   - Displays an editable **Card Group Title** (e.g., `"CI Flakiness"`), Card count badge, **combined Vote total** (sum of pre-merge member Card Votes + Votes placed directly on the Card Group), and an expand/collapse toggle.
   - **Group-Level Voting Only:** Once Cards belong to a Card Group, live voting happens **exclusively on the Card Group header** (one unified `+`/`-` control); individual member Cards do not show separate interactive vote buttons while grouped.
@@ -174,7 +174,9 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Card Comments:**
   - Lightweight anonymous discussion notes on any revealed Card (max 500 chars, up to 50 comments per Card).
   - Cards show only a minimal comment count pill (e.g., `2`) when comments exist so the Board stays uncluttered.
-  - Clicking opens a clean **Card Detail Slide-Over Drawer** (desktop) or **Bottom Sheet** (mobile) displaying the full Card, reactions, Action Item controls, and comment thread.
+  - The Card details button and comment count open a right-side drawer at 640 CSS px and wider and a bottom sheet on narrower screens. Both show the Card, reactions, Action Item controls, and comments.
+  - The modal has a scrim, explicit close, Escape dismissal, contained keyboard focus, and focus return to the opening control or Board when that control disappears. Dismissal can interrupt entry. Reduced motion removes sliding. A viewer snapshot that redacts the Card removes its content and closes the modal immediately.
+  - Posting shows pending feedback. A failed comment stays in the composer with its error and can be submitted again.
   - Authors can delete their own comments; Facilitator can delete any revealed comment (both with compact inline confirmation).
 
 ---
@@ -185,7 +187,8 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - `actionDone`: boolean checkbox (`Open` / `Done`).
   - `actionOwner`: optional short free-text tag (max 40 chars, e.g., `"Platform"`, `"API squad"`, or blank — explicitly optional and never asks for emails or accounts).
 - **Action Items Drawer:**
-  - Accessible from the Board header; aggregates all Action Items across every Column.
+  - Opens from the header or More and aggregates visible Action Items across every Column. Present it as a right-side drawer on desktop and a bottom sheet on phones.
+  - Dim the Board with a scrim. Contain focus and allow dismissal with Escape, the close button, or the scrim, including while the panel is opening. Return focus to the opening control or to an available Action Items entry or More after the layout changes. Use static feedback with reduced motion.
   - Filterable by `All` / `Open` / `Done`.
   - One-click **"Copy as Markdown Checklist"** for pasting into GitHub Issues, Linear, Jira, or Slack.
   - When a Board is **Locked**, Facilitators can still check off `actionDone` and update `actionOwner` on existing Action Items for post-retro follow-up.
@@ -193,13 +196,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 ---
 
 ### 3.9 Sorting, Search & Filtering
-- **Instant Client-Side Search:** Compact search bar (`/` shortcut) filtering visible Cards, Card Group titles, and comments in real time with match counts.
+- Keep the labeled **Search** field, filters, sort, and **Clear filters** above the Columns. Search (`/` shortcut) filters visible Cards, Card Group titles, and comments as the Participant types. Private Mode placeholders stay outside search results.
 - **Sort Modes (Purely Viewer-Local — No Manual Intra-Column Ordering):**
   - `Newest` (default during writing)
   - `Oldest`
-  - `Most Voted` (descending by total Votes, ideal for discussion phase)
+  - `Most Voted` (descending by total Votes). During Blind Voting, this option is unavailable and a selected `Most Voted` sort falls back to `Newest` until Blind Voting ends.
 - **Quick Filter Chips:** `All`, `Mine`, `Voted`, `Action Items`.
-- Filtering and sorting are strictly local per viewer so one person searching never disrupts anyone else's screen.
+- When the view is narrowed, keep the selected filter (when set), match count, and **Clear filters** visible. Clearing restores `All` and empties Search while preserving the sort. A Column that has no Cards and a Column with no matches have distinct messages.
+- Search, filters, and sorting affect only the Participant's view and remain available on a Locked Board.
 
 ---
 
@@ -209,28 +213,30 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
     1. Toggle `actionDone` and update `actionOwner` on **existing Action Items**,
     2. **Unlock** the Board, or
     3. **Delete** the Board permanently.
-  - Board remains viewable, searchable, and exportable until expiry.
+  - Show Locked where the composer appears in each desktop Column and in the phone’s bottom writing area. Viewing, search, sorting, filters, and export remain available. Facilitators can also view and rotate the Co-Facilitator Link while the Board is Locked.
 - **Automatic Inactivity Cleanup:**
   - Every Board tracks `last_active_at` (updated on any write).
   - After `retention_days` (default 90 days) of inactivity, the Board and all associated records are permanently purged.
   - On Cloudflare Durable Objects, this runs via a per-Board **DO Alarm** (`ctx.storage.setAlarm`). On Node, a lightweight daily scheduled sweep deletes expired rows.
 - **Immediate Deletion & Expired Board UX:**
   - Facilitator can permanently delete a Board at any time (with explicit confirmation), broadcasting a `board:deleted` notice to connected clients and wiping storage immediately.
-  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) displays a clean *"Board not found or expired"* view with a *"Create a new board"* CTA and automatically removes that `boardId` from the browser's `localStorage` Recent Boards list.
+  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) shows **Board not found or expired**, explains deletion and inactivity expiry, and links to **Create a new board**. The screen follows the selected theme and removes that Board from Recent Boards. When an open Board becomes unavailable, dismiss its overlays and move focus to the unavailable screen heading.
 
 ---
 
 ### 3.11 Export & Sharing
 - **Share Modal:**
-  - **Participant Link** (`/b/<boardId>`) with one-click copy.
-  - **Co-Facilitator Link** (`/b/<boardId>#f=<token>`) fetched on demand by any Facilitator with a concise security note and a **Rotate Link** action (with confirmation) to revoke leaked links.
-  - **QR Code** rendered purely client-side as SVG (zero external image requests) for in-room Participants joining via phone.
-- **Exports (Strictly Obey Current Visibility Rules):**
-  - Exports always use the server-projected viewer snapshot — redacted Cards stay redacted while Private Mode is ON, and aggregate Vote totals stay omitted while Blind Voting is ON (no bypass flag; reveal first for a full export).
+  - Show the **Participant Link** (`/b/<boardId>`) first, with a copy action and a locally generated QR code that opens the same URL.
+  - Show a separate **Co-Facilitator Link** section only to Facilitators, including on Locked Boards. Explain that it grants Facilitator access and control over Board settings. Retrieve the link on demand and confirm **Rotate Link** before replacing it and invalidating previously shared links.
+  - Announce copy, retrieval, and rotation results in the dialog. If clipboard access fails, offer to copy from the selectable link field. Keep the retrieval and rotation controls available for retry after failures.
+  - Move focus into Share when it opens, keep Board controls out of its tab order, and return focus when **Close Share** or Escape dismisses it.
+- **Exports (in More):**
+  - Participants and Facilitators can copy, download, and print from More by keyboard or touch, including when the Board is Locked. Copy and download show progress and any failures alongside More.
+  - Exports use the server-projected viewer snapshot across all Columns. Private Mode keeps hidden Cards redacted for each viewer. Blind Voting omits aggregate Vote totals for both roles.
   - **Markdown (`.md`)** — Copy to clipboard or download; structured by Columns, Card Groups, Vote counts, comments, and a trailing Action Items checklist.
   - **CSV (`.csv`)** — Excel/Google Sheets ready with UTF-8 BOM and CSV formula-injection neutralization (prefixing leading `=`, `+`, `-`, `@`, `\t`, `\r`).
   - **JSON (`.json`)** — Complete structured Board snapshot.
-  - **Print / PDF** — Clean `@media print` stylesheet producing an ink-friendly, multi-column or stacked document via browser print dialog.
+  - **Print / Save as PDF** opens the browser print dialog with a stacked, ink-friendly document in either theme. The document includes visible Cards, Card Groups, comments, Action Item status and owners, and the viewer’s own Votes during Blind Voting. Local search and filters stay in place when the print dialog closes.
 
 ---
 
@@ -240,21 +246,22 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 - **Tailwind CSS v4 (`@tailwindcss/vite`):**
   - Semantic design tokens defined via `@theme` and CSS custom properties in [src/App.css](../src/App.css).
   - Dark mode driven by `@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));` so `dark:*` utilities match the `data-theme` attribute cleanly.
-  - **Light Mode Tokens:** Canvas `#FAFAFA`, Surface `#FFFFFF`, Subtle Surface `#F3F4F6`, Border `#E5E7EB`, Primary Text `#111827`, Muted Text `#6B7280`, Primary Accent `#111827` (subtle indigo `#4F46E5` for interactive focus).
-  - **Dark Mode Tokens:** Canvas `#0E0F11`, Surface `#16181D`, Subtle Surface `#1E2128`, Border `#262A33`, Primary Text `#F3F4F6`, Muted Text `#9CA3AF`, Primary Accent `#E5E7EB` / `#818CF8`.
-  - **Column Pastel Accents (8 curated muted tokens):** `slate`, `sage`, `sky`, `amber`, `rose`, `violet`, `teal`, `coral` — rendered as a crisp 3px top border + whisper-soft 5% opacity Column header tint.
-- **Typography:** System UI / self-hosted `Inter` stack (zero Google Fonts network requests for strict privacy). `font-variant-numeric: tabular-nums` on timers, Vote badges, and counters.
+  - **Light:** Warm canvas `#F7F5F0`, opaque surface `#FFFFFF`, subtle surface `#EDEAE3`, text `#202522`, muted text `#555C56`, primary action `#255B48`, focus `#414BB0`.
+  - **Dark:** Charcoal canvas `#1C1E20`, opaque surface `#27292C`, subtle surface `#313337`, text `#F6F5F1`, muted text `#BFC3BF`, primary action `#ABD7C2`, focus `#AAB2FF`.
+  - **Column accents:** Slate, sage, sky, amber, rose, violet, teal, and coral appear as small markers alongside labeled Column titles and tabs.
+- **Typography:** System UI stack with no font network requests. Start Card and composer text at 1 rem and use tabular numerals for timers and counts.
+- **Feedback:** Controls give immediate color or opacity feedback on press and commit on activation. More stays anchored to its trigger. Column tabs and swipe update the selected Column immediately, and reduced-motion mode disables decorative motion.
 - **Zero-FOUC Theme Init:** Tiny inline script in [src/Document.tsx](../src/Document.tsx) applies `data-theme="dark" | "light"` from `localStorage` / `prefers-color-scheme` before first paint.
 
 ### 4.2 Mobile-First Responsive Behavior
-- **Desktop (`>= 1024px`):** Side-by-side Columns (3–4 Columns fill viewport width cleanly; 5+ Columns scroll horizontally with smooth snap), hover-revealed quick actions, drag-and-drop Card move & grouping, slide-over Card Detail Drawer.
+- **Desktop (`>= 1024px`):** Side-by-side Columns (3–4 Columns fill viewport width cleanly; 5+ Columns scroll horizontally with smooth snap), visible Card actions, drag-and-drop Card move & grouping, slide-over Card Detail Drawer.
 - **Tablet (`640px – 1023px`):** 2-column responsive layout or horizontal snap Columns.
 - **Mobile (`< 640px`):**
-  - Compact sticky header with overflow menu for secondary controls.
-  - Horizontal scrollable **Column Tab Bar** showing Column accent dots and Card counts, plus horizontal swipe support between Columns.
-  - Full-width single-column stream with 44px minimum touch targets.
-  - Bottom-anchored quick-add Card bar for effortless thumb typing.
-  - Card detail & actions presented in native-feeling **Bottom Sheets** (no hover-only controls anywhere).
+  - Share and More fit on a single controls row. Give long titles and context their own full-width lines and let active states wrap.
+  - Keep the sticky **Column Tab Bar** in its own horizontal scroll region. Tabs show labels, accents, and counts. Swipe the Card stream horizontally to change Columns while preserving vertical scrolling.
+  - Keep **Search** visible and place the filter chips and sort selector in a **Filter & sort** disclosure. Leave the active filter, match count, and **Clear filters** visible when the disclosure closes.
+  - Show a single Column with at least 44 × 44 CSS px touch targets. Keep the composer at the bottom of the visible viewport during entry, including when the software keyboard is shown.
+  - Card details open in a bottom sheet. Card and Card Group commands remain available by touch with hit areas at least 44 × 44 CSS px, including reaction choices and the tappable checkbox labels.
 
 ### 4.3 Keyboard Shortcuts & Accessibility
 - **Shortcuts (disabled when focused in an input/textarea):**
@@ -508,7 +515,7 @@ export type BoardEvent =
    - `BoardStore` + `BoardRealtime` interfaces; Cloudflare Workers + SQLite Durable Object (`BoardRoom` + `src/worker.ts` + `wrangler.jsonc` + `@cloudflare/vite-plugin` default `pnpm dev`) and Node SQLite + SSE adapter (Vitest `server` tests & self-hosted swap).
    - Anonymous Participant & Facilitator signed cookie + AES-256-GCM facilitator token crypto (`src/server/session.ts`, 90-day sliding TTL, lazy mint on `GET /b/:id`).
    - Tailwind CSS v4 `@theme` design tokens & zero-FOUC Light/Dark theme init in `src/Document.tsx`.
-   - Home page (`/`) with template gallery, custom Column builder, advanced options, and `localStorage` Recent Boards.
+   - Home page (`/`) with default creation, disclosed template selection, a Column editor, advanced options, and local Recent Boards.
 2. **Phase 2 — Core Retro Workspace & Live Sync**
    - Board route (`/b/:id`) with streaming SSR preload, responsive desktop Columns & mobile tabbed swipe view, and Deleted/Expired Board empty state.
    - Full Column & Card CRUD (hard delete with inline confirmation), desktop drag-and-drop (cross-Column moves), mobile Move menu, live WS/SSE delta patching, reconnect resync, and deduplicated presence count.

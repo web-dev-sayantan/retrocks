@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId } from 'solid-js';
 
 import {
   MAX_CARD_CONTENT_LENGTH,
@@ -8,6 +8,7 @@ import {
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardReactions from './CardReactions';
@@ -16,6 +17,7 @@ import {
   ArrowRightLeftIcon,
   FlagIcon,
   MessageSquareIcon,
+  MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
   TrashIcon,
@@ -42,32 +44,49 @@ export interface CardItemProps {
     targetId: string,
   ) => Promise<boolean>;
   onUngroupCard: (cardId: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
   ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
-  onOpenCardDetail: (cardId: string) => void;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
 }
+
+const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-8';
 
 export default function CardItem(props: CardItemProps) {
   const [isEditing, setIsEditing] = createSignal(false);
   const [editDraft, setEditDraft] = createSignal('');
   const [isSaving, setIsSaving] = createSignal(false);
+  const [editError, setEditError] = createSignal<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
-  const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
-  const [groupMenuOpen, setGroupMenuOpen] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
   const [isUngrouping, setIsUngrouping] = createSignal(false);
   const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
   const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
+  const [actionError, setActionError] = createSignal('');
+
+  const menuId = createUniqueId();
+  const [menuPage, setMenuPage] = createSignal<'actions' | 'move' | 'group' | null>(null);
+  let article: HTMLElement | undefined;
+  let menuTrigger: HTMLButtonElement | undefined;
+  let menu: HTMLDivElement | undefined;
+  let editor: HTMLTextAreaElement | undefined;
+  let cancelDeleteButton: HTMLButtonElement | undefined;
+  const pendingAction = createMemo(() => {
+    if (isMoving()) return 'Moving Card…';
+    if (isGrouping()) return 'Grouping Card…';
+    if (isUngrouping()) return 'Ungrouping Card…';
+    if (isUpdatingAction()) return 'Updating Action Item…';
+    return null;
+  });
 
   const [wasRevealed, setWasRevealed] = createSignal(false);
 
@@ -76,10 +95,10 @@ export default function CardItem(props: CardItemProps) {
     (redacted, previous) => {
       setWasRevealed(previous === true && !redacted);
       if (redacted) {
+        setActionError('');
         cancelEdit();
         setConfirmingDelete(false);
-        setMoveMenuOpen(false);
-        setGroupMenuOpen(false);
+        setMenuPage(null);
       }
     },
   );
@@ -90,27 +109,55 @@ export default function CardItem(props: CardItemProps) {
       if (locked) {
         cancelEdit();
         setConfirmingDelete(false);
-        setMoveMenuOpen(false);
-        setGroupMenuOpen(false);
+        setMenuPage(null);
       }
     },
   );
 
-  createEffect(
-    () => moveMenuOpen() || groupMenuOpen(),
-    (isOpen) => {
-      if (!isOpen) return;
-      function handleKeyDown(event: KeyboardEvent): void {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          setMoveMenuOpen(false);
-          setGroupMenuOpen(false);
-        }
+  createEffect(isEditing, (editing, wasEditing) => {
+    if (editing) editor?.focus();
+    else if (wasEditing) menuTrigger?.focus();
+  });
+
+  createEffect(confirmingDelete, (confirming, wasConfirming) => {
+    if (confirming) cancelDeleteButton?.focus();
+    else if (wasConfirming) menuTrigger?.focus();
+  });
+
+  createEffect(menuPage, (page) => {
+    if (page) getEnabledMenuItems(menu)[0]?.focus();
+  });
+
+  createEffect(() => menuPage() !== null, (isOpen) => {
+    if (!isOpen) return;
+    function dismissOutside(event: PointerEvent): void {
+      if (event.target instanceof Node && !article?.contains(event.target)) {
+        setMenuPage(null);
       }
-      document.addEventListener('keydown', handleKeyDown);
-      return () => document.removeEventListener('keydown', handleKeyDown);
-    },
-  );
+    }
+    document.addEventListener('pointerdown', dismissOutside);
+    return () => document.removeEventListener('pointerdown', dismissOutside);
+  });
+
+  function closeMenu(): void {
+    setMenuPage(null);
+    menuTrigger?.focus();
+  }
+
+  function handleMenuKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' || (event.key === 'ArrowLeft' && menuPage() !== 'actions')) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (menuPage() === 'actions') closeMenu();
+      else setMenuPage('actions');
+      return;
+    }
+    if (event.key === 'Tab') {
+      closeMenu();
+      return;
+    }
+    handleMenuNavigation(event);
+  }
 
   const canManage = createMemo(() => {
     if (props.isLocked || props.card.redacted) return false;
@@ -196,30 +243,34 @@ export default function CardItem(props: CardItemProps) {
   });
 
   function startEdit(): void {
+    setEditError(null);
     setEditDraft(props.card.content);
     setConfirmingDelete(false);
-    setMoveMenuOpen(false);
-    setGroupMenuOpen(false);
+    setMenuPage(null);
     setIsEditing(true);
   }
 
   function cancelEdit(): void {
     setIsEditing(false);
     setEditDraft('');
+    setEditError(null);
   }
 
   async function saveEdit(): Promise<void> {
     const trimmed = editDraft().trim();
-    if (trimmed.length === 0 || isSaving()) return;
+    if (trimmed.length === 0 || isSaving() || !canManage()) return;
     if (trimmed === props.card.content) {
       setIsEditing(false);
       return;
     }
     setIsSaving(true);
+    setEditError(null);
     try {
-      const ok = await props.onUpdateCard(props.card.id, trimmed);
-      if (ok) {
-        setIsEditing(false);
+      const error = await props.onUpdateCard(props.card.id, trimmed);
+      if (error === null) cancelEdit();
+      else {
+        setEditError(error);
+        editor?.focus();
       }
     } finally {
       setIsSaving(false);
@@ -238,38 +289,50 @@ export default function CardItem(props: CardItemProps) {
     }
   }
 
-  async function handleConfirmDelete(): Promise<void> {
-    if (isDeleting()) return;
-    setIsDeleting(true);
+  async function runCardAction(
+    request: () => Promise<boolean>,
+    failureMessage: string,
+    setPending: (pending: boolean) => void,
+  ): Promise<boolean> {
+    setPending(true);
+    setActionError('');
     try {
-      const ok = await props.onDeleteCard(props.card.id);
-      if (!ok) {
-        setConfirmingDelete(false);
-      }
+      if (await request()) return true;
+    } catch {
+      // Report rejected requests alongside unsuccessful mutation responses.
     } finally {
-      setIsDeleting(false);
+      setPending(false);
     }
+    if (!props.card.redacted) setActionError(failureMessage);
+    return false;
   }
 
-  async function updateAction(patch: ActionItemPatch): Promise<void> {
-    if (isUpdatingAction()) return;
-    setIsUpdatingAction(true);
-    try {
-      await props.onUpdateActionItem(props.card.id, patch);
-    } finally {
-      setIsUpdatingAction(false);
-    }
+  async function handleConfirmDelete(): Promise<void> {
+    if (isDeleting()) return;
+    await runCardAction(
+      () => props.onDeleteCard(props.card.id),
+      'Could not delete the Card. Try again.',
+      setIsDeleting,
+    );
+  }
+
+  async function updateAction(patch: ActionItemPatch): Promise<boolean> {
+    if (isUpdatingAction()) return false;
+    return runCardAction(
+      () => props.onUpdateActionItem(props.card.id, patch),
+      'Could not update the Action Item. Try again.',
+      setIsUpdatingAction,
+    );
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    setIsMoving(true);
-    setMoveMenuOpen(false);
-    try {
-      await props.onMoveCard(props.card.id, targetColumnId);
-    } finally {
-      setIsMoving(false);
-    }
+    closeMenu();
+    await runCardAction(
+      () => props.onMoveCard(props.card.id, targetColumnId),
+      'Could not move the Card. Try again.',
+      setIsMoving,
+    );
   }
 
   async function groupWith(
@@ -278,23 +341,21 @@ export default function CardItem(props: CardItemProps) {
     targetId: string,
   ): Promise<void> {
     if (isGrouping()) return;
-    setIsGrouping(true);
-    setGroupMenuOpen(false);
-    try {
-      await props.onGroupCard(cardId, targetType, targetId);
-    } finally {
-      setIsGrouping(false);
-    }
+    if (menuPage()) closeMenu();
+    await runCardAction(
+      () => props.onGroupCard(cardId, targetType, targetId),
+      'Could not group the Card. Try again.',
+      setIsGrouping,
+    );
   }
 
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
-    setIsUngrouping(true);
-    try {
-      await props.onUngroupCard(props.card.id);
-    } finally {
-      setIsUngrouping(false);
-    }
+    await runCardAction(
+      () => props.onUngroupCard(props.card.id),
+      'Could not ungroup the Card. Try again.',
+      setIsUngrouping,
+    );
   }
 
   function handleGroupDragOver(event: DragEvent): void {
@@ -344,6 +405,7 @@ export default function CardItem(props: CardItemProps) {
 
   return (
     <article
+      ref={article}
       data-card-id={props.card.id}
       draggable={canDrag() ? 'true' : 'false'}
       onDragStart={handleDragStart}
@@ -352,11 +414,11 @@ export default function CardItem(props: CardItemProps) {
       onDragLeave={handleGroupDragLeave}
       onDrop={handleGroupDrop}
       class={[
-        'group relative rounded-lg border border-border bg-surface p-3 shadow-2xs transition-colors',
+        'relative min-w-0 rounded-lg border border-border bg-surface p-3 transition-colors',
         {
           'cursor-grab active:cursor-grabbing hover:border-text-muted/40':
             canDrag(),
-          'bg-surface-subtle/60': props.card.redacted,
+          'bg-surface-subtle': props.card.redacted,
           'motion-safe:animate-[card-reveal_260ms_ease-out]': wasRevealed(),
           'ring-2 ring-focus/70': isGroupDropActive(),
         },
@@ -390,14 +452,17 @@ export default function CardItem(props: CardItemProps) {
           fallback={
             <div class="space-y-2">
               <textarea
+                ref={editor}
                 aria-label="Edit card text"
+                aria-invalid={editError() ? 'true' : undefined}
+                readonly={isSaving()}
                 value={editDraft()}
                 maxlength={MAX_CARD_CONTENT_LENGTH}
                 rows={3}
                 onInput={(e) => setEditDraft(e.currentTarget.value)}
                 onKeyDown={handleEditKeyDown}
                 class={[
-                  'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-sm text-text',
+                  'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-base text-text',
                   'placeholder:text-text-muted focus:border-focus focus:outline-none',
                 ]}
               />
@@ -428,14 +493,17 @@ export default function CardItem(props: CardItemProps) {
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
                   >
-                    {isSaving() ? 'Saving...' : 'Save'}
+                    {isSaving() ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </div>
+              <Show when={editError()}>
+                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{editError()}</p>
+              </Show>
             </div>
           }
         >
-          <div class="text-sm leading-relaxed text-text">
+          <div class="text-base leading-relaxed text-text">
             <CardText text={props.card.content} />
           </div>
 
@@ -450,24 +518,28 @@ export default function CardItem(props: CardItemProps) {
           </div>
 
           <Show when={props.card.isActionItem}>
-            <div class="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-subtle/60 px-2 py-1.5">
-              <input
-                type="checkbox"
-                checked={props.card.actionDone}
-                disabled={
-                  (props.isLocked && !props.isFacilitator) || isUpdatingAction()
-                }
-                aria-label={`Mark ${props.card.content} as Done`}
-                onChange={(event) =>
-                  void updateAction({ actionDone: event.currentTarget.checked })
-                }
-                class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              <span class="text-[11px] font-medium text-text-muted">
-                {props.card.actionDone ? 'Done' : 'Open'}
-              </span>
+            <div class="mt-2 flex flex-wrap items-center gap-x-2 rounded-md border border-border bg-surface-subtle/60 px-2 py-1.5">
+              <label class="inline-flex min-h-11 min-w-11 cursor-pointer items-center gap-2 sm:min-h-8 sm:min-w-0">
+                <input
+                  type="checkbox"
+                  checked={props.card.actionDone}
+                  disabled={
+                    (props.isLocked && !props.isFacilitator) || isUpdatingAction()
+                  }
+                  aria-label={`Mark ${props.card.content} as Done`}
+                  onChange={async (event) => {
+                    const checkbox = event.currentTarget;
+                    const ok = await updateAction({ actionDone: checkbox.checked });
+                    if (!ok && checkbox.isConnected) checkbox.checked = props.card.actionDone;
+                  }}
+                  class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <span class="text-[11px] font-medium text-text-muted">
+                  {props.card.actionDone ? 'Done' : 'Open'}
+                </span>
+              </label>
               <Show when={props.card.actionOwner}>
-                <span class="ml-auto truncate rounded-full border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+                <span class="ml-auto wrap-anywhere rounded-full border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
                   {props.card.actionOwner}
                 </span>
               </Show>
@@ -475,7 +547,7 @@ export default function CardItem(props: CardItemProps) {
           </Show>
 
           <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex items-center gap-1.5 text-[11px] text-text-muted">
+            <div class="flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
               <Show when={props.card.isMine}>
                 <span class="rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text">
                   You
@@ -490,9 +562,9 @@ export default function CardItem(props: CardItemProps) {
                 <button
                   type="button"
                   aria-label={`${props.card.commentCount} ${props.card.commentCount === 1 ? 'comment' : 'comments'}`}
-                  onClick={() => props.onOpenCardDetail(props.card.id)}
+                  onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
                   class={[
-                    'inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-subtle/70 px-2 py-0.5 text-[11px] font-medium text-text sm:min-h-6',
+                    'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text sm:min-h-6 sm:min-w-0',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
@@ -513,7 +585,7 @@ export default function CardItem(props: CardItemProps) {
                 type="button"
                 aria-label="Open Card details"
                 title="Open Card details"
-                onClick={() => props.onOpenCardDetail(props.card.id)}
+                onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
                 class={[
                   'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
@@ -523,273 +595,157 @@ export default function CardItem(props: CardItemProps) {
                 <MessageSquareIcon />
               </button>
 
-              <Show when={canGroup()}>
-                <div class="relative">
-                  <button
-                    type="button"
-                    aria-label="Group with..."
-                    aria-haspopup="menu"
-                    aria-expanded={groupMenuOpen() ? 'true' : 'false'}
-                    title="Group with..."
-                    disabled={isGrouping()}
-                    onClick={() => {
-                      setConfirmingDelete(false);
-                      setMoveMenuOpen(false);
-                      setGroupMenuOpen((prev) => !prev);
-                    }}
-                    class={[
-                      'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                      'transition-colors hover:bg-surface-subtle hover:text-text disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    ]}
-                  >
-                    <PlusIcon />
-                  </button>
-
-                  <Show when={groupMenuOpen()}>
-                    <div
-                      role="menu"
-                      aria-label="Group card with"
-                      data-board-overlay="true"
-                      class="absolute right-0 bottom-full z-30 mb-1 min-w-48 rounded-lg border border-border bg-surface p-1 shadow-md"
-                    >
-                      <p class="px-2 py-1 text-[11px] font-medium text-text-muted">
-                        Group with...
-                      </p>
-                      <For each={groupTargets().cards}>
-                        {(targetCard) => (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() =>
-                              void groupWith(props.card.id, 'card', targetCard.id)
-                            }
-                            class={[
-                              'flex min-h-11 w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-xs text-text sm:min-h-8',
-                              'transition-colors hover:bg-surface-subtle',
-                              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                            ]}
-                          >
-                            <span class="truncate">{targetCard.content}</span>
-                          </button>
-                        )}
-                      </For>
-                      <For each={groupTargets().groups}>
-                        {(targetGroup) => (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() =>
-                              void groupWith(props.card.id, 'group', targetGroup.id)
-                            }
-                            class={[
-                              'flex min-h-11 w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-xs text-text sm:min-h-8',
-                              'transition-colors hover:bg-surface-subtle',
-                              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                            ]}
-                          >
-                            <span class="truncate">
-                              {targetGroup.title || 'Card Group'}
-                            </span>
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                </div>
-              </Show>
-
               <Show when={!props.isLocked}>
                 <button
+                  ref={menuTrigger}
                   type="button"
-                  aria-label={
-                    props.card.isActionItem
-                      ? 'Unflag Action Item'
-                      : 'Flag as Action Item'
-                  }
-                  aria-pressed={props.card.isActionItem ? 'true' : 'false'}
-                  title={
-                    props.card.isActionItem
-                      ? 'Unflag Action Item'
-                      : 'Flag as Action Item'
-                  }
-                  disabled={isUpdatingAction()}
-                  onClick={() =>
-                    void updateAction({
-                      isActionItem: !props.card.isActionItem,
-                    })
-                  }
-                  class={[
-                    'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md sm:min-h-7 sm:min-w-7',
-                    'transition-colors hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-50',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    props.card.isActionItem
-                      ? 'text-text'
-                      : 'text-text-muted hover:text-text',
-                  ]}
+                  aria-label="Card actions"
+                  title="Card actions"
+                  aria-haspopup="menu"
+                  aria-expanded={menuPage() ? 'true' : 'false'}
+                  aria-controls={menuPage() ? menuId : undefined}
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    setMenuPage(menuPage() ? null : 'actions');
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      setConfirmingDelete(false);
+                      setMenuPage('actions');
+                      if (menuPage()) getEnabledMenuItems(menu)[0]?.focus();
+                    }
+                  }}
+                  class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
                 >
-                  <FlagIcon />
-                </button>
-              </Show>
-
-              <Show when={canManage()}>
-                <div
-                class={[
-                  'relative flex items-center gap-1 transition-opacity',
-                  {
-                    'opacity-100': confirmingDelete() || moveMenuOpen(),
-                    'sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100':
-                      !confirmingDelete() && !moveMenuOpen(),
-                  },
-                ]}
-              >
-                <Show
-                  when={!confirmingDelete()}
-                  fallback={
-                    <div class="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void handleConfirmDelete()}
-                        disabled={isDeleting()}
-                        class={[
-                          'min-h-11 rounded-md bg-col-rose px-2.5 py-1 text-xs font-medium text-white sm:min-h-7 sm:px-2',
-                          'cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        ]}
-                      >
-                        {isDeleting() ? 'Deleting...' : 'Confirm?'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmingDelete(false)}
-                        disabled={isDeleting()}
-                        class={[
-                          'min-h-11 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2',
-                          'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        ]}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  }
-                >
-                  <button
-                    type="button"
-                    aria-label="Edit card"
-                    title="Edit card"
-                    onClick={startEdit}
-                    class={[
-                      'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                      'transition-colors hover:bg-surface-subtle hover:text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    ]}
-                  >
-                    <PencilIcon />
-                  </button>
-
-                  <Show when={canMove()}>
-                    <div class="relative">
-                      <button
-                        type="button"
-                        aria-label="Move to..."
-                        aria-haspopup="menu"
-                        aria-expanded={moveMenuOpen() ? 'true' : 'false'}
-                        title="Move to..."
-                        disabled={isMoving()}
-                        onClick={() => {
-                          setConfirmingDelete(false);
-                          setMoveMenuOpen((prev) => !prev);
-                        }}
-                        class={[
-                          'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                          'transition-colors hover:bg-surface-subtle hover:text-text',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        ]}
-                      >
-                        <ArrowRightLeftIcon />
-                      </button>
-
-                      <Show when={moveMenuOpen()}>
-                        <div
-                          role="menu"
-                          aria-label="Move card to Column"
-                          data-board-overlay="true"
-                          class="absolute right-0 bottom-full z-30 mb-1 min-w-44 rounded-lg border border-border bg-surface p-1 shadow-md"
-                        >
-                          <p class="px-2 py-1 text-[11px] font-medium text-text-muted">
-                            Move to...
-                          </p>
-                          <For each={otherColumns()}>
-                            {(targetCol) => (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() =>
-                                  void handleSelectMoveTarget(targetCol.id)
-                                }
-                                class={[
-                                  'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text sm:min-h-8',
-                                  'transition-colors hover:bg-surface-subtle',
-                                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                                ]}
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  class={[
-                                    'h-2 w-2 shrink-0 rounded-full',
-                                    COLUMN_ACCENT_STYLES[targetCol.accent]
-                                      .swatch,
-                                  ]}
-                                />
-                                <span class="truncate">{targetCol.title}</span>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-
-                  <button
-                    type="button"
-                    aria-label="Delete"
-                    title="Delete card"
-                    onClick={() => {
-                      setMoveMenuOpen(false);
-                      setGroupMenuOpen(false);
-                      setConfirmingDelete(true);
-                    }}
-                    class={[
-                      'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                      'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    ]}
-                  >
-                    <TrashIcon />
-                  </button>
-                </Show>
-              </div>
-            </Show>
-
-              <Show when={props.card.groupId !== null && props.canUngroup}>
-                <button
-                  type="button"
-                  aria-label="Ungroup card"
-                  title="Ungroup card"
-                  disabled={isUngrouping()}
-                  onClick={() => void handleUngroup()}
-                  class={[
-                    'min-h-11 cursor-pointer rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-medium text-text-muted sm:min-h-7',
-                    'transition-colors hover:bg-surface-subtle hover:text-text disabled:opacity-50',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  Ungroup
+                  <MoreHorizontalIcon />
                 </button>
               </Show>
             </div>
           </div>
+          <Show when={!props.isLocked && menuPage()}>
+            <div
+              ref={menu}
+              id={menuId}
+              role="menu"
+              aria-label={menuPage() === 'move' ? 'Move Card to Column' : menuPage() === 'group' ? 'Group Card with' : 'Card actions'}
+              data-board-overlay="true"
+              data-print-hide="true"
+              onKeyDown={handleMenuKeyDown}
+              class="relative z-10 mt-1 ml-auto max-h-[50dvh] w-56 max-w-full overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-md"
+            >
+              <Show when={menuPage() === 'actions'}>
+                <Show when={canManage()}>
+                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} onClick={startEdit}>
+                    <PencilIcon /> Edit Card
+                  </button>
+                </Show>
+                <Show when={canMove()}>
+                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} disabled={isMoving()} onClick={() => setMenuPage('move')}>
+                    <ArrowRightLeftIcon /> Move to…
+                  </button>
+                </Show>
+                <Show when={canGroup()}>
+                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} disabled={isGrouping()} onClick={() => setMenuPage('group')}>
+                    <PlusIcon /> Group with…
+                  </button>
+                </Show>
+                <Show when={props.card.groupId !== null && props.canUngroup}>
+                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} disabled={isUngrouping()} onClick={() => { closeMenu(); void handleUngroup(); }}>
+                    Ungroup Card
+                  </button>
+                </Show>
+                <button
+                  type="button"
+                  role="menuitem"
+                  tabindex={-1}
+                  class={menuItemClass}
+                  disabled={isUpdatingAction()}
+                  onClick={() => {
+                    closeMenu();
+                    void updateAction({ isActionItem: !props.card.isActionItem });
+                  }}
+                >
+                  <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
+                </button>
+                <Show when={canManage()}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabindex={-1}
+                    class={menuItemClass}
+                    disabled={isDeleting()}
+                    onClick={() => {
+                      setActionError('');
+                      setMenuPage(null);
+                      setConfirmingDelete(true);
+                    }}
+                  >
+                    <TrashIcon /> Delete Card
+                  </button>
+                </Show>
+              </Show>
+              <Show when={menuPage() === 'move'}>
+                <For each={otherColumns()}>
+                  {(target) => (
+                    <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} onClick={() => void handleSelectMoveTarget(target.id)}>
+                      <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
+                      <span class="min-w-0 wrap-anywhere">{target.title}</span>
+                    </button>
+                  )}
+                </For>
+              </Show>
+              <Show when={menuPage() === 'group'}>
+                <For each={groupTargets().cards}>
+                  {(target) => (
+                    <button type="button" role="menuitem" tabindex={-1} class={[menuItemClass, 'wrap-anywhere']} onClick={() => void groupWith(props.card.id, 'card', target.id)}>
+                      {target.content}
+                    </button>
+                  )}
+                </For>
+                <For each={groupTargets().groups}>
+                  {(target) => (
+                    <button type="button" role="menuitem" tabindex={-1} class={[menuItemClass, 'wrap-anywhere']} onClick={() => void groupWith(props.card.id, 'group', target.id)}>
+                      {target.title || 'Card Group'}
+                    </button>
+                  )}
+                </For>
+              </Show>
+              <Show when={menuPage() !== 'actions'}>
+                <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} onClick={() => setMenuPage('actions')}>
+                  Back to Card actions
+                </button>
+              </Show>
+            </div>
+          </Show>
+          <Show when={canManage() && confirmingDelete()}>
+            <div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" data-print-hide="true">
+              <span class="mr-auto text-sm text-text">Delete this Card?</span>
+              <button
+                ref={cancelDeleteButton}
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={isDeleting()}
+                class="min-h-11 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-8"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmDelete()}
+                disabled={isDeleting()}
+                class="min-h-11 rounded-md bg-rose-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-8"
+              >
+                {isDeleting() ? 'Deleting…' : 'Confirm?'}
+              </button>
+            </div>
+          </Show>
+          <Show when={pendingAction()}>
+            <p role="status" class="mt-1 text-xs text-text-muted">{pendingAction()}</p>
+          </Show>
+          <Show when={actionError()}>
+            <p role="alert" data-print-hide="true" class="mt-1 text-xs text-rose-700 dark:text-rose-300">{actionError()}</p>
+          </Show>
         </Show>
       </Show>
     </article>

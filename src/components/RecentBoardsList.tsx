@@ -20,69 +20,55 @@ export default function RecentBoardsList() {
 
   return (
     <Show when={entries().length > 0}>
-      <section aria-labelledby="recent-boards-heading" class="mt-10">
-        <div class="flex items-baseline justify-between gap-4">
-          <h2
-            id="recent-boards-heading"
-            class="text-sm font-semibold tracking-tight text-text"
-          >
-            Recent Boards
-          </h2>
-          <p class="text-xs text-text-muted">
-            Saved locally in this browser only
-          </p>
-        </div>
+      <section
+        aria-labelledby="recent-boards-heading"
+        class="mt-8 min-w-0 border-t border-border pt-6 sm:mt-10 lg:mt-0 lg:border-t-0 lg:pt-1"
+      >
+        <h2 id="recent-boards-heading" class="text-xl font-semibold tracking-tight text-text lg:text-2xl">
+          Recent Boards
+        </h2>
+        <p class="mt-1 text-sm text-text-muted">Saved in this browser only.</p>
 
-        <ul class="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          <For each={entries()}>
+        <ul class="mt-3 divide-y divide-border" role="list">
+          <For each={[...entries()].sort((a, b) => b.lastVisitedAt - a.lastVisitedAt)}>
             {(entry) => (
-              <li class="group flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-text-muted/40">
+              <li class="flex items-center gap-2 py-2">
                 <a
                   href={`/b/${entry.id}`}
+                  aria-labelledby={`recent-board-title-${entry.id}`}
+                  aria-describedby={`recent-board-details-${entry.id}`}
                   class={[
-                    'min-w-0 flex-1 rounded-md',
+                    'group flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-lg px-2 py-1 [overflow-wrap:anywhere]',
+                    'hover:bg-surface-subtle active:bg-surface-subtle',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
                 >
-                  <div class="flex items-center gap-2">
-                    <span class="truncate text-sm font-medium text-text group-hover:underline">
-                      {entry.title}
-                    </span>
-                    <Show when={entry.isFacilitator}>
-                      <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
-                        Facilitator
-                      </span>
-                    </Show>
-                  </div>
-                  <p class="mt-0.5 text-xs text-text-muted tabular-nums">
+                  <span
+                    id={`recent-board-title-${entry.id}`}
+                    class="text-base font-medium text-text group-hover:underline"
+                  >
+                    {entry.title}
+                  </span>
+                  <span
+                    id={`recent-board-details-${entry.id}`}
+                    class="text-sm text-text-muted tabular-nums"
+                  >
                     Visited {formatRelativeTime(entry.lastVisitedAt)}
-                  </p>
+                    <Show when={entry.isFacilitator}> · <span>Facilitator</span></Show>
+                  </span>
                 </a>
 
                 <button
                   type="button"
                   onClick={() => handleRemove(entry.id)}
-                  aria-label={`Remove ${entry.title} from recent boards`}
-                  title="Remove from history"
+                  aria-label={`Remove ${entry.title} from Recent Boards`}
                   class={[
-                    'inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg',
-                    'text-text-muted transition-colors hover:bg-surface-subtle hover:text-text',
+                    'min-h-11 min-w-11 shrink-0 cursor-pointer rounded-lg px-2 py-1 text-sm font-medium text-text-muted',
+                    'transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
                 >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.75"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="h-4 w-4"
-                  >
-                    <path d="M18 6 6 18" />
-                    <path d="m6 6 12 12" />
-                  </svg>
+                  Remove
                 </button>
               </li>
             )}

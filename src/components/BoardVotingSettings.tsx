@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, createUniqueId } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
 
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
 import type { UpdateVotingSettingsInput } from '../lib/voting-schemas';
@@ -18,6 +18,8 @@ export default function BoardVotingSettings(props: {
     BoardViewDTO,
     'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup' | 'isLocked'
   >;
+  open: boolean;
+  onClose: () => void;
   onUpdate: (patch: VotingSettingsPatch) => Promise<string | null>;
   onReset: () => Promise<string | null>;
   onToggleLock: (isLocked: boolean) => Promise<string | null>;
@@ -68,6 +70,15 @@ export default function BoardVotingSettings(props: {
     dialog.showModal();
   }
 
+  createEffect(() => props.open, (open) => {
+    if (open && !dialog.open) untrack(openDialog);
+  });
+
+  function closeDialog() {
+    dialog.close();
+    props.onClose();
+  }
+
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
     if (pending() || !validLimit() || props.board.isLocked) return;
@@ -84,7 +95,7 @@ export default function BoardVotingSettings(props: {
       patch.allowParticipantGroup = grouping;
     }
     if (Object.keys(patch).length === 0) {
-      dialog.close();
+      closeDialog();
       return;
     }
 
@@ -93,7 +104,7 @@ export default function BoardVotingSettings(props: {
     try {
       const message = await props.onUpdate(patch);
       setError(message);
-      if (message === null && dialog.open) dialog.close();
+      if (message === null && dialog.open) closeDialog();
     } finally {
       setPending(null);
     }
@@ -135,7 +146,7 @@ export default function BoardVotingSettings(props: {
       setError(message);
       if (message === null) {
         setConfirmingDelete(false);
-        if (dialog.open) dialog.close();
+        if (dialog.open) closeDialog();
       }
     } finally {
       setPending(null);
@@ -144,17 +155,11 @@ export default function BoardVotingSettings(props: {
 
   return (
     <>
-      <button
-        type="button"
-        aria-haspopup="dialog"
-        class={[buttonClass, 'ml-auto shrink-0 border border-border bg-surface text-text hover:bg-surface-subtle']}
-        disabled={pending() !== null}
-        onClick={openDialog}
-      >
-        Board Settings
-      </button>
       <dialog
         ref={dialog}
+        onClose={() => {
+          if (!dialog.open && props.open) props.onClose();
+        }}
         aria-labelledby={titleId}
         class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border border-border bg-surface p-4 text-text shadow-xl backdrop:bg-black/50 sm:p-5"
       >
@@ -163,8 +168,8 @@ export default function BoardVotingSettings(props: {
           <button
             type="button"
             aria-label="Close Board Settings"
-            class={[buttonClass, 'border border-border text-text-muted hover:bg-surface-subtle hover:text-text']}
-            onClick={() => dialog.close()}
+            class={[buttonClass, 'min-w-11 shrink-0 border border-border text-text-muted hover:bg-surface-subtle hover:text-text sm:min-w-9']}
+            onClick={closeDialog}
           >
             <CloseIcon />
           </button>

@@ -6,6 +6,7 @@ import {
   createSignal,
   createStore,
   createUniqueId,
+  flush,
   onSettled,
   reconcile,
   untrack,
@@ -15,11 +16,6 @@ import {
   defaultBoardWorkspaceActions,
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
-import {
-  buildExportFilename,
-  buildExportUrl,
-  formatBoardMarkdown,
-} from '../lib/board-export';
 import { connectBoardLive } from '../lib/board-live';
 import { applyBoardEvents } from '../lib/board-store';
 import {
@@ -45,6 +41,7 @@ import {
   type BoardSortMode,
   type ColumnStreamItem,
 } from '../lib/board-view';
+import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
@@ -56,7 +53,7 @@ import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSett
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
-import ExportBoardMenu from './ExportBoardMenu';
+import ExportBoardMenu, { type ExportFeedback } from './ExportBoardMenu';
 import {
   CheckIcon,
   CloseIcon,
@@ -65,6 +62,8 @@ import {
   PencilIcon,
   PlusIcon,
 } from './Icons';
+import PageMessage from './PageMessage';
+import PrintBoard from './PrintBoard';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
 import type { WorkspaceVoting } from './VoteControls';
@@ -96,11 +95,19 @@ const EMPTY_CARDS: readonly CardViewDTO[] = [];
 const EMPTY_GROUPS: readonly CardGroupDTO[] = [];
 const EMPTY_STREAM_ITEMS: readonly ColumnStreamItem[] = [];
 
-function getResponsiveGridClass(columnCount: number): string {
-  if (columnCount <= 1) return 'sm:grid sm:grid-cols-1 lg:max-w-2xl';
-  if (columnCount === 2) return 'sm:grid sm:grid-cols-2 lg:grid-cols-2';
-  if (columnCount === 3) return 'sm:grid sm:grid-cols-2 lg:grid-cols-3';
-  if (columnCount === 4) return 'sm:grid sm:grid-cols-2 lg:grid-cols-4';
+function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): string {
+  if (columnCount <= 1) return showAddColumn
+    ? 'sm:grid sm:grid-cols-[minmax(0,1fr)_auto] lg:max-w-3xl'
+    : 'sm:grid sm:grid-cols-1 lg:max-w-2xl';
+  if (columnCount === 2) return showAddColumn
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(2,minmax(0,1fr))_auto]'
+    : 'sm:grid sm:grid-cols-2';
+  if (columnCount === 3) return showAddColumn
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]'
+    : 'sm:grid sm:grid-cols-2 lg:grid-cols-3';
+  if (columnCount === 4) return showAddColumn
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]'
+    : 'sm:grid sm:grid-cols-2 lg:grid-cols-4';
   return 'sm:flex sm:overflow-x-auto sm:snap-x sm:snap-mandatory sm:pb-4';
 }
 
@@ -112,6 +119,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [nowMs, setNowMs] = createSignal(Date.now());
+  const [isLive, setIsLive] = createSignal(false);
   const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
   const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
   const timerClock = createMemo(() => {
@@ -152,21 +160,38 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
-  const [revealAnnouncement, setRevealAnnouncement] = createSignal('');
+  const [modeAnnouncement, setModeAnnouncement] = createSignal('');
   let optimisticCardSeq = 0;
 
-  // Mobile (< 640px) header overflow menu state
-  const mobileMenuId = createUniqueId();
-  const [mobileMenuOpen, setMobileMenuOpen] = createSignal(false);
-  const [mobileCopyStatus, setMobileCopyStatus] = createSignal('');
-  let mobileMenuRootEl: HTMLDivElement | undefined;
-  let mobileMenuTriggerEl: HTMLButtonElement | undefined;
+  // More disclosure and Board Settings
+  const boardMenuId = createUniqueId();
+  const [boardMenuOpen, setBoardMenuOpen] = createSignal(false);
+  const [exportFeedback, setExportFeedback] = createSignal<ExportFeedback | null>(null);
+  const [isPrinting, setIsPrinting] = createSignal(false);
+  onSettled(() => {
+    function preparePrint(): void {
+      setIsPrinting(true);
+      flush();
+    }
+    function finishPrint(): void {
+      setIsPrinting(false);
+    }
+    window.addEventListener('beforeprint', preparePrint);
+    window.addEventListener('afterprint', finishPrint);
+    return () => {
+      window.removeEventListener('beforeprint', preparePrint);
+      window.removeEventListener('afterprint', finishPrint);
+    };
+  });
+  const [isBoardSettingsOpen, setIsBoardSettingsOpen] = createSignal(false);
+  let boardMenuRootEl: HTMLDivElement | undefined;
+  let boardMenuTriggerEl: HTMLButtonElement | undefined;
+  let boardMenuEl: HTMLDivElement | undefined;
 
-  function closeMobileMenu(restoreFocus: boolean): void {
-    setMobileMenuOpen(false);
-    setMobileCopyStatus('');
+  function closeBoardMenu(restoreFocus: boolean): void {
+    setBoardMenuOpen(false);
     if (restoreFocus) {
-      mobileMenuTriggerEl?.focus();
+      boardMenuTriggerEl?.focus();
     }
   }
 
@@ -182,14 +207,29 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     createSignal<ColumnAccent>('slate');
   const [newColumnIsAction, setNewColumnIsAction] = createSignal(false);
   const [isSavingColumn, setIsSavingColumn] = createSignal(false);
+  const canAddColumn = createMemo(() => {
+    const board = workspace.board;
+    return !!board?.isFacilitator && !board.isLocked && board.columns.length < MAX_COLUMNS_PER_BOARD;
+  });
+  let newColumnTitleEl: HTMLInputElement | undefined;
+
+  function openAddColumn(): void {
+    closeBoardMenu(false);
+    setIsAddingColumn(true);
+  }
+
+  createEffect(isAddingColumn, (open) => {
+    if (open) newColumnTitleEl?.focus();
+  });
 
   // Mobile active Column + swipe + bottom quick-add state
   const [activeColumnId, setActiveColumnId] = createSignal<string | null>(null);
-  const [mobileDraft, setMobileDraft] = createSignal('');
+  const [mobileDrafts, setMobileDrafts] = createStore<Record<string, { content: string; error: string | null }>>({});
   const [isSubmittingMobileCard, setIsSubmittingMobileCard] =
     createSignal(false);
-  let touchStartX: number | null = null;
-  let touchStartY: number | null = null;
+  let swipeStart: { x: number; y: number; touchId: number } | undefined;
+  let columnTabListEl: HTMLDivElement | undefined;
+  let mobileComposerBarEl: HTMLDivElement | undefined;
 
   // Desktop drag-and-drop Card state
   const [draggingCardId, setDraggingCardId] = createSignal<string | null>(null);
@@ -203,8 +243,22 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     null,
   );
 
+  const [isCardDetailOpen, setIsCardDetailOpen] = createSignal(false);
+  let cardDetailTrigger: HTMLButtonElement | undefined;
+  let boardMain: HTMLElement | undefined;
+
   // Action Items Drawer state
   const [isActionItemsOpen, setIsActionItemsOpen] = createSignal(false);
+  let actionItemsHeaderEntry: HTMLButtonElement | undefined;
+
+  function restoreActionItemsFocus(previousFocus: HTMLElement | null): void {
+    for (const target of [previousFocus, actionItemsHeaderEntry, boardMenuTriggerEl]) {
+      if (!target?.isConnected || target.closest('[hidden]')) continue;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
+    }
+  }
+
   const openActionItemCount = createMemo(
     () =>
       workspace.board?.cards.filter(
@@ -242,10 +296,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       setIsRenamingBoard(false);
       setIsAddingColumn(false);
       setOpenCardDetailId(null);
+      setIsCardDetailOpen(false);
       setIsActionItemsOpen(false);
-      setMobileMenuOpen(false);
-      setMobileCopyStatus('');
-    }
+      setBoardMenuOpen(false);
+      setIsBoardSettingsOpen(false);
+      }
     untrack(() => {
       setWorkspace((draft) => {
         const current = draft.board;
@@ -315,15 +370,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     },
   );
 
-  createEffect(mobileMenuOpen, (isOpen) => {
+  createEffect(boardMenuOpen, (isOpen) => {
     if (!isOpen) return;
+    getEnabledMenuItems(boardMenuEl)[0]?.focus();
     function handlePointerDown(event: PointerEvent): void {
       if (
         event.target instanceof Node &&
-        mobileMenuRootEl &&
-        !mobileMenuRootEl.contains(event.target)
+        boardMenuRootEl &&
+        !boardMenuRootEl.contains(event.target)
       ) {
-        closeMobileMenu(false);
+        closeBoardMenu(false);
       }
     }
     document.addEventListener('pointerdown', handlePointerDown);
@@ -337,6 +393,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         setSearchQuery('');
         setQuickFilter('all');
         setSortMode('newest');
+        setActiveColumnId(null);
+        setMobileDrafts((drafts) => {
+          for (const id of Object.keys(drafts)) delete drafts[id];
+        });
       }
     },
   );
@@ -344,26 +404,51 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   createEffect(
     () => {
       const board = workspace.board;
-      return board && { id: board.id, isBlurred: board.isBlurred };
+      return board && {
+        id: board.id,
+        isBlurred: board.isBlurred,
+        blindVoting: board.blindVoting,
+        isLocked: board.isLocked,
+      };
     },
     (board, previous) => {
-      if (!board || board.isBlurred || previous?.id !== board.id) {
-        setRevealAnnouncement('');
-      } else if (previous.isBlurred) {
-        setRevealAnnouncement('All Cards revealed.');
+      if (!board || previous?.id !== board.id) {
+        setModeAnnouncement('');
+        return;
       }
+      const changes: string[] = [];
+      if (board.isBlurred !== previous.isBlurred) {
+        changes.push(board.isBlurred ? 'Private Mode is on.' : 'All Cards revealed.');
+      }
+      if (board.blindVoting !== previous.blindVoting) {
+        changes.push(board.blindVoting ? 'Blind Voting is on.' : 'Blind Voting is off.');
+      }
+      if (board.isLocked !== previous.isLocked) {
+        changes.push(board.isLocked ? 'Board locked.' : 'Board unlocked.');
+      }
+      setModeAnnouncement(changes.join(' '));
     },
   );
 
+  let unavailableHeading: HTMLHeadingElement | undefined;
   const liveBoardId = createMemo(() => workspace.board?.id);
-  createEffect(liveBoardId, (boardId) => {
-    if (!boardId || typeof window === 'undefined') return;
+  createEffect(liveBoardId, (boardId, previousBoardId) => {
+    if (!boardId) {
+      if (previousBoardId) unavailableHeading?.focus();
+      return;
+    }
+    if (typeof window === 'undefined') return;
     const live = connectBoardLive(boardId, {
-      onReconnect: () => setOnlineCount(null),
+      onReconnect() {
+        setIsLive(false);
+        setOnlineCount(null);
+      },
       onMessage(message) {
         switch (message.type) {
           case 'board:snapshot':
+            if (message.board.id !== boardId) break;
             applyServerSnapshot(message.board, message.serverNow);
+            setIsLive(true);
             break;
           case 'board:mutation':
             applyVersionedEvents(boardId, message.version, message.events);
@@ -396,6 +481,21 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     document.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
       document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  });
+
+  onSettled(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const updateComposerInset = () => {
+      const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      mobileComposerBarEl?.style.setProperty('--keyboard-inset', `${inset}px`);
+    };
+    viewport.addEventListener('resize', updateComposerInset);
+    viewport.addEventListener('scroll', updateComposerInset);
+    return () => {
+      viewport.removeEventListener('resize', updateComposerInset);
+      viewport.removeEventListener('scroll', updateComposerInset);
     };
   });
 
@@ -505,6 +605,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     ({ id, card }) => {
       if (id !== null && card === null) {
         setOpenCardDetailId(null);
+        setIsCardDetailOpen(false);
       }
     },
   );
@@ -530,15 +631,27 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     if (event.defaultPrevented || event.isComposing) return;
 
     if (event.key === 'Escape') {
+      if (isCardDetailOpen()) {
+        // Events inside the drawer are handled there after its nested controls.
+        if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
+        event.preventDefault();
+        setIsCardDetailOpen(false);
+        return;
+      }
+      if (isActionItemsOpen()) {
+        event.preventDefault();
+        setIsActionItemsOpen(false);
+        return;
+      }
       const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
       if (openDialog) {
         event.preventDefault();
         openDialog.close();
         return;
       }
-      if (mobileMenuOpen()) {
+      if (boardMenuOpen()) {
         event.preventDefault();
-        closeMobileMenu(true);
+        closeBoardMenu(true);
         return;
       }
       if (isAddingColumn()) {
@@ -572,8 +685,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       if (composer?.isConnected) {
         event.preventDefault();
         composer.focus();
-        composer.scrollIntoView?.({ block: 'nearest' });
-      } else if (mobileComposerEl?.isConnected) {
+        if (document.activeElement === composer) {
+          composer.scrollIntoView?.({ block: 'nearest' });
+          return;
+        }
+      }
+      if (mobileComposerEl?.isConnected) {
         event.preventDefault();
         mobileComposerEl.focus();
       }
@@ -680,12 +797,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   async function handleCreateCard(
     columnId: string,
     content: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
     const trimmed = content.trim();
-    if (!board || board.isLocked || trimmed.length === 0) return false;
+    if (!board || board.isLocked) return 'This Board is not accepting new Cards.';
     const column = board.columns.find((col) => col.id === columnId);
-    if (!column) return false;
+    if (!column) return 'This Column is no longer available.';
 
     const boardId = board.id;
     optimisticCardSeq += 1;
@@ -754,32 +871,31 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       } else {
         removeOptimisticCard(boardId, tempId);
       }
-      const ok = applyMutationResponse(boardId, response);
-      if (ok) {
+      if (!response.ok) return response.message;
+      if (workspace.board?.id === boardId) {
+        applyVersionedEvents(boardId, response.version, response.events);
         setNowMs(Date.now() + serverTimeOffsetMs);
       }
-      return ok;
+      return null;
     } catch {
       removeOptimisticCard(boardId, tempId);
-      if (workspace.board?.id === boardId) {
-        setErrorMessage('Could not create Card. Try again.');
-      }
-      return false;
+      return 'Could not create Card. Try again.';
     }
   }
 
   async function handleUpdateCard(
     cardId: string,
     content: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || !canManageCard(board, cardId)) return false;
-    const response = await actions().updateCard({
-      boardId: board.id,
-      cardId,
-      content,
-    });
-    return applyMutationResponse(board.id, response);
+    if (!board || !canManageCard(board, cardId)) return 'This Card can no longer be edited.';
+    try {
+      const response = await actions().updateCard({ boardId: board.id, cardId, content });
+      if (!response.ok) return response.message;
+      return applyMutationResponse(board.id, response) ? null : 'This Card can no longer be edited.';
+    } catch {
+      return 'Could not save the Card. Try again.';
+    }
   }
 
   async function handleUpdateActionItem(
@@ -804,7 +920,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       cardId,
       ...patch,
     });
-    return applyMutationResponse(board.id, response);
+    return response.ok && applyMutationResponse(board.id, response);
   }
 
   async function handleMoveCard(
@@ -941,13 +1057,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   async function handleToggleReaction(
     cardId: string,
     emoji: ReactionEmoji,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
     if (!board || board.isLocked || cardId.startsWith('optimistic:')) {
-      return false;
+      return 'This Card can no longer receive reactions.';
     }
     const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
+    if (!card || card.redacted) return 'This Card can no longer receive reactions.';
 
     const boardId = board.id;
     const hadReaction = card.myReactions.includes(emoji);
@@ -961,59 +1077,72 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       });
       if (!response.ok) {
         applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
+        return response.message;
       }
-      return applyMutationResponse(boardId, response);
+      applyMutationResponse(boardId, response);
+      return null;
     } catch {
       applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
-      if (workspace.board?.id === boardId) {
-        setErrorMessage('Could not update reaction. Try again.');
-      }
-      return false;
+      return 'Could not update reaction. Try again.';
     }
   }
 
   async function handleCreateComment(
     cardId: string,
     content: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || board.isLocked) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
-    const response = await actions().createComment({
-      boardId: board.id,
-      cardId,
-      content,
-    });
-    const ok = applyMutationResponse(board.id, response);
-    if (ok) {
-      setNowMs(Date.now() + serverTimeOffsetMs);
+    const card = board?.cards.find((item) => item.id === cardId);
+    if (!board || board.isLocked || !card || card.redacted) {
+      return 'This Card can no longer receive comments.';
     }
-    return ok;
+    try {
+      const response = await actions().createComment({ boardId: board.id, cardId, content });
+      if (!response.ok) return response.message;
+      if (applyMutationResponse(board.id, response)) {
+        setNowMs(Date.now() + serverTimeOffsetMs);
+      }
+      return null;
+    } catch {
+      return 'Could not post comment. Try again.';
+    }
   }
 
   async function handleDeleteComment(
     cardId: string,
     commentId: string,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || board.isLocked) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
-    const response = await actions().deleteComment({
-      boardId: board.id,
-      cardId,
-      commentId,
-    });
-    return applyMutationResponse(board.id, response);
+    const card = board?.cards.find((item) => item.id === cardId);
+    if (!board || board.isLocked || !card || card.redacted) {
+      return 'This comment can no longer be deleted.';
+    }
+    try {
+      const response = await actions().deleteComment({ boardId: board.id, cardId, commentId });
+      if (!response.ok) return response.message;
+      applyMutationResponse(board.id, response);
+      return null;
+    } catch {
+      return 'Could not delete comment. Try again.';
+    }
   }
 
-  function handleOpenCardDetail(cardId: string): void {
+  function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
     const board = workspace.board;
     if (!board || cardId.startsWith('optimistic:')) return;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return;
+    cardDetailTrigger = trigger;
     setOpenCardDetailId(cardId);
+    setIsCardDetailOpen(true);
+  }
+
+  function restoreCardDetailFocus(): void {
+    if (cardDetailTrigger?.isConnected) {
+      cardDetailTrigger.focus({ preventScroll: true });
+      if (document.activeElement === cardDetailTrigger) return;
+    }
+    boardMain?.focus({ preventScroll: true });
   }
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
@@ -1170,60 +1299,92 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
+  function updateMobileDraft(columnId: string, content: string): void {
+    setMobileDrafts((drafts) => {
+      drafts[columnId] = { content, error: null };
+    });
+  }
+
   async function handleMobileQuickAdd(): Promise<void> {
     const targetCol = activeMobileColumn();
-    const trimmed = mobileDraft().trim();
-    if (!targetCol || trimmed.length === 0 || isSubmittingMobileCard()) return;
+    if (!targetCol || isSubmittingMobileCard()) return;
+    const { id } = targetCol;
+    const draft = mobileDrafts[id]?.content ?? '';
+    if (draft.trim().length === 0) return;
     setIsSubmittingMobileCard(true);
+    updateMobileDraft(id, draft);
     try {
-      const ok = await handleCreateCard(targetCol.id, trimmed);
-      if (ok) {
-        setMobileDraft('');
-      }
+      const error = await handleCreateCard(id, draft.trim());
+      setMobileDrafts((drafts) => {
+        const current = drafts[id];
+        if (current?.content === draft) {
+          drafts[id] = error === null ? { content: '', error: null } : { content: draft, error };
+        }
+      });
     } finally {
       setIsSubmittingMobileCard(false);
     }
   }
 
   function handleMobileComposerKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       void handleMobileQuickAdd();
     }
   }
 
+  createEffect(resolvedActiveColumnIndex, (index) => {
+    const list = columnTabListEl;
+    const tab = list?.querySelectorAll<HTMLElement>('[role=tab]')[index];
+    if (!list || !tab) return;
+    const rail = list.getBoundingClientRect();
+    const item = tab.getBoundingClientRect();
+    const offset = item.left < rail.left ? item.left - rail.left - 12
+      : item.right > rail.right ? item.right - rail.right + 12 : 0;
+    if (offset !== 0) list.scrollLeft += offset;
+  });
+
+  function handleColumnTabsKeyDown(event: KeyboardEvent): void {
+    const cols = workspace.board?.columns ?? [];
+    const index = resolvedActiveColumnIndex();
+    let next: number;
+    switch (event.key) {
+      case 'Home': next = 0; break;
+      case 'End': next = cols.length - 1; break;
+      case 'ArrowLeft': next = (index - 1 + cols.length) % cols.length; break;
+      case 'ArrowRight': next = (index + 1) % cols.length; break;
+      default: return;
+    }
+    if (!cols[next]) return;
+    event.preventDefault();
+    setActiveColumnId(cols[next].id);
+    columnTabListEl?.querySelectorAll<HTMLElement>('[role=tab]')[next]?.focus({ preventScroll: true });
+  }
+
   function handleTouchStart(event: TouchEvent): void {
     const touch = event.changedTouches[0];
-    if (!touch) return;
-    touchStartX = touch.clientX;
-    touchStartY = touch.clientY;
+    if (!touch || (event.touches && event.touches.length > 1) ||
+        (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, [data-board-overlay]'))) {
+      swipeStart = undefined;
+      return;
+    }
+    swipeStart = { x: touch.clientX, y: touch.clientY, touchId: touch.identifier };
   }
 
   function handleTouchEnd(event: TouchEvent): void {
-    if (touchStartX === null || touchStartY === null) return;
+    const start = swipeStart;
+    swipeStart = undefined;
     const touch = event.changedTouches[0];
-    const startX = touchStartX;
-    const startY = touchStartY;
-    touchStartX = null;
-    touchStartY = null;
-    if (!touch) return;
+    if (!start || !touch || touch.identifier !== start.touchId) return;
 
-    const dx = touch.clientX - startX;
-    const dy = touch.clientY - startY;
-    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) {
-      return;
-    }
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
 
     const cols = workspace.board?.columns ?? [];
-    if (cols.length <= 1) return;
-    const currentIdx = resolvedActiveColumnIndex();
-    const nextIdx =
-      dx < 0
-        ? Math.min(cols.length - 1, currentIdx + 1)
-        : Math.max(0, currentIdx - 1);
-    if (nextIdx !== currentIdx) {
-      setActiveColumnId(cols[nextIdx].id);
-    }
+    const current = resolvedActiveColumnIndex();
+    const next = cols[current + (dx < 0 ? 1 : -1)];
+    if (next) setActiveColumnId(next.id);
   }
 
   function handleDragStartCard(cardId: string, sourceColumnId: string): void {
@@ -1255,12 +1416,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       when={workspace.board}
       fallback={
         <div class="flex min-h-dvh flex-col">
-          <header class="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur-sm">
+          <header class="border-b border-border bg-canvas">
             <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
               <a
                 href={props.homeHref ?? '/'}
                 class={[
-                  'inline-flex items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
+                  'inline-flex min-h-11 items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
                   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                 ]}
               >
@@ -1274,156 +1435,260 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             </div>
           </header>
 
-          <main class="mx-auto flex flex-1 max-w-lg flex-col items-center justify-center px-6 py-16 text-center">
-            <p class="text-xs font-medium tracking-wide text-text-muted uppercase tabular-nums">
-              404
-            </p>
-            <h1 class="mt-2 text-2xl font-semibold tracking-tight text-text">
-              Board not found or expired
-            </h1>
-            <p class="mt-3 text-sm text-text-muted">
-              This Board may have been deleted by its Facilitator or expired
-              after inactivity.
-            </p>
-            <a
-              href={props.homeHref ?? '/'}
-              class={[
-                'mt-6 inline-flex items-center rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-contrast',
-                'transition-opacity hover:opacity-90',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-              ]}
-            >
+          <PageMessage
+            title="Board not found or expired"
+            message="This Board may have been deleted by a Facilitator or expired after inactivity."
+            headingRef={(element) => { unavailableHeading = element; }}
+          >
+            <a href={props.homeHref ?? '/'} class="page-message-action">
               Create a new board
             </a>
-          </main>
+          </PageMessage>
         </div>
       }
     >
       {(board) => (
-        <div class="flex min-h-dvh flex-col bg-canvas">
+        <div
+          class="board-workspace flex min-h-dvh flex-col bg-canvas"
+          data-board-print-ready={isPrinting() ? "" : undefined}
+        >
+          <Show when={isPrinting()}>
+            <PrintBoard board={board()} />
+          </Show>
           <div aria-live="polite" aria-atomic="true" class="sr-only">
-            {revealAnnouncement()}
+            {modeAnnouncement()}
           </div>
-          {/* Minimal sticky Board header */}
-          <header class="sticky top-0 z-20 border-b border-border bg-surface/95 backdrop-blur-sm">
-            <div class="mx-auto flex max-w-[1600px] items-center justify-between gap-x-2 gap-y-2 px-3 py-2 sm:flex-wrap sm:gap-x-3 sm:px-6 lg:min-h-14 lg:flex-nowrap lg:py-1.5">
-              <div class="flex min-w-0 flex-1 items-center gap-2 sm:basis-full sm:gap-3 lg:basis-auto">
-                <a
-                  href={props.homeHref ?? '/'}
-                  aria-label="Retrocks home"
+          <header class="@container relative z-20 border-b border-border bg-canvas">
+            <div class="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 pt-3 pb-4 @max-[20rem]:grid-cols-[minmax(0,1fr)] sm:px-6 sm:pt-5">
+              <a
+                href={props.homeHref ?? '/'}
+                aria-label="Retrocks home"
+                class="inline-flex min-h-11 w-fit items-center gap-2 rounded-md text-sm font-semibold text-text-muted hover:text-text sm:min-h-8"
+              >
+                <span aria-hidden="true" class="size-2.5 rounded-sm bg-accent" />
+                Retrocks
+              </a>
+
+              <div class="col-span-2 row-start-2 min-w-0 @max-[20rem]:col-span-1 @max-[20rem]:row-start-3 sm:col-span-1">
+                <Show
+                  when={!isRenamingBoard()}
+                  fallback={
+                    <div class="flex max-w-md items-center gap-1.5">
+                      <input
+                        type="text"
+                        aria-label="Board title"
+                        value={boardTitleDraft()}
+                        maxlength={MAX_BOARD_TITLE_LENGTH}
+                        onInput={(e) =>
+                          setBoardTitleDraft(e.currentTarget.value)
+                        }
+                        onKeyDown={handleBoardTitleKeyDown}
+                        class={[
+                          'min-w-0 flex-1 rounded-md border border-border bg-canvas px-2.5 py-1 text-base font-semibold text-text',
+                          'focus:border-focus focus:outline-none',
+                        ]}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Save Board title"
+                        disabled={
+                          isSavingBoardTitle() ||
+                          boardTitleDraft().trim().length === 0
+                        }
+                        onClick={() => void saveBoardRename()}
+                        class="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+                      >
+                        <CheckIcon />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel Board rename"
+                        onClick={cancelBoardRename}
+                        class="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
+                      >
+                        <CloseIcon />
+                      </button>
+                    </div>
+                  }
+                >
+                  <div class="flex items-start gap-1.5">
+                    <h1 class="min-w-0 wrap-anywhere text-3xl leading-tight font-semibold tracking-tight text-text sm:text-4xl">
+                      {board().title}
+                    </h1>
+                    <Show when={board().isFacilitator && !board().isLocked}>
+                      <button
+                        type="button"
+                        aria-label="Rename Board"
+                        title="Rename Board"
+                        data-print-hide="true"
+                        onClick={startBoardRename}
+                        class={[
+                          'inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted',
+                          'transition-colors hover:bg-surface-subtle hover:text-text',
+                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                        ]}
+                      >
+                        <PencilIcon />
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
+                <Show when={board().subtitle.length > 0}>
+                  <p class="mt-1 max-w-[65ch] wrap-anywhere text-base leading-relaxed text-text-muted">{board().subtitle}</p>
+                </Show>
+              </div>
+
+              <div data-print-hide="true" class="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-1.5 @max-[20rem]:col-start-1 @max-[20rem]:row-start-2 sm:row-span-2 sm:gap-2 sm:self-end">
+                <button
+                  ref={actionItemsHeaderEntry}
+                  type="button"
+                  aria-keyshortcuts="A"
+                  aria-haspopup="dialog"
+                  aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
+                  title="Action Items (A)"
+                  onClick={(event) => {
+                    event.currentTarget.focus();
+                    setIsActionItemsOpen(true);
+                  }}
                   class={[
-                    'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text sm:min-h-8',
+                    'hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text @min-[26rem]:inline-flex sm:min-h-9 sm:px-3',
+                    'transition-colors hover:bg-surface-subtle active:bg-surface-subtle',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
                 >
-                  <span
-                    aria-hidden="true"
-                    class="inline-block h-2.5 w-2.5 rounded-sm bg-accent"
-                  />
-                  <span class="hidden sm:inline">Retrocks</span>
-                </a>
-                <span aria-hidden="true" class="text-border">
-                  /
-                </span>
+                  <FlagIcon class="h-3.5 w-3.5" />
+                  <span>Action Items</span>{' '}
+                  <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
+                    {openActionItemCount()}
+                  </span>{' '}
+                  <span class="sr-only">open</span>
+                </button>
+                <Show when={board().id} keyed>
+                  {(boardId) => (
+                    <ShareBoard
+                      boardId={boardId}
+                      isFacilitator={board().isFacilitator}
+                    />
+                  )}
+                </Show>
 
-                <div class="min-w-0 flex-1">
-                  <Show
-                    when={!isRenamingBoard()}
-                    fallback={
-                      <div class="flex max-w-md items-center gap-1.5">
-                        <input
-                          type="text"
-                          aria-label="Board title"
-                          value={boardTitleDraft()}
-                          maxlength={MAX_BOARD_TITLE_LENGTH}
-                          onInput={(e) =>
-                            setBoardTitleDraft(e.currentTarget.value)
-                          }
-                          onKeyDown={handleBoardTitleKeyDown}
-                          class={[
-                            'min-w-0 flex-1 rounded-md border border-border bg-canvas px-2.5 py-1 text-sm font-semibold text-text',
-                            'focus:border-focus focus:outline-none',
-                          ]}
-                        />
-                        <button
-                          type="button"
-                          aria-label="Save Board title"
-                          disabled={
-                            isSavingBoardTitle() ||
-                            boardTitleDraft().trim().length === 0
-                          }
-                          onClick={() => void saveBoardRename()}
-                          class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
-                        >
-                          <CheckIcon />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Cancel Board rename"
-                          onClick={cancelBoardRename}
-                          class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
-                        >
-                          <CloseIcon />
-                        </button>
-                      </div>
+                <div
+                  ref={boardMenuRootEl}
+                  class="relative"
+                  onFocusOut={(event) => {
+                    if (boardMenuOpen() && event.relatedTarget instanceof Node &&
+                        !event.currentTarget.contains(event.relatedTarget)) {
+                      closeBoardMenu(false);
                     }
+                  }}
+                >
+                  <button
+                    ref={boardMenuTriggerEl}
+                    type="button"
+                    aria-label="More board actions"
+                    aria-haspopup="menu"
+                    aria-expanded={boardMenuOpen() ? 'true' : 'false'}
+                    aria-controls={boardMenuId}
+                    onPointerDown={(event) => {
+                      // Let the click close More before focus leaves the menu.
+                      if (boardMenuOpen()) event.preventDefault();
+                    }}
+                    onClick={() => {
+                      if (boardMenuOpen()) closeBoardMenu(true);
+                      else setBoardMenuOpen(true);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowDown' && !boardMenuOpen()) {
+                        event.preventDefault();
+                        setBoardMenuOpen(true);
+                      }
+                    }}
+                    class="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-sm font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle @max-[20rem]:px-2 sm:min-h-9"
                   >
-                    <div class="flex items-center gap-1.5">
-                      <h1 class="truncate text-sm font-semibold text-text sm:text-base">
-                        {board().title}
-                      </h1>
-                      <Show when={board().isFacilitator && !board().isLocked}>
-                        <button
-                          type="button"
-                          aria-label="Rename Board"
-                          title="Rename Board"
-                          data-print-hide="true"
-                          onClick={startBoardRename}
-                          class={[
-                            'inline-flex min-h-9 min-w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                            'transition-colors hover:bg-surface-subtle hover:text-text',
-                            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                          ]}
-                        >
-                          <PencilIcon />
-                        </button>
-                      </Show>
-                      <Show when={board().isLocked}>
-                        <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
-                          Locked
-                        </span>
-                      </Show>
-                      <Show when={board().isBlurred}>
-                        <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text">
-                          Private Mode
-                        </span>
-                      </Show>
-                    </div>
-                  </Show>
-                  <div class="flex min-w-0 items-center gap-2 text-xs text-text-muted">
-                    <span
-                      role="status"
-                      data-print-hide="true"
-                      class="inline-flex shrink-0 items-center gap-1.5"
-                    >
-                      <span
-                        aria-hidden="true"
-                        class={[
-                          'h-1.5 w-1.5 rounded-full',
-                          onlineCount() === null ? 'bg-text-muted' : 'bg-emerald-600 dark:bg-emerald-400',
-                        ]}
-                      />
-                      {onlineCount() === null ? 'Reconnecting…' : `${onlineCount()} online`}
-                    </span>
-                    <Show when={board().subtitle.length > 0}>
-                      <p class="truncate">{board().subtitle}</p>
+                    <MoreHorizontalIcon />
+                    <span>More</span>
+                  </button>
+
+                  <div
+                    ref={boardMenuEl}
+                    id={boardMenuId}
+                    hidden={!boardMenuOpen()}
+                    role="menu"
+                    aria-label="More board actions"
+                    data-board-overlay={boardMenuOpen() ? 'true' : undefined}
+                    onKeyDown={handleMenuNavigation}
+                    onFocusOut={(event) => {
+                      if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                        closeBoardMenu(false);
+                      }
+                    }}
+                    class="absolute top-full right-0 z-30 mt-2 max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-border bg-surface p-2 shadow-lg"
+                  >
+                    <ThemeToggle menuItem />
+                    <Show when={board().isFacilitator}>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        tabindex={-1}
+                        aria-haspopup="dialog"
+                        class="board-menu-item"
+                        onClick={() => {
+                          closeBoardMenu(true);
+                          setIsBoardSettingsOpen(true);
+                        }}
+                      >
+                        Board Settings
+                      </button>
                     </Show>
+                    <Show when={canAddColumn()}>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        tabindex={-1}
+                        class="board-menu-item sm:hidden"
+                        onClick={openAddColumn}
+                      >
+                        <span class="inline-flex items-center gap-2"><PlusIcon /> Add column</span>
+                      </button>
+                    </Show>
+                    <button
+                      type="button"
+                      role="menuitem"
+                        tabindex={-1}
+                      aria-haspopup="dialog"
+                      class="board-menu-item @min-[26rem]:hidden"
+                      onClick={() => {
+                        closeBoardMenu(true);
+                        setIsActionItemsOpen(true);
+                      }}
+                    >
+                      <span class="inline-flex items-center gap-2"><FlagIcon /> Action Items</span>{' '}
+                      <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
+                    </button>
+                    <div role="separator" class="my-1 border-t border-border" />
+                    <ExportBoardMenu
+                      board={board()}
+                      onClose={() => closeBoardMenu(true)}
+                      onFeedback={setExportFeedback}
+                    />
                   </div>
                 </div>
               </div>
 
-              <div data-print-hide="true" class="flex shrink-0 items-center gap-1.5 sm:flex-wrap sm:gap-2 lg:flex-nowrap">
-                <div class="hidden items-center gap-1.5 sm:flex sm:flex-wrap sm:gap-2 lg:flex-nowrap">
+              <div role="group" aria-label="Board status" class="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 @max-[20rem]:col-span-1">
+                <div data-print-hide="true" class="flex items-center gap-2 text-sm text-text-muted">
+                  <span role="status" class="inline-flex items-center gap-1.5 font-medium">
+                    <span
+                      aria-hidden="true"
+                      class={['size-1.5 shrink-0 rounded-full', isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
+                    />
+                    {isLive() ? 'Live' : 'Reconnecting…'}
+                  </span>
+                  <Show when={isLive() && onlineCount() !== null}>
+                    <span class="border-l border-border pl-2 tabular-nums">{onlineCount()} online</span>
+                  </Show>
+                </div>
+                <div data-print-hide="true">
                   <Show when={board().id} keyed>
                     {(boardId) => (
                       <CountdownTimer
@@ -1434,353 +1699,133 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       />
                     )}
                   </Show>
-                  <Show when={board().isFacilitator && !board().isLocked}>
-                    <button
-                      type="button"
-                      aria-keyshortcuts="B"
-                      title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
-                      disabled={isChangingPrivateMode()}
-                      onClick={() => void togglePrivateMode()}
-                      class={[
-                        'inline-flex min-h-11 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium sm:min-h-9 sm:px-3',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
-                        board().isBlurred
-                          ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
-                          : 'border-border bg-surface text-text hover:bg-surface-subtle',
-                      ]}
-                    >
-                      {board().isBlurred ? 'Reveal All' : 'Private Mode'}
-                    </button>
-                  </Show>
-                  <Show
-                    when={
-                      board().isFacilitator &&
-                      !board().isLocked &&
-                      board().columns.length < MAX_COLUMNS_PER_BOARD
-                    }
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingColumn((prev) => !prev)}
-                      class={[
-                        'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-9',
-                        'transition-colors hover:bg-surface-subtle',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                      ]}
-                    >
-                      <PlusIcon class="h-3.5 w-3.5" />
-                      <span class="hidden sm:inline">+ Add column</span>
-                      <span class="sm:hidden">Column</span>
-                    </button>
-                  </Show>
-                  <button
-                    type="button"
-                    aria-keyshortcuts="A"
-                    aria-haspopup="dialog"
-                    aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
-                    title="Action Items (A)"
-                    onClick={() => setIsActionItemsOpen((open) => !open)}
-                    class={[
-                      'inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text sm:min-h-9 sm:px-3',
-                      'transition-colors hover:bg-surface-subtle',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    ]}
-                  >
-                    <FlagIcon class="h-3.5 w-3.5" />
-                    <span class="sr-only lg:not-sr-only">Action Items</span>{' '}
-                    <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
-                      {openActionItemCount()}
-                    </span>{' '}
-                    <span class="sr-only">open</span>
-                  </button>
                 </div>
-
-                <Show when={board().id} keyed>
-                  {(boardId) => (
-                    <ShareBoard
-                      boardId={boardId}
-                      isFacilitator={board().isFacilitator}
-                    />
-                  )}
+                <Show when={board().isBlurred || (board().isFacilitator && !board().isLocked)}>
+                  <div class="flex max-w-full flex-wrap items-center gap-2">
+                    <Show when={board().isBlurred}>
+                      <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Private Mode</span>
+                    </Show>
+                    <Show when={board().isFacilitator && !board().isLocked}>
+                      <button
+                        type="button"
+                        data-print-hide="true"
+                        aria-keyshortcuts="B"
+                        title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
+                        disabled={isChangingPrivateMode()}
+                        onClick={() => void togglePrivateMode()}
+                        class={[
+                          'inline-flex min-h-11 min-w-11 cursor-pointer items-center rounded-lg border px-2.5 text-sm font-medium transition-colors active:opacity-80 sm:min-h-9 sm:px-3',
+                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                          board().isBlurred
+                            ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
+                            : 'border-border bg-surface text-text hover:bg-surface-subtle',
+                        ]}
+                      >
+                        {board().isBlurred ? 'Reveal All' : 'Private Mode'}
+                      </button>
+                    </Show>
+                  </div>
                 </Show>
-
-                <div class="hidden items-center gap-2 sm:flex">
-                  <ExportBoardMenu board={board()} />
-                  <ThemeToggle />
-                </div>
-
-                {/* Mobile (< 640px) compact overflow menu for secondary Board controls */}
-                <div ref={mobileMenuRootEl} class="relative sm:hidden">
-                  <button
-                    ref={mobileMenuTriggerEl}
-                    type="button"
-                    aria-label="More board actions"
-                    aria-haspopup="menu"
-                    aria-expanded={mobileMenuOpen() ? 'true' : 'false'}
-                    aria-controls={mobileMenuOpen() ? mobileMenuId : undefined}
-                    onClick={() => {
-                      if (mobileMenuOpen()) {
-                        closeMobileMenu(true);
-                      } else {
-                        setMobileCopyStatus('');
-                        setMobileMenuOpen(true);
-                      }
-                    }}
-                    class={[
-                      'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-text',
-                      'transition-colors hover:bg-surface-subtle',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    ]}
-                  >
-                    <MoreHorizontalIcon />
-                  </button>
-
-                  <Show when={mobileMenuOpen()}>
-                    <div
-                      id={mobileMenuId}
-                      role="menu"
-                      aria-label="More board actions"
-                      data-board-overlay="true"
-                      class="fixed inset-x-3 top-14 z-30 max-h-[calc(100dvh-4.5rem)] space-y-1 overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg sm:hidden"
-                    >
-                      <div class="flex items-center justify-between gap-2 border-b border-border/70 px-1 pb-2">
-                        <Show when={board().id} keyed>
-                          {(boardId) => (
-                            <CountdownTimer
-                              timer={board().timer}
-                              clock={timerClock()}
-                              canControl={board().isFacilitator && !board().isLocked}
-                              onChange={(change) => changeCountdown(boardId, change)}
-                            />
-                          )}
-                        </Show>
-                        <ThemeToggle />
-                      </div>
-
-                      <Show when={board().isFacilitator && !board().isLocked}>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          disabled={isChangingPrivateMode()}
-                          onClick={() => {
-                            closeMobileMenu(false);
-                            void togglePrivateMode();
-                          }}
-                          class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
-                        >
-                          <span>{board().isBlurred ? 'Reveal All' : 'Private Mode'}</span>
-                        </button>
-                      </Show>
-
-                      <Show
-                        when={
-                          board().isFacilitator &&
-                          !board().isLocked &&
-                          board().columns.length < MAX_COLUMNS_PER_BOARD
-                        }
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            closeMobileMenu(false);
-                            setIsAddingColumn((prev) => !prev);
-                          }}
-                          class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                        >
-                          <PlusIcon class="h-3.5 w-3.5" />
-                          <span>Add column</span>
-                        </button>
-                      </Show>
-
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMobileMenu(false);
-                          setIsActionItemsOpen(true);
-                        }}
-                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                      >
-                        <span class="inline-flex items-center gap-2">
-                          <FlagIcon class="h-3.5 w-3.5" />
-                          <span>Action Items</span>
-                        </span>
-                        <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
-                          {openActionItemCount()}
-                        </span>
-                      </button>
-
-                      <div class="my-1 border-t border-border/70" role="separator" />
-
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          const markdown = formatBoardMarkdown(board());
-                          void navigator.clipboard
-                            .writeText(markdown)
-                            .then(() => setMobileCopyStatus('Copied Markdown!'))
-                            .catch(() =>
-                              setMobileCopyStatus('Could not copy to the clipboard.'),
-                            );
-                        }}
-                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                      >
-                        <span>Copy Markdown</span>
-                        <span aria-hidden="true" class="text-[11px] font-normal text-text-muted">
-                          Clipboard
-                        </span>
-                      </button>
-
-                      <a
-                        role="menuitem"
-                        href={buildExportUrl(board().id, 'md')}
-                        download={buildExportFilename(board().title, 'md')}
-                        onClick={() => closeMobileMenu(false)}
-                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                      >
-                        <span>Download Markdown</span>
-                        <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
-                          .md
-                        </span>
-                      </a>
-
-                      <a
-                        role="menuitem"
-                        href={buildExportUrl(board().id, 'csv')}
-                        download={buildExportFilename(board().title, 'csv')}
-                        onClick={() => closeMobileMenu(false)}
-                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                      >
-                        <span>Download CSV</span>
-                        <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
-                          .csv
-                        </span>
-                      </a>
-
-                      <a
-                        role="menuitem"
-                        href={buildExportUrl(board().id, 'json')}
-                        download={buildExportFilename(board().title, 'json')}
-                        onClick={() => closeMobileMenu(false)}
-                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                      >
-                        <span>Download JSON</span>
-                        <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
-                          .json
-                        </span>
-                      </a>
-
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          closeMobileMenu(false);
-                          window.print();
-                        }}
-                        class="flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-                      >
-                        <span>Print / Save as PDF</span>
-                      </button>
-
-                      <Show when={mobileCopyStatus()}>
-                        <p
-                          role="status"
-                          class="border-t border-border/70 px-2.5 pt-2 pb-1 text-[11px] font-medium text-text-muted"
-                        >
-                          {mobileCopyStatus()}
-                        </p>
-                      </Show>
-                    </div>
-                  </Show>
-                </div>
-              </div>
-            </div>
-
-            <Show when={
-              board().voteLimit !== null ||
-              board().blindVoting ||
-              board().isFacilitator
-            }>
-              <div
-                data-print-hide="true"
-                class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 border-t border-border/70 px-4 py-1.5 sm:px-6"
-              >
+                <Show when={board().blindVoting}>
+                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Blind Voting</span>
+                </Show>
+                <Show when={board().isLocked}>
+                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Locked</span>
+                </Show>
                 <Show when={board().voteLimit !== null}>
-                  <span aria-live="polite" class="rounded-full border border-border bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text tabular-nums">
+                  <span aria-live="polite" aria-atomic="true" class="text-sm font-medium text-text tabular-nums">
                     {voting().remainingVotes} / {board().voteLimit} votes left
                   </span>
                 </Show>
-                <Show when={board().blindVoting}>
-                  <span class="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted">
-                    Blind Voting
-                  </span>
-                </Show>
-                <Show when={board().isFacilitator}>
-                  <BoardVotingSettings
-                    board={board()}
-                    onUpdate={saveVotingSettings}
-                    onReset={resetAllVotes}
-                    onToggleLock={toggleBoardLock}
-                    onDeleteBoard={deleteCurrentBoard}
-                  />
+                <Show when={board().isBlurred}>
+                  <p class="basis-full text-sm text-text-muted">Only you can read your Cards until they’re revealed.</p>
                 </Show>
               </div>
-            </Show>
 
-            {/* Mobile (< 640px) scrollable Column Tab Bar */}
-            <nav
-              aria-label="Board Columns"
-              data-print-hide="true"
-              class="border-t border-border/70 bg-surface sm:hidden"
-            >
-              <div
-                role="tablist"
-                aria-label="Select Column"
-                class="flex items-center gap-1.5 overflow-x-auto px-3 py-2"
+              <p
+                data-print-hide="true"
+                aria-live="polite"
+                aria-atomic="true"
+                class={[
+                  'col-span-2 text-sm empty:absolute',
+                  exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
+                ]}
               >
-                <For each={board().columns}>
-                  {(column, index) => (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={
-                        resolvedActiveColumnIndex() === index()
-                          ? 'true'
-                          : 'false'
-                      }
-                      onClick={() => setActiveColumnId(column.id)}
-                      class={[
-                        'inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        {
-                          'border-text bg-surface-subtle text-text':
-                            resolvedActiveColumnIndex() === index(),
-                          'border-border bg-surface text-text-muted hover:text-text':
-                            resolvedActiveColumnIndex() !== index(),
-                        },
-                      ]}
-                    >
-                      <span
-                        aria-hidden="true"
-                        class={[
-                          'h-2 w-2 shrink-0 rounded-full',
-                          COLUMN_ACCENT_STYLES[column.accent].swatch,
-                        ]}
-                      />
-                      <span class="max-w-32 truncate">{column.title}</span>
-                      <span class="rounded-full bg-surface px-1.5 py-0.5 text-[11px] text-text-muted tabular-nums">
-                        {boardView()?.hasActiveFilter
-                          ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
-                          : column.cardCount}
-                      </span>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </nav>
+                {exportFeedback()?.message}
+              </p>
+            </div>
           </header>
+
+          <Show when={board().isFacilitator}>
+            <BoardVotingSettings
+              board={board()}
+              open={isBoardSettingsOpen()}
+              onClose={() => {
+                setIsBoardSettingsOpen(false);
+                boardMenuTriggerEl?.focus();
+              }}
+              onUpdate={saveVotingSettings}
+              onReset={resetAllVotes}
+              onToggleLock={toggleBoardLock}
+              onDeleteBoard={deleteCurrentBoard}
+            />
+          </Show>
+
+          {/* Mobile (< 640px) scrollable Column Tab Bar */}
+          <nav
+            aria-label="Board Columns"
+            data-print-hide="true"
+            class="sticky top-0 z-10 min-w-0 border-b border-border bg-canvas sm:hidden"
+          >
+            <div
+              ref={columnTabListEl}
+              onKeyDown={handleColumnTabsKeyDown}
+              role="tablist"
+              aria-label="Select Column"
+              class="flex items-center gap-1.5 overflow-x-auto px-3 py-2"
+            >
+              <For each={board().columns}>
+                {(column, index) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-controls={`column-${column.id}`}
+                    tabindex={resolvedActiveColumnIndex() === index() ? 0 : -1}
+                    aria-selected={
+                      resolvedActiveColumnIndex() === index()
+                        ? 'true'
+                        : 'false'
+                    }
+                    onClick={() => setActiveColumnId(column.id)}
+                    class={[
+                      'inline-flex min-h-11 max-w-[min(18rem,85vw)] shrink-0 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors active:bg-surface-subtle',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      {
+                        'border-text bg-surface-subtle text-text':
+                          resolvedActiveColumnIndex() === index(),
+                        'border-border bg-surface text-text-muted hover:text-text':
+                          resolvedActiveColumnIndex() !== index(),
+                      },
+                    ]}
+                  >
+                    <span
+                      aria-hidden="true"
+                      class={[
+                        'h-2 w-2 shrink-0 rounded-full',
+                        COLUMN_ACCENT_STYLES[column.accent].swatch,
+                      ]}
+                    />
+                    <span class="min-w-0 wrap-anywhere text-left">{column.title}</span>
+                    <span class="text-xs text-text-muted tabular-nums">
+                      {boardView()?.hasActiveFilter
+                        ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
+                        : column.cardCount}
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </nav>
 
           {/* Viewer-local Search, Quick Filter & Sort toolbar */}
           <Show when={boardView()}>
@@ -1819,7 +1864,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     type="button"
                     aria-label="Dismiss error"
                     onClick={() => setErrorMessage(null)}
-                    class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:text-text"
+                    class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-md text-text-muted hover:text-text"
                   >
                     <CloseIcon />
                   </button>
@@ -1836,7 +1881,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 class="rounded-xl border border-border bg-surface p-4 shadow-2xs"
               >
                 <div class="flex flex-wrap items-end gap-3">
-                  <div class="min-w-52 flex-1">
+                  <div class="w-full min-w-0 flex-1 basis-52">
                     <label
                       for="new-column-title"
                       class="block text-xs font-medium text-text-muted"
@@ -1844,6 +1889,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       New column title
                     </label>
                     <input
+                      ref={newColumnTitleEl}
                       id="new-column-title"
                       type="text"
                       aria-label="New column title"
@@ -1859,7 +1905,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     <span class="block text-xs font-medium text-text-muted">
                       Accent
                     </span>
-                    <div class="mt-1.5 flex items-center gap-1.5">
+                    <div class="mt-1.5 grid w-fit grid-cols-4 gap-1.5 sm:grid-cols-8">
                       <For each={COLUMN_ACCENTS}>
                         {(accent) => (
                           <button
@@ -1870,7 +1916,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                             }
                             onClick={() => setNewColumnAccent(accent)}
                             class={[
-                              'inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border transition-colors',
+                              'inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:size-9',
                               {
                                 'border-focus bg-surface-subtle':
                                   newColumnAccent() === accent,
@@ -1892,7 +1938,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     </div>
                   </div>
 
-                  <label class="inline-flex min-h-9 cursor-pointer items-center gap-2 text-xs text-text-muted">
+                  <label class="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm text-text-muted sm:min-h-9">
                     <input
                       type="checkbox"
                       checked={newColumnIsAction()}
@@ -1929,9 +1975,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
           {/* Responsive Columns workspace (single-column + swipe on mobile, grid/snap on tablet & desktop) */}
           <main
+            ref={boardMain}
+            tabindex={-1}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
-            class="mx-auto w-full max-w-[1600px] flex-1 px-4 pt-4 pb-28 sm:px-6 sm:py-6"
+            onTouchCancel={() => { swipeStart = undefined; }}
+            class="mx-auto w-full max-w-[1600px] flex-1 touch-pan-y touch-pinch-zoom px-3 py-4 sm:touch-auto sm:px-6 sm:py-6"
           >
             <Show
               when={
@@ -1940,27 +1989,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 (boardView()?.matchedCardCount ?? 0) === 0
               }
             >
-              <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
-                <p>No Cards match your current search or filter.</p>
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  class={[
-                    'inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
-                    'transition-colors hover:bg-canvas',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  Clear filters
-                </button>
-              </div>
+              <p class="mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+                No Cards match your current search or filter.
+              </p>
             </Show>
 
             <div
               data-board-columns="true"
               class={[
                 'gap-4',
-                getResponsiveGridClass(board().columns.length),
+                getResponsiveGridClass(board().columns.length, canAddColumn()),
               ]}
             >
               <For each={board().columns}>
@@ -2008,68 +2046,82 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     },
                   );
                   return (
-                  <ColumnPanel
-                    column={column}
-                    columnIndex={index()}
-                    totalColumns={board().columns.length}
-                    columns={board().columns}
-                    cards={columnCards()}
-                    groups={columnGroups()}
-                    streamItems={columnStreamItems()}
-                    visibleCardCount={
-                      boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
-                    }
-                    hasActiveFilter={boardView()?.hasActiveFilter ?? false}
-                    voting={voting()}
-                    isFacilitator={board().isFacilitator}
-                    isLocked={board().isLocked}
-                    isBlurred={board().isBlurred}
-                    canGroupCards={canManageGrouping(board())}
-                    nowMs={nowMs()}
-                    isMobileActive={resolvedActiveColumnIndex() === index()}
-                    isHorizontalSnap={isHorizontalSnap()}
-                    draggingCardId={draggingCardId()}
-                    draggingGroupId={draggingGroupId()}
-                    draggingSourceColumnId={draggingSourceColumnId()}
-                    onResetFilters={resetFilters}
-                    onRegisterComposer={registerColumnComposer}
-                    onActivateColumn={(colId) => setActiveColumnId(colId)}
-                    onCreateCard={handleCreateCard}
-                    onUpdateCard={handleUpdateCard}
-                    onUpdateActionItem={handleUpdateActionItem}
-                    onMoveCard={handleMoveCard}
-                    onDeleteCard={handleDeleteCard}
-                    onToggleReaction={handleToggleReaction}
-                    onOpenCardDetail={handleOpenCardDetail}
-                    onUpdateColumn={handleUpdateColumn}
-                    onMoveColumn={handleMoveColumn}
-                    onDeleteColumn={handleDeleteColumn}
-                    onGroupCard={handleGroupCard}
-                    onUngroupCard={handleUngroupCard}
-                    onRenameCardGroup={handleRenameCardGroup}
-                    onDissolveCardGroup={handleDissolveCardGroup}
-                    onMoveCardGroup={handleMoveCardGroup}
-                    onDragStartCard={handleDragStartCard}
-                    onDragStartGroup={handleDragStartGroup}
-                    onDragEndCard={handleDragEndCard}
-                  />
+                    <ColumnPanel
+                      column={column}
+                      columnIndex={index()}
+                      totalColumns={board().columns.length}
+                      columns={board().columns}
+                      cards={columnCards()}
+                      groups={columnGroups()}
+                      streamItems={columnStreamItems()}
+                      visibleCardCount={
+                        boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
+                      }
+                      hasActiveFilter={boardView()?.hasActiveFilter ?? false}
+                      voting={voting()}
+                      isFacilitator={board().isFacilitator}
+                      isLocked={board().isLocked}
+                      isBlurred={board().isBlurred}
+                      canGroupCards={canManageGrouping(board())}
+                      nowMs={nowMs()}
+                      isMobileActive={resolvedActiveColumnIndex() === index()}
+                      isHorizontalSnap={isHorizontalSnap()}
+                      draggingCardId={draggingCardId()}
+                      draggingGroupId={draggingGroupId()}
+                      draggingSourceColumnId={draggingSourceColumnId()}
+                      onResetFilters={resetFilters}
+                      onRegisterComposer={registerColumnComposer}
+                      onActivateColumn={(colId) => setActiveColumnId(colId)}
+                      onCreateCard={handleCreateCard}
+                      onUpdateCard={handleUpdateCard}
+                      onUpdateActionItem={handleUpdateActionItem}
+                      onMoveCard={handleMoveCard}
+                      onDeleteCard={handleDeleteCard}
+                      onToggleReaction={handleToggleReaction}
+                      onOpenCardDetail={handleOpenCardDetail}
+                      onUpdateColumn={handleUpdateColumn}
+                      onMoveColumn={handleMoveColumn}
+                      onDeleteColumn={handleDeleteColumn}
+                      onGroupCard={handleGroupCard}
+                      onUngroupCard={handleUngroupCard}
+                      onRenameCardGroup={handleRenameCardGroup}
+                      onDissolveCardGroup={handleDissolveCardGroup}
+                      onMoveCardGroup={handleMoveCardGroup}
+                      onDragStartCard={handleDragStartCard}
+                      onDragStartGroup={handleDragStartGroup}
+                      onDragEndCard={handleDragEndCard}
+                    />
                   );
                 }}
               </For>
+              <Show when={canAddColumn()}>
+                <button
+                  type="button"
+                  data-print-hide="true"
+                  onClick={openAddColumn}
+                  class="hidden w-fit shrink-0 items-center gap-1.5 self-start rounded-lg border border-dashed border-border px-3 py-2 text-sm font-medium text-text-muted hover:bg-surface active:bg-surface-subtle sm:inline-flex sm:min-h-11"
+                >
+                  <PlusIcon />
+                  <span>Add a Column</span>
+                </button>
+              </Show>
             </div>
           </main>
 
           {/* Card Detail Drawer / Bottom Sheet */}
-          <Show when={openDetailCard()}>
-            {(card) => (
+          <Show when={openDetailCard() && openCardDetailId()} keyed>
+            {(_id) => (
               <CardDetailDrawer
-                card={card()}
+                card={openDetailCard()!}
                 column={openDetailColumn()}
                 isFacilitator={board().isFacilitator}
                 isLocked={board().isLocked}
                 isBlurred={board().isBlurred}
                 nowMs={nowMs()}
-                onClose={() => setOpenCardDetailId(null)}
+                isOpen={isCardDetailOpen()}
+                onClose={() => setIsCardDetailOpen(false)}
+                onExit={() => setOpenCardDetailId(null)}
+                restoreFocus={restoreCardDetailFocus}
                 onUpdateActionItem={handleUpdateActionItem}
                 onToggleReaction={handleToggleReaction}
                 onCreateComment={handleCreateComment}
@@ -2079,36 +2131,52 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </Show>
 
           {/* Action Items Drawer / Bottom Sheet */}
-          <Show when={isActionItemsOpen()}>
-            <ActionItemsDrawer
-              board={board()}
-              isLocked={board().isLocked}
-              onClose={() => setIsActionItemsOpen(false)}
-              onUpdateActionItem={handleUpdateActionItem}
-            />
-          </Show>
+          <ActionItemsDrawer
+            board={board()}
+            open={isActionItemsOpen()}
+            isLocked={board().isLocked}
+            onClose={() => setIsActionItemsOpen(false)}
+            onRestoreFocus={restoreActionItemsFocus}
+            onUpdateActionItem={handleUpdateActionItem}
+          />
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
-          <Show when={!board().isLocked && activeMobileColumn()}>
+          <Show
+            when={!board().isLocked && activeMobileColumn()}
+            fallback={
+              <Show when={board().isLocked}>
+                <p data-print-hide="true" class="sticky bottom-0 z-20 border-t border-border bg-surface px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-sm text-text-muted sm:hidden">
+                  This Board is Locked. You can still read and search Cards.
+                </p>
+              </Show>
+            }
+          >
             {(targetCol) => (
               <div
                 data-print-hide="true"
-                class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 py-2.5 backdrop-blur-sm sm:hidden"
+                ref={mobileComposerBarEl}
+                class="sticky bottom-[var(--keyboard-inset,0px)] z-20 border-t border-border bg-surface px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden"
               >
+                <p class="mb-1 wrap-anywhere text-sm text-text-muted">
+                  Write in <span class="font-semibold text-text">{targetCol().title}</span>
+                </p>
+                <Show when={mobileDrafts[targetCol().id]?.error}>
+                  {(error) => <p role="alert" class="mb-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
+                </Show>
                 <div class="flex items-end gap-2">
                   <textarea
                     ref={(el) => {
                       mobileComposerEl = el;
                     }}
                     aria-label={`Quick add card to ${targetCol().title}`}
-                    placeholder={`Add a card to ${targetCol().title}...`}
-                    value={mobileDraft()}
+                    placeholder="Add a Card…"
+                    value={mobileDrafts[targetCol().id]?.content ?? ''}
                     maxlength={MAX_CARD_CONTENT_LENGTH}
                     rows={1}
-                    onInput={(e) => setMobileDraft(e.currentTarget.value)}
+                    onInput={(e) => updateMobileDraft(targetCol().id, e.currentTarget.value)}
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
-                      'min-h-11 flex-1 resize-none rounded-lg border border-border bg-canvas px-3 py-2.5 text-sm text-text',
+                      'min-h-11 min-w-0 flex-1 resize-none rounded-lg border border-control bg-canvas px-3 py-2.5 text-base text-text',
                       'placeholder:text-text-muted focus:border-focus focus:outline-none',
                     ]}
                   />
@@ -2116,12 +2184,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     type="button"
                     disabled={
                       isSubmittingMobileCard() ||
-                      mobileDraft().trim().length === 0
+                      (mobileDrafts[targetCol().id]?.content.trim().length ?? 0) === 0
                     }
                     onClick={() => void handleMobileQuickAdd()}
                     class={[
                       'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-accent-contrast',
-                      'transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
+                      'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
                   >

@@ -18,6 +18,7 @@ import {
   COLUMN_ACCENT_STYLES,
   formatDefaultBoardTitle,
   getBoardTemplate,
+  type TemplateColumnDef,
 } from '../lib/templates';
 
 interface EditableColumn {
@@ -29,6 +30,69 @@ interface EditableColumn {
 
 export interface BoardCreatorProps {
   onSubmit?: (input: CreateBoardInput) => Promise<ActionError | void>;
+}
+
+const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
+const inputClass = `min-h-11 w-full rounded-lg border border-control bg-surface px-3 py-2 text-base text-text placeholder:text-text-muted ${focusClass}`;
+
+const optionClass = (selected: boolean) => [
+  'min-h-11 min-w-11 cursor-pointer rounded-lg border px-3 py-2 text-sm font-medium transition-colors active:bg-surface-subtle active:text-text',
+  focusClass,
+  selected
+    ? 'border-accent bg-accent text-accent-contrast'
+    : 'border-control bg-surface text-text hover:bg-surface-subtle',
+];
+const columnCommandClass = `inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-control bg-surface text-base text-text hover:bg-surface-subtle active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`;
+
+function ColumnPreview(props: { columns: readonly TemplateColumnDef[]; id?: string }) {
+  return (
+    <span id={props.id} class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-text-muted">
+      <For each={props.columns}>
+        {(column) => (
+          <span class="flex min-w-0 items-baseline gap-2">
+            <span
+              aria-hidden="true"
+              class={['relative -top-0.5 size-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[column.accent].bar]}
+            />
+            <span class="min-w-0 [overflow-wrap:anywhere]">{column.title || 'Untitled Column'}</span>
+          </span>
+        )}
+      </For>
+    </span>
+  );
+}
+
+function DisclosureButton(props: {
+  panelId: string;
+  label: string;
+  open: boolean;
+  onClick: () => void;
+  buttonRef?: (button: HTMLButtonElement) => void;
+}) {
+  return (
+    <button
+      ref={props.buttonRef}
+      type="button"
+      aria-expanded={props.open ? 'true' : 'false'}
+      aria-controls={props.open ? props.panelId : undefined}
+      onClick={() => props.onClick()}
+      class={`group flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-base font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle ${focusClass}`}
+    >
+      {props.label}
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="size-4 shrink-0 group-aria-expanded:rotate-180"
+      >
+        <path d="m4 6 4 4 4-4" />
+      </svg>
+    </button>
+  );
 }
 
 let columnKeyCounter = 0;
@@ -57,6 +121,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
   const [columns, setColumns] = createStore<EditableColumn[]>(
     columnsFromTemplate('standard'),
   );
+  const [templatesOpen, setTemplatesOpen] = createSignal(false);
   const [customizeOpen, setCustomizeOpen] = createSignal(false);
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
 
@@ -71,13 +136,22 @@ export default function BoardCreator(props: BoardCreatorProps) {
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
   const [dragIndex, setDragIndex] = createSignal<number | null>(null);
 
+  let templateToggle: HTMLButtonElement;
+  let customizeToggle: HTMLButtonElement;
+
   const handleSelectTemplate = (nextTemplateId: BoardTemplateId) => {
-    setTemplateId(nextTemplateId);
-    setColumns(() => columnsFromTemplate(nextTemplateId));
+    if (nextTemplateId !== templateId()) {
+      setTemplateId(nextTemplateId);
+      setColumns(() => columnsFromTemplate(nextTemplateId));
+      setErrorMessage(null);
+    }
+    setTemplatesOpen(false);
     if (nextTemplateId === 'custom') {
       setCustomizeOpen(true);
+      customizeToggle.focus();
+    } else {
+      templateToggle.focus();
     }
-    setErrorMessage(null);
   };
 
   const handleAddColumn = () => {
@@ -187,389 +261,289 @@ export default function BoardCreator(props: BoardCreatorProps) {
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      class="rounded-2xl border border-border bg-surface p-5 shadow-xs sm:p-8"
-      novalidate
-    >
-      <div class="flex flex-col gap-1">
-        <p class="text-xs font-medium tracking-wide text-text-muted uppercase">
-          Zero login · Privacy-first · Free
-        </p>
-        <h1 class="text-2xl font-semibold tracking-tight text-text sm:text-3xl">
-          Create a retrospective Board in seconds
-        </h1>
+    <form class="min-w-0" onSubmit={handleSubmit} novalidate>
+      <h1 class="text-3xl font-semibold tracking-tight text-text sm:text-4xl">
+        Create a board
+      </h1>
+
+      <div class="mt-5 grid gap-2">
+        <label for="board-title-input" class="text-base font-medium text-text">
+          Board title <span class="font-normal text-text-muted">(optional)</span>
+        </label>
+        <input
+          id="board-title-input"
+          type="text"
+          maxlength={120}
+          value={title()}
+          onInput={(e) => setTitle(e.currentTarget.value)}
+          placeholder={defaultTitlePlaceholder}
+          class={inputClass}
+        />
       </div>
 
-      {/* Board metadata */}
-      <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label
-            for="board-title-input"
-            class="block text-xs font-medium text-text-muted"
-          >
-            Board title <span class="font-normal">(optional)</span>
-          </label>
-          <input
-            id="board-title-input"
-            type="text"
-            maxlength={120}
-            value={title()}
-            onInput={(e) => setTitle(e.currentTarget.value)}
-            placeholder={defaultTitlePlaceholder}
-            class={[
-              'mt-1.5 w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-text',
-              'placeholder:text-text-muted/70',
-              'focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus',
-            ]}
-          />
-        </div>
-
-        <div>
-          <label
-            for="board-subtitle-input"
-            class="block text-xs font-medium text-text-muted"
-          >
-            Subtitle / context <span class="font-normal">(optional)</span>
-          </label>
-          <input
-            id="board-subtitle-input"
-            type="text"
-            maxlength={240}
-            value={subtitle()}
-            onInput={(e) => setSubtitle(e.currentTarget.value)}
-            placeholder="e.g., Sprint 42 · Checkout Team"
-            class={[
-              'mt-1.5 w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-text',
-              'placeholder:text-text-muted/70',
-              'focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus',
-            ]}
-          />
-        </div>
-      </div>
-
-      {/* Curated Templates with visual mini-Column previews */}
-      <div class="mt-6">
-        <div class="flex items-center justify-between gap-3">
-          <span class="text-xs font-medium text-text-muted">
-            Choose a template
-          </span>
+      <div class="mt-4">
+        <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border border-border bg-surface px-3 py-2">
+          <h2 class="text-base font-semibold text-text [overflow-wrap:anywhere]">
+            {getBoardTemplate(templateId()).name}
+          </h2>
           <button
+            ref={(element) => { templateToggle = element; }}
             type="button"
-            aria-expanded={
-              customizeOpen() || templateId() === 'custom' ? 'true' : 'false'
-            }
-            onClick={() => setCustomizeOpen((prev) => !prev)}
+            aria-label="Change template"
+            aria-expanded={templatesOpen() ? 'true' : 'false'}
+            aria-controls={templatesOpen() ? 'board-templates' : undefined}
+            onClick={() => setTemplatesOpen((open) => !open)}
             class={[
-              'cursor-pointer text-xs font-medium text-text-muted underline-offset-4 hover:text-text hover:underline',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+              'min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-2 text-sm font-medium text-text-muted',
+              'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle aria-expanded:bg-surface-subtle aria-expanded:text-text',
+              'sm:col-start-2 sm:row-span-2 sm:row-start-1',
+              focusClass,
             ]}
           >
-            {customizeOpen() || templateId() === 'custom'
-              ? 'Hide Column editor'
-              : `Customize Columns (${columns.length})`}
+            Change
           </button>
-        </div>
-
-        <div class="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          <For each={BOARD_TEMPLATES}>
-            {(template) => (
-              <button
-                type="button"
-                aria-pressed={templateId() === template.id ? 'true' : 'false'}
-                onClick={() => handleSelectTemplate(template.id)}
-                class={[
-                  'flex cursor-pointer flex-col rounded-xl border p-3.5 text-left transition-colors',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  {
-                    'border-focus bg-surface-subtle/70 ring-1 ring-focus/30':
-                      templateId() === template.id,
-                    'border-border bg-surface hover:border-text-muted/50 hover:bg-surface-subtle/40':
-                      templateId() !== template.id,
-                  },
-                ]}
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-sm font-medium text-text">
-                    {template.name}
-                  </span>
-                  <span class="text-[11px] text-text-muted tabular-nums">
-                    {template.id === 'custom'
-                      ? '1–10 cols'
-                      : `${template.columns.length} cols`}
-                  </span>
-                </div>
-                <p class="mt-1 line-clamp-1 text-xs text-text-muted">
-                  {template.description}
-                </p>
-
-                {/* Visual mini-Column preview */}
-                <div
-                  class="mt-3 grid gap-1.5"
-                  style={{
-                    'grid-template-columns': `repeat(${Math.min(template.columns.length, 6)}, minmax(0, 1fr))`,
-                  }}
-                >
-                  <For each={template.columns}>
-                    {(col) => (
-                      <div class="overflow-hidden rounded-md border border-border/80 bg-canvas">
-                        <div
-                          class={[
-                            'h-[3px] w-full',
-                            COLUMN_ACCENT_STYLES[col.accent].bar,
-                          ]}
-                        />
-                        <div
-                          class={[
-                            'px-1.5 py-1',
-                            COLUMN_ACCENT_STYLES[col.accent].tint,
-                          ]}
-                        >
-                          <p class="truncate text-[10px] font-medium text-text">
-                            {col.title}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </button>
-            )}
-          </For>
-        </div>
-      </div>
-
-      {/* Editable Columns (always shown for Custom Board or when expanded) */}
-      <Show when={customizeOpen() || templateId() === 'custom'}>
-        <div class="mt-5 rounded-xl border border-border bg-canvas p-4">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h2 class="text-xs font-semibold tracking-wide text-text uppercase">
-                Columns ({columns.length} / 10)
-              </h2>
-              <p class="mt-0.5 text-xs text-text-muted">
-                Edit titles, pick pastel accents, or drag to reorder.
-              </p>
-            </div>
-            <button
-              type="button"
-              disabled={columns.length >= 10}
-              onClick={handleAddColumn}
-              class={[
-                'inline-flex cursor-pointer items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text transition-colors',
-                'hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-              ]}
-            >
-              + Add Column
-            </button>
+          <div class="col-span-2 pb-1 sm:col-span-1 sm:col-start-1 sm:row-start-2">
+            <ColumnPreview columns={columns} />
           </div>
-
-          <ul class="mt-3 space-y-2">
-            <For each={columns}>
-              {(col, index) => (
-                <li
-                  draggable="true"
-                  onDragStart={() => setDragIndex(index())}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => {
-                    const from = dragIndex();
-                    if (from !== null) {
-                      handleMoveColumn(from, index());
-                    }
-                    setDragIndex(null);
-                  }}
-                  onDragEnd={() => setDragIndex(null)}
-                  class="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-2.5"
+        </div>
+        <Show when={templatesOpen()}>
+          <div id="board-templates" class="mt-2 grid gap-2 sm:grid-cols-2">
+            <For each={BOARD_TEMPLATES}>
+              {(template) => (
+                <button
+                  type="button"
+                  aria-label={template.name}
+                  aria-pressed={templateId() === template.id ? 'true' : 'false'}
+                  aria-describedby={`template-${template.id}-columns`}
+                  onClick={() => handleSelectTemplate(template.id)}
+                  class={[
+                    'min-h-11 min-w-0 cursor-pointer space-y-2 rounded-xl border p-3 text-left transition-colors hover:bg-surface-subtle active:bg-surface-subtle',
+                    focusClass,
+                    templateId() === template.id
+                      ? 'border-accent bg-surface-subtle'
+                      : 'border-control bg-surface',
+                  ]}
                 >
-                  <span
-                    aria-hidden="true"
-                    class={[
-                      'h-6 w-1.5 shrink-0 rounded-full',
-                      COLUMN_ACCENT_STYLES[col.accent].bar,
-                    ]}
-                  />
-                  <input
-                    type="text"
-                    data-column-title-input="true"
-                    aria-label={`Column ${index() + 1} title`}
-                    maxlength={60}
-                    value={col.title}
-                    onInput={(e) =>
-                      handleRenameColumn(index(), e.currentTarget.value)
-                    }
-                    class={[
-                      'min-w-[140px] flex-1 rounded-md border border-border bg-canvas px-2.5 py-1.5 text-sm text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus',
-                    ]}
-                  />
-
-                  {/* Pastel accent swatches */}
-                  <div
-                    class="flex items-center gap-1"
-                    role="group"
-                    aria-label={`Column ${index() + 1} accent color`}
-                  >
-                    <For each={COLUMN_ACCENTS}>
-                      {(accent) => (
-                        <button
-                          type="button"
-                          onClick={() => handleColumnAccent(index(), accent)}
-                          aria-label={`${COLUMN_ACCENT_STYLES[accent].label} accent`}
-                          aria-pressed={col.accent === accent ? 'true' : 'false'}
-                          class={[
-                            'h-5 w-5 cursor-pointer rounded-full transition-transform',
-                            COLUMN_ACCENT_STYLES[accent].swatch,
-                            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                            {
-                              'scale-110 ring-2 ring-text ring-offset-2 ring-offset-surface':
-                                col.accent === accent,
-                              'opacity-70 hover:opacity-100':
-                                col.accent !== accent,
-                            },
-                          ]}
-                        />
-                      )}
-                    </For>
-                  </div>
-
-                  {/* Action column flag */}
-                  <button
-                    type="button"
-                    aria-pressed={col.isActionColumn ? 'true' : 'false'}
-                    onClick={() => handleToggleActionColumn(index())}
-                    title="Auto-flag new Cards in this Column as Action Items"
-                    class={[
-                      'cursor-pointer rounded-md border px-2 py-1 text-[11px] font-medium transition-colors',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                      {
-                        'border-focus bg-surface-subtle text-text':
-                          col.isActionColumn,
-                        'border-border bg-canvas text-text-muted hover:text-text':
-                          !col.isActionColumn,
-                      },
-                    ]}
-                  >
-                    Action Column
-                  </button>
-
-                  {/* Reorder & Remove controls */}
-                  <div class="flex items-center gap-1">
-                    <button
-                      type="button"
-                      disabled={index() === 0}
-                      onClick={() => handleMoveColumn(index(), index() - 1)}
-                      aria-label={`Move Column ${index() + 1} up`}
-                      class={[
-                        'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border text-xs text-text-muted',
-                        'hover:bg-surface-subtle hover:text-text disabled:cursor-not-allowed disabled:opacity-35',
-                      ]}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      disabled={index() === columns.length - 1}
-                      onClick={() => handleMoveColumn(index(), index() + 1)}
-                      aria-label={`Move Column ${index() + 1} down`}
-                      class={[
-                        'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border text-xs text-text-muted',
-                        'hover:bg-surface-subtle hover:text-text disabled:cursor-not-allowed disabled:opacity-35',
-                      ]}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      disabled={columns.length <= 1}
-                      onClick={() => handleRemoveColumn(index())}
-                      aria-label={`Remove Column ${index() + 1}`}
-                      class={[
-                        'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border text-xs text-text-muted',
-                        'hover:bg-surface-subtle hover:text-text disabled:cursor-not-allowed disabled:opacity-35',
-                      ]}
-                    >
-                      ×
-                    </button>
-                  </div>
-                </li>
+                  <span class="block text-base font-semibold text-text">{template.name}</span>
+                  <ColumnPreview id={`template-${template.id}-columns`} columns={template.columns} />
+                </button>
               )}
             </For>
-          </ul>
-        </div>
-      </Show>
+          </div>
+        </Show>
+      </div>
 
-      {/* Collapsible Advanced Options */}
-      <div class="mt-5 border-t border-border pt-4">
-        <button
-          type="button"
-          aria-expanded={advancedOpen() ? 'true' : 'false'}
-          onClick={() => setAdvancedOpen((prev) => !prev)}
-          class={[
-            'flex w-full cursor-pointer items-center justify-between text-left text-xs font-medium text-text-muted transition-colors hover:text-text',
-            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-          ]}
-        >
-          <span>Advanced options</span>
-          <span class="tabular-nums">
-            {voteLimit() === null ? 'Unlimited votes' : `${voteLimit()} votes`} ·{' '}
-            {isBlurred() ? 'Private Mode on' : 'Private Mode off'} ·{' '}
-            {retentionDays()}d expiry
-          </span>
-        </button>
+      <Show when={errorMessage()}>
+        {(msg) => (
+          <p
+            role="alert"
+            class="mt-4 rounded-lg border border-col-rose bg-col-rose-tint px-3 py-2 text-base text-text"
+          >
+            {msg()}
+          </p>
+        )}
+      </Show>
+      <button
+        type="submit"
+        disabled={submitting()}
+        class={[
+          'mt-4 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-5 py-2 text-base font-semibold text-accent-contrast sm:w-auto',
+          'transition-opacity hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60',
+          focusClass,
+        ]}
+      >
+        {submitting() ? 'Creating board…' : 'Create board'}
+      </button>
+
+      <div class="mt-5 space-y-1">
+        <DisclosureButton
+          panelId="board-customize"
+          label="Customize board"
+          open={customizeOpen()}
+          onClick={() => setCustomizeOpen((open) => !open)}
+          buttonRef={(element) => { customizeToggle = element; }}
+        />
+        <Show when={customizeOpen()}>
+          <div id="board-customize" class="space-y-4 px-2 py-3">
+            <div class="grid gap-2">
+              <label for="board-subtitle-input" class="text-base font-medium text-text">
+                Subtitle / context <span class="font-normal text-text-muted">(optional)</span>
+              </label>
+              <input
+                id="board-subtitle-input"
+                type="text"
+                maxlength={240}
+                value={subtitle()}
+                onInput={(e) => setSubtitle(e.currentTarget.value)}
+                placeholder="e.g., Sprint 42 · Checkout Team"
+                class={inputClass}
+              />
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="text-base font-semibold text-text">
+                Columns <span class="font-normal text-text-muted tabular-nums">({columns.length} / 10)</span>
+              </h2>
+              <button
+                type="button"
+                disabled={columns.length >= 10}
+                onClick={handleAddColumn}
+                class={`min-h-11 cursor-pointer rounded-lg border border-control bg-surface px-3 py-2 text-sm font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`}
+              >
+                Add Column
+              </button>
+            </div>
+
+            <ul class="space-y-2" role="list">
+              <For each={columns}>
+                {(col, index) => (
+                  <li
+                    draggable="true"
+                    onDragStart={() => setDragIndex(index())}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      const from = dragIndex();
+                      if (from !== null) {
+                        handleMoveColumn(from, index());
+                      }
+                      setDragIndex(null);
+                    }}
+                    onDragEnd={() => setDragIndex(null)}
+                    class="space-y-3 rounded-xl border border-border bg-surface p-3"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        class={['h-6 w-1 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[col.accent].bar]}
+                      />
+                      <input
+                        type="text"
+                        aria-label={`Column ${index() + 1} title`}
+                        maxlength={60}
+                        value={col.title}
+                        onInput={(e) =>
+                          handleRenameColumn(index(), e.currentTarget.value)
+                        }
+                        class={`min-w-0 ${inputClass}`}
+                      />
+                    </div>
+
+                    <div
+                      class="flex flex-wrap gap-1"
+                      role="group"
+                      aria-label={`Column ${index() + 1} accent color`}
+                    >
+                      <For each={COLUMN_ACCENTS}>
+                        {(accent) => (
+                          <button
+                            type="button"
+                            onClick={() => handleColumnAccent(index(), accent)}
+                            aria-label={`${COLUMN_ACCENT_STYLES[accent].label} accent`}
+                            aria-pressed={col.accent === accent ? 'true' : 'false'}
+                            class={[
+                              'inline-grid size-11 cursor-pointer place-items-center rounded-lg border border-transparent hover:bg-surface-subtle active:bg-surface-subtle',
+                              focusClass,
+                              { 'border-control bg-surface-subtle': col.accent === accent },
+                            ]}
+                          >
+                            <span
+                              aria-hidden="true"
+                              class={[
+                                'size-5 rounded-full',
+                                COLUMN_ACCENT_STYLES[accent].swatch,
+                                { 'ring-2 ring-text ring-offset-2 ring-offset-surface': col.accent === accent },
+                              ]}
+                            />
+                          </button>
+                        )}
+                      </For>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        aria-pressed={col.isActionColumn ? 'true' : 'false'}
+                        onClick={() => handleToggleActionColumn(index())}
+                        title="Auto-flag new Cards in this Column as Action Items"
+                        class={optionClass(col.isActionColumn)}
+                      >
+                        Action Column
+                      </button>
+
+                      <div class="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          disabled={index() === 0}
+                          onClick={() => handleMoveColumn(index(), index() - 1)}
+                          aria-label={`Move Column ${index() + 1} up`}
+                          class={columnCommandClass}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          disabled={index() === columns.length - 1}
+                          onClick={() => handleMoveColumn(index(), index() + 1)}
+                          aria-label={`Move Column ${index() + 1} down`}
+                          class={columnCommandClass}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          disabled={columns.length <= 1}
+                          onClick={() => handleRemoveColumn(index())}
+                          aria-label={`Remove Column ${index() + 1}`}
+                          class={columnCommandClass}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        </Show>
+      </div>
+
+      <div class="mt-1 space-y-1 border-t border-border pt-1">
+        <DisclosureButton
+          panelId="board-advanced"
+          label="Advanced options"
+          open={advancedOpen()}
+          onClick={() => setAdvancedOpen((open) => !open)}
+        />
 
         <Show when={advancedOpen()}>
-          <div class="mt-4 grid grid-cols-1 gap-4 rounded-xl border border-border bg-canvas p-4 sm:grid-cols-2">
-            {/* Votes per Participant */}
-            <div>
-              <span class="block text-xs font-medium text-text">
-                Votes per Participant
-              </span>
-              <div class="mt-2 flex flex-wrap gap-1.5">
+          <div id="board-advanced" class="grid gap-4 px-2 py-3 sm:grid-cols-2">
+            <fieldset class="min-w-0">
+              <legend class="text-base font-medium text-text">Votes per Participant</legend>
+              <div class="mt-2 flex flex-wrap gap-1">
                 <For each={VOTE_LIMIT_OPTIONS}>
                   {(opt) => (
                     <button
                       type="button"
                       aria-pressed={voteLimit() === opt ? 'true' : 'false'}
                       onClick={() => setVoteLimit(opt)}
-                      class={[
-                        'cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        {
-                          'border-accent bg-accent text-accent-contrast':
-                            voteLimit() === opt,
-                          'border-border bg-surface text-text-muted hover:text-text':
-                            voteLimit() !== opt,
-                        },
-                      ]}
+                      class={optionClass(voteLimit() === opt)}
                     >
                       {opt === null ? 'Unlimited' : String(opt)}
                     </button>
                   )}
                 </For>
               </div>
-            </div>
+            </fieldset>
 
-            {/* Max Votes per Card or Card Group */}
-            <div>
-              <span class="block text-xs font-medium text-text">
-                Max Votes per Card or Card Group
-              </span>
-              <div class="mt-2 flex flex-wrap gap-1.5">
+            <fieldset class="min-w-0">
+              <legend class="text-base font-medium text-text">Max Votes per Card or Card Group</legend>
+              <div class="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"
                   aria-pressed={maxVotesPerCard() === null ? 'true' : 'false'}
                   onClick={() => setMaxVotesPerCard(null)}
-                  class={[
-                    'cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    {
-                      'border-accent bg-accent text-accent-contrast':
-                        maxVotesPerCard() === null,
-                      'border-border bg-surface text-text-muted hover:text-text':
-                        maxVotesPerCard() !== null,
-                    },
-                  ]}
+                  class={optionClass(maxVotesPerCard() === null)}
                 >
                   Unlimited (stackable)
                 </button>
@@ -577,42 +551,21 @@ export default function BoardCreator(props: BoardCreatorProps) {
                   type="button"
                   aria-pressed={maxVotesPerCard() === 1 ? 'true' : 'false'}
                   onClick={() => setMaxVotesPerCard(1)}
-                  class={[
-                    'cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    {
-                      'border-accent bg-accent text-accent-contrast':
-                        maxVotesPerCard() === 1,
-                      'border-border bg-surface text-text-muted hover:text-text':
-                        maxVotesPerCard() !== 1,
-                    },
-                  ]}
+                  class={optionClass(maxVotesPerCard() === 1)}
                 >
                   1 per Card or Card Group
                 </button>
               </div>
-            </div>
+            </fieldset>
 
-            {/* Start in Private Mode */}
-            <div>
-              <span class="block text-xs font-medium text-text">
-                Start in Private Mode
-              </span>
-              <div class="mt-2 flex gap-1.5">
+            <fieldset class="min-w-0">
+              <legend class="text-base font-medium text-text">Start in Private Mode</legend>
+              <div class="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"
                   aria-pressed={!isBlurred() ? 'true' : 'false'}
                   onClick={() => setIsBlurred(false)}
-                  class={[
-                    'cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    {
-                      'border-accent bg-accent text-accent-contrast':
-                        !isBlurred(),
-                      'border-border bg-surface text-text-muted hover:text-text':
-                        isBlurred(),
-                    },
-                  ]}
+                  class={optionClass(!isBlurred())}
                 >
                   Off
                 </button>
@@ -620,84 +573,34 @@ export default function BoardCreator(props: BoardCreatorProps) {
                   type="button"
                   aria-pressed={isBlurred() ? 'true' : 'false'}
                   onClick={() => setIsBlurred(true)}
-                  class={[
-                    'cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                    {
-                      'border-accent bg-accent text-accent-contrast':
-                        isBlurred(),
-                      'border-border bg-surface text-text-muted hover:text-text':
-                        !isBlurred(),
-                    },
-                  ]}
+                  class={optionClass(isBlurred())}
                 >
                   On
                 </button>
               </div>
-            </div>
+            </fieldset>
 
-            {/* Auto-expiry on inactivity */}
-            <div>
-              <span class="block text-xs font-medium text-text">
-                Auto-expiry on inactivity
-              </span>
-              <div class="mt-2 flex flex-wrap gap-1.5">
+            <fieldset class="min-w-0">
+              <legend class="text-base font-medium text-text">Auto-expiry on inactivity</legend>
+              <div class="mt-2 flex flex-wrap gap-1">
                 <For each={RETENTION_DAYS_OPTIONS}>
                   {(days) => (
                     <button
                       type="button"
                       aria-pressed={retentionDays() === days ? 'true' : 'false'}
                       onClick={() => setRetentionDays(days)}
-                      class={[
-                        'cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium tabular-nums transition-colors',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        {
-                          'border-accent bg-accent text-accent-contrast':
-                            retentionDays() === days,
-                          'border-border bg-surface text-text-muted hover:text-text':
-                            retentionDays() !== days,
-                        },
-                      ]}
+                      class={optionClass(retentionDays() === days)}
                     >
                       {days} days
                     </button>
                   )}
                 </For>
               </div>
-            </div>
+            </fieldset>
           </div>
         </Show>
       </div>
 
-      {/* Inline error feedback */}
-      <Show when={errorMessage()}>
-        {(msg) => (
-          <p
-            role="alert"
-            class="mt-4 rounded-lg border border-col-rose/40 bg-col-rose-tint px-3.5 py-2.5 text-sm text-text"
-          >
-            {msg()}
-          </p>
-        )}
-      </Show>
-
-      {/* Primary CTA */}
-      <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
-        <p class="text-xs text-text-muted">
-          Share the link right away — no signup required for Participants.
-        </p>
-        <button
-          type="submit"
-          disabled={submitting()}
-          class={[
-            'inline-flex cursor-pointer items-center justify-center rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-contrast',
-            'transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60',
-            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-          ]}
-        >
-          {submitting() ? 'Creating Board…' : 'Create Board'}
-        </button>
-      </div>
     </form>
   );
 }

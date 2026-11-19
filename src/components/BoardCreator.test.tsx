@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { fireEvent, render } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +9,7 @@ import {
   recordRecentBoard,
 } from '../lib/recent-boards';
 import type { CreateBoardInput } from '../lib/schemas';
+import Home from '../routes/index';
 import BoardCreator from './BoardCreator';
 import RecentBoardsList from './RecentBoardsList';
 
@@ -17,57 +18,134 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
 });
 
 describe('<BoardCreator />', () => {
-  it('renders all 9 curated templates with visual mini-Column previews and submits customized Board options', async () => {
+  it('shows the default Board and creates it in one action', async () => {
     const onSubmit = vi.fn(async (_input: CreateBoardInput) => undefined);
-    const { getByRole, getByLabelText, getByText } = render(() => (
+    const { getByRole, getByLabelText, getByText, queryByText } = render(() => (
       <BoardCreator onSubmit={onSubmit} />
     ));
     flush();
 
-    // All 9 curated templates appear above the fold
-    for (const name of [
-      'Standard Retro',
-      'Start / Stop / Continue',
-      'Mad / Sad / Glad',
-      '4Ls',
-      'Starfish',
-      'Sailboat',
-      'Six Thinking Hats',
-      'Pros & Cons',
-      'Custom Board',
-    ]) {
+    expect(getByRole('heading', { name: 'Create a board' })).toBeInTheDocument();
+    expect(getByLabelText('Board title (optional)')).toHaveValue('');
+    expect(getByText('Standard Retro')).toBeInTheDocument();
+    for (const name of ['Went Well', 'To Improve', 'Action Items']) {
       expect(getByText(name)).toBeInTheDocument();
     }
+    expect(queryByText('Sailboat')).toBeNull();
+    expect(queryByText('Start in Private Mode')).toBeNull();
 
-    // Visual mini-Column preview includes Standard Retro's Action Items Column
-    expect(getByText('Went Well')).toBeInTheDocument();
-    expect(getByText('Action Items')).toBeInTheDocument();
+    fireEvent.click(getByRole('button', { name: 'Create board' }));
+    flush();
+    await Promise.resolve();
 
-    // Fill optional title and subtitle
-    fireEvent.input(getByLabelText(/Board title/i), {
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      title: '',
+      subtitle: '',
+      templateId: 'standard',
+      columns: [
+        { title: 'Went Well', accent: 'sage', isActionColumn: false },
+        { title: 'To Improve', accent: 'rose', isActionColumn: false },
+        { title: 'Action Items', accent: 'sky', isActionColumn: true },
+      ],
+      voteLimit: 5,
+      maxVotesPerCard: null,
+      isBlurred: false,
+      retentionDays: 90,
+    });
+  });
+
+  it('previews all nine templates and submits the selected template', async () => {
+    const onSubmit = vi.fn(async (_input: CreateBoardInput) => undefined);
+    const { getByRole, getByText, queryByRole } = render(() => (
+      <BoardCreator onSubmit={onSubmit} />
+    ));
+    flush();
+
+    const templateToggle = getByRole('button', { name: 'Change template' });
+    fireEvent.click(templateToggle);
+    flush();
+
+    for (const [name, columnName] of [
+      ['Standard Retro', 'Went Well'],
+      ['Start / Stop / Continue', 'Continue Doing'],
+      ['Mad / Sad / Glad', 'Glad'],
+      ['4Ls', 'Longed For'],
+      ['Starfish', 'More Of'],
+      ['Sailboat', 'Anchor (Holds Us Back)'],
+      ['Six Thinking Hats', 'Creativity (Green)'],
+      ['Pros & Cons', 'Cons'],
+      ['Custom Board', 'Column 1'],
+    ]) {
+      expect(getByRole('button', { name })).toHaveTextContent(columnName);
+    }
+
+    fireEvent.click(getByRole('button', { name: 'Sailboat' }));
+    flush();
+    expect(templateToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(templateToggle).toHaveFocus();
+    expect(queryByRole('button', { name: 'Sailboat' })).toBeNull();
+    expect(getByRole('heading', { name: 'Sailboat' })).toBeInTheDocument();
+    expect(getByText('Anchor (Holds Us Back)')).toBeInTheDocument();
+
+    fireEvent.click(getByRole('button', { name: 'Create board' }));
+    flush();
+    await Promise.resolve();
+
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      templateId: 'sailboat',
+      columns: [
+        { title: 'Wind (Helps Us)', accent: 'sky', isActionColumn: false },
+        { title: 'Anchor (Holds Us Back)', accent: 'slate', isActionColumn: false },
+        { title: 'Rocks (Risks)', accent: 'coral', isActionColumn: false },
+        { title: 'Island (Goals)', accent: 'sage', isActionColumn: false },
+      ],
+    }));
+  });
+
+  it('opens the Column editor for Custom Board and preserves collapsed draft options', async () => {
+    const onSubmit = vi.fn(async (_input: CreateBoardInput) => undefined);
+    const { getByRole, getByLabelText, queryByRole } = render(() => (
+      <BoardCreator onSubmit={onSubmit} />
+    ));
+    flush();
+
+    fireEvent.input(getByLabelText('Board title (optional)'), {
       target: { value: 'Sprint 42 Retrospective' },
     });
+    fireEvent.click(getByRole('button', { name: 'Change template' }));
+    flush();
+    fireEvent.click(getByRole('button', { name: 'Custom Board' }));
+    flush();
+
+    const customizeToggle = getByRole('button', { name: 'Customize board' });
+    expect(customizeToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(customizeToggle).toHaveFocus();
     fireEvent.input(getByLabelText(/Subtitle/i), {
       target: { value: 'Checkout Team' },
     });
-
-    // Switch to Custom Board and customize Columns (add, rename, accent, reorder)
-    fireEvent.click(getByRole('button', { name: /Custom Board/i }));
-    flush();
 
     const addColumnBtn = getByRole('button', { name: /Add column/i });
     fireEvent.click(addColumnBtn);
     flush();
 
-    const columnInputs = document.querySelectorAll<HTMLInputElement>(
-      'input[data-column-title-input="true"]',
-    );
-    expect(columnInputs.length).toBe(4);
-    fireEvent.input(columnInputs[3], { target: { value: 'Follow-ups' } });
+    fireEvent.input(getByRole('textbox', { name: 'Column 4 title' }), {
+      target: { value: 'Follow-ups' },
+    });
+    fireEvent.click(customizeToggle);
+    flush();
+    expect(queryByRole('textbox', { name: 'Column 4 title' })).toBeNull();
+    expect(getByRole('heading', { name: 'Custom Board' })).toBeInTheDocument();
+
+    fireEvent.click(customizeToggle);
+    flush();
+    expect(getByLabelText(/Subtitle/i)).toHaveValue('Checkout Team');
+    expect(getByRole('textbox', { name: 'Column 4 title' })).toHaveValue('Follow-ups');
+    fireEvent.click(customizeToggle);
     flush();
 
     // Expand collapsible advanced options
@@ -85,7 +163,10 @@ describe('<BoardCreator />', () => {
     fireEvent.click(getByRole('button', { name: '180 days' }));
     flush();
 
-    // Submit the form
+    fireEvent.click(advancedToggle);
+    flush();
+    expect(queryByRole('button', { name: '180 days' })).toBeNull();
+
     fireEvent.click(getByRole('button', { name: /Create Board/i }));
     flush();
     await Promise.resolve();
@@ -103,7 +184,7 @@ describe('<BoardCreator />', () => {
     expect(submitted.retentionDays).toBe(180);
   });
 
-  it('displays server error feedback cleanly when creation fails (e.g. rate limit)', async () => {
+  it('keeps Board input available for retry after a creation error', async () => {
     const onSubmit = vi.fn(async () => ({
       ok: false as const,
       code: 'RATE_LIMITED' as const,
@@ -114,11 +195,16 @@ describe('<BoardCreator />', () => {
     ));
     flush();
 
-    fireEvent.click(getByRole('button', { name: /Create Board/i }));
+    const title = getByRole('textbox', { name: 'Board title (optional)' });
+    fireEvent.input(title, { target: { value: 'Sprint 42' } });
+    flush();
+    fireEvent.click(getByRole('button', { name: 'Create board' }));
     flush();
 
     const alert = await findByRole('alert');
     expect(alert).toHaveTextContent('Too many Boards created recently.');
+    expect(title).toHaveValue('Sprint 42');
+    expect(getByRole('button', { name: 'Create board' })).toBeEnabled();
   });
 
   it('interacts with zero Solid 2.0 reactivity diagnostics', async () => {
@@ -129,7 +215,9 @@ describe('<BoardCreator />', () => {
           <BoardCreator onSubmit={noopSubmit} />
         ));
         flush();
-        fireEvent.click(getByRole('button', { name: /Sailboat/i }));
+        fireEvent.click(getByRole('button', { name: 'Change template' }));
+        flush();
+        fireEvent.click(getByRole('button', { name: 'Sailboat' }));
         flush();
         fireEvent.click(getByRole('button', { name: /Advanced options/i }));
         flush();
@@ -141,35 +229,55 @@ describe('<BoardCreator />', () => {
 });
 
 describe('<RecentBoardsList /> & localStorage persistence', () => {
-  it('stores only safe metadata (never tokens), renders links, and supports one-click remove', () => {
+  it('links to and removes Recent Boards from home in last-visited order', () => {
+    const now = Date.now();
     recordRecentBoard(
       {
         id: 'board_0123456789abcdef',
-        title: 'Sprint 41 Retro',
+        title: 'Sprint 42 Retro',
         isFacilitator: true,
       },
-      Date.now() - 120_000,
+      now - 120_000,
+    );
+    recordRecentBoard(
+      { id: 'board_fedcba9876543210', title: 'Sprint 41 Retro' },
+      now - 300_000,
     );
 
-    const rawStored = localStorage.getItem(RECENT_BOARDS_STORAGE_KEY) ?? '';
-    expect(rawStored).toContain('board_0123456789abcdef');
-    expect(rawStored).toContain('Sprint 41 Retro');
-    expect(rawStored).not.toContain('token');
-
-    const { getByRole, queryByText } = render(() => <RecentBoardsList />);
+    const { getAllByRole, getByRole, getByText, queryByRole } = render(() => <Home />);
     flush();
 
-    const link = getByRole('link', { name: /Sprint 41 Retro/i });
-    expect(link).toHaveAttribute('href', '/b/board_0123456789abcdef');
+    const links = getAllByRole('link');
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      '/b/board_0123456789abcdef',
+      '/b/board_fedcba9876543210',
+    ]);
+    expect(getByRole('link', { name: 'Sprint 42 Retro' })).toHaveAccessibleDescription(
+      'Visited 2m ago · Facilitator',
+    );
+    expect(getByRole('link', { name: 'Sprint 41 Retro' })).toHaveAccessibleDescription(
+      'Visited 5m ago',
+    );
+    expect(getByText('Saved in this browser only.')).toBeInTheDocument();
 
-    const removeBtn = getByRole('button', {
-      name: /Remove Sprint 41 Retro from recent boards/i,
-    });
-    fireEvent.click(removeBtn);
+    fireEvent.click(getByRole('button', {
+      name: 'Remove Sprint 42 Retro from Recent Boards',
+    }));
     flush();
 
-    expect(queryByText('Sprint 41 Retro')).toBeNull();
-    expect(readRecentBoards()).toEqual([]);
+    expect(queryByRole('link', { name: 'Sprint 42 Retro' })).toBeNull();
+    expect(readRecentBoards().map((entry) => entry.id)).toEqual([
+      'board_fedcba9876543210',
+    ]);
+    expect(localStorage.getItem(RECENT_BOARDS_STORAGE_KEY)).not.toContain('token');
+
+    fireEvent.click(getByRole('button', {
+      name: 'Remove Sprint 41 Retro from Recent Boards',
+    }));
+    flush();
+
+    expect(queryByRole('region', { name: 'Recent Boards' })).toBeNull();
+    expect(getByRole('button', { name: 'Create board' })).toBeEnabled();
   });
 
   it('mounts and removes Recent Boards entries with zero Solid 2.0 reactivity diagnostics', async () => {

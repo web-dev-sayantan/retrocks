@@ -5,22 +5,75 @@
   to { filter: blur(0); opacity: 1; }
 }
 
+.card-detail-dialog {
+  transition: display 180ms allow-discrete, overlay 180ms allow-discrete;
+}
+
+.card-detail-dialog:not([open]) {
+  pointer-events: none;
+}
+
+.card-detail-dialog::backdrop {
+  background: transparent;
+  pointer-events: none;
+}
+
+.card-detail-scrim,
+.card-detail-panel {
+  transition: opacity 180ms ease-out, transform 180ms cubic-bezier(0.2, 0.75, 0.35, 1);
+}
+
+.card-detail-panel {
+  --card-detail-offset: translateY(100%);
+}
+
+@media (min-width: 40rem) {
+  .card-detail-panel {
+    --card-detail-offset: translateX(100%);
+  }
+}
+
+.card-detail-dialog:not([open]) :is(.card-detail-scrim, .card-detail-panel) {
+  opacity: 0;
+}
+
+.card-detail-dialog:not([open]) .card-detail-panel {
+  transform: var(--card-detail-offset);
+}
+
+@starting-style {
+  .card-detail-dialog[open] :is(.card-detail-scrim, .card-detail-panel) {
+    opacity: 0;
+  }
+
+  .card-detail-dialog[open] .card-detail-panel {
+    transform: var(--card-detail-offset);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-detail-panel {
+    --card-detail-offset: none;
+  }
+}
+
 /* Drive Tailwind dark:* utilities from the zero-FOUC data-theme attribute. */
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 /* Semantic light theme tokens (default). */
 :root {
-  --retrocks-canvas: #fafafa;
+  --retrocks-canvas: #f7f5f0;
   --retrocks-surface: #ffffff;
-  --retrocks-surface-subtle: #f3f4f6;
-  --retrocks-border: #e5e7eb;
-  --retrocks-text: #111827;
-  --retrocks-text-muted: #6b7280;
-  --retrocks-accent: #111827;
+  --retrocks-surface-subtle: #edeae3;
+  --retrocks-border: #d9d5cc;
+  --retrocks-control: #81877e;
+  --retrocks-text: #202522;
+  --retrocks-text-muted: #555c56;
+  --retrocks-accent: #255b48;
   --retrocks-accent-contrast: #ffffff;
-  --retrocks-focus: #4f46e5;
+  --retrocks-focus: #414bb0;
 
-  /* 8 curated muted pastel Column accent tokens (3px top border + 5% tint). */
+  /* Column accent markers and subtle tint tokens. */
   --retrocks-col-slate: #64748b;
   --retrocks-col-sage: #4d8b6f;
   --retrocks-col-sky: #3b82b6;
@@ -42,15 +95,16 @@
 
 /* Semantic dark theme tokens. */
 [data-theme='dark'] {
-  --retrocks-canvas: #0e0f11;
-  --retrocks-surface: #16181d;
-  --retrocks-surface-subtle: #1e2128;
-  --retrocks-border: #262a33;
-  --retrocks-text: #f3f4f6;
-  --retrocks-text-muted: #9ca3af;
-  --retrocks-accent: #e5e7eb;
-  --retrocks-accent-contrast: #0e0f11;
-  --retrocks-focus: #818cf8;
+  --retrocks-canvas: #1c1e20;
+  --retrocks-surface: #27292c;
+  --retrocks-surface-subtle: #313337;
+  --retrocks-border: #515456;
+  --retrocks-control: #777d79;
+  --retrocks-text: #f6f5f1;
+  --retrocks-text-muted: #bfc3bf;
+  --retrocks-accent: #abd7c2;
+  --retrocks-accent-contrast: #1c1e20;
+  --retrocks-focus: #aab2ff;
 
   --retrocks-col-slate: #94a3b8;
   --retrocks-col-sage: #6eb393;
@@ -68,6 +122,7 @@
   --color-surface: var(--retrocks-surface);
   --color-surface-subtle: var(--retrocks-surface-subtle);
   --color-border: var(--retrocks-border);
+  --color-control: var(--retrocks-control);
   --color-text: var(--retrocks-text);
   --color-text-muted: var(--retrocks-text-muted);
   --color-accent: var(--retrocks-accent);
@@ -96,7 +151,7 @@
 
   /* Privacy-first system typography — zero external font network requests */
   --font-sans:
-    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
@@ -119,6 +174,85 @@
   }
 }
 
+@layer components {
+  .page-message-action {
+    @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+  }
+
+  .board-menu-item {
+    @apply flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus;
+  }
+}
+
+/* Keep the drawer in the top layer briefly on close to finish its exit. */
+.action-items-dialog {
+  --action-items-offset: translateY(100%);
+  transition: display 160ms allow-discrete, overlay 160ms allow-discrete;
+}
+
+.action-items-dialog::backdrop {
+  background-color: transparent;
+  transition: background-color 160ms ease, display 160ms allow-discrete,
+    overlay 160ms allow-discrete;
+}
+
+.action-items-dialog .action-items-panel {
+  transform: var(--action-items-offset);
+  transition: transform 160ms ease-in;
+}
+
+.action-items-dialog[open] .action-items-panel {
+  transform: translate(0);
+  transition-timing-function: ease-out;
+}
+
+.action-items-dialog[open]::backdrop {
+  background-color: rgb(0 0 0 / 50%);
+}
+
+.action-items-dialog:not([open]) {
+  pointer-events: none;
+}
+
+@media (width >= 40rem) {
+  .action-items-dialog {
+    --action-items-offset: translateX(100%);
+  }
+}
+
+@starting-style {
+  .action-items-dialog[open]::backdrop {
+    background-color: transparent;
+  }
+
+  .action-items-dialog[open] .action-items-panel {
+    transform: var(--action-items-offset);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-items-dialog .action-items-panel {
+    transform: none !important;
+  }
+}
+
+@layer base {
+  .board-workspace :where(button, a, summary):focus-visible {
+    outline: 2px solid var(--retrocks-focus);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --retrocks-border: #777b72;
+  }
+
+  [data-theme='dark'] {
+    --retrocks-border: #9ca09e;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -137,8 +271,78 @@
   }
 }
 
+.board-print {
+  display: none;
+}
+
 /* Ink-friendly Print / Save as PDF layout (SPEC §3.11) */
 @media print {
+  @page {
+    margin: 0.65in;
+  }
+
+  .board-workspace[data-board-print-ready] {
+    display: block;
+    min-height: auto;
+    background: #fff;
+  }
+
+  .board-workspace[data-board-print-ready] > :not(.board-print) {
+    display: none !important;
+  }
+
+  .board-print {
+    display: block;
+    color: #111;
+    color-scheme: light;
+    font-size: 11pt;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .board-print h1,
+  .board-print h2,
+  .board-print h3 {
+    break-after: avoid;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .board-print h1 {
+    font-size: 21pt;
+    margin-bottom: 6pt;
+  }
+
+  .board-print h2 {
+    border-top: 1px solid #999;
+    font-size: 15pt;
+    margin-top: 14pt;
+    padding-top: 6pt;
+  }
+
+  .board-print h3 {
+    font-size: 12pt;
+    margin-top: 8pt;
+  }
+
+  .board-print ul {
+    list-style: disc outside;
+    padding-inline-start: 16pt;
+  }
+
+  .board-print li {
+    break-inside: avoid;
+    margin-block: 4pt;
+  }
+
+  .board-print-content {
+    white-space: pre-wrap;
+  }
+
+  .board-print-meta {
+    color: #444;
+    font-size: 10pt;
+  }
   :root,
   [data-theme='dark'] {
     --retrocks-canvas: #ffffff;

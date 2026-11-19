@@ -19,7 +19,7 @@ export interface WorkspaceVoting {
 
 const buttonClass = [
   'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center px-2 text-sm font-medium text-text sm:min-h-7 sm:min-w-7',
-  'transition-colors hover:bg-surface-subtle focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+  'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
   'disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-50',
 ];
 
@@ -41,7 +41,7 @@ export default function VoteControls(props: {
   );
 
   return (
-    <div role="group" aria-label="Voting" class="inline-flex w-fit shrink-0 items-center rounded-lg border border-border bg-canvas">
+    <div role="group" aria-label="Voting" class="inline-flex w-fit max-w-full shrink-0 items-center rounded-lg border border-border bg-canvas">
       <Show when={!props.isLocked}>
         <button
           type="button"
@@ -55,7 +55,7 @@ export default function VoteControls(props: {
         </button>
       </Show>
       <span
-        class="min-w-6 px-1.5 text-center text-xs font-medium text-text tabular-nums"
+        class="min-w-0 wrap-anywhere px-1.5 text-center text-xs font-medium text-text tabular-nums"
         title={votes() === null ? `${myVotes()} of your Votes` : `${votes()} total Votes · ${myVotes()} yours`}
       >
         {votes() === null ? `${myVotes()} yours` : votes()}

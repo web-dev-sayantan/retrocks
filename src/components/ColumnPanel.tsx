@@ -53,16 +53,16 @@ export interface ColumnPanelProps {
     el: HTMLTextAreaElement | null,
   ) => void;
   onActivateColumn?: (columnId: string) => void;
-  onCreateCard: (columnId: string, content: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<boolean>;
+  onCreateCard: (columnId: string, content: string) => Promise<string | null>;
+  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
   ) => Promise<boolean>;
   onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
   onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<boolean>;
-  onOpenCardDetail: (cardId: string) => void;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
   onUpdateColumn: (
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
@@ -88,7 +88,9 @@ export interface ColumnPanelProps {
 
 export default function ColumnPanel(props: ColumnPanelProps) {
   const [cardDraft, setCardDraft] = createSignal('');
-  const [composerFocused, setComposerFocused] = createSignal(false);
+  const [cardError, setCardError] = createSignal<string | null>(null);
+  // Keep Cards below the composer stationary when focus leaves the textarea.
+  const [hasFocusedComposer, setHasFocusedComposer] = createSignal(false);
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
 
   const [menuOpen, setMenuOpen] = createSignal(false);
@@ -139,17 +141,51 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     return map;
   });
 
+  let menuRootEl: HTMLDivElement | undefined;
+  let menuTriggerEl: HTMLButtonElement | undefined;
+  let menuPanelEl: HTMLDivElement | undefined;
+
   createEffect(menuOpen, (isOpen) => {
     if (!isOpen) return;
+
+    function positionMenu(): void {
+      if (!menuTriggerEl || !menuPanelEl) return;
+      const anchor = menuTriggerEl.getBoundingClientRect();
+      const below = window.innerHeight - anchor.bottom - 12;
+      const above = anchor.top - 12;
+      const opensBelow = below >= 320 || below >= above;
+      menuPanelEl.style.right = `${Math.max(12, window.innerWidth - anchor.right)}px`;
+      menuPanelEl.style.top = opensBelow ? `${anchor.bottom + 4}px` : 'auto';
+      menuPanelEl.style.bottom = opensBelow ? 'auto' : `${window.innerHeight - anchor.top + 4}px`;
+      menuPanelEl.style.maxHeight = `${Math.max(44, opensBelow ? below : above)}px`;
+    }
+
+    function handlePointerDown(event: PointerEvent): void {
+      if (event.target instanceof Node && !menuRootEl?.contains(event.target)) {
+        setMenuOpen(false);
+        setConfirmingDelete(false);
+      }
+    }
+
+    positionMenu();
     function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
         event.preventDefault();
+        menuTriggerEl?.focus();
         setMenuOpen(false);
         setConfirmingDelete(false);
       }
     }
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('scroll', positionMenu, { capture: true, passive: true });
+    window.addEventListener('resize', positionMenu);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('scroll', positionMenu, true);
+      window.removeEventListener('resize', positionMenu);
+    };
   });
 
   let composerEl: HTMLTextAreaElement | undefined;
@@ -181,13 +217,16 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   async function submitNewCard(): Promise<void> {
-    const trimmed = cardDraft().trim();
+    const draft = cardDraft();
+    const trimmed = draft.trim();
     if (trimmed.length === 0 || isCreatingCard() || props.isLocked) return;
     setIsCreatingCard(true);
+    setCardError(null);
     try {
-      const ok = await props.onCreateCard(props.column.id, trimmed);
-      if (ok) {
-        setCardDraft('');
+      const error = await props.onCreateCard(props.column.id, trimmed);
+      if (cardDraft() === draft) {
+        setCardError(error);
+        if (error === null) setCardDraft('');
       }
     } finally {
       setIsCreatingCard(false);
@@ -195,7 +234,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   }
 
   function handleComposerKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       void submitNewCard();
     }
@@ -334,6 +373,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   return (
     <section
+      id={`column-${props.column.id}`}
       aria-label={props.column.title}
       data-column-id={props.column.id}
       onFocusIn={() => props.onActivateColumn?.(props.column.id)}
@@ -341,7 +381,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       class={[
-        'flex-col overflow-visible rounded-xl border border-border bg-surface shadow-2xs transition-shadow',
+        'flex-col gap-3 rounded-xl transition-shadow',
         {
           flex: props.isMobileActive,
           'hidden sm:flex': !props.isMobileActive,
@@ -352,23 +392,13 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         },
       ]}
     >
-      {/* Crisp 3px pastel top accent bar */}
-      <div
-        data-column-accent-bar="true"
-        class={[
-          'h-[3px] w-full rounded-t-xl',
-          COLUMN_ACCENT_STYLES[props.column.accent].bar,
-        ]}
-      />
-
-      {/* Column header with whisper-soft 5% tint */}
-      <div
-        class={[
-          'relative flex items-center justify-between gap-2 border-b border-border/70 px-3.5 py-2.5',
-          COLUMN_ACCENT_STYLES[props.column.accent].tint,
-        ]}
-      >
-        <div class="flex min-w-0 flex-1 items-center gap-2">
+      <div class="relative flex min-h-11 items-center justify-between gap-2 sm:min-h-9">
+        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
+          <span
+            aria-hidden="true"
+            data-column-accent-bar="true"
+            class={['size-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[props.column.accent].swatch]}
+          />
           <Show
             when={!isRenaming()}
             fallback={
@@ -381,7 +411,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   onInput={(e) => setRenameDraft(e.currentTarget.value)}
                   onKeyDown={handleRenameKeyDown}
                   class={[
-                    'min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-sm font-semibold text-text',
+                    'min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text',
                     'focus:border-focus focus:outline-none',
                   ]}
                 />
@@ -390,7 +420,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   aria-label="Save column title"
                   disabled={isSavingRename() || renameDraft().trim().length === 0}
                   onClick={() => void saveRename()}
-                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+                  class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-9 sm:min-w-9 items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
                 >
                   <CheckIcon />
                 </button>
@@ -398,14 +428,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   type="button"
                   aria-label="Cancel column rename"
                   onClick={cancelRename}
-                  class="inline-flex min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
+                  class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-9 sm:min-w-9 items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
                 >
                   <CloseIcon />
                 </button>
               </div>
             }
           >
-            <h2 class="truncate text-sm font-semibold text-text">
+            <h2 class="min-w-0 flex-[1_1_0] wrap-anywhere text-base leading-snug font-semibold text-text sm:text-lg">
               <Show
                 when={canManageColumn()}
                 fallback={props.column.title}
@@ -415,7 +445,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   onClick={startRename}
                   title="Click to rename Column"
                   class={[
-                    'max-w-full cursor-pointer truncate rounded-sm text-left hover:underline',
+                    'min-h-11 w-full cursor-pointer rounded-sm text-left wrap-anywhere hover:underline sm:min-h-8',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
                 >
@@ -438,7 +468,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 ? `${props.visibleCardCount} of ${props.column.cardCount} cards`
                 : `${props.column.cardCount} cards`
             }
-            class="inline-flex min-w-6 items-center justify-center rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium text-text-muted tabular-nums"
+            class="inline-flex min-w-6 items-center justify-center rounded-full bg-surface-subtle px-2 py-1 text-xs font-medium text-text-muted tabular-nums"
           >
             {props.hasActiveFilter
               ? `${props.visibleCardCount}/${props.column.cardCount}`
@@ -446,8 +476,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           </span>
 
           <Show when={canManageColumn()}>
-            <div data-print-hide="true" class="relative">
+            <div ref={menuRootEl} data-print-hide="true">
               <button
+                ref={menuTriggerEl}
                 type="button"
                 aria-label={`Column options for ${props.column.title}`}
                 aria-haspopup="menu"
@@ -467,16 +498,17 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
               <Show when={menuOpen()}>
                 <div
+                  ref={menuPanelEl}
                   role="menu"
                   aria-label={`Options for ${props.column.title}`}
                   data-board-overlay="true"
-                  class="absolute top-full right-0 z-30 mt-1 w-56 rounded-xl border border-border bg-surface p-2 shadow-lg"
+                  class="fixed z-30 w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 shadow-lg"
                 >
                   <button
                     type="button"
                     role="menuitem"
                     onClick={startRename}
-                    class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-text hover:bg-surface-subtle"
+                    class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-text hover:bg-surface-subtle"
                   >
                     <PencilIcon />
                     <span>Rename column</span>
@@ -487,7 +519,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       type="button"
                       disabled={!canMoveLeft()}
                       onClick={() => void handleReorder(-1)}
-                      class="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                      class="inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <ChevronLeftIcon />
                       <span>Move left</span>
@@ -496,7 +528,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       type="button"
                       disabled={!canMoveRight()}
                       onClick={() => void handleReorder(1)}
-                      class="inline-flex min-h-10 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                      class="inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <span>Move right</span>
                       <ChevronRightIcon />
@@ -507,7 +539,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     <p class="px-1 text-[11px] font-medium text-text-muted">
                       Accent color
                     </p>
-                    <div class="mt-1.5 grid grid-cols-4 gap-1.5 px-1">
+                    <div class="mt-1.5 grid grid-cols-4 gap-1 px-1">
                       <For each={COLUMN_ACCENTS}>
                         {(accent) => (
                           <button
@@ -518,7 +550,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                             }
                             onClick={() => void handleSelectAccent(accent)}
                             class={[
-                              'flex min-h-9 cursor-pointer items-center justify-center rounded-md border transition-colors',
+                              'flex min-h-11 cursor-pointer sm:min-h-9 items-center justify-center rounded-md border transition-colors',
                               {
                                 'border-focus bg-surface-subtle':
                                   props.column.accent === accent,
@@ -565,7 +597,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                               type="button"
                               disabled={isDeletingColumn() || !canDeleteColumn()}
                               onClick={() => void handleConfirmDeleteColumn()}
-                              class="min-h-9 flex-1 cursor-pointer rounded-md bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+                              class="min-h-11 min-w-11 flex-1 cursor-pointer rounded-md bg-col-rose sm:min-h-9 px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
                             >
                               {isDeletingColumn()
                                 ? 'Deleting...'
@@ -575,7 +607,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                               type="button"
                               disabled={isDeletingColumn()}
                               onClick={() => setConfirmingDelete(false)}
-                              class="min-h-9 cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text"
+                              class="min-h-11 min-w-11 cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text sm:min-h-9"
                             >
                               Cancel
                             </button>
@@ -588,7 +620,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         disabled={!canDeleteColumn()}
                         title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
                         onClick={() => setConfirmingDelete(true)}
-                        class="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300"
+                        class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300"
                       >
                         <TrashIcon />
                         <span>Delete column</span>
@@ -604,28 +636,29 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
       {/* Pinned top quick inline "+ Add card" composer */}
       <Show when={!props.isLocked}>
-        <div data-print-hide="true" class="border-b border-border/60 bg-canvas/50 p-3">
+        <div data-print-hide="true" class="hidden sm:block">
           <textarea
             ref={composerEl}
             aria-label={`Add card to ${props.column.title}`}
-            placeholder="+ Add card"
+            placeholder="+ Add Card"
             value={cardDraft()}
             maxlength={MAX_CARD_CONTENT_LENGTH}
-            rows={composerFocused() || cardDraft().length > 0 ? 2 : 1}
-            onFocus={() => setComposerFocused(true)}
-            onBlur={() => {
-              if (cardDraft().length === 0) {
-                setComposerFocused(false);
-              }
+            rows={hasFocusedComposer() || cardDraft().length > 0 ? 2 : 1}
+            onFocus={() => setHasFocusedComposer(true)}
+            onInput={(e) => {
+              setCardDraft(e.currentTarget.value);
+              setCardError(null);
             }}
-            onInput={(e) => setCardDraft(e.currentTarget.value)}
             onKeyDown={handleComposerKeyDown}
             class={[
-              'w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text',
+              'min-h-11 w-full resize-none rounded-lg border border-control bg-surface px-3 py-2 text-base text-text',
               'placeholder:text-text-muted focus:border-focus focus:outline-none',
             ]}
           />
-          <Show when={composerFocused() || cardDraft().length > 0}>
+          <Show when={cardError()}>
+            {(error) => <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
+          </Show>
+          <Show when={hasFocusedComposer() || cardDraft().length > 0}>
             <div class="mt-2 flex items-center justify-between gap-2">
               <span class="text-[11px] text-text-muted">
                 <Show
@@ -654,20 +687,26 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </Show>
 
+      <Show when={props.isLocked}>
+        <p data-print-hide="true" class="hidden rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-muted sm:block">
+          This Board is Locked. You can still read and search Cards.
+        </p>
+      </Show>
+
       {/* Column Card stream body */}
-      <div class="flex flex-1 flex-col gap-2.5 p-3">
+      <div class="flex flex-1 flex-col gap-3">
         <Show
           when={props.streamItems.length > 0}
           fallback={
             <Show
               when={props.hasActiveFilter && props.cards.length > 0}
               fallback={
-                <p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                <p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-text-muted">
                   No Cards yet
                 </p>
               }
             >
-              <div class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+              <div class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-text-muted">
                 <p>No matching Cards in this Column</p>
                 <button
                   type="button"

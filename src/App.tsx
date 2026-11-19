@@ -5,6 +5,7 @@ import { env } from 'virtual:solid-env/client';
 
 import './App.css';
 import BoardRobotsMeta from './components/BoardRobotsMeta';
+import PageMessage from './components/PageMessage';
 import ThemeToggle from './components/ThemeToggle';
 import { isBoardPathname } from './lib/routes';
 import { Router, paths } from './router';
@@ -17,12 +18,12 @@ function AppShell(props: ParentProps) {
       <Title>{env.VITE_APP_NAME}</Title>
       <BoardRobotsMeta pathname={location.pathname} />
       <Show when={!isBoardPathname(location.pathname)}>
-        <header class="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur-sm">
+        <header class="border-b border-border bg-surface">
           <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
             <a
               href={paths()}
               class={[
-                'inline-flex items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
+                'inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-semibold tracking-tight text-text',
                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
               ]}
             >
@@ -38,27 +39,14 @@ function AppShell(props: ParentProps) {
       </Show>
       <Errored
         fallback={(error, reset) => (
-          <main class="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-6 py-16 text-center">
-            <h1 class="text-xl font-semibold text-text">
-              Something went wrong
-            </h1>
-            <p class="mt-2 text-sm text-text-muted">
-              {error instanceof Error
-                ? error.message
-                : 'An unexpected error occurred.'}
-            </p>
-            <button
-              type="button"
-              onClick={reset}
-              class={[
-                'mt-6 inline-flex cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-contrast',
-                'transition-opacity hover:opacity-90',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-              ]}
-            >
+          <PageMessage
+            title="Something went wrong"
+            message={error instanceof Error ? error.message : 'An unexpected error occurred.'}
+          >
+            <button type="button" onClick={reset} class="page-message-action">
               Try again
             </button>
-          </main>
+          </PageMessage>
         )}
       >
         <Loading

@@ -528,6 +528,13 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+function openBoardSettings(view: Pick<ReturnType<typeof render>, 'getByRole'>) {
+  fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
+  flush();
+  fireEvent.click(view.getByRole('menuitem', { name: 'Board Settings' }));
+  flush();
+}
+
 describe('<BoardWorkspace />', () => {
   it('optimistically updates the Card and toolbar balance, then restores both on rejection', async () => {
     const card = makeCard({ isMine: false, votes: 2 });
@@ -647,7 +654,7 @@ describe('<BoardWorkspace />', () => {
     const dialog = getByText('Board Settings', { selector: 'h2' }).closest('dialog')!;
     dialog.showModal = () => { dialog.open = true; };
     dialog.close = () => { dialog.open = false; };
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
     const voteLimit = settings.getByRole('combobox', { name: 'Vote limit' });
@@ -668,7 +675,7 @@ describe('<BoardWorkspace />', () => {
     expect(queryByTitle('3 total Votes · 1 yours')).not.toBeInTheDocument();
     expect(getByRole('button', { name: 'Cast Vote' })).toBeDisabled();
 
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     fireEvent.click(settings.getByRole('button', { name: 'Reset All Votes' }));
     flush();
@@ -710,9 +717,12 @@ describe('<BoardWorkspace />', () => {
       flush();
       expect(streams).toHaveLength(1);
       expect(streams[0].url).toBe(`/api/boards/${board.id}/live`);
+      expect(getByRole('status')).toHaveTextContent('Reconnecting');
       streams[0].receive({ type: 'board:snapshot', version: 1, serverNow: 100, board });
+      expect(getByRole('status')).toHaveTextContent('Live');
       streams[0].receive({ type: 'presence:count', count: 2 });
-      expect(getByRole('status')).toHaveTextContent('2 online');
+      expect(getByText('2 online')).toBeVisible();
+      expect(getByRole('status')).toHaveTextContent(/^Live$/);
 
       fireEvent.click(getByRole('tab', { name: /To Improve/ }));
       flush();
@@ -746,7 +756,8 @@ describe('<BoardWorkspace />', () => {
 
       expect(getByRole('heading', { name: 'Recovered title' })).toBeInTheDocument();
       expect(getByText(incoming.content)).toBeInTheDocument();
-      expect(getByRole('status')).toHaveTextContent('2 online');
+      expect(getByText('2 online')).toBeVisible();
+      expect(getByRole('status')).toHaveTextContent(/^Live$/);
       expect(getByRole('tab', { name: /To Improve/ })).toHaveAttribute('aria-selected', 'true');
       expect(composer).toHaveValue('Still typing');
     } finally {
@@ -860,10 +871,125 @@ describe('<BoardWorkspace />', () => {
       expect(view.queryByRole('button', { name: 'Open Card details' })).not.toBeInTheDocument();
       expect(view.queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
       expect(view.queryByText('<b>Live reply</b>')).not.toBeInTheDocument();
+      expect(view.queryByText(card.content)).not.toBeInTheDocument();
+      await Promise.resolve();
+      expect(view.getByRole('main')).toHaveFocus();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
     }
+  });
+
+  it('retains a failed comment in Card details and clears it after a successful retry', async () => {
+    const card = makeCard();
+    const board = makeBoardView({ cards: [card] });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+    const comment = drawer.getByRole('textbox', { name: 'Comment' });
+    fireEvent.input(comment, { target: { value: 'Keep my reply' } });
+    flush();
+
+    let rejectComment!: (response: BoardMutationResponse) => void;
+    spies.createComment.mockImplementationOnce(() => new Promise((resolve) => { rejectComment = resolve; }));
+    fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
+    flush();
+    expect(drawer.getByRole('button', { name: /Posting/ })).toBeDisabled();
+    rejectComment({ ok: false, code: 'RATE_LIMITED', message: 'Try posting again shortly.' });
+    await flushPromises();
+    expect(drawer.getByRole('alert')).toHaveTextContent('Try posting again shortly.');
+    expect(comment).toHaveValue('Keep my reply');
+
+    spies.createComment.mockResolvedValueOnce({
+      ok: true,
+      version: 2,
+      events: [{
+        type: 'comment:created',
+        version: 2,
+        cardId: card.id,
+        comment: { id: 'comment_1', cardId: card.id, content: 'Keep my reply', isMine: true, createdAt: 300 },
+      }],
+    });
+    fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
+    await flushPromises();
+    expect(drawer.getByText('Keep my reply')).toBeInTheDocument();
+    expect(comment).toHaveValue('');
+    expect(drawer.queryByRole('alert')).toBeNull();
+  });
+
+  it('handles Escape within Card details before dismissing the drawer', async () => {
+    const card = makeCard({ isActionItem: true, actionOwner: 'Platform' });
+    const board = makeBoardView({ cards: [card] });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+
+    const trigger = view.getByRole('button', { name: 'Open Card details' });
+    fireEvent.click(trigger);
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+    const picker = drawer.getByRole('button', { name: 'Add reaction' });
+    fireEvent.click(picker);
+    flush();
+    const choice = within(drawer.getByRole('group', { name: 'Choose a reaction' }))
+      .getByRole('button', { name: '🎉' });
+    choice.focus();
+    fireEvent.keyDown(choice, { key: 'Escape' });
+    flush();
+    expect(drawer.queryByRole('group', { name: 'Choose a reaction' })).toBeNull();
+    expect(picker).toHaveFocus();
+
+    const owner = drawer.getByRole('textbox', { name: 'Action owner' });
+    owner.focus();
+    fireEvent.input(owner, { target: { value: 'Draft owner' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    // A subsequent blur in the same frame cannot save the discarded draft.
+    picker.focus();
+    await flushPromises();
+    expect(owner).toHaveValue('Platform');
+    expect(spies.updateActionItem).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(picker, { key: 'Escape' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('contains focus in Card details and restores it after Escape or explicit close', () => {
+    const card = makeCard({ comments: [], commentCount: 1 });
+    const board = makeBoardView({ cards: [card] });
+    const { actions } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+
+    const comments = view.getByRole('button', { name: '1 comment' });
+    fireEvent.click(comments);
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
+    const close = drawer.getByRole('button', { name: 'Close Card details' });
+    const comment = drawer.getByRole('textbox', { name: 'Comment' });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    expect(comment).toHaveFocus();
+    fireEvent.keyDown(comment, { key: 'Tab' });
+    expect(close).toHaveFocus();
+
+    fireEvent.keyDown(close, { key: 'Escape' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(comments).toHaveFocus();
+
+    const open = view.getByRole('button', { name: 'Open Card details' });
+    fireEvent.click(open);
+    flush();
+    fireEvent.click(view.getByRole('button', { name: 'Close Card details' }));
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(open).toHaveFocus();
   });
 
   it('allows Facilitators to delete any revealed comment with inline confirmation and closes Card details on Escape without Solid diagnostics', async () => {
@@ -977,11 +1103,9 @@ describe('<BoardWorkspace />', () => {
       const cardArticle = view
         .getByText('Pair on flaky tests')
         .closest('article')!;
-      fireEvent.click(
-        within(cardArticle).getByRole('button', {
-          name: 'Flag as Action Item',
-        }),
-      );
+      fireEvent.click(within(cardArticle).getByRole('button', { name: 'Card actions' }));
+      flush();
+      fireEvent.click(within(cardArticle).getByRole('menuitem', { name: 'Flag as Action Item' }));
       await flushPromises();
       expect(spies.updateActionItem).toHaveBeenCalledWith({
         boardId: board.id,
@@ -1146,6 +1270,53 @@ describe('<BoardWorkspace />', () => {
     });
   });
 
+  it('lets Participants recover from a failed copy and return to Share after dismissal', async () => {
+    const board = makeBoardView({ isFacilitator: false });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const share = view.getByRole('button', { name: 'Share' });
+    share.focus();
+    fireEvent.click(share);
+    flush();
+    const dialog = within(view.getByRole('dialog', { name: 'Share Board' }));
+    expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus();
+    expect(dialog.getByRole('img', { name: 'Participant Link QR code' })).toBeInTheDocument();
+    expect(dialog.queryByRole('region', { name: 'Co-Facilitator Link' })).toBeNull();
+
+    const link = dialog.getByRole('textbox', { name: 'Participant Link' }) as HTMLInputElement;
+    const participantUrl = new URL(`/b/${board.id}`, window.location.origin).href;
+    expect(link).toHaveValue(participantUrl);
+    const copy = dialog.getByRole('button', { name: 'Copy Participant Link' });
+    const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard unavailable'));
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      copy.focus();
+      fireEvent.click(copy);
+      await flushPromises();
+      expect(dialog.getByRole('status')).toHaveTextContent('Copy the selected link manually.');
+      expect(link).toHaveFocus();
+      expect(link.selectionStart).toBe(0);
+      expect(link.selectionEnd).toBe(participantUrl.length);
+
+      copy.focus();
+      fireEvent.click(copy);
+      await flushPromises();
+      expect(dialog.getByRole('status')).toHaveTextContent('Participant Link copied.');
+      expect(writeText).toHaveBeenLastCalledWith(participantUrl);
+
+      fireEvent.keyDown(copy, { key: 'Escape' });
+      flush();
+      expect(view.queryByRole('dialog', { name: 'Share Board' })).toBeNull();
+      expect(share).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('renders clean missing/expired state with CTA and removes stale Board ID from localStorage Recent Boards', () => {
     const staleId = 'board_expired_12345678';
     recordRecentBoard({ id: staleId, title: 'Old Expired Retro' });
@@ -1205,6 +1376,11 @@ describe('<BoardWorkspace />', () => {
     const composer = getByLabelText(
       'Add card to Went Well',
     ) as HTMLTextAreaElement;
+    const untouchedComposer = getByLabelText('Add card to To Improve');
+    expect(composer).toHaveAttribute('rows', '1');
+    composer.focus();
+    flush();
+    expect(composer).toHaveAttribute('rows', '2');
     fireEvent.input(composer, {
       target: {
         value: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
@@ -1226,6 +1402,16 @@ describe('<BoardWorkspace />', () => {
       columnId: 'col_1',
       content: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
     });
+    expect(composer).toHaveValue('');
+    expect(composer).toHaveFocus();
+
+    const column = within(getByRole('region', { name: 'Went Well' }));
+    const cardActions = column.getByRole('button', { name: 'Card actions' });
+    cardActions.focus();
+    flush();
+    expect(composer).toHaveAttribute('rows', '2');
+    expect(column.getByRole('button', { name: 'Add' })).toBeDisabled();
+    expect(untouchedComposer).toHaveAttribute('rows', '1');
 
     const wentWell = getByRole('region', { name: 'Went Well' });
     expect(within(wentWell).getByText('v2')).toBeInTheDocument();
@@ -1276,6 +1462,53 @@ describe('<BoardWorkspace />', () => {
     );
   });
 
+  it('shows failed Card mutations beside their controls and leaves them available to retry', async () => {
+    const card = makeCard({ content: 'My card', isMine: true });
+    const target = makeCard({ id: 'target', content: 'Group target' });
+    const board = makeBoardView({ cards: [card, target], allowParticipantGroup: true });
+    const { actions, spies } = createFakeActions(board);
+    spies.moveCard.mockRejectedValueOnce(new Error('Disconnected'));
+    spies.groupCards.mockResolvedValueOnce({
+      ok: false, code: 'VALIDATION_ERROR', message: 'Grouping failed.',
+    });
+    spies.deleteCard.mockRejectedValueOnce(new Error('Disconnected'));
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const mine = within(view.getByText(card.content).closest('article')!);
+    const trigger = mine.getByRole('button', { name: 'Card actions' });
+    function select(name: string) {
+      fireEvent.click(mine.getByRole('menuitem', { name }));
+      flush();
+    }
+
+    fireEvent.click(trigger);
+    flush();
+    select('Move to…');
+    select('To Improve');
+    await flushPromises();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not move the Card.');
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(trigger);
+    flush();
+    select('Group with…');
+    select('Group target');
+    await flushPromises();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not group the Card.');
+
+    fireEvent.click(trigger);
+    flush();
+    select('Delete Card');
+    const confirm = mine.getByRole('button', { name: 'Confirm?' });
+    fireEvent.click(confirm);
+    await flushPromises();
+    expect(confirm).toBeEnabled();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.');
+    fireEvent.click(confirm);
+    await flushPromises();
+    expect(view.queryByText(card.content)).toBeNull();
+  });
+
   it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and inline Delete -> Confirm? confirmation', async () => {
     const myCard = makeCard({
       id: 'card_mine',
@@ -1324,21 +1557,44 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const wentWell = getByRole('region', { name: 'Went Well' });
-    // Only myCard shows "You" badge and author action buttons
+    const mine = within(within(wentWell).getByText(myCard.content).closest('article')!);
+    const teammate = within(within(wentWell).getByText(otherCard.content).closest('article')!);
+    const menuTrigger = mine.getByRole('button', { name: 'Card actions' });
     expect(within(wentWell).getAllByText('You')).toHaveLength(1);
-    expect(
-      within(wentWell).getAllByRole('button', { name: 'Edit card' }),
-    ).toHaveLength(1);
 
-    // Inline edit myCard
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Edit card' }));
+    fireEvent.click(teammate.getByRole('button', { name: 'Card actions' }));
     flush();
-    const editBox = within(wentWell).getByLabelText(
-      'Edit card text',
-    ) as HTMLTextAreaElement;
+    const teammateMenu = within(teammate.getByRole('menu', { name: 'Card actions' }));
+    expect(teammateMenu.getAllByRole('menuitem').map((item) => item.textContent?.trim()))
+      .toEqual(['Flag as Action Item']);
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    flush();
+    expect(teammate.queryByRole('menu')).toBeNull();
+    expect(teammate.getByRole('button', { name: 'Card actions' })).toHaveFocus();
+
+    fireEvent.keyDown(menuTrigger, { key: 'ArrowDown' });
+    flush();
+    const edit = mine.getByRole('menuitem', { name: 'Edit Card' });
+    expect(edit).toHaveFocus();
+    fireEvent.keyDown(edit, { key: 'ArrowDown' });
+    expect(mine.getByRole('menuitem', { name: 'Move to…' })).toHaveFocus();
+    fireEvent.click(edit);
+    flush();
+    const editBox = mine.getByRole('textbox', { name: 'Edit card text' });
+    expect(editBox).toHaveFocus();
     fireEvent.input(editBox, { target: { value: 'Refined retro note' } });
     flush();
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Save' }));
+
+    let rejectEdit!: (response: BoardMutationResponse) => void;
+    spies.updateCard.mockImplementationOnce(() => new Promise((resolve) => { rejectEdit = resolve; }));
+    fireEvent.click(mine.getByRole('button', { name: 'Save' }));
+    flush();
+    expect(mine.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    rejectEdit({ ok: false, code: 'VALIDATION_ERROR', message: 'Could not save this edit.' });
+    await flushPromises();
+    expect(mine.getByRole('alert')).toHaveTextContent('Could not save this edit.');
+    expect(editBox).toHaveValue('Refined retro note');
+    fireEvent.click(mine.getByRole('button', { name: 'Save' }));
     await flushPromises();
 
     expect(spies.updateCard).toHaveBeenCalledWith({
@@ -1349,7 +1605,10 @@ describe('<BoardWorkspace />', () => {
     expect(within(wentWell).getByText('Refined retro note')).toBeInTheDocument();
 
     // Move myCard across Columns using "Move to..." menu
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Move to...' }));
+    expect(mine.getByRole('button', { name: 'Card actions' })).toHaveFocus();
+    fireEvent.click(mine.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(mine.getByRole('menuitem', { name: 'Move to…' }));
     flush();
     fireEvent.click(
       within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
@@ -1389,7 +1648,10 @@ describe('<BoardWorkspace />', () => {
     });
 
     // Inline delete confirmation: Delete -> Confirm?
-    fireEvent.click(within(wentWell).getByRole('button', { name: 'Delete' }));
+    const movedBack = within(within(wentWell).getByText('Refined retro note').closest('article')!);
+    fireEvent.click(movedBack.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(movedBack.getByRole('menuitem', { name: 'Delete Card' }));
     flush();
     expect(spies.deleteCard).not.toHaveBeenCalled();
 
@@ -1467,7 +1729,7 @@ describe('<BoardWorkspace />', () => {
     ).toBeInTheDocument();
 
     // Add Column
-    fireEvent.click(getByRole('button', { name: /\+ Add column/i }));
+    fireEvent.click(getByRole('button', { name: 'Add a Column' }));
     flush();
     const newColInput = getByLabelText('New column title') as HTMLInputElement;
     fireEvent.input(newColInput, { target: { value: 'Kudos' } });
@@ -1577,7 +1839,9 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const ownCard = getByText(own.content).closest('article')!;
-    fireEvent.click(within(ownCard).getByRole('button', { name: 'Edit card' }));
+    fireEvent.click(within(ownCard).getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(within(ownCard).getByRole('menuitem', { name: 'Edit Card' }));
     flush();
     const editor = getByRole('textbox', { name: 'Edit card text' });
     fireEvent.input(editor, { target: { value: 'Editing my Card' } });
@@ -1600,6 +1864,7 @@ describe('<BoardWorkspace />', () => {
     await flushPromises();
     expect(spies.setPrivateMode).toHaveBeenCalledTimes(1);
 
+    getByRole('button', { name: 'Reveal All' }).focus();
     fireEvent.keyDown(document, { key: 'b' });
     await flushPromises();
     expect(spies.setPrivateMode).toHaveBeenLastCalledWith({ boardId: board.id, isBlurred: false });
@@ -1609,6 +1874,69 @@ describe('<BoardWorkspace />', () => {
     expect(getByText('All Cards revealed.')).toHaveAttribute('aria-live', 'polite');
     expect(getByRole('textbox', { name: 'Edit card text' })).toBe(editor);
     expect(getByRole('textbox', { name: 'Add card to Went Well' })).toBe(composer);
+  });
+
+  it('announces concurrent Board states and keeps Vote totals hidden after Cards are revealed', () => {
+    const streams: EventTarget[] = [];
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() {
+        super();
+        streams.push(this);
+      }
+      close() {}
+    });
+    const peer = makeCard({
+      id: 'peer', isMine: false, content: 'Review handoff notes', votes: null, myVotes: 2,
+    });
+    const own = makeCard({ id: 'own', content: 'Prepare the handoff', votes: null });
+    const board = makeBoardView({ isFacilitator: false, cards: [own, peer], remainingVotes: 3 });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    try {
+      flush();
+      const send = (nextBoard: BoardViewDTO) => {
+        const message: BoardLiveMessage = {
+          type: 'board:snapshot', version: nextBoard.version, serverNow: Date.now(), board: nextBoard,
+        };
+        streams[0].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+        flush();
+      };
+
+      send({
+        ...board, version: 2, isBlurred: true, blindVoting: true,
+        cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
+      });
+      const status = within(view.getByRole('group', { name: 'Board status' }));
+      expect(status.getByText('Private Mode')).toBeVisible();
+      expect(status.getByText('Blind Voting')).toBeVisible();
+      expect(view.getByText(/Private Mode is on.*Blind Voting is on/)).toHaveAttribute('aria-live', 'polite');
+      expect(view.queryByText(peer.content)).not.toBeInTheDocument();
+      expect(view.getByText(own.content)).toBeVisible();
+      fireEvent.click(within(view.getByText(own.content).closest('article')!).getByRole('button', { name: 'Card actions' }));
+      flush();
+      expect(view.getByRole('menuitem', { name: 'Edit Card' })).toBeEnabled();
+
+      send({
+        ...board, version: 3, isBlurred: true, blindVoting: true, isLocked: true,
+        cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
+      });
+      expect(status.getByText('Private Mode')).toBeVisible();
+      expect(status.getByText('Blind Voting')).toBeVisible();
+      expect(status.getByText('Locked')).toBeVisible();
+
+      send({ ...board, version: 4, blindVoting: true });
+      expect(view.getByText(peer.content)).toBeVisible();
+      expect(status.queryByText('Private Mode')).not.toBeInTheDocument();
+      expect(status.getByText('Blind Voting')).toBeVisible();
+      expect(status.queryByText('Locked')).not.toBeInTheDocument();
+      expect(view.getByText(/All Cards revealed.*Board unlocked/)).toHaveAttribute('aria-live', 'polite');
+      const peerVote = within(view.getByText(peer.content).closest('article')!).getByRole('group', { name: 'Voting' });
+      expect(peerVote).toHaveTextContent('2 yours');
+      expect(view.getByText('3 / 5 votes left')).toBeVisible();
+      expect(view.getByRole('option', { name: /Most Voted/ })).toBeDisabled();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('hides Facilitator edit/move/delete controls on redacted Cards during Private Mode', () => {
@@ -1643,9 +1971,8 @@ describe('<BoardWorkspace />', () => {
 
     const col1 = getByRole('region', { name: 'Went Well' });
     expect(
-      within(col1).queryByRole('button', { name: 'Edit card' }),
+      within(col1).queryByRole('button', { name: 'Card actions' }),
     ).toBeNull();
-    expect(within(col1).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
   it('lets a Facilitator Lock and Unlock the Board while keeping Action Item follow-up enabled and disabling content edits', async () => {
@@ -1697,7 +2024,7 @@ describe('<BoardWorkspace />', () => {
     };
 
     // Open Board Settings and Lock the Board
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
     fireEvent.click(settings.getByRole('button', { name: 'Lock Board' }));
@@ -1718,16 +2045,17 @@ describe('<BoardWorkspace />', () => {
     expect(getByText('Locked')).toBeInTheDocument();
     expect(queryByRole('button', { name: 'Rename Board' })).toBeNull();
     expect(queryByRole('button', { name: 'Private Mode' })).toBeNull();
-    expect(queryByRole('button', { name: /\+ Add column/i })).toBeNull();
+    expect(queryByRole('button', { name: 'Add a Column' })).toBeNull();
     expect(queryByLabelText('Add card to Went Well')).toBeNull();
     expect(queryByRole('button', { name: 'Cast Vote' })).toBeNull();
     expect(queryByRole('button', { name: 'Remove Vote' })).toBeNull();
-    expect(queryByRole('button', { name: 'Edit card' })).toBeNull();
-    expect(queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(queryByRole('button', { name: 'Card actions' })).toBeNull();
     expect(queryByRole('button', { name: 'Add reaction' })).toBeNull();
-    expect(queryByRole('button', { name: 'Flag as Action Item' })).toBeNull();
-    expect(queryByRole('button', { name: 'Unflag Action Item' })).toBeNull();
-    expect(getByRole('button', { name: 'Board Settings' })).toBeEnabled();
+    fireEvent.click(getByRole('button', { name: 'More board actions' }));
+    flush();
+    expect(getByRole('menuitem', { name: 'Board Settings' })).toBeEnabled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    flush();
     expect(getByRole('button', { name: 'Share' })).toBeEnabled();
 
     // Facilitator CAN update actionDone & actionOwner on existing Action Items in Action Items Drawer
@@ -1767,9 +2095,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     // Facilitator CAN also update existing Action Item in Card Detail Drawer, but cannot unflag or comment
-    const actionArticle = getByText('Automate canary rollback').closest(
-      'article',
-    )!;
+    const actionArticle = within(getByRole('main')).getByText('Automate canary rollback').closest('article')!;
     fireEvent.click(
       within(actionArticle).getByRole('button', { name: 'Open Card details' }),
     );
@@ -1790,7 +2116,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     // Unlock the Board from Board Settings
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     fireEvent.click(settings.getByRole('button', { name: 'Unlock Board' }));
     await flushPromises();
@@ -1803,6 +2129,30 @@ describe('<BoardWorkspace />', () => {
     });
     expect(queryByText('Locked')).toBeNull();
     expect(getByRole('button', { name: 'Private Mode' })).toBeEnabled();
+  });
+
+  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', () => {
+    const board = makeBoardView({ isLocked: true });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const entry = view.getByRole('button', { name: 'Action Items 0 open' });
+    entry.focus();
+    fireEvent.click(entry);
+    flush();
+
+    const close = view.getByRole('button', { name: 'Close Action Items' });
+    expect(close).toHaveFocus();
+    // In the browser the header entry becomes hidden at the compact layout width.
+    entry.hidden = true;
+    fireEvent.click(close);
+    flush();
+
+    expect(view.queryByRole('dialog', { name: 'Action Items' })).toBeNull();
+    expect(view.getByRole('button', { name: 'More board actions' })).toHaveFocus();
   });
 
   it('prevents non-Facilitator Participants from editing Action Items or accessing Board Settings when Locked', () => {
@@ -1888,7 +2238,7 @@ describe('<BoardWorkspace />', () => {
       dialog.open = false;
     };
 
-    fireEvent.click(getByRole('button', { name: 'Board Settings' }));
+    openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
 
@@ -1946,7 +2296,7 @@ describe('<BoardWorkspace />', () => {
         isFacilitator: false,
       });
 
-      const { getByRole } = render(() => (
+      const { getByRole, queryByRole } = render(() => (
         <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
       ));
       flush();
@@ -1954,12 +2304,17 @@ describe('<BoardWorkspace />', () => {
       expect(streams).toHaveLength(1);
       expect(readRecentBoards().some((item) => item.id === board.id)).toBe(true);
 
+      fireEvent.click(getByRole('button', { name: 'Share' }));
+      flush();
+      expect(getByRole('dialog', { name: 'Share Board' })).toBeInTheDocument();
+
       streams[0].emit({ type: 'board:deleted', version: 2 });
       flush();
 
       expect(
         getByRole('heading', { level: 1, name: 'Board not found or expired' }),
-      ).toBeInTheDocument();
+      ).toHaveFocus();
+      expect(queryByRole('dialog', { name: 'Share Board' })).toBeNull();
       expect(readRecentBoards().some((item) => item.id === board.id)).toBe(
         false,
       );
@@ -2000,7 +2355,7 @@ describe('<BoardWorkspace />', () => {
         dialog.close = () => {
           dialog.open = false;
         };
-        fireEvent.click(view.getByRole('button', { name: 'Board Settings' }));
+        openBoardSettings(view);
         flush();
         fireEvent.click(view.getByRole('button', { name: 'Delete Board' }));
         flush();
@@ -2033,9 +2388,10 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const wentWell = getByRole('region', { name: 'Went Well' });
-    fireEvent.click(
-      within(wentWell).getAllByRole('button', { name: 'Group with...' })[0],
-    );
+    const firstCard = within(within(wentWell).getByText(first.content).closest('article')!);
+    fireEvent.click(firstCard.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(firstCard.getByRole('menuitem', { name: 'Group with…' }));
     flush();
     fireEvent.click(
       within(wentWell).getByRole('menuitem', { name: /Flaky CI checks/ }),
@@ -2085,9 +2441,10 @@ describe('<BoardWorkspace />', () => {
     flush();
     expect(within(wentWell).getByText('CI flakiness')).toBeInTheDocument();
 
-    fireEvent.click(
-      within(wentWell).getAllByRole('button', { name: 'Ungroup card' })[0],
-    );
+    const groupedFirstCard = within(within(wentWell).getByText(first.content).closest('article')!);
+    fireEvent.click(groupedFirstCard.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(groupedFirstCard.getByRole('menuitem', { name: 'Ungroup Card' }));
     await flushPromises();
 
     expect(spies.ungroupCard).toHaveBeenCalledWith({
@@ -2150,9 +2507,10 @@ describe('<BoardWorkspace />', () => {
         name: 'Rename Card Group',
       }),
     ).not.toBeInTheDocument();
-    expect(
-      within(participantColumn).queryByRole('button', { name: 'Ungroup card' }),
-    ).not.toBeInTheDocument();
+    const memberCard = within(within(participantColumn).getByText(cards[0].content).closest('article')!);
+    fireEvent.click(memberCard.getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(memberCard.queryByRole('menuitem', { name: 'Ungroup Card' })).not.toBeInTheDocument();
     cleanup();
 
     const board = makeBoardView({
@@ -2186,11 +2544,21 @@ describe('<BoardWorkspace />', () => {
     });
     expect(within(wentWell).getByText('CI reliability')).toBeInTheDocument();
 
-    fireEvent.click(
-      within(wentWell).getByRole('button', {
-        name: 'Move Card Group to...',
-      }),
-    );
+    const moveGroup = within(wentWell).getByRole('button', { name: 'Move Card Group to...' });
+    let rejectMove!: (response: BoardMutationResponse) => void;
+    spies.moveCardGroup.mockImplementationOnce(() => new Promise((resolve) => { rejectMove = resolve; }));
+    fireEvent.click(moveGroup);
+    flush();
+    fireEvent.click(within(wentWell).getByRole('menuitem', { name: /To Improve/i }));
+    flush();
+    expect(moveGroup).toBeDisabled();
+    rejectMove({ ok: false, code: 'VALIDATION_ERROR', message: 'Move was rejected.' });
+    await flushPromises();
+    expect(within(wentWell).getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
+    expect(moveGroup).toBeEnabled();
+    expect(moveGroup).toHaveFocus();
+
+    fireEvent.click(moveGroup);
     flush();
     fireEvent.click(
       within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
@@ -2259,16 +2627,16 @@ describe('<BoardWorkspace />', () => {
 
       const { artifact } = await captureArtifact(
         async () => {
-          const { getByRole, queryByRole } = render(() => (
+          const { getByRole, queryByRole, getByText } = render(() => (
             <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
           ));
           flush();
 
-          const exportButton = getByRole('button', { name: 'Export' });
+          const exportButton = getByRole('button', { name: 'More board actions' });
           fireEvent.click(exportButton);
           flush();
 
-          const menu = getByRole('menu', { name: 'Export Board' });
+          const menu = getByRole('menu', { name: 'More board actions' });
           expect(menu).toHaveAttribute('data-board-overlay', 'true');
 
           const mdLink = within(menu).getByRole('menuitem', {
@@ -2311,23 +2679,28 @@ describe('<BoardWorkspace />', () => {
             '- [ ] Automate canary rollback (Owner: Platform)',
           );
 
-          // Close on Escape
+          expect(getByText('Markdown copied.')).toBeVisible();
+          expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+
+          // Reopen and close on Escape
+          fireEvent.click(exportButton);
+          flush();
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
           expect(
-            queryByRole('menu', { name: 'Export Board' }),
+            queryByRole('menu', { name: 'More board actions' }),
           ).not.toBeInTheDocument();
 
           // Reopen and close on outside pointerdown
           fireEvent.click(exportButton);
           flush();
           expect(
-            getByRole('menu', { name: 'Export Board' }),
+            getByRole('menu', { name: 'More board actions' }),
           ).toBeInTheDocument();
           fireEvent.pointerDown(document.body);
           flush();
           expect(
-            queryByRole('menu', { name: 'Export Board' }),
+            queryByRole('menu', { name: 'More board actions' }),
           ).not.toBeInTheDocument();
 
           // Reopen and trigger Print / Save as PDF
@@ -2339,13 +2712,114 @@ describe('<BoardWorkspace />', () => {
           flush();
           expect(printSpy).toHaveBeenCalledTimes(1);
           expect(
-            queryByRole('menu', { name: 'Export Board' }),
+            queryByRole('menu', { name: 'More board actions' }),
           ).not.toBeInTheDocument();
         },
         { scenario: 'board-workspace-export-menu' },
       );
 
       expectNoDiagnostics(artifact);
+    } finally {
+      printSpy.mockRestore();
+    }
+  });
+
+  it('reports an unsuccessful Board download beside More and allows a retry', async () => {
+    const request = vi.spyOn(window, 'fetch').mockResolvedValueOnce(new Response(null, { status: 503 }));
+    try {
+      const board = makeBoardView({ isFacilitator: false, isLocked: true });
+      const { getByRole, queryByRole, getByText } = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+      ));
+      flush();
+
+      const more = getByRole('button', { name: 'More board actions' });
+      fireEvent.click(more);
+      flush();
+      fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }));
+      flush();
+
+      expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+      expect(more).toHaveFocus();
+      expect(getByText('Preparing CSV download…')).toBeVisible();
+      await flushPromises();
+      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+      expect(request).toHaveBeenCalledWith(expect.stringMatching(`/api/boards/${board.id}/export\\?format=csv$`));
+
+      fireEvent.click(more);
+      flush();
+      request.mockRejectedValueOnce(new TypeError('Offline'));
+      fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }));
+      await flushPromises();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+    } finally {
+      request.mockRestore();
+    }
+  });
+
+  it.each([false, true])('prints the viewer’s Board with Private Mode and Blind Voting (Facilitator: %s)', (isFacilitator) => {
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {
+      window.dispatchEvent(new Event('beforeprint'));
+    });
+    try {
+      const board = makeBoardView({
+        isFacilitator,
+        isBlurred: true,
+        blindVoting: true,
+        isLocked: true,
+        groups: [{
+          id: 'group_mixed',
+          columnId: 'col_2',
+          title: 'Hidden group title',
+          redacted: true,
+          cardIds: ['mine', 'theirs'],
+          votes: 7,
+          myVotes: 0,
+          createdAt: 1,
+        }],
+        cards: [
+          makeCard({
+            id: 'mine', columnId: 'col_2', groupId: 'group_mixed',
+            content: 'Visible group member', isActionItem: true, actionOwner: 'Platform',
+            votes: null,
+          }),
+          makeCard({
+            id: 'theirs', columnId: 'col_2', groupId: 'group_mixed',
+            content: 'Hidden Card content', redacted: true, isMine: false, votes: null,
+          }),
+          makeCard({ id: 'standalone', content: 'Visible standalone Card', myVotes: 1, votes: 7 }),
+        ],
+      });
+      const { getByRole, getByLabelText, queryByLabelText } = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+      ));
+      flush();
+      const search = getByRole('searchbox', { name: 'Search Cards, Card Groups, and comments' });
+      fireEvent.input(search, { target: { value: 'Visible standalone Card' } });
+      flush();
+
+      fireEvent.click(getByRole('button', { name: 'More board actions' }));
+      flush();
+      fireEvent.click(getByRole('menuitem', { name: 'Print / Save as PDF' }));
+      flush();
+
+      const output = getByLabelText('Printable Board');
+      expect(output).toHaveTextContent('Sprint 42 Retro');
+      expect(output).toHaveTextContent('To Improve');
+      expect(output).toHaveTextContent('Visible group member');
+      expect(output).toHaveTextContent('Platform');
+      expect(output).toHaveTextContent('Visible standalone Card');
+      expect(output).toHaveTextContent('1 of your Votes');
+      expect(output).toHaveTextContent('[Hidden in Private Mode]');
+      expect(output).not.toHaveTextContent('Hidden group title');
+      expect(output).not.toHaveTextContent('Hidden Card content');
+      expect(output).not.toHaveTextContent('7 Votes');
+
+      window.dispatchEvent(new Event('afterprint'));
+      flush();
+      expect(queryByLabelText('Printable Board')).not.toBeInTheDocument();
+      expect(search).toHaveValue('Visible standalone Card');
     } finally {
       printSpy.mockRestore();
     }
@@ -2368,9 +2842,11 @@ describe('<BoardWorkspace />', () => {
       ));
       flush();
 
-      fireEvent.click(getByRole('button', { name: 'Export' }));
+      fireEvent.click(getByRole('button', { name: 'More board actions' }));
       flush();
-      const menu = getByRole('menu', { name: 'Export Board' });
+      const menu = getByRole('menu', { name: 'More board actions' });
+      expect(within(menu).queryByRole('menuitem', { name: 'Board Settings' })).not.toBeInTheDocument();
+      expect(within(menu).queryByRole('menuitem', { name: 'Add column' })).not.toBeInTheDocument();
       expect(
         within(menu).getByRole('menuitem', { name: 'Copy Markdown' }),
       ).toBeInTheDocument();
@@ -2658,6 +3134,55 @@ describe('<BoardWorkspace />', () => {
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps Search and the active filter available outside Filter & sort on a Locked Board', () => {
+    const board = makeBoardView({
+      isFacilitator: false,
+      isLocked: true,
+      cards: [
+        makeCard({ id: 'own', content: 'My deployment checklist' }),
+        makeCard({ id: 'peer', content: 'Teammate deployment checklist', isMine: false }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    ));
+    flush();
+
+    const search = view.getByRole('searchbox', { name: 'Search Cards, Card Groups, and comments' });
+    const disclosure = view.getByRole('button', { name: 'Filter & sort' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(disclosure);
+    flush();
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(within(view.getByRole('group', { name: 'Filter cards' })).getByRole('button', { name: 'Mine' }));
+    fireEvent.change(view.getByRole('combobox', { name: 'Sort cards' }), { target: { value: 'oldest' } });
+    fireEvent.click(disclosure);
+    fireEvent.input(search, { target: { value: 'deployment' } });
+    flush();
+
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(view.getByText('Filter: Mine')).toBeVisible();
+    expect(view.getByText('1 match (1 of 2 cards)')).toBeVisible();
+    expect(view.queryByText('Teammate deployment checklist')).not.toBeInTheDocument();
+
+    fireEvent.click(view.getByRole('button', { name: 'Clear filters' }));
+    flush();
+    expect(search).toHaveValue('');
+    expect(search).toHaveFocus();
+    expect(view.queryByText('Filter: Mine')).not.toBeInTheDocument();
+    expect(view.getByText('Teammate deployment checklist')).toBeInTheDocument();
+
+    fireEvent.click(disclosure);
+    flush();
+    expect(view.getByRole('combobox', { name: 'Sort cards' })).toHaveValue('oldest');
+    for (const spy of Object.values(spies)) {
+      expect(spy).not.toHaveBeenCalled();
     }
   });
 
@@ -3037,7 +3562,34 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
-  it('opens the mobile overflow menu for secondary controls and closes on Escape with zero diagnostics', async () => {
+  it('lets Tab leave More in either direction without adding actions to the tab order', () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const trigger = view.getByRole('button', { name: 'More board actions' });
+    const next = view.getByRole('searchbox');
+
+    for (const shiftKey of [false, true]) {
+      fireEvent.click(trigger);
+      flush();
+      const menu = within(view.getByRole('menu', { name: 'More board actions' }));
+      const items = menu.getAllByRole('menuitem');
+      expect(items.every((item) => item.tabIndex === -1)).toBe(true);
+      expect(items[0]).toHaveFocus();
+      fireEvent.keyDown(items[0], { key: 'End' });
+      expect(items.at(-1)).toHaveFocus();
+      expect(fireEvent.keyDown(items.at(-1)!, { key: 'Tab', shiftKey })).toBe(true);
+
+      const destination = shiftKey ? trigger : next;
+      destination.focus();
+      flush();
+      expect(destination).toHaveFocus();
+      expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    }
+  });
+
+  it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {
     const board = makeBoardView({
       isFacilitator: true,
       cards: [makeCard({ isActionItem: true, actionDone: false })],
@@ -3061,7 +3613,8 @@ describe('<BoardWorkspace />', () => {
           const menu = view.getByRole('menu', { name: 'More board actions' });
           expect(menu).toHaveAttribute('data-board-overlay', 'true');
           const withinMenu = within(menu);
-          expect(withinMenu.getByRole('menuitem', { name: /Private Mode/i })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: 'Board Settings' })).toBeInTheDocument();
+          expect(withinMenu.getByRole('menuitem', { name: /Switch to (light|dark) theme/ })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Add column/i })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Action Items/i })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Download Markdown/i })).toBeInTheDocument();
@@ -3071,6 +3624,7 @@ describe('<BoardWorkspace />', () => {
 
           expect(trigger).toHaveAttribute('aria-expanded', 'false');
           expect(view.queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
+          expect(trigger).toHaveFocus();
         } finally {
           view.unmount();
         }
@@ -3149,7 +3703,8 @@ describe('<BoardWorkspace />', () => {
 
           expect(view.queryByText('Will fail on server')).not.toBeInTheDocument();
           expect(within(col1).getByText('1')).toBeInTheDocument();
-          expect(view.getByRole('alert')).toHaveTextContent('Board card limit reached.');
+          expect(composer).toHaveValue('Will fail on server');
+          expect(within(col1).getByRole('alert')).toHaveTextContent('Board card limit reached.');
         } finally {
           view.unmount();
         }
