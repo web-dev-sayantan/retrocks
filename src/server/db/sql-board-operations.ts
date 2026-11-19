@@ -13,6 +13,7 @@ import type {
   BoardMutationCommand,
   BoardMutationOutcome,
   CreateBoardRecord,
+  FacilitatorCapability,
   RawBoardMutationEvent,
   RawBoardRow,
   RawBoardSnapshot,
@@ -392,6 +393,29 @@ export class SqlBoardOperations {
     return changes;
   }
 
+  getFacilitatorCapability(
+    boardId: string,
+    now: number = Date.now(),
+  ): FacilitatorCapability | null {
+    this.ensureSchema();
+    const row = this.sql.get<Pick<
+      BoardDbRow,
+      'facilitator_token_hash' | 'facilitator_token_encrypted'
+    >>(
+      `SELECT facilitator_token_hash, facilitator_token_encrypted
+       FROM boards WHERE id = ? AND last_active_at + retention_days * ? > ?`,
+      boardId,
+      MS_PER_DAY,
+      now,
+    );
+    return row
+      ? {
+          facilitatorTokenHash: row.facilitator_token_hash,
+          facilitatorTokenEncrypted: row.facilitator_token_encrypted,
+        }
+      : null;
+  }
+
   getBoardTokenSalt(boardId: string, now: number = Date.now()): string | null {
     this.ensureSchema();
     const row = this.sql.get<{
@@ -506,7 +530,7 @@ export class SqlBoardOperations {
         };
       }
 
-      if (board.isLocked) {
+      if (board.isLocked && command.type !== 'facilitator:rotate') {
         return {
           ok: false,
           code: 'BOARD_LOCKED',
@@ -549,6 +573,28 @@ export class SqlBoardOperations {
       };
 
       switch (command.type) {
+        case 'facilitator:rotate': {
+          if (!actor.isFacilitator) {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'Only a Facilitator can rotate the Co-Facilitator Link.',
+            };
+          }
+
+          this.sql.run(
+            `UPDATE boards SET facilitator_token_hash = ?, facilitator_token_encrypted = ?,
+                               version = ?, last_active_at = ? WHERE id = ?`,
+            command.capability.facilitatorTokenHash,
+            command.capability.facilitatorTokenEncrypted,
+            nextVersion,
+            now,
+            boardId,
+          );
+          rawEvents.push({ type: 'board:updated', version: nextVersion, patch: {} });
+          return finalize(nextVersion, now);
+        }
+
         case 'board:rename': {
           if (!actor.isFacilitator) {
             return {

@@ -88,8 +88,9 @@ describe('crypto helpers (WebCrypto)', () => {
     expect(wrongBoard).toBeNull();
 
     // Tampering with ciphertext fails authentication
-    const tampered =
-      ciphertext1.slice(0, -1) + (ciphertext1.endsWith('A') ? 'B' : 'A');
+    const [version, iv, ciphertext] = ciphertext1.split('.');
+    const changedByte = ciphertext.startsWith('A') ? 'B' : 'A';
+    const tampered = `${version}.${iv}.${changedByte}${ciphertext.slice(1)}`;
     expect(
       await decryptFacilitatorToken(tampered, boardId, [secret]),
     ).toBeNull();

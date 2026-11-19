@@ -6,6 +6,7 @@ import type {
   BoardMutationCommand,
   BoardMutationOutcome,
   CreateBoardRecord,
+  FacilitatorCapability,
   RawBoardSnapshot,
 } from '../db/raw-types';
 
@@ -21,6 +22,10 @@ export interface BoardStore {
     now?: number,
   ): Promise<RawBoardSnapshot | null>;
   getBoardTokenSalt(boardId: string, now?: number): Promise<string | null>;
+  getFacilitatorCapability(
+    boardId: string,
+    now?: number,
+  ): Promise<FacilitatorCapability | null>;
   mutateBoard(
     boardId: string,
     actor: BoardMutationActor,
