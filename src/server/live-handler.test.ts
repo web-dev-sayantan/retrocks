@@ -113,6 +113,95 @@ it('fans out a private Card over concurrent streams and counts tabs from one coo
   }
 });
 
+it('atomically projects Private Mode and Reveal All over HTTP and every live stream', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  const streams: ReturnType<typeof readLiveStream>[] = [];
+  try {
+    const service = await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const origin = 'https://retrocks.app';
+    const { result: board, cookie: facilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => service.createBoardForRequest({}),
+    );
+    const boardUrl = `${origin}/b/${board.id}`;
+    const liveUrl = `${origin}/api/boards/${board.id}/live`;
+    const { cookie: participantCookie } = await withSession(
+      new Request(boardUrl),
+      () => service.getBoardForRequest(board.id),
+    );
+    async function post<T>(cookie: string, run: () => Promise<T>) {
+      return (await withSession(new Request(boardUrl, {
+        method: 'POST',
+        headers: { cookie },
+      }), run)).result;
+    }
+
+    const participantText = 'Only its author can read this in Private Mode.';
+    const facilitatorText = 'Facilitator feedback is equally private.';
+    for (const [cookie, content] of [
+      [participantCookie!, participantText],
+      [facilitatorCookie!, facilitatorText],
+    ]) {
+      await post(cookie, () => service.createCardForRequest({
+        boardId: board.id, columnId: board.columns[0].id, content,
+      }));
+      streams.push(readLiveStream(await handleLiveRequest(
+        board.id,
+        new Request(liveUrl, { headers: { cookie } }),
+      )));
+      await streams.at(-1)!.until('board:snapshot');
+    }
+
+    const setPrivateMode = (cookie: string, isBlurred: boolean) =>
+      post(cookie, () => service.setPrivateModeForRequest({ boardId: board.id, isBlurred }));
+    await expect(setPrivateMode(participantCookie!, true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const enabled = await setPrivateMode(facilitatorCookie!, true);
+    const privateFrame = streams.map((stream) =>
+      stream.until('board:snapshot', (message) => message.version === enabled.version),
+    );
+    const [participantFrame, facilitatorFrame] = await Promise.all(privateFrame);
+    expect(enabled.events).toEqual([{ ...facilitatorFrame, serverNow: expect.any(Number) }]);
+    expect(facilitatorFrame.board).toMatchObject({ isBlurred: true, isFacilitator: true });
+    expect(participantFrame.board).toMatchObject({ isBlurred: true, isFacilitator: false });
+
+    for (const [frame, ownText, privateText] of [
+      [facilitatorFrame, facilitatorText, participantText],
+      [participantFrame, participantText, facilitatorText],
+    ] as const) {
+      expect(frame.board.cards).toEqual(expect.arrayContaining([
+        expect.objectContaining({ content: ownText, isMine: true, redacted: false }),
+        expect.objectContaining({ content: '', comments: [], isMine: false, redacted: true, placeholderLines: 1 }),
+      ]));
+      expect(JSON.stringify(frame)).not.toContain(privateText);
+    }
+
+    const { result: privateRead } = await withSession(
+      new Request(boardUrl, { headers: { cookie: facilitatorCookie! } }),
+      () => service.getBoardForRequest(board.id),
+    );
+    expect(privateRead).toEqual(facilitatorFrame.board);
+
+    const revealed = await setPrivateMode(facilitatorCookie!, false);
+    expect(revealed.version).toBe(enabled.version + 1);
+    const revealFrames = await Promise.all(streams.map((stream) =>
+      stream.until('board:snapshot', (message) => message.version === revealed.version),
+    ));
+    expect(revealed.events).toEqual([{ ...revealFrames[1], serverNow: expect.any(Number) }]);
+    for (const { board: revealedBoard } of revealFrames) {
+      expect(revealedBoard.isBlurred).toBe(false);
+      expect(revealedBoard.cards).toEqual(expect.arrayContaining([
+        expect.objectContaining({ content: participantText, redacted: false }),
+        expect.objectContaining({ content: facilitatorText, redacted: false }),
+      ]));
+    }
+  } finally {
+    await Promise.all(streams.map((stream) => stream.close()));
+    vi.unstubAllEnvs();
+  }
+});
+
 it('prunes an SSE subscriber that stops sending heartbeats', async () => {
   vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });

@@ -23,21 +23,16 @@ export function projectLivePublication(
 ): BoardLiveMessage {
   if (!('snapshot' in publication)) return publication;
   const { snapshot, events } = publication;
-  if (events.some((event) =>
-    event.type === 'board:updated' &&
-    (event.patch.isBlurred !== undefined || event.patch.blindVoting !== undefined),
-  )) {
-    // Privacy transitions also change the presentation of existing Cards and Votes.
-    return projectLiveSnapshot(snapshot, viewer);
-  }
+  const projected = projectMutationEventsForViewer(
+    snapshot,
+    events,
+    viewer.participantHash,
+    viewer.isFacilitator,
+  );
+  if (projected[0]?.type === 'board:snapshot') return projected[0];
   return {
     type: 'board:mutation',
     version: snapshot.board.version,
-    events: projectMutationEventsForViewer(
-      snapshot,
-      events,
-      viewer.participantHash,
-      viewer.isFacilitator,
-    ),
+    events: projected,
   };
 }

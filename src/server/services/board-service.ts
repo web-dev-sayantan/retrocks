@@ -18,6 +18,7 @@ import {
   MoveCardInputSchema,
   RenameBoardInputSchema,
   ReorderColumnsInputSchema,
+  SetPrivateModeInputSchema,
   UpdateCardInputSchema,
   UpdateColumnInputSchema,
 } from '../../lib/schemas';
@@ -244,6 +245,16 @@ export async function renameBoardForRequest(
     type: 'board:rename',
     title: input.title,
     ...(input.subtitle !== undefined ? { subtitle: input.subtitle } : {}),
+  });
+}
+
+export async function setPrivateModeForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  const input = parseMutationInput(SetPrivateModeInputSchema, rawInput);
+  return executeBoardMutation(input.boardId, {
+    type: 'board:set-private-mode',
+    isBlurred: input.isBlurred,
   });
 }
 

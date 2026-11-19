@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
   MAX_CARD_CONTENT_LENGTH,
@@ -32,6 +32,20 @@ export default function CardItem(props: CardItemProps) {
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
+
+  const [wasRevealed, setWasRevealed] = createSignal(false);
+
+  createEffect(
+    () => props.card.redacted,
+    (redacted, previous) => {
+      setWasRevealed(previous === true && !redacted);
+      if (redacted) {
+        cancelEdit();
+        setConfirmingDelete(false);
+        setMoveMenuOpen(false);
+      }
+    },
+  );
 
   const canManage = createMemo(() => {
     if (props.isLocked || props.card.redacted) return false;
@@ -152,6 +166,7 @@ export default function CardItem(props: CardItemProps) {
           'cursor-grab active:cursor-grabbing hover:border-text-muted/40':
             canDrag(),
           'bg-surface-subtle/60': props.card.redacted,
+          'motion-safe:animate-[card-reveal_260ms_ease-out]': wasRevealed(),
         },
       ]}
     >
