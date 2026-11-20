@@ -1,7 +1,14 @@
+import {
+  Dialog,
+  DialogBackdrop,
+  DialogContent,
+  DialogTitle,
+} from '@ui-sdk/solid/dialog';
 import { ChevronDown } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
 
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
+import { confirmBoardAction } from '../lib/board-confirm';
 import { canControlFacilitation } from '../lib/board-permissions';
 import type { UpdateVotingSettingsInput } from '../lib/voting-schemas';
 import BoardOverlayHeader from './BoardOverlayHeader';
@@ -15,8 +22,8 @@ const buttonClass = [
 ];
 
 const fieldClass = 'board-modal-field min-h-11 w-full px-3 py-2 text-base sm:min-h-9 sm:text-sm';
-const confirmationClass = [buttonClass, 'bg-rose-700 text-white hover:bg-rose-800'];
 const mutedButtonClass = [buttonClass, 'border border-border bg-surface text-text hover:bg-surface-subtle'];
+const destructiveButtonClass = [buttonClass, 'bg-rose-700 text-white hover:bg-rose-800'];
 
 export default function BoardVotingSettings(props: {
   board: Pick<
@@ -30,16 +37,12 @@ export default function BoardVotingSettings(props: {
   onToggleLock: (isLocked: boolean) => Promise<string | null>;
   onDeleteBoard: () => Promise<string | null>;
 }) {
-  let dialog!: HTMLDialogElement;
-  const titleId = createUniqueId();
   const destructiveActionsId = createUniqueId();
   const [voteLimitChoice, setVoteLimitChoice] = createSignal('5');
   const [customLimit, setCustomLimit] = createSignal('');
   const [singleVote, setSingleVote] = createSignal(false);
   const [blindVoting, setBlindVoting] = createSignal(false);
   const [allowParticipantGroup, setAllowParticipantGroup] = createSignal(false);
-  const [confirmingReset, setConfirmingReset] = createSignal(false);
-  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [pending, setPending] = createSignal<'save' | 'reset' | 'lock' | 'delete' | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   let initialSettings: Pick<
@@ -56,34 +59,25 @@ export default function BoardVotingSettings(props: {
     return limit === null || (Number.isSafeInteger(limit) && limit >= 1);
   });
 
-  function openDialog() {
-    const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } =
-      props.board;
-    initialSettings = {
-      voteLimit,
-      maxVotesPerCard,
-      blindVoting,
-      allowParticipantGroup,
-    };
-    setVoteLimitChoice(voteLimit === null ? 'unlimited' : VOTE_LIMIT_OPTIONS.some((option) => option === voteLimit) ? String(voteLimit) : 'custom');
-    setCustomLimit(voteLimit === null ? '' : String(voteLimit));
-    setSingleVote(maxVotesPerCard === 1);
-    setBlindVoting(blindVoting);
-    setAllowParticipantGroup(allowParticipantGroup);
-    setConfirmingReset(false);
-    setConfirmingDelete(false);
-    setError(null);
-    dialog.showModal();
-  }
-
   createEffect(() => props.open, (open) => {
-    if (open && !dialog.open) untrack(openDialog);
+    if (!open) return;
+    untrack(() => {
+      const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } =
+        props.board;
+      initialSettings = {
+        voteLimit,
+        maxVotesPerCard,
+        blindVoting,
+        allowParticipantGroup,
+      };
+      setVoteLimitChoice(voteLimit === null ? 'unlimited' : VOTE_LIMIT_OPTIONS.some((option) => option === voteLimit) ? String(voteLimit) : 'custom');
+      setCustomLimit(voteLimit === null ? '' : String(voteLimit));
+      setSingleVote(maxVotesPerCard === 1);
+      setBlindVoting(blindVoting);
+      setAllowParticipantGroup(allowParticipantGroup);
+      setError(null);
+    });
   });
-
-  function closeDialog() {
-    dialog.close();
-    props.onClose();
-  }
 
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
@@ -101,7 +95,7 @@ export default function BoardVotingSettings(props: {
       patch.allowParticipantGroup = grouping;
     }
     if (Object.keys(patch).length === 0) {
-      closeDialog();
+      props.onClose();
       return;
     }
 
@@ -110,7 +104,7 @@ export default function BoardVotingSettings(props: {
     try {
       const message = await props.onUpdate(patch);
       setError(message);
-      if (message === null && dialog.open) closeDialog();
+      if (message === null) props.onClose();
     } finally {
       setPending(null);
     }
@@ -118,12 +112,16 @@ export default function BoardVotingSettings(props: {
 
   async function resetVotes() {
     if (pending() || !canControlFacilitation(props.board)) return;
+    const confirmed = await confirmBoardAction({
+      title: 'Remove every Vote from this Board?',
+      description: 'Every Participant’s Votes go back to zero. This cannot be undone.',
+      confirmLabel: 'Reset All Votes',
+    });
+    if (!confirmed) return;
     setPending('reset');
     setError(null);
     try {
-      const message = await props.onReset();
-      setError(message);
-      if (message === null) setConfirmingReset(false);
+      setError(await props.onReset());
     } finally {
       setPending(null);
     }
@@ -134,46 +132,50 @@ export default function BoardVotingSettings(props: {
     const nextLocked = !props.board.isLocked;
     setPending('lock');
     setError(null);
-    setConfirmingReset(false);
     try {
-      const message = await props.onToggleLock(nextLocked);
-      setError(message);
+      setError(await props.onToggleLock(nextLocked));
     } finally {
       setPending(null);
     }
   }
 
-  async function confirmDeleteBoard() {
+  async function deleteBoard() {
     if (pending()) return;
+    const confirmed = await confirmBoardAction({
+      title: 'Permanently delete this Board?',
+      description: 'The Board and every Card, Column, Vote, and comment are erased immediately. This cannot be undone.',
+      confirmLabel: 'Delete Board',
+    });
+    if (!confirmed) return;
     setPending('delete');
     setError(null);
     try {
       const message = await props.onDeleteBoard();
       setError(message);
-      if (message === null) {
-        setConfirmingDelete(false);
-        if (dialog.open) closeDialog();
-      }
+      if (message === null) props.onClose();
     } finally {
       setPending(null);
     }
   }
 
   return (
-    <>
-      <dialog
-        ref={dialog}
-        onClose={() => {
-          if (!dialog.open && props.open) props.onClose();
-        }}
-        aria-labelledby={titleId}
-        class="board-dialog-surface rounded-2xl border border-border bg-surface text-text shadow-2xl"
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogBackdrop data-print-hide="true" class="board-dialog-backdrop z-40" />
+      <DialogContent
+        data-board-overlay="true"
+        data-print-hide="true"
+        class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
       >
-        <BoardOverlayHeader closeLabel="Close Board Settings" onClose={closeDialog}>
-          <h2 id={titleId}>Board Settings</h2>
+        <BoardOverlayHeader closeLabel="Close Board Settings" onClose={() => props.onClose()}>
+          <DialogTitle class="truncate">Board Settings</DialogTitle>
         </BoardOverlayHeader>
 
-        <div class="p-5">
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
           <Show when={props.board.isLocked}>
             <p class="mb-3 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-text">
               This Board is Locked. Unlock the Board to adjust Voting settings or reset Votes.
@@ -297,41 +299,14 @@ export default function BoardVotingSettings(props: {
             <h3 id={destructiveActionsId} class="text-sm font-semibold text-text">
               Destructive actions
             </h3>
-            <div>
-              <Show
-                when={confirmingReset() && canControlFacilitation(props.board)}
-                fallback={
-                  <button
-                    type="button"
-                    class={mutedButtonClass}
-                    disabled={pending() !== null || !canControlFacilitation(props.board)}
-                    onClick={() => { setError(null); setConfirmingReset(true); }}
-                  >
-                    Reset All Votes
-                  </button>
-                }
-              >
-                <p class="mb-2 text-sm text-text">Remove every Vote from this Board?</p>
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    class={confirmationClass}
-                    disabled={pending() !== null}
-                    onClick={() => void resetVotes()}
-                  >
-                    {pending() === 'reset' ? 'Resetting…' : 'Confirm Reset'}
-                  </button>
-                  <button
-                    type="button"
-                    class={mutedButtonClass}
-                    disabled={pending() !== null}
-                    onClick={() => setConfirmingReset(false)}
-                  >
-                    Cancel Reset
-                  </button>
-                </div>
-              </Show>
-            </div>
+            <button
+              type="button"
+              class={mutedButtonClass}
+              disabled={pending() !== null || !canControlFacilitation(props.board)}
+              onClick={() => void resetVotes()}
+            >
+              {pending() === 'reset' ? 'Resetting…' : 'Reset All Votes'}
+            </button>
 
             <div class="space-y-2 border-t border-col-rose/35 pt-3">
               <div>
@@ -340,45 +315,14 @@ export default function BoardVotingSettings(props: {
                   Permanently erase this Board and all Cards, Columns, Votes, and comments immediately.
                 </p>
               </div>
-              <Show
-                when={confirmingDelete()}
-                fallback={
-                  <button
-                    type="button"
-                    class={mutedButtonClass}
-                    disabled={pending() !== null}
-                    onClick={() => {
-                      setError(null);
-                      setConfirmingReset(false);
-                      setConfirmingDelete(true);
-                    }}
-                  >
-                    Delete Board
-                  </button>
-                }
+              <button
+                type="button"
+                class={destructiveButtonClass}
+                disabled={pending() !== null}
+                onClick={() => void deleteBoard()}
               >
-                <p class="text-sm text-text">
-                  Permanently delete this Board? This cannot be undone.
-                </p>
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    class={confirmationClass}
-                    disabled={pending() !== null}
-                    onClick={() => void confirmDeleteBoard()}
-                  >
-                    {pending() === 'delete' ? 'Deleting…' : 'Confirm Delete'}
-                  </button>
-                  <button
-                    type="button"
-                    class={mutedButtonClass}
-                    disabled={pending() !== null}
-                    onClick={() => setConfirmingDelete(false)}
-                  >
-                    Cancel Delete
-                  </button>
-                </div>
-              </Show>
+                {pending() === 'delete' ? 'Deleting…' : 'Delete Board'}
+              </button>
             </div>
           </section>
 
@@ -386,7 +330,7 @@ export default function BoardVotingSettings(props: {
             <p role="alert" class="mt-3 text-sm text-text">{error()}</p>
           </Show>
         </div>
-      </dialog>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }

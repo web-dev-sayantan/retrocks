@@ -22,6 +22,7 @@ import {
 } from '../lib/board-types';
 import type { BoardMutations } from '../lib/board-session';
 import type { ColumnStreamItem } from '../lib/board-view';
+import { confirmBoardAction } from '../lib/board-confirm';
 import {
   areAllGroupCardsMine,
   canContribute,
@@ -81,7 +82,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [isRenaming, setIsRenaming] = createSignal(false);
   const [renameDraft, setRenameDraft] = createSignal('');
   const [isSavingRename, setIsSavingRename] = createSignal(false);
-  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
 
@@ -90,7 +90,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     (locked) => {
       if (locked) {
         setMenuOpen(false);
-        setConfirmingDelete(false);
         setIsRenaming(false);
         setRenameDraft('');
       }
@@ -127,8 +126,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   let renameInputEl: HTMLInputElement | undefined;
   let composerEl: HTMLTextAreaElement | undefined;
-  let deleteItemEl: HTMLDivElement | undefined;
-  let confirmDeleteItemEl: HTMLDivElement | undefined;
 
   createEffect(isRenaming, (renaming) => {
     if (renaming) {
@@ -212,7 +209,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function startRename(): void {
     setMenuOpen(false);
-    setConfirmingDelete(false);
     setRenameDraft(props.column.title);
     setIsRenaming(true);
   }
@@ -263,22 +259,20 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     await props.actions.moveColumn(props.column.id, direction);
   }
 
-  function showDeleteConfirmation(confirm: boolean): void {
-    setConfirmingDelete(confirm);
-    queueMicrotask(() => {
-      const item = confirm ? confirmDeleteItemEl : deleteItemEl;
-      if (item?.isConnected) item.focus();
-    });
-  }
-
-  async function handleConfirmDeleteColumn(): Promise<void> {
+  async function requestDeleteColumn(): Promise<void> {
     if (isDeletingColumn() || !canDeleteColumn()) return;
+    const count = props.column.cardCount;
+    const confirmed = await confirmBoardAction({
+      title: count > 0
+        ? `Delete this Column and its ${count} ${count === 1 ? 'card' : 'cards'}?`
+        : 'Delete this empty Column?',
+      description: 'The Column and its Cards are removed for everyone on this Board.',
+      confirmLabel: 'Delete column',
+    });
+    if (!confirmed) return;
     setIsDeletingColumn(true);
     try {
-      const ok = await props.actions.deleteColumn(props.column.id);
-      if (!ok) {
-        showDeleteConfirmation(false);
-      }
+      await props.actions.deleteColumn(props.column.id);
     } finally {
       setIsDeletingColumn(false);
     }
@@ -479,7 +473,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   open={menuOpen()}
                   onOpenChange={(next) => {
                     setMenuOpen(next);
-                    if (!next) setConfirmingDelete(false);
                   }}
                 >
                   <MenuTrigger
@@ -585,66 +578,16 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     </div>
 
                     <MenuSeparator class="my-2 border-t border-border/80" />
-                    <div>
-                      <Show
-                        when={!confirmingDelete()}
-                        fallback={
-                          <div class="space-y-2 rounded-lg bg-surface-subtle p-2">
-                            <p class="text-xs text-text">
-                              <Show
-                                when={props.column.cardCount > 0}
-                                fallback="Delete this empty Column?"
-                              >
-                                Delete this Column and its{' '}
-                                <span class="font-semibold tabular-nums">
-                                  {props.column.cardCount}{' '}
-                                  {props.column.cardCount === 1
-                                    ? 'card'
-                                    : 'cards'}
-                                </span>
-                                ?
-                              </Show>
-                            </p>
-                            <div class="flex items-center gap-1.5">
-                              <MenuItem
-                                ref={confirmDeleteItemEl}
-                                value="confirm-delete"
-                                closeOnSelect={false}
-                                disabled={isDeletingColumn() || !canDeleteColumn()}
-                                onSelect={() => void handleConfirmDeleteColumn()}
-                                class="spring-press min-h-11 min-w-11 flex flex-1 cursor-pointer items-center justify-center rounded-lg bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 data-highlighted:opacity-90 data-disabled:opacity-50 sm:min-h-8"
-                              >
-                                {isDeletingColumn()
-                                  ? 'Deleting…'
-                                  : 'Confirm delete'}
-                              </MenuItem>
-                              <MenuItem
-                                value="cancel-delete"
-                                closeOnSelect={false}
-                                disabled={isDeletingColumn()}
-                                onSelect={() => showDeleteConfirmation(false)}
-                                class="spring-press min-h-11 min-w-11 flex cursor-pointer items-center justify-center rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text data-highlighted:text-text sm:min-h-8"
-                              >
-                                Cancel
-                              </MenuItem>
-                            </div>
-                          </div>
-                        }
-                      >
-                        <MenuItem
-                          ref={deleteItemEl}
-                          value="delete"
-                          closeOnSelect={false}
-                          disabled={!canDeleteColumn()}
-                          title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
-                          onSelect={() => showDeleteConfirmation(true)}
-                          class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
-                        >
-                          <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
-                          <span>Delete column</span>
-                        </MenuItem>
-                      </Show>
-                    </div>
+                    <MenuItem
+                      value="delete"
+                      disabled={!canDeleteColumn()}
+                      title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
+                      onSelect={() => void requestDeleteColumn()}
+                      class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
+                    >
+                      <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
+                      <span>Delete column</span>
+                    </MenuItem>
                   </MenuContent>
                 </Menu>
               </div>

@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { hasOpenBoardOverlay } from '../lib/board-view';
 import CardReactions from './CardReactions';
 
 afterEach(() => {
@@ -63,17 +62,16 @@ describe('<CardReactions /> picker dismissal', () => {
 
     view.getByRole('button', { name: '🎉' }).focus();
     flush();
-    expect(hasOpenBoardOverlay()).toBe(true);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
 
     const nextCard = view.getByRole('button', { name: 'Other Card' });
     nextCard.focus();
     flush();
     expect(nextCard).toHaveFocus();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(hasOpenBoardOverlay()).toBe(false);
   });
 
-  it('keeps an outside click target in place until the click is dispatched', () => {
+  it('lets an outside press dismiss the picker while the click still reaches its target', () => {
     const onOutsideClick = vi.fn();
     const view = renderPicker(onOutsideClick);
     const trigger = view.getByRole('button', { name: 'Add reaction' });
@@ -82,36 +80,28 @@ describe('<CardReactions /> picker dismissal', () => {
     flush();
 
     const nextCard = view.getByRole('button', { name: 'Other Card' });
-    fireEvent.mouseDown(nextCard, { button: 0 });
+    fireEvent.pointerDown(nextCard, { button: 0 });
+    // A real pointer press focuses the target; jsdom clicks do not.
     nextCard.focus();
     flush();
-    expect(hasOpenBoardOverlay()).toBe(true);
-
-    fireEvent.mouseUp(nextCard, { button: 0 });
-    flush();
-    expect(hasOpenBoardOverlay()).toBe(true);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(nextCard);
     flush();
     expect(onOutsideClick).toHaveBeenCalledOnce();
     expect(nextCard).toHaveFocus();
-    expect(hasOpenBoardOverlay()).toBe(false);
   });
 
-  it('clears the Board overlay when an outside press moves focus but produces no click', () => {
-    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] });
+  it('dismisses the picker on an outside pointer press even without a click', () => {
     const view = renderPicker();
     const trigger = view.getByRole('button', { name: 'Add reaction' });
     fireEvent.click(trigger);
     flush();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
 
     const nextCard = view.getByRole('button', { name: 'Other Card' });
-    fireEvent.mouseDown(nextCard, { button: 0 });
-    nextCard.focus();
-    fireEvent.mouseUp(nextCard, { button: 0 });
-    vi.advanceTimersToNextFrame();
+    fireEvent.pointerDown(nextCard, { button: 0 });
     flush();
-
-    expect(nextCard).toHaveFocus();
-    expect(hasOpenBoardOverlay()).toBe(false);
+    expect(nextCard).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 });

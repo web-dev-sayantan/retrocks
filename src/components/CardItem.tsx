@@ -19,6 +19,7 @@ import {
   canInteractWithCard,
   canManageCard,
 } from '../lib/board-permissions';
+import { confirmBoardAction } from '../lib/board-confirm';
 import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
 import { getEnabledMenuItems } from '../lib/menu-keyboard';
 import { isOptimisticId } from '../lib/optimistic-ids';
@@ -79,7 +80,6 @@ export default function CardItem(props: CardItemProps) {
   const [editDraft, setEditDraft] = createSignal('');
   const [isSaving, setIsSaving] = createSignal(false);
   const [editError, setEditError] = createSignal<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
@@ -94,7 +94,6 @@ export default function CardItem(props: CardItemProps) {
   let menuTrigger: HTMLButtonElement | undefined;
   let menu: HTMLDivElement | undefined;
   let editor: HTMLTextAreaElement | undefined;
-  let cancelDeleteButton: HTMLButtonElement | undefined;
   const pendingAction = createMemo(() => {
     if (isMoving()) return 'Moving Card…';
     if (isGrouping()) return 'Grouping Card…';
@@ -143,7 +142,6 @@ export default function CardItem(props: CardItemProps) {
       if (redacted) {
         setActionError('');
         cancelEdit();
-        setConfirmingDelete(false);
         setMenuPage(null);
       } else {
         clearPeekTimer();
@@ -160,7 +158,6 @@ export default function CardItem(props: CardItemProps) {
     (locked) => {
       if (locked) {
         cancelEdit();
-        setConfirmingDelete(false);
         setMenuPage(null);
       }
     },
@@ -169,11 +166,6 @@ export default function CardItem(props: CardItemProps) {
   createEffect(isEditing, (editing, wasEditing) => {
     if (editing) editor?.focus();
     else if (wasEditing) menuTrigger?.focus();
-  });
-
-  createEffect(confirmingDelete, (confirming, wasConfirming) => {
-    if (confirming) cancelDeleteButton?.focus();
-    else if (wasConfirming) menuTrigger?.focus();
   });
 
   createEffect(menuPage, (page) => {
@@ -279,7 +271,6 @@ export default function CardItem(props: CardItemProps) {
     textTap.reset();
     setEditError(null);
     setEditDraft(props.card.content);
-    setConfirmingDelete(false);
     setMenuPage(null);
     setIsEditing(true);
   }
@@ -342,8 +333,14 @@ export default function CardItem(props: CardItemProps) {
     return false;
   }
 
-  async function handleConfirmDelete(): Promise<void> {
+  async function handleDeleteCard(): Promise<void> {
     if (isDeleting()) return;
+    const confirmed = await confirmBoardAction({
+      title: 'Delete this Card?',
+      description: 'The Card and its comments are removed for everyone on this Board.',
+      confirmLabel: 'Delete Card',
+    });
+    if (!confirmed) return;
     await runCardAction(
       () => props.actions.deleteCard(props.card.id),
       'Could not delete the Card. Try again.',
@@ -660,10 +657,7 @@ export default function CardItem(props: CardItemProps) {
                 <Menu
                   open={menuPage() !== null}
                   modal={false}
-                  onOpenChange={(open) => {
-                    if (open) setConfirmingDelete(false);
-                    setMenuPage(open ? 'actions' : null);
-                  }}
+                  onOpenChange={(open) => setMenuPage(open ? 'actions' : null)}
                 >
                   <MenuTrigger
                     ref={menuTrigger}
@@ -679,7 +673,7 @@ export default function CardItem(props: CardItemProps) {
                     align="end"
                     sideOffset={6}
                     collisionPadding={12}
-                    finalFocus={isEditing() || confirmingDelete() ? 'none' : undefined}
+                    finalFocus={isEditing() ? 'none' : undefined}
                     render={(contentProps) => (
                       <div
                         {...contentProps}
@@ -733,7 +727,7 @@ export default function CardItem(props: CardItemProps) {
                           disabled={isDeleting()}
                           onSelect={() => {
                             setActionError('');
-                            setConfirmingDelete(true);
+                            void handleDeleteCard();
                           }}
                         >
                           <TrashIcon /> Delete Card
@@ -776,28 +770,6 @@ export default function CardItem(props: CardItemProps) {
               </Show>
             </div>
           </footer>
-          <Show when={canManage() && confirmingDelete()}>
-            <div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" data-print-hide="true">
-              <span class="mr-auto text-sm text-text">Delete this Card?</span>
-              <button
-                ref={cancelDeleteButton}
-                type="button"
-                onClick={() => setConfirmingDelete(false)}
-                disabled={isDeleting()}
-                class="min-h-11 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-8"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleConfirmDelete()}
-                disabled={isDeleting()}
-                class="min-h-11 rounded-md bg-rose-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-8"
-              >
-                {isDeleting() ? 'Deleting…' : 'Confirm?'}
-              </button>
-            </div>
-          </Show>
           <p class="sr-only" aria-live="polite" aria-atomic="true">{pendingAction()}</p>
           <Show when={actionError()}>
             <p role="alert" data-print-hide="true" class="mt-1 text-xs text-rose-700 dark:text-rose-300">{actionError()}</p>

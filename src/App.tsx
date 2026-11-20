@@ -1,3 +1,4 @@
+import { OverlayHost } from '@ui-sdk/solid/overlays';
 import { Title } from '@solidjs/meta';
 import { useLocation } from '@solidjs/router';
 import { Clock, Columns3, ShieldCheck } from 'lucide';
@@ -5,6 +6,7 @@ import { Errored, Loading, Show, type ParentProps } from 'solid-js';
 import { env } from 'virtual:solid-env/client';
 
 import './App.css';
+import BoardConfirmDialog from './components/BoardConfirmDialog';
 import BoardRobotsMeta from './components/BoardRobotsMeta';
 import LucideIcon from './components/LucideIcon';
 import PageMessage from './components/PageMessage';
@@ -82,6 +84,8 @@ function AppShell(props: ParentProps) {
           {props.children}
         </Loading>
       </Errored>
+      <OverlayHost />
+      <BoardConfirmDialog />
     </>
   );
 }
