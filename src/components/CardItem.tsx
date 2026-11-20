@@ -8,7 +8,6 @@ import {
   type CardGroupDTO,
   type CardViewDTO,
   type ColumnDTO,
-  type ReactionEmoji,
 } from '../lib/board-types';
 import {
   REDACTED_CARD_WHISPERS,
@@ -24,6 +23,7 @@ import { confirmBoardAction } from '../lib/board-confirm';
 import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
 import { isOptimisticId } from '../lib/optimistic-ids';
 import { formatRelativeTime } from '../lib/recent-boards';
+import type { BoardMutations } from '../lib/board-session';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import CardReactions from './CardReactions';
@@ -36,7 +36,8 @@ import {
   PlusIcon,
   TrashIcon,
 } from './Icons';
-import VoteControls, { type WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
+import VoteControls from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;
@@ -53,20 +54,17 @@ export interface CardItemProps {
   nowMs: number;
   draggingCardId: string | null;
   draggingSourceColumnId: string | null;
-  onGroupCard: (
-    cardId: string,
-    targetType: 'card' | 'group',
-    targetId: string,
-  ) => Promise<boolean>;
-  onUngroupCard: (cardId: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
-  onUpdateActionItem: (
-    cardId: string,
-    patch: ActionItemPatch,
-  ) => Promise<boolean>;
-  onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
-  onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  /** Controller-shaped Card mutations (the workspace passes its session). */
+  actions: Pick<
+    BoardMutations,
+    | 'updateCard'
+    | 'updateActionItem'
+    | 'moveCard'
+    | 'deleteCard'
+    | 'toggleReaction'
+    | 'groupCard'
+    | 'ungroupCard'
+  >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
@@ -284,7 +282,7 @@ export default function CardItem(props: CardItemProps) {
     setIsSaving(true);
     setEditError(null);
     try {
-      const error = await props.onUpdateCard(props.card.id, trimmed);
+      const error = await props.actions.updateCard(props.card.id, trimmed);
       if (error === null) cancelEdit();
       else {
         setEditError(error);
@@ -334,7 +332,7 @@ export default function CardItem(props: CardItemProps) {
     });
     if (!confirmed) return;
     await runCardAction(
-      () => props.onDeleteCard(props.card.id),
+      () => props.actions.deleteCard(props.card.id),
       'Could not delete the Card. Try again.',
       setIsDeleting,
     );
@@ -343,7 +341,7 @@ export default function CardItem(props: CardItemProps) {
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isUpdatingAction()) return false;
     return runCardAction(
-      () => props.onUpdateActionItem(props.card.id, patch),
+      () => props.actions.updateActionItem(props.card.id, patch),
       'Could not update the Action Item. Try again.',
       setIsUpdatingAction,
     );
@@ -352,7 +350,7 @@ export default function CardItem(props: CardItemProps) {
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
     await runCardAction(
-      () => props.onMoveCard(props.card.id, targetColumnId),
+      () => props.actions.moveCard(props.card.id, targetColumnId),
       'Could not move the Card. Try again.',
       setIsMoving,
     );
@@ -365,7 +363,7 @@ export default function CardItem(props: CardItemProps) {
   ): Promise<void> {
     if (isGrouping()) return;
     await runCardAction(
-      () => props.onGroupCard(cardId, targetType, targetId),
+      () => props.actions.groupCard(cardId, targetType, targetId),
       'Could not group the Card. Try again.',
       setIsGrouping,
     );
@@ -374,7 +372,7 @@ export default function CardItem(props: CardItemProps) {
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
     await runCardAction(
-      () => props.onUngroupCard(props.card.id),
+      () => props.actions.ungroupCard(props.card.id),
       'Could not ungroup the Card. Try again.',
       setIsUngrouping,
     );
@@ -595,7 +593,7 @@ export default function CardItem(props: CardItemProps) {
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
               disabled={props.isLocked}
-              onToggleReaction={props.onToggleReaction}
+              onToggleReaction={props.actions.toggleReaction}
             />
 
             <div class="order-first flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-none sm:col-start-1">

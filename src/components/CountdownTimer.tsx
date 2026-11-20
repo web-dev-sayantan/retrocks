@@ -8,14 +8,11 @@ import {
 } from '@ui-sdk/solid/popover';
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 import { NumberInput, NumberInputControl } from '@ui-sdk/solid/number-input';
+import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import { Clock, Pause, Volume2, VolumeX, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
 import type { BoardMutationResponse, TimerStateDTO } from '../lib/board-types';
-import {
-  hasOpenBoardOverlay,
-  isTypingInEditableElement,
-} from '../lib/board-view';
 import type { TimerChange } from '../lib/schemas';
 import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES, type ServerClockSample } from '../lib/timer';
 import { TIMER_MUTE_STORAGE_KEY, createTimerChime } from '../lib/timer-chime';
@@ -150,6 +147,23 @@ export default function CountdownTimer(props: {
     if (!next) setError('');
   }
 
+  // Page-level "t" opens the popover; the popover's own layer wins while it
+  // is open, so the same key closes it there (shortcuts pause under modals).
+  useShortcut(
+    () => (props.canControl ? 't' : null),
+    (event) => {
+      void popover.open({ reason: 'shortcut', event });
+    },
+    { description: 'Toggle countdown timer', when: () => !open() },
+  );
+  useShortcut(
+    () => (props.canControl ? 't' : null),
+    (event) => {
+      popover.close({ reason: 'shortcut', event });
+    },
+    { layer: () => panel, description: 'Toggle countdown timer' },
+  );
+
   createEffect(open, (isOpen) => {
     if (isOpen && panel && !panel.contains(document.activeElement)) {
       panel.focus();
@@ -173,29 +187,12 @@ export default function CountdownTimer(props: {
       }
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.isComposing) return;
-      if (!props.canControl || event.repeat || event.key.toLowerCase() !== 't' ||
-          event.altKey || event.ctrlKey || event.metaKey) return;
-      if (isTypingInEditableElement(event)) return;
-      if (open()) {
-        event.preventDefault();
-        popover.close({ reason: 'shortcut', event });
-        return;
-      }
-      if (hasOpenBoardOverlay()) return;
-      event.preventDefault();
-      void popover.open({ reason: 'shortcut', event });
-    }
-
     document.addEventListener('click', prepareChime, true);
     document.addEventListener('keydown', prepareChime, true);
-    document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('storage', syncMute);
     return () => {
       document.removeEventListener('click', prepareChime, true);
       document.removeEventListener('keydown', prepareChime, true);
-      document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('storage', syncMute);
       chime.dispose();
     };

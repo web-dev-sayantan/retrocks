@@ -9,6 +9,7 @@ import {
 } from 'solid-js';
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 
+import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
   buildActionItemsMarkdown,
   filterActionItems,
@@ -191,8 +192,16 @@ function sameCards(previous: readonly CardViewDTO[], next: readonly CardViewDTO[
 
 export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   let previousFocus: HTMLElement | null = null;
+  let contentEl: HTMLDivElement | undefined;
   const [filter, setFilter] = createSignal<ActionItemFilter>('all');
   const [copyStatus, setCopyStatus] = createSignal('');
+
+  // While the drawer is open its layer outranks the paused page, so the
+  // same "a" that opened it closes it here.
+  useShortcut('a', () => props.onClose(), {
+    layer: () => contentEl,
+    description: 'Toggle Action Items',
+  });
 
   const allItems = createMemo(
     () => filterActionItems(props.board.cards, 'all'),
@@ -255,6 +264,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
     >
       <DrawerBackdrop data-print-hide="true" class="board-drawer-backdrop" />
       <DrawerContent
+        ref={contentEl}
         finalFocus="none"
         data-board-overlay="true"
         data-print-hide="true"

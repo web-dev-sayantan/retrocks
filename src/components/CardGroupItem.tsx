@@ -4,20 +4,20 @@ import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide'
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import type {
-  ActionItemPatch,
   CardGroupDTO,
   CardViewDTO,
   ColumnDTO,
-  ReactionEmoji,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
 import { canContribute, isGroupRedacted } from '../lib/board-permissions';
 import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
+import type { BoardMutations } from '../lib/board-session';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import VoteControls, { type WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
+import VoteControls from './VoteControls';
 
 export interface CardGroupItemProps {
   group: CardGroupDTO;
@@ -35,23 +35,20 @@ export interface CardGroupItemProps {
   nowMs: number;
   draggingCardId: string | null;
   draggingSourceColumnId: string | null;
-  onRename: (groupId: string, title: string) => Promise<boolean>;
-  onDissolve: (groupId: string) => Promise<boolean>;
-  onMoveGroup: (groupId: string, targetColumnId: string) => Promise<boolean>;
-  onGroupCard: (
-    cardId: string,
-    targetType: 'card' | 'group',
-    targetId: string,
-  ) => Promise<boolean>;
-  onUngroupCard: (cardId: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
-  onUpdateActionItem: (
-    cardId: string,
-    patch: ActionItemPatch,
-  ) => Promise<boolean>;
-  onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
-  onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  /** Controller-shaped Card/Group mutations (the workspace passes its session). */
+  actions: Pick<
+    BoardMutations,
+    | 'updateCard'
+    | 'updateActionItem'
+    | 'moveCard'
+    | 'deleteCard'
+    | 'toggleReaction'
+    | 'groupCard'
+    | 'ungroupCard'
+    | 'renameCardGroup'
+    | 'dissolveCardGroup'
+    | 'moveCardGroup'
+  >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
@@ -135,7 +132,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     }
     setIsSaving(true);
     try {
-      const ok = await props.onRename(props.group.id, title);
+      const ok = await props.actions.renameCardGroup(props.group.id, title);
       if (ok) setIsRenaming(false);
     } finally {
       setIsSaving(false);
@@ -159,7 +156,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     setIsMoving(true);
     setMoveFailed(false);
     try {
-      const ok = await props.onMoveGroup(props.group.id, targetColumnId);
+      const ok = await props.actions.moveCardGroup(props.group.id, targetColumnId);
       setMoveFailed(!ok);
     } catch {
       setMoveFailed(true);
@@ -172,7 +169,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     if (isDissolving()) return;
     setIsDissolving(true);
     try {
-      await props.onDissolve(props.group.id);
+      await props.actions.dissolveCardGroup(props.group.id);
     } finally {
       setIsDissolving(false);
     }
@@ -215,7 +212,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     setIsDropActive(false);
     const card = draggingCard();
     if (card) {
-      void props.onGroupCard(card.id, 'group', props.group.id);
+      void props.actions.groupCard(card.id, 'group', props.group.id);
     }
   }
 
@@ -436,13 +433,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 nowMs={props.nowMs}
                 draggingCardId={props.draggingCardId}
                 draggingSourceColumnId={props.draggingSourceColumnId}
-                onGroupCard={props.onGroupCard}
-                onUngroupCard={props.onUngroupCard}
-                onUpdateCard={props.onUpdateCard}
-                onUpdateActionItem={props.onUpdateActionItem}
-                onMoveCard={props.onMoveCard}
-                onDeleteCard={props.onDeleteCard}
-                onToggleReaction={props.onToggleReaction}
+                actions={props.actions}
                 onOpenCardDetail={props.onOpenCardDetail}
                 onDragStartCard={props.onDragStartCard}
                 onDragEndCard={props.onDragEndCard}

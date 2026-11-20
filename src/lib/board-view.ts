@@ -22,12 +22,6 @@ export const BOARD_QUICK_FILTERS: readonly {
   { value: 'action-items', label: 'Action Items' },
 ];
 
-export const TEXT_INPUT_SELECTOR =
-  'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
-
-export const BOARD_OVERLAY_SELECTOR =
-  'dialog[open], [aria-modal="true"], [data-board-overlay]';
-
 export interface BoardViewFilterOptions {
   query: string;
   filter: BoardQuickFilter;
@@ -262,20 +256,4 @@ export function formatMatchCountSummary(
     return `${matchedCardCount} ${matchUnit} (${matchedCardCount} of ${totalCardCount} ${cardUnit})`;
   }
   return `${matchedCardCount} of ${totalCardCount} ${cardUnit}`;
-}
-
-export function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  return Boolean(target.closest(TEXT_INPUT_SELECTOR));
-}
-
-export function isTypingInEditableElement(
-  event: KeyboardEvent,
-  doc: Document = document,
-): boolean {
-  return isEditableTarget(event.target) || isEditableTarget(doc.activeElement);
-}
-
-export function hasOpenBoardOverlay(doc: Document = document): boolean {
-  return Boolean(doc.querySelector(BOARD_OVERLAY_SELECTOR));
 }

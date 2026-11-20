@@ -3,22 +3,8 @@ import { Show, createMemo } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
 import { canCastVote, canContribute } from '../lib/board-permissions';
-import type { ChangeVoteInput } from '../lib/voting-schemas';
+import type { WorkspaceVoting } from '../lib/board-session';
 import LucideIcon from './LucideIcon';
-
-type VoteDelta = ChangeVoteInput['delta'];
-
-export interface WorkspaceVoting {
-  remainingVotes: number | null;
-  maxVotesPerCard: number | null;
-  pending: boolean;
-  optimisticVote: { targetId: string; delta: VoteDelta } | null;
-  onChange: (
-    targetType: 'card' | 'group',
-    targetId: string,
-    delta: VoteDelta,
-  ) => void;
-}
 
 const buttonClass = [
   'spring-press inline-flex h-full min-w-11 cursor-pointer items-center justify-center text-text sm:min-w-7',
