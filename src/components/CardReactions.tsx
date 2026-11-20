@@ -21,54 +21,11 @@ export default function CardReactions(props: CardReactionsProps) {
   );
 
   const [reactionError, setReactionError] = createSignal<string | null>(null);
-  let controls: HTMLDivElement | undefined;
   let pickerTrigger: HTMLButtonElement | undefined;
-  let pressingOutside = false;
-
-  createEffect(pickerOpen, (open) => {
-    const root = controls;
-    if (!open || !root) return;
-
-    const doc = root.ownerDocument;
-    let releaseCheck: number | undefined;
-    const handleMouseEvent = (event: MouseEvent): void => {
-      const outside = event.target instanceof Node && !root.contains(event.target);
-      if (event.type === 'mousedown') {
-        pressingOutside = event.button === 0 && outside;
-        return;
-      }
-
-      if (event.type === 'mouseup' && pressingOutside && releaseCheck === undefined) {
-        // An outside press can move focus without producing a click.
-        releaseCheck = requestAnimationFrame(() => {
-          releaseCheck = undefined;
-          if (!root.contains(doc.activeElement)) setPickerOpen(false);
-        });
-      }
-      pressingOutside = false;
-      if (event.type === 'click' && outside) setPickerOpen(false);
-    };
-
-    const mouseEvents = ['mousedown', 'mouseup', 'click'] as const;
-    for (const type of mouseEvents) doc.addEventListener(type, handleMouseEvent, true);
-    return () => {
-      pressingOutside = false;
-      if (releaseCheck !== undefined) cancelAnimationFrame(releaseCheck);
-      for (const type of mouseEvents) doc.removeEventListener(type, handleMouseEvent, true);
-    };
-  });
 
   createEffect(() => props.disabled, (disabled) => {
     if (disabled) setPickerOpen(false);
   });
-
-  function handlePickerKeyDown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape' || event.isComposing || !pickerOpen()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setPickerOpen(false);
-    pickerTrigger?.focus();
-  }
 
   const activeReactions = createMemo(() => {
     const counts = props.reactions;
@@ -100,16 +57,6 @@ export default function CardReactions(props: CardReactionsProps) {
 
   return (
     <div
-      ref={controls}
-      onKeyDown={handlePickerKeyDown}
-      onFocusOut={(event) => {
-        // Keep an outside pointer press active until its click can reach the target.
-        if (!pickerOpen() || pressingOutside) return;
-        const nextFocus = event.relatedTarget;
-        if (!(nextFocus instanceof Node) || !event.currentTarget.contains(nextFocus)) {
-          setPickerOpen(false);
-        }
-      }}
       class={[
         'flex flex-wrap items-center gap-1.5',
         {
@@ -146,13 +93,7 @@ export default function CardReactions(props: CardReactionsProps) {
       <Show when={!props.disabled}>
         <Popover
           open={pickerOpen()}
-          onOpenChange={(open, details) => {
-            if (details.reason === 'outside-press' || details.reason === 'focus-out') {
-              details.cancel();
-              return;
-            }
-            setPickerOpen(open);
-          }}
+          onOpenChange={(open) => setPickerOpen(open)}
         >
           <PopoverTrigger
             ref={pickerTrigger}
