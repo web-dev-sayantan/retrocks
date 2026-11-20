@@ -1313,7 +1313,10 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(share);
     flush();
     const dialog = within(view.getByRole('dialog', { name: 'Share Board' }));
-    expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus();
+    // A press-open moves focus on the next animation frame.
+    await waitFor(() =>
+      expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus(),
+    );
     expect(dialog.getByRole('img', { name: 'Participant Link QR code' })).toBeInTheDocument();
     expect(dialog.queryByRole('region', { name: 'Co-Facilitator Link' })).toBeNull();
 
@@ -3674,16 +3677,13 @@ describe('<BoardWorkspace />', () => {
           await flushPromises();
           expect(spies.setPrivateMode).toHaveBeenCalledWith({ boardId: board.id, isBlurred: true });
 
-          // "Esc" closes Share Board <dialog> and Column options popover
-          const shareDialog = view.getByText('Share Board', { selector: 'h2' }).closest('dialog')!;
-          shareDialog.showModal = () => { shareDialog.open = true; };
-          shareDialog.close = () => { shareDialog.open = false; };
+          // "Esc" closes the Share Board dialog and the Column options popover
           fireEvent.click(view.getByRole('button', { name: 'Share' }));
           flush();
-          expect(shareDialog.open).toBe(true);
+          expect(view.getByRole('dialog', { name: 'Share Board' })).toBeInTheDocument();
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
-          expect(shareDialog.open).toBe(false);
+          expect(view.queryByRole('dialog', { name: 'Share Board' })).not.toBeInTheDocument();
 
           const wentWell = view.getByRole('region', { name: 'Went Well' });
           fireEvent.click(within(wentWell).getByRole('button', { name: 'Column options for Went Well' }));
