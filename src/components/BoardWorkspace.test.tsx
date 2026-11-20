@@ -817,7 +817,12 @@ describe('<BoardWorkspace />', () => {
       events: [{ type: 'comment:deleted' as const, version: 5, cardId: card.id, commentId: 'mine' }],
     }));
     Object.assign(actions, { toggleReaction, createComment, deleteComment });
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const view = render(() => (
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardConfirmDialog />
+      </>
+    ));
     function receive(message: BoardLiveMessage) {
       streams[0].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
       flush();
@@ -863,12 +868,16 @@ describe('<BoardWorkspace />', () => {
       expect(createComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, content: 'My reply' });
       expect(drawer.getByText('My reply')).toBeInTheDocument();
       fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
-      flush();
-      expect(deleteComment).not.toHaveBeenCalled();
-      fireEvent.click(drawer.getByRole('button', { name: 'Confirm?' }));
       await flushPromises();
-      expect(deleteComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, commentId: 'mine' });
-      expect(drawer.queryByText('My reply')).not.toBeInTheDocument();
+      expect(deleteComment).not.toHaveBeenCalled();
+      fireEvent.click(
+        within(view.getByRole('alertdialog', { name: 'Delete this comment?' }))
+          .getByRole('button', { name: 'Delete comment' }),
+      );
+      await waitFor(() => {
+        expect(deleteComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, commentId: 'mine' });
+        expect(drawer.queryByText('My reply')).not.toBeInTheDocument();
+      });
 
       receive({
         type: 'board:snapshot',
@@ -971,7 +980,7 @@ describe('<BoardWorkspace />', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('dismisses Card details when a press begins and ends on the backdrop', () => {
+  it('dismisses Card details when a press begins and ends on the backdrop', async () => {
     const board = makeBoardView({ cards: [makeCard()] });
     const view = render(() => (
       <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
@@ -980,23 +989,25 @@ describe('<BoardWorkspace />', () => {
 
     const trigger = view.getByRole('button', { name: 'Open Card details' });
     fireEvent.click(trigger);
-    flush();
+    await flushPromises();
 
     const drawer = view.getByRole('dialog', { name: 'Card details' });
+    const backdrop = document.querySelector('[data-slot="drawer-backdrop"]')!;
     const close = within(drawer).getByRole('button', { name: 'Close Card details' });
+    // A press that begins inside the sheet never counts as a backdrop press.
     fireEvent.pointerDown(close, { button: 0 });
-    fireEvent.click(drawer);
+    fireEvent.pointerUp(close, { button: 0 });
     flush();
-    expect(drawer).toBeVisible();
+    expect(view.getByRole('dialog', { name: 'Card details' })).toBeInTheDocument();
 
-    fireEvent.pointerDown(drawer, { button: 0 });
-    fireEvent.click(drawer);
-    flush();
+    fireEvent.pointerDown(backdrop, { button: 0 });
+    fireEvent.pointerUp(backdrop, { button: 0 });
+    await flushPromises();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(trigger).toHaveFocus();
   });
 
-  it('contains focus in Card details and restores it after Escape or explicit close', () => {
+  it('contains focus in Card details and restores it after Escape or explicit close', async () => {
     const card = makeCard({ comments: [], commentCount: 1 });
     const board = makeBoardView({ cards: [card] });
     const { actions } = createFakeActions(board);
@@ -1005,31 +1016,33 @@ describe('<BoardWorkspace />', () => {
 
     const comments = view.getByRole('button', { name: '1 comment' });
     fireEvent.click(comments);
-    flush();
+    await flushPromises();
     const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
     const close = drawer.getByRole('button', { name: 'Close Card details' });
     const comment = drawer.getByRole('textbox', { name: 'Comment' });
     expect(close).toHaveFocus();
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    await flushPromises();
     expect(comment).toHaveFocus();
     fireEvent.keyDown(comment, { key: 'Tab' });
+    await flushPromises();
     expect(close).toHaveFocus();
 
     fireEvent.keyDown(close, { key: 'Escape' });
-    flush();
+    await flushPromises();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(comments).toHaveFocus();
 
     const open = view.getByRole('button', { name: 'Open Card details' });
     fireEvent.click(open);
-    flush();
+    await flushPromises();
     fireEvent.click(view.getByRole('button', { name: 'Close Card details' }));
-    flush();
+    await flushPromises();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(open).toHaveFocus();
   });
 
-  it('allows Facilitators to delete any revealed comment with inline confirmation and closes Card details on Escape without Solid diagnostics', async () => {
+  it('lets Facilitators delete any revealed comment through the shared confirm and closes Card details on Escape without Solid diagnostics', async () => {
     const card = makeCard({
       isMine: false,
       comments: [
@@ -1061,7 +1074,10 @@ describe('<BoardWorkspace />', () => {
 
     const { artifact } = await captureArtifact(async () => {
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <>
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardConfirmDialog />
+        </>
       ));
       try {
         flush();
@@ -1072,15 +1088,20 @@ describe('<BoardWorkspace />', () => {
         );
         expect(drawer.getByText('Needs follow-up')).toBeInTheDocument();
         fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
-        flush();
-        fireEvent.click(drawer.getByRole('button', { name: 'Confirm?' }));
         await flushPromises();
-        expect(deleteComment).toHaveBeenCalledWith({
-          boardId: board.id,
-          cardId: card.id,
-          commentId: 'other_comment',
+        expect(deleteComment).not.toHaveBeenCalled();
+        fireEvent.click(
+          within(view.getByRole('alertdialog', { name: 'Delete this comment?' }))
+            .getByRole('button', { name: 'Delete comment' }),
+        );
+        await waitFor(() => {
+          expect(deleteComment).toHaveBeenCalledWith({
+            boardId: board.id,
+            cardId: card.id,
+            commentId: 'other_comment',
+          });
+          expect(drawer.queryByText('Needs follow-up')).not.toBeInTheDocument();
         });
-        expect(drawer.queryByText('Needs follow-up')).not.toBeInTheDocument();
 
         fireEvent.keyDown(document, { key: 'Escape' });
         flush();
@@ -2169,7 +2190,7 @@ describe('<BoardWorkspace />', () => {
     expect(getByRole('button', { name: 'Private Mode' })).toBeEnabled();
   });
 
-  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', () => {
+  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', async () => {
     const board = makeBoardView({ isLocked: true });
     const { actions } = createFakeActions(board);
     const view = render(() => (
@@ -2183,9 +2204,10 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const close = view.getByRole('button', { name: 'Close Action Items' });
-    expect(close).toHaveFocus();
-    // In the browser the header entry becomes hidden at the compact layout width.
-    entry.hidden = true;
+    await waitFor(() => expect(close).toHaveFocus());
+    // In the browser the header entry becomes hidden at the compact layout width;
+    // jsdom still focuses hidden elements, so simulate it being unavailable.
+    entry.remove();
     fireEvent.click(close);
     flush();
 

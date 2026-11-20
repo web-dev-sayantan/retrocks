@@ -1,3 +1,8 @@
+import {
+  Drawer,
+  DrawerBackdrop,
+  DrawerContent,
+} from '@ui-sdk/solid/drawer';
 import { Trash2 } from 'lucide';
 import {
   For,
@@ -19,9 +24,9 @@ import {
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import { confirmBoardAction } from '../lib/board-confirm';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
-import { closeBoardDrawer, createDrawerBackdropDismiss, showBoardDrawer } from './board-drawer';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
@@ -35,6 +40,7 @@ export interface CardDetailDrawerProps {
   isBlurred: boolean;
   nowMs: number;
   isOpen: boolean;
+  side: 'bottom' | 'right';
   onClose: () => void;
   onExit: () => void;
   restoreFocus: () => void;
@@ -58,68 +64,16 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const [commentError, setCommentError] = createSignal<string | null>(null);
   const [deleteCommentError, setDeleteCommentError] = createSignal<string | null>(null);
   const [isPosting, setIsPosting] = createSignal(false);
-  const [confirmingCommentId, setConfirmingCommentId] = createSignal<
-    string | null
-  >(null);
   const [deletingCommentId, setDeletingCommentId] = createSignal<string | null>(
     null,
   );
 
-  let dialog: HTMLDialogElement | undefined;
-  let closeButton: HTMLButtonElement | undefined;
-  let focusRestored = false;
-  const backdropDismiss = createDrawerBackdropDismiss(() => props.onClose());
-
-  createEffect(
-    () => props.isOpen,
-    (open) => {
-      const element = dialog;
-      if (!element) return;
-      if (open) {
-        focusRestored = false;
-        backdropDismiss.reset();
-        showBoardDrawer(element);
-        closeButton?.focus({ preventScroll: true });
-        return;
-      }
-      return closeBoardDrawer(
-        element,
-        () => {
-          focusRestored = true;
-          props.restoreFocus();
-        },
-        () => props.onExit(),
-      );
-    },
-  );
-
-  onSettled(() => {
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (!dialog?.open || event.isComposing || event.key !== 'Tab') return;
-
-      // Native modal containment handles the rest of the tab order.
-      const stops = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'a[href], button, input, textarea, select, [tabindex]',
-      )).filter((item) => item.tabIndex >= 0 && !item.matches(':disabled, [hidden]'));
-      const boundary = event.shiftKey ? stops[0] : stops.at(-1);
-      if (document.activeElement === boundary || !dialog.contains(document.activeElement)) {
-        event.preventDefault();
-        (event.shiftKey ? stops.at(-1) : stops[0])?.focus();
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown, { capture: true });
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown, { capture: true });
-      if (!focusRestored) {
-        if (dialog?.open) dialog.close?.();
-        // Wait until the same snapshot has updated the trigger in the Board.
-        const restoreFocus = untrack(() => props.restoreFocus);
-        queueMicrotask(() => {
-          if (document.activeElement === document.body) restoreFocus();
-        });
-      }
-    };
+  onSettled(() => () => {
+    // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
+    const restoreFocus = untrack(() => props.restoreFocus);
+    queueMicrotask(() => {
+      if (document.activeElement === document.body) restoreFocus();
+    });
   });
 
   const isAtCommentLimit = createMemo(
@@ -136,6 +90,10 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
       setOwnerDraft(owner);
     },
   );
+
+  createEffect(() => props.isOpen, (open, wasOpen) => {
+    if (!open && wasOpen) untrack(() => props.restoreFocus());
+  });
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
@@ -206,14 +164,19 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     }
   }
 
-  async function handleConfirmDeleteComment(commentId: string): Promise<void> {
+  async function handleDeleteComment(commentId: string): Promise<void> {
     if (deletingCommentId() !== null) return;
+    const confirmed = await confirmBoardAction({
+      title: 'Delete this comment?',
+      description: 'The comment is removed for everyone on this Board.',
+      confirmLabel: 'Delete comment',
+    });
+    if (!confirmed) return;
     setDeletingCommentId(commentId);
     setDeleteCommentError(null);
     try {
       const error = await props.onDeleteComment(props.card.id, commentId);
       if (error) setDeleteCommentError(error);
-      else setConfirmingCommentId(null);
     } finally {
       setDeletingCommentId(null);
     }
@@ -226,29 +189,31 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   }
 
   return (
-    <dialog
-      ref={dialog}
-      aria-label="Card details"
-      data-board-overlay={props.isOpen ? 'true' : undefined}
-      data-print-hide="true"
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
-        event.preventDefault();
-        event.stopPropagation();
-        props.onClose();
+    <Drawer
+      open={props.isOpen}
+      side={props.side}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
       }}
-      onCancel={(event) => {
-        event.preventDefault();
-        props.onClose();
+      onOpenChangeComplete={(open) => {
+        if (!open) props.onExit();
       }}
-      class="board-drawer-dialog"
-      onPointerDown={backdropDismiss.onPointerDown}
-      onPointerCancel={backdropDismiss.reset}
-      onClick={backdropDismiss.onClick}
     >
-      <div class="board-drawer-panel">
+      <DrawerBackdrop data-print-hide="true" class="board-drawer-backdrop" />
+      <DrawerContent
+        finalFocus="none"
+        render={(contentProps) => (
+          <div
+            {...contentProps}
+            aria-labelledby={undefined}
+            aria-label="Card details"
+            data-board-overlay="true"
+            data-print-hide="true"
+            class="board-drawer-panel"
+          />
+        )}
+      >
         <BoardOverlayHeader
-          closeRef={(button) => { closeButton = button; }}
           closeLabel="Close Card details"
           onClose={() => props.onClose()}
         >
@@ -432,61 +397,27 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                         </div>
 
                         <Show when={canDeleteComment(comment.isMine)}>
-                          <Show
-                            when={confirmingCommentId() !== comment.id}
-                            fallback={
-                              <div class="flex flex-wrap items-center gap-1">
-                                <button
-                                  type="button"
-                                  disabled={deletingCommentId() === comment.id}
-                                  onClick={() =>
-                                    void handleConfirmDeleteComment(comment.id)
-                                  }
-                                  class={[
-                                    'min-h-11 rounded-md bg-col-rose px-2.5 py-1 text-xs font-medium text-white sm:min-h-7 sm:px-2',
-                                    'cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50',
-                                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                                  ]}
-                                >
-                                  {deletingCommentId() === comment.id
-                                    ? 'Deleting...'
-                                    : 'Confirm?'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={deletingCommentId() === comment.id}
-                                  onClick={() => setConfirmingCommentId(null)}
-                                  class={[
-                                    'min-h-11 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2',
-                                    'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
-                                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                                  ]}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            }
+                          <button
+                            type="button"
+                            aria-label="Delete"
+                            title="Delete comment"
+                            disabled={deletingCommentId() !== null}
+                            onClick={() => {
+                              setDeleteCommentError(null);
+                              void handleDeleteComment(comment.id);
+                            }}
+                            class={[
+                              'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
+                              'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
+                              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                              'disabled:cursor-not-allowed disabled:opacity-50',
+                            ]}
                           >
-                            <button
-                              type="button"
-                              aria-label="Delete"
-                              title="Delete comment"
-                              onClick={() => {
-                                setDeleteCommentError(null);
-                                setConfirmingCommentId(comment.id);
-                              }}
-                              class={[
-                                'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                                'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
-                                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                              ]}
-                            >
-                              <LucideIcon icon={Trash2} class="size-3.5" />
-                            </button>
-                          </Show>
+                            <LucideIcon icon={Trash2} class="size-3.5" />
+                          </button>
                         </Show>
                       </div>
-                      <Show when={confirmingCommentId() === comment.id && deleteCommentError()}>
+                      <Show when={deletingCommentId() === comment.id && deleteCommentError()}>
                         <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">{deleteCommentError()}</p>
                       </Show>
                     </li>
@@ -550,7 +481,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
             </Show>
           </div>
         </Show>
-      </div>
-    </dialog>
+      </DrawerContent>
+    </Drawer>
   );
 }

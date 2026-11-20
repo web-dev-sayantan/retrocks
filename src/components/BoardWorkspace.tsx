@@ -731,7 +731,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     if (event.key === 'Escape') {
       if (isCardDetailOpen()) {
         // Events inside the drawer are handled there after its nested controls.
-        if (event.target instanceof Element && event.target.closest('dialog[open]')) return;
+        if (event.target instanceof Element && event.target.closest('[data-board-overlay]')) return;
         event.preventDefault();
         setIsCardDetailOpen(false);
         return;
@@ -739,12 +739,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       if (isActionItemsOpen()) {
         event.preventDefault();
         setIsActionItemsOpen(false);
-        return;
-      }
-      const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
-      if (openDialog) {
-        event.preventDefault();
-        openDialog.close();
         return;
       }
       if (boardMenuOpen()) {
@@ -2364,6 +2358,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 isBlurred={board().isBlurred}
                 nowMs={nowMs()}
                 isOpen={isCardDetailOpen()}
+                side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocus={restoreCardDetailFocus}
@@ -2379,6 +2374,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           <ActionItemsDrawer
             board={board()}
             open={isActionItemsOpen()}
+            side={isMobileBoard() ? 'bottom' : 'right'}
             isLocked={board().isLocked}
             onClose={() => setIsActionItemsOpen(false)}
             onRestoreFocus={restoreActionItemsFocus}
