@@ -1,21 +1,21 @@
 # Retrocks
 
-A zero-login, privacy-first collaborative retrospective board application for agile teams and brainstorming sessions.
+A zero-login collaboration app for retrospectives, brainstorming, and live story estimation.
 
 ## Language
 
 ### Roles & Access
 
 **Participant**:
-An anonymous person viewing or contributing to a board without an account or personal profile.
+A person viewing or contributing to a Board or Room without an account or personal profile.
 _Avoid_: User, member, account
 
 **Facilitator**:
-A participant who holds board-level control over facilitation modes, column structure, voting rules, locking, and deletion.
+A Participant who has permission to manage a Board or run a Pointing Poker Room.
 _Avoid_: Admin, host, owner, moderator
 
 **Co-Facilitator Link**:
-A shareable link for a specific board that grants the Facilitator role when opened.
+A shareable link to a specific Board or Room that grants the Facilitator role when opened.
 _Avoid_: Admin link, invite link, moderator URL
 
 ### Board & Content
@@ -57,3 +57,27 @@ _Avoid_: Task, todo, follow-up
 **Locked**:
 A read-only board state that freezes content changes while preserving viewing, searching, exporting, and facilitator follow-up on existing Action Items.
 _Avoid_: Archived, frozen, read-only mode
+
+### Pointing Poker
+
+**Room**:
+A shareable workspace for one live Pointing Poker session.
+_Avoid_: Board, game
+
+**Display Name**:
+The name a Participant chooses for themselves in a Room.
+_Avoid_: Username, account name
+
+**Story**:
+A titled piece of work that a team estimates together in Pointing Poker.
+
+**Deck**:
+The ordered set of choices a participant can vote for when estimating a Story.
+_Avoid_: Metric, voting options
+
+**Voting Round**:
+One opportunity for Participants to estimate the active Story, from the opening of voting through reveal or cancellation.
+
+**Accepted Estimate**:
+The Deck value a Facilitator records for a Story as the team's agreed estimate.
+_Avoid_: Average, winning vote
