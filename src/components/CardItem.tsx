@@ -66,6 +66,10 @@ const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 ro
 const PLACEHOLDER_LINES_1 = ['w-3/4'] as const;
 const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
 const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
+const TAP_MAX_MOVE_PX = 16;
+const TAP_MAX_DURATION_MS = 300;
+const DOUBLE_TAP_MAX_DELAY_MS = 350;
+const DOUBLE_TAP_MAX_DISTANCE_PX = 32;
 
 export default function CardItem(props: CardItemProps) {
   const [isEditing, setIsEditing] = createSignal(false);
@@ -287,7 +291,76 @@ export default function CardItem(props: CardItemProps) {
     return PLACEHOLDER_LINES_2;
   });
 
+  let activeTouch: { pointerId: number; x: number; y: number; time: number } | undefined;
+  let lastTap: { x: number; y: number; time: number } | undefined;
+
+  function clearTapState(): void {
+    activeTouch = undefined;
+    lastTap = undefined;
+  }
+
+  function isTextEditTarget(target: EventTarget | null): boolean {
+    if (!canManage() || props.card.id.startsWith('optimistic:')) return false;
+    return !(target instanceof Element && target.closest('a'));
+  }
+
+  function handleTextDoubleClick(event: MouseEvent): void {
+    if (!isTextEditTarget(event.target)) return;
+    clearTapState();
+    startEdit();
+  }
+
+  function handleTextPointerDown(event: PointerEvent): void {
+    if (event.pointerType !== 'touch') return;
+    if (!event.isPrimary || !isTextEditTarget(event.target)) {
+      clearTapState();
+      return;
+    }
+    activeTouch = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now(),
+    };
+  }
+
+  function handleTextPointerCancel(event: PointerEvent): void {
+    if (activeTouch?.pointerId === event.pointerId) {
+      activeTouch = undefined;
+    }
+  }
+
+  function handleTextPointerUp(event: PointerEvent): void {
+    if (event.pointerType !== 'touch' || !event.isPrimary) return;
+    const start = activeTouch;
+    activeTouch = undefined;
+    if (!start || start.pointerId !== event.pointerId) return;
+    if (!isTextEditTarget(event.target)) {
+      lastTap = undefined;
+      return;
+    }
+    const now = Date.now();
+    const moveDistance = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (now - start.time > TAP_MAX_DURATION_MS || moveDistance > TAP_MAX_MOVE_PX) {
+      lastTap = undefined;
+      return;
+    }
+    const previous = lastTap;
+    if (
+      previous &&
+      now - previous.time <= DOUBLE_TAP_MAX_DELAY_MS &&
+      Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= DOUBLE_TAP_MAX_DISTANCE_PX
+    ) {
+      lastTap = undefined;
+      event.preventDefault();
+      startEdit();
+      return;
+    }
+    lastTap = { x: event.clientX, y: event.clientY, time: now };
+  }
+
   function startEdit(): void {
+    clearTapState();
     setEditError(null);
     setEditDraft(props.card.content);
     setConfirmingDelete(false);
@@ -296,6 +369,7 @@ export default function CardItem(props: CardItemProps) {
   }
 
   function cancelEdit(): void {
+    clearTapState();
     setIsEditing(false);
     setEditDraft('');
     setEditError(null);
@@ -560,7 +634,13 @@ export default function CardItem(props: CardItemProps) {
             </div>
           }
         >
-          <div class="text-base leading-relaxed text-text">
+          <div
+            onDblClick={handleTextDoubleClick}
+            onPointerDown={handleTextPointerDown}
+            onPointerUp={handleTextPointerUp}
+            onPointerCancel={handleTextPointerCancel}
+            class="text-base leading-relaxed text-text sm:touch-manipulation"
+          >
             <CardText text={props.card.content} />
           </div>
 

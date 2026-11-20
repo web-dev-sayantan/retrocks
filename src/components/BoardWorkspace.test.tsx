@@ -4290,4 +4290,159 @@ describe('<BoardWorkspace />', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('edits an individual Card on double-click of its text area (standalone or grouped) while ignoring links, non-text areas, and non-editable Cards', async () => {
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      content: 'Check https://example.com/docs for details',
+      isMine: true,
+    });
+    const groupedCard = makeCard({
+      id: 'card_grouped',
+      columnId: 'col_1',
+      groupId: 'group_1',
+      content: 'Grouped retro note',
+      isMine: true,
+    });
+    const otherCard = makeCard({
+      id: 'card_other',
+      columnId: 'col_1',
+      content: 'Teammate note',
+      isMine: false,
+    });
+    const board = makeBoardView({
+      isFacilitator: false,
+      groups: [
+        {
+          id: 'group_1',
+          columnId: 'col_1',
+          title: 'Release',
+          cardIds: ['card_grouped'],
+          votes: 0,
+          myVotes: 0,
+          createdAt: Date.now() - 60_000,
+        },
+      ],
+      cards: [myCard, groupedCard, otherCard],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const view = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const wentWell = view.getByRole('region', { name: 'Went Well' });
+    const mineArticle = within(wentWell).getByText(/for details/).closest('article')!;
+    const mine = within(mineArticle);
+
+    // Double-clicking a link inside card text does not enter edit mode
+    fireEvent.dblClick(mine.getByRole('link', { name: 'https://example.com/docs' }));
+    flush();
+    expect(mine.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+    // Double-clicking outside the text area (e.g., the "You" badge in the card footer) does not enter edit mode
+    fireEvent.dblClick(mine.getByText('You'));
+    flush();
+    expect(mine.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+    // Double-clicking a teammate's card as a participant does not enter edit mode
+    const otherArticle = within(wentWell).getByText('Teammate note').closest('article')!;
+    fireEvent.dblClick(within(otherArticle).getByText('Teammate note'));
+    flush();
+    expect(within(otherArticle).queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+    // Double-clicking the card text area enters edit mode and saves cleanly
+    fireEvent.dblClick(mine.getByText(/for details/));
+    flush();
+    const editBox = mine.getByRole('textbox', { name: 'Edit card text' });
+    expect(editBox).toHaveFocus();
+    fireEvent.input(editBox, { target: { value: 'Updated via double-click' } });
+    flush();
+    fireEvent.keyDown(editBox, { key: 'Enter' });
+    await flushPromises();
+    expect(spies.updateCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_mine',
+      content: 'Updated via double-click',
+    });
+    expect(within(wentWell).getByText('Updated via double-click')).toBeInTheDocument();
+
+    // Double-clicking an individual card inside a Card Group enters edit mode
+    const groupedArticle = within(wentWell).getByText('Grouped retro note').closest('article')!;
+    fireEvent.dblClick(within(groupedArticle).getByText('Grouped retro note'));
+    flush();
+    const groupedEditBox = within(groupedArticle).getByRole('textbox', { name: 'Edit card text' });
+    expect(groupedEditBox).toHaveFocus();
+    expect(groupedEditBox).toHaveValue('Grouped retro note');
+    fireEvent.keyDown(groupedEditBox, { key: 'Escape' });
+    flush();
+    expect(within(groupedArticle).queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+  });
+
+  it('edits a Card on touch double-tap of its text area and ignores slow taps, drags, or locked boards', () => {
+    vi.useFakeTimers();
+    try {
+      const myCard = makeCard({
+        id: 'card_touch',
+        columnId: 'col_1',
+        content: 'Tap me twice',
+        isMine: true,
+      });
+      const board = makeBoardView({ cards: [myCard] });
+      const { actions } = createFakeActions(board);
+
+      const view = render(() => (
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+      ));
+      flush();
+
+      const wentWell = view.getByRole('region', { name: 'Went Well' });
+      const cardText = within(wentWell).getByText('Tap me twice');
+      const cardArticle = cardText.closest('article')!;
+      const card = within(cardArticle);
+
+      const tapAt = (target: Element, x: number, y: number, pointerId = 1) => {
+        fireEvent.pointerDown(target, { pointerType: 'touch', isPrimary: true, pointerId, clientX: x, clientY: y });
+        vi.advanceTimersByTime(40);
+        fireEvent.pointerUp(target, { pointerType: 'touch', isPrimary: true, pointerId, clientX: x, clientY: y });
+        flush();
+      };
+
+      // Two taps too far apart in time do not enter edit mode
+      tapAt(cardText, 100, 100, 1);
+      vi.advanceTimersByTime(500);
+      tapAt(cardText, 100, 100, 2);
+      expect(card.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+      // A drag/scroll gesture does not count as a second tap
+      vi.advanceTimersByTime(100);
+      fireEvent.pointerDown(cardText, { pointerType: 'touch', isPrimary: true, pointerId: 3, clientX: 100, clientY: 100 });
+      vi.advanceTimersByTime(40);
+      fireEvent.pointerUp(cardText, { pointerType: 'touch', isPrimary: true, pointerId: 3, clientX: 100, clientY: 140 });
+      flush();
+      expect(card.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+      // Two quick taps within threshold enter edit mode
+      tapAt(cardText, 100, 100, 4);
+      vi.advanceTimersByTime(120);
+      tapAt(cardText, 104, 102, 5);
+      const editBox = card.getByRole('textbox', { name: 'Edit card text' });
+      expect(editBox).toHaveFocus();
+      expect(editBox).toHaveValue('Tap me twice');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
