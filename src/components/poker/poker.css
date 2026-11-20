@@ -197,3 +197,44 @@
   opacity: 0.62;
   cursor: default;
 }
+
+.poker-voting {
+  border-color: color-mix(in srgb, var(--poker-highlight), transparent 72%);
+}
+
+.poker-deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 3.25rem), 1fr));
+  gap: 0.5rem;
+}
+
+.poker-vote-tile {
+  display: grid;
+  place-items: center;
+  min-block-size: 3.5rem;
+  padding: 0.4rem;
+  border: 1px solid var(--poker-highlight);
+  border-radius: 0.5rem;
+  background: var(--color-surface);
+  color: var(--poker-highlight);
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.poker-vote-tile:hover {
+  background: var(--poker-pale);
+}
+
+.poker-vote-tile[data-checked] {
+  background: var(--poker-accent);
+  color: var(--poker-accent-contrast);
+}
+
+.poker-ballot {
+  background: var(--color-surface);
+  border-color: var(--color-control);
+}

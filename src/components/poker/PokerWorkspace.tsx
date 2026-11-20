@@ -1,7 +1,8 @@
 import { For, Show, createMemo, onSettled } from 'solid-js';
 
-import type { PokerResult, PokerRoomView, PokerStoryCommand } from '../../lib/poker-types';
+import type { PokerResult, PokerRoomView, PokerStoryCommand, PokerVotingCommand } from '../../lib/poker-types';
 import PokerRoomSharing from './PokerRoomSharing';
+import PokerVotingRound from './PokerVotingRound';
 import PokerStoryQueue from './PokerStoryQueue';
 import './poker.css';
 
@@ -11,9 +12,13 @@ export default function PokerWorkspace(props: {
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
   claimError?: string;
-  onChangeStory: (command: PokerStoryCommand) => Promise<PokerResult>;
+  onChange: (command: PokerStoryCommand | PokerVotingCommand) => Promise<PokerResult>;
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
+  const submitted = createMemo(() => {
+    const round = props.room.round;
+    return round?.phase === 'open' ? new Set(round.submittedParticipantIds) : null;
+  });
   let heading!: HTMLHeadingElement;
 
   onSettled(() => {
@@ -42,13 +47,24 @@ export default function PokerWorkspace(props: {
           }>
             {(story) => <p class="poker-active-title mt-2 font-semibold [overflow-wrap:anywhere]">{story().title}</p>}
           </Show>
+          <Show when={props.room.round}>
+            {(round) => (
+              <PokerVotingRound
+                round={round()}
+                deck={props.room.deck}
+                canReveal={props.room.viewer?.isFacilitator === true}
+                onChange={props.onChange}
+              />
+            )}
+          </Show>
         </section>
 
         <PokerStoryQueue
           stories={props.room.stories}
           activeStoryId={props.room.activeStoryId}
           canManage={props.room.viewer?.isFacilitator === true}
-          onChange={props.onChangeStory}
+          discardRoundId={props.room.round?.id}
+          onChange={props.onChange}
         />
 
         <section class="poker-roster min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-6" aria-labelledby="poker-participants">
@@ -62,9 +78,12 @@ export default function PokerWorkspace(props: {
                       {participant().displayName}
                       <Show when={participant().id === props.room.viewer?.id}> (you)</Show>
                     </p>
-                    <Show when={participant().isFacilitator}>
-                      <p class="text-xs text-text-muted">Facilitator</p>
-                    </Show>
+                    <div class="flex flex-wrap gap-x-2 text-xs text-text-muted">
+                      <Show when={participant().isFacilitator}><span>Facilitator</span></Show>
+                      <Show when={submitted()}>
+                        {(ids) => <span>{ids().has(participant().id) ? 'Voted' : 'Awaiting vote'}</span>}
+                      </Show>
+                    </div>
                   </div>
                   <span class={[
                     'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',

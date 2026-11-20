@@ -46,7 +46,7 @@ export async function mutatePokerRoomForRequest(id: string, input: unknown): Pro
     return {
       ok: false,
       code: 'INVALID_INPUT',
-      message: isJoin ? 'Enter a valid Display Name.' : 'Check the Story details and try again.',
+      message: isJoin ? 'Enter a valid Display Name.' : 'Check the Room details and try again.',
     };
   }
 

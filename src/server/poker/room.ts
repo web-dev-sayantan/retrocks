@@ -3,12 +3,14 @@ import 'server-only';
 import { safeParse } from 'valibot';
 
 import { PokerDisplayName } from '../../lib/poker-schemas';
-import type {
-  PokerParticipant,
-  PokerResult,
-  PokerRoomCommand,
-  PokerRoomView,
-  PokerStory,
+import {
+  FIBONACCI_DECK,
+  type PokerParticipant,
+  type PokerResult,
+  type PokerRoomCommand,
+  type PokerRoomView,
+  type PokerRoundView,
+  type PokerStory,
 } from '../../lib/poker-types';
 import type { PokerSharingResult } from '../../lib/poker-sharing-types';
 import { generateEntityId, tokenHashesMatch } from '../crypto';
@@ -55,6 +57,27 @@ const storyMissing = {
   message: 'That Story is no longer in the queue.',
 } as const;
 
+const roundChanged = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'The Voting Round has changed. Check the active Story and try again.',
+} as const;
+const discardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to discard the current Voting Round before switching Stories.',
+} as const;
+
+interface StoredVotingRound {
+  id: string;
+  phase: 'open' | 'revealed';
+  ballots: Record<string, string>;
+}
+
+function startVotingRound(): StoredVotingRound {
+  return { id: generateEntityId(), phase: 'open', ballots: {} };
+}
+
 interface StoredParticipant extends PokerParticipant {
   hash: string;
 }
@@ -68,6 +91,8 @@ export interface StoredPokerRoom {
   pendingFacilitatorClaims?: string[];
   stories?: PokerStory[];
   activeStoryId?: string | null;
+  deck?: readonly string[];
+  round?: StoredVotingRound | null;
 }
 
 export function pokerDisplayName(input: unknown): string | undefined {
@@ -84,6 +109,29 @@ export function pokerParticipant(room: StoredPokerRoom, hash: string): PokerPart
   return participant ? projectParticipant(participant) : null;
 }
 
+function projectRound(room: StoredPokerRoom, viewerId: string): PokerRoundView | null {
+  const round = room.round;
+  if (!round) return null;
+
+  if (round.phase === 'open') {
+    return {
+      id: round.id,
+      phase: 'open',
+      ownChoice: round.ballots[viewerId] ?? null,
+      submittedParticipantIds: Object.keys(round.ballots),
+    };
+  }
+
+  return {
+    id: round.id,
+    phase: 'revealed',
+    ballots: room.participants.flatMap(({ id, displayName }) => {
+      const choice = round.ballots[id];
+      return choice === undefined ? [] : [{ participantId: id, displayName, choice }];
+    }),
+  };
+}
+
 export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoomView {
   const viewer = pokerParticipant(room, hash);
   return {
@@ -96,6 +144,8 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     participants: viewer ? room.participants.map(projectParticipant) : [],
     stories: viewer ? room.stories ?? [] : [],
     activeStoryId: viewer ? room.activeStoryId ?? null : null,
+    deck: viewer ? room.deck ?? FIBONACCI_DECK : [],
+    round: viewer ? projectRound(room, viewer.id) : null,
   };
 }
 
@@ -150,6 +200,8 @@ export class PokerRoomStorage {
       participants: [{ id: generateEntityId(), hash, displayName, isFacilitator: true }],
       stories: [],
       activeStoryId: null,
+      deck: FIBONACCI_DECK,
+      round: null,
     };
     this.db.run(
       'INSERT INTO poker_rooms (id, expires_at, data) VALUES (?, ?, ?)',
@@ -198,6 +250,9 @@ export class PokerRoomStorage {
           }
           if (story.title === command.title) return { ok: true, room };
           story.title = command.title;
+          if (room.activeStoryId === story.id && room.round?.phase === 'open') {
+            room.round = startVotingRound();
+          }
           room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
@@ -222,8 +277,39 @@ export class PokerRoomStorage {
           if (story.status !== 'pending') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Choose a pending Story.' };
           }
-          if (room.activeStoryId === story.id) return { ok: true, room };
+          if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) {
+            return roundChanged;
+          }
+          if (room.round && room.activeStoryId === story.id) return { ok: true, room };
+          if (room.round && command.discardRoundId === undefined) return discardRequired;
           room.activeStoryId = story.id;
+          room.round = startVotingRound();
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'vote': {
+          const participant = pokerParticipant(room, hash);
+          if (!participant) return { ok: false, code: 'FORBIDDEN', message: 'Join the Room to vote.' };
+          const round = room.round;
+          if (round?.id !== command.roundId || round.phase !== 'open') return roundChanged;
+          const { choice } = command;
+          if (choice !== null && !(room.deck ?? FIBONACCI_DECK).includes(choice)) {
+            return { ok: false, code: 'INVALID_INPUT', message: 'Choose a value from the Deck.' };
+          }
+          if ((round.ballots[participant.id] ?? null) === choice) return { ok: true, room };
+          if (choice === null) delete round.ballots[participant.id];
+          else round.ballots[participant.id] = choice;
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'reveal': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const round = room.round;
+          if (round?.id !== command.roundId || round.phase !== 'open') return roundChanged;
+          if (Object.keys(round.ballots).length === 0) {
+            return { ok: false, code: 'INVALID_INPUT', message: 'At least one vote is required to reveal.' };
+          }
+          round.phase = 'revealed';
           room.expiresAt = now + ROOM_TTL_MS;
           break;
         }

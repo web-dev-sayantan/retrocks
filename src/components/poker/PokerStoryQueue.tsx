@@ -10,6 +10,7 @@ import {
   type PokerStory,
   type PokerStoryCommand,
 } from '../../lib/poker-types';
+import { confirmBoardAction } from '../../lib/board-confirm';
 import LucideIcon from '../LucideIcon';
 
 const storyStatuses = {
@@ -26,9 +27,11 @@ function StoryTitleForm(props: {
 }) {
   const [title, setTitle] = createSignal(untrack(() => props.initialTitle ?? ''));
   const editing = () => Boolean(props.onCancel);
+  const [ready, setReady] = createSignal(false);
   let input!: HTMLInputElement;
 
   onSettled(() => {
+    setReady(true);
     if (editing()) {
       input.focus();
       input.select();
@@ -38,12 +41,13 @@ function StoryTitleForm(props: {
   return (
     <form
       class="poker-story-form poker-form"
+      method="post"
       aria-label={editing() ? 'Edit Story title' : 'Add a Story'}
       aria-busy={props.busy ? 'true' : 'false'}
       onSubmit={async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
-        if (!props.busy && await props.onSave(title())) {
+        if (ready() && !props.busy && await props.onSave(title())) {
           setTitle('');
           form.reset();
         }
@@ -56,7 +60,7 @@ function StoryTitleForm(props: {
           class="poker-input board-focus-ring"
           value={title()}
           onValueChange={(value) => setTitle(value)}
-          readonly={props.busy}
+          readonly={props.busy || !ready()}
           required
           maxlength={POKER_STORY_TITLE_LIMIT}
           pattern={'.*\\S.*'}
@@ -66,8 +70,8 @@ function StoryTitleForm(props: {
         <Button
           class="poker-primary board-focus-ring"
           type="submit"
-          disabled={props.busy}
-          focusableWhenDisabled
+          disabled={props.busy || !ready()}
+          focusableWhenDisabled={ready()}
         >
           {editing() ? 'Save title' : 'Add Story'}
         </Button>
@@ -85,6 +89,7 @@ export default function PokerStoryQueue(props: {
   stories: PokerStory[];
   activeStoryId: string | null;
   canManage: boolean;
+  discardRoundId?: string;
   onChange: (command: PokerStoryCommand) => Promise<PokerResult>;
 }) {
   const headingId = createUniqueId();
@@ -92,6 +97,7 @@ export default function PokerStoryQueue(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
   const [announcement, setAnnouncement] = createSignal('');
+  const [confirming, setConfirming] = createSignal(false);
 
   async function change(command: PokerStoryCommand) {
     if (busy()) return null;
@@ -111,6 +117,29 @@ export default function PokerStoryQueue(props: {
 
   async function addStory(title: string) {
     return Boolean(await change({ type: 'add-story', title }));
+  }
+
+  async function selectStory(story: PokerStory) {
+    if (busy() || confirming()) return;
+    const discardRoundId = props.discardRoundId;
+    if (discardRoundId !== undefined) {
+      setConfirming(true);
+      try {
+        if (!await confirmBoardAction({
+          title: 'Switch Stories?',
+          description: 'Switching Stories discards the current Voting Round and its votes.',
+          cancelLabel: 'Stay with this Story',
+          confirmLabel: 'Switch Story',
+        })) return;
+      } finally {
+        setConfirming(false);
+      }
+    }
+    await change({
+      type: 'select-story',
+      storyId: story.id,
+      ...(discardRoundId === undefined ? {} : { discardRoundId }),
+    });
   }
 
   async function move(story: PokerStory, index: number, offset: -1 | 1, control: HTMLElement) {
@@ -147,6 +176,7 @@ export default function PokerStoryQueue(props: {
           <For each={props.stories} keyed={(story) => story.id}>
             {(story, index) => {
               const active = () => props.activeStoryId === story().id;
+              const selected = () => active() && props.discardRoundId !== undefined;
               let editButton: HTMLButtonElement | undefined;
               function finishEditing() {
                 setEditing(null);
@@ -174,12 +204,12 @@ export default function PokerStoryQueue(props: {
                       <Show when={story().status === 'pending'}>
                         <Button
                           class="poker-story-control board-focus-ring"
-                          aria-label={`${active() ? 'Selected' : 'Select'} ${story().title}`}
-                          disabled={active() || busy()}
+                          aria-label={`${selected() ? 'Selected' : 'Select'} ${story().title}`}
+                          disabled={selected() || busy() || confirming()}
                           focusableWhenDisabled
-                          onClick={() => change({ type: 'select-story', storyId: story().id })}
+                          onClick={() => selectStory(story())}
                         >
-                          {active() ? 'Selected' : 'Select'}
+                          {selected() ? 'Selected' : 'Select'}
                         </Button>
                         <Button
                           ref={editButton}
