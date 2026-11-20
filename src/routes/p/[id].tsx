@@ -6,11 +6,11 @@ import PageMessage from '../../components/PageMessage';
 import PokerWorkspace from '../../components/poker/PokerWorkspace';
 import RoomNameForm from '../../components/poker/RoomNameForm';
 import { takeFacilitatorLinkToken } from '../../lib/facilitator-link';
-import { getPokerRoom, joinPokerRoom } from '../../lib/poker-actions';
+import { changePokerStory, getPokerRoom, joinPokerRoom } from '../../lib/poker-actions';
 import { createPokerLive } from '../../lib/poker-live';
 import { pokerRoomPath, pokerSetupPath } from '../../lib/poker-routes';
 import { claimPokerFacilitatorLink } from '../../lib/poker-sharing-actions';
-import type { PokerRoomView } from '../../lib/poker-types';
+import type { PokerRoomView, PokerStoryCommand } from '../../lib/poker-types';
 
 export const route = {
   preload: ({ params }) => {
@@ -46,10 +46,22 @@ function JoinedRoom(props: { room: PokerRoomView; focusHeading: boolean; claimEr
     return current && current.version >= props.room.version ? current : props.room;
   };
 
+  function acceptRoom(next: PokerRoomView) {
+    if (next.id === props.room.id) {
+      setLiveRoom((current) => !current || next.version >= current.version ? next : current);
+    }
+  }
+
+  async function onChangeStory(command: PokerStoryCommand) {
+    const result = await changePokerStory(props.room.id, command);
+    if (result.ok) acceptRoom(result.room);
+    return result;
+  }
+
   onSettled(() => {
     const stream = createPokerLive(untrack(() => props.room.id), (message) => {
-      if (message.type === 'room:snapshot' && message.room.id === untrack(() => props.room.id)) {
-        setLiveRoom((current) => !current || message.room.version >= current.version ? message.room : current);
+      if (message.type === 'room:snapshot') {
+        acceptRoom(message.room);
       } else if (message.type === 'room:presence') {
         setOnline(message.online);
       } else if (message.type === 'room:missing') {
@@ -68,6 +80,7 @@ function JoinedRoom(props: { room: PokerRoomView; focusHeading: boolean; claimEr
         status={live()?.status() ?? 'connecting'}
         focusHeading={props.focusHeading}
         claimError={props.claimError}
+        onChangeStory={onChangeStory}
       />
     </Show>
   );

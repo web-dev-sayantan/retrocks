@@ -41,7 +41,14 @@ export async function mutatePokerRoomForRequest(id: string, input: unknown): Pro
     return { ok: false, code: 'ROOM_NOT_FOUND', message: 'This Room is no longer available.' };
   }
   const command = safeParse(PokerCommand, input);
-  if (!command.success) return { ok: false, code: 'INVALID_INPUT', message: 'Enter a valid Display Name.' };
+  if (!command.success) {
+    const isJoin = input && typeof input === 'object' && 'type' in input && input.type === 'join';
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      message: isJoin ? 'Enter a valid Display Name.' : 'Check the Story details and try again.',
+    };
+  }
 
   const session = await ensureParticipantSession({ renew: true });
   const room = await getPokerRoomAccess(id);

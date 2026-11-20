@@ -1,7 +1,8 @@
-import { For, Show, onSettled } from 'solid-js';
+import { For, Show, createMemo, onSettled } from 'solid-js';
 
-import type { PokerRoomView } from '../../lib/poker-types';
+import type { PokerResult, PokerRoomView, PokerStoryCommand } from '../../lib/poker-types';
 import PokerRoomSharing from './PokerRoomSharing';
+import PokerStoryQueue from './PokerStoryQueue';
 import './poker.css';
 
 export default function PokerWorkspace(props: {
@@ -10,7 +11,9 @@ export default function PokerWorkspace(props: {
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
   claimError?: string;
+  onChangeStory: (command: PokerStoryCommand) => Promise<PokerResult>;
 }) {
+  const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
   let heading!: HTMLHeadingElement;
 
   onSettled(() => {
@@ -30,17 +33,25 @@ export default function PokerWorkspace(props: {
         {props.claimError}
       </p>
       <div class="poker-layout">
-        <section class="min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-7" aria-labelledby="poker-stories">
-          <h2 id="poker-stories" class="text-xl font-semibold tracking-tight">Stories</h2>
-          <p class="mt-2 text-sm leading-relaxed text-text-muted">There are no Stories in this Room yet.</p>
-          <PokerRoomSharing
-            roomId={props.room.id}
-            isFacilitator={props.room.viewer?.isFacilitator ?? false}
-            revision={props.room.facilitatorLinkRevision}
-          />
+        <section class="poker-active min-w-0 rounded-xl p-5 sm:p-7" aria-labelledby="poker-active-story">
+          <h2 id="poker-active-story" class="text-sm font-semibold">Active Story</h2>
+          <Show when={activeStory()} fallback={
+            <p class="mt-2 text-base leading-relaxed">
+              {props.room.viewer?.isFacilitator ? 'Select a Story from the queue.' : 'Waiting for the Facilitator to select a Story.'}
+            </p>
+          }>
+            {(story) => <p class="poker-active-title mt-2 font-semibold [overflow-wrap:anywhere]">{story().title}</p>}
+          </Show>
         </section>
 
-        <section class="min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-6" aria-labelledby="poker-participants">
+        <PokerStoryQueue
+          stories={props.room.stories}
+          activeStoryId={props.room.activeStoryId}
+          canManage={props.room.viewer?.isFacilitator === true}
+          onChange={props.onChangeStory}
+        />
+
+        <section class="poker-roster min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-6" aria-labelledby="poker-participants">
           <h2 id="poker-participants" class="text-xl font-semibold tracking-tight">Participants</h2>
           <ul class="mt-3 divide-y divide-border">
             <For each={props.room.participants} keyed={(participant) => participant.id}>
@@ -67,6 +78,11 @@ export default function PokerWorkspace(props: {
               )}
             </For>
           </ul>
+          <PokerRoomSharing
+            roomId={props.room.id}
+            isFacilitator={props.room.viewer?.isFacilitator ?? false}
+            revision={props.room.facilitatorLinkRevision}
+          />
         </section>
       </div>
     </main>
