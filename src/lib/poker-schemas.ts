@@ -22,6 +22,7 @@ const CustomDeckChoices = v.pipe(
 
 export const PokerCommand = v.variant('type', [
   v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
+  v.object({ type: v.literal('close-room'), discardRoundId: v.optional(PokerEntityId) }),
   v.object({ type: v.literal('add-story'), title: PokerStoryTitle }),
   v.object({
     type: v.literal('correct-estimate'),
@@ -63,12 +64,13 @@ const Participant = v.object({
   isFacilitator: v.boolean(),
 });
 
-const Story = v.object({
-  id: PokerEntityId,
+const StorySummary = v.object({
   title: PokerStoryTitle,
   status: v.picklist(['pending', 'estimated', 'skipped']),
   acceptedEstimate: v.optional(v.string()),
 });
+
+const Story = v.object({ id: PokerEntityId, ...StorySummary.entries });
 
 const Round = v.variant('phase', [
   v.object({
@@ -88,9 +90,12 @@ const Round = v.variant('phase', [
   }),
 ]);
 
-const Room = v.object({
+const RoomVersion = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
+
+const LiveRoom = v.object({
+  closed: v.literal(false),
   id: PokerRoomId,
-  version: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+  version: RoomVersion,
   viewer: v.nullable(Participant),
   facilitatorLinkRevision: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
   participants: v.array(Participant),
@@ -101,6 +106,16 @@ const Room = v.object({
   deckLocked: v.boolean(),
   round: v.nullable(Round),
 });
+
+const ClosedRoom = v.object({
+  closed: v.literal(true),
+  id: PokerRoomId,
+  version: RoomVersion,
+  canDelete: v.boolean(),
+  stories: v.array(StorySummary),
+});
+
+const Room = v.variant('closed', [LiveRoom, ClosedRoom]);
 
 const PokerLiveFrame = v.variant('type', [
   v.object({ type: v.literal('room:snapshot'), room: Room, connectionId: v.optional(v.string()) }),

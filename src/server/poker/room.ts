@@ -5,6 +5,7 @@ import { safeParse } from 'valibot';
 import { PokerDisplayName } from '../../lib/poker-schemas';
 import {
   POKER_DECK_PRESETS,
+  unresolvedPokerRoundId,
   type PokerDeckType,
   type PokerParticipant,
   type PokerResult,
@@ -23,6 +24,12 @@ const notFound = {
   ok: false,
   code: 'ROOM_NOT_FOUND',
   message: 'This Room is no longer available.',
+} as const;
+
+const roomClosed = {
+  ok: false,
+  code: 'ROOM_CLOSED',
+  message: 'This Room is closed.',
 } as const;
 
 const forbidden = {
@@ -94,6 +101,8 @@ export interface StoredPokerRoom {
   version: number;
   expiresAt: number;
   participants: StoredParticipant[];
+  closedAt?: number;
+  closedFacilitatorHashes?: string[];
   facilitatorCapability?: PokerFacilitatorCapability;
   pendingFacilitatorClaims?: string[];
   stories: PokerStory[];
@@ -145,9 +154,28 @@ function projectRound(room: StoredPokerRoom, viewerId: string): PokerRoundView |
   };
 }
 
+export function pokerCanDeleteRoom(room: StoredPokerRoom, hash: string): boolean {
+  return room.closedAt === undefined
+    ? pokerParticipant(room, hash)?.isFacilitator === true
+    : room.closedFacilitatorHashes?.includes(hash) === true;
+}
+
 export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoomView {
+  if (room.closedAt !== undefined) {
+    return {
+      closed: true,
+      id: room.id,
+      version: room.version,
+      canDelete: pokerCanDeleteRoom(room, hash),
+      stories: room.stories.map(({ title, status, acceptedEstimate }) => ({
+        title, status, ...(acceptedEstimate === undefined ? {} : { acceptedEstimate }),
+      })),
+    };
+  }
+
   const viewer = pokerParticipant(room, hash);
   return {
+    closed: false,
     id: room.id,
     version: room.version,
     viewer,
@@ -247,7 +275,25 @@ export class PokerRoomStorage {
       const room = this.snapshot(id, now);
       if (!room) return notFound;
 
+      if (room.closedAt !== undefined) {
+        if (command.type !== 'close-room') return roomClosed;
+        return pokerCanDeleteRoom(room, hash) ? { ok: true, room } : forbidden;
+      }
+
       switch (command.type) {
+        case 'close-room': {
+          if (!pokerCanDeleteRoom(room, hash)) return forbidden;
+          if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;
+          room.closedAt = now;
+          room.expiresAt = now + ROOM_TTL_MS;
+          room.closedFacilitatorHashes = room.participants.filter((p) => p.isFacilitator).map((p) => p.hash);
+          room.participants = [];
+          delete room.facilitatorCapability;
+          delete room.pendingFacilitatorClaims;
+          room.activeStoryId = null;
+          room.round = null;
+          break;
+        }
         case 'join': {
           if (pokerParticipant(room, hash)) return { ok: true, room };
           const displayName = pokerDisplayName(command.displayName);

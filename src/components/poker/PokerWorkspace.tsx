@@ -1,6 +1,7 @@
-import { For, Show, createMemo, onSettled } from 'solid-js';
+import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
-import type { PokerResult, PokerRoomView, PokerRoomChange } from '../../lib/poker-types';
+import { confirmBoardAction } from '../../lib/board-confirm';
+import { unresolvedPokerRoundId, type PokerResult, type PokerLiveRoomView, type PokerRoomChange } from '../../lib/poker-types';
 import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerVotingRound from './PokerVotingRound';
@@ -8,7 +9,7 @@ import PokerStoryQueue from './PokerStoryQueue';
 import './poker.css';
 
 export default function PokerWorkspace(props: {
-  room: PokerRoomView;
+  room: PokerLiveRoomView;
   online: string[];
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
@@ -20,6 +21,33 @@ export default function PokerWorkspace(props: {
     const round = props.room.round;
     return round?.phase === 'open' ? new Set(round.submittedParticipantIds) : null;
   });
+  const [closeError, setCloseError] = createSignal('');
+  const [closing, setClosing] = createSignal(false);
+  let closeInProgress = false;
+
+  async function closeRoom() {
+    if (closeInProgress) return;
+    closeInProgress = true;
+    setCloseError('');
+    const discardRoundId = unresolvedPokerRoundId(props.room.round);
+    try {
+      if (discardRoundId !== undefined && !await confirmBoardAction({
+        title: 'Close Room?',
+        description: 'Closing discards the current Voting Round and its votes. Accepted Estimates stay in the read-only summary.',
+        confirmLabel: 'Close Room',
+      })) return;
+
+      setClosing(true);
+      const result = await props.onChange({ type: 'close-room', ...(discardRoundId === undefined ? {} : { discardRoundId }) });
+      if (!result.ok) setCloseError(result.message);
+    } catch {
+      setCloseError('Could not close the Room. Try again.');
+    } finally {
+      closeInProgress = false;
+      setClosing(false);
+    }
+  }
+
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
 
@@ -31,13 +59,20 @@ export default function PokerWorkspace(props: {
     <main class="poker-workspace" data-deck-type={props.room.deckType}>
       <header class="mb-7 flex flex-wrap items-end justify-between gap-3 border-b border-border pb-5">
         <h1 ref={heading} tabindex={-1} class="poker-title">Pointing Poker</h1>
-        <p class="text-sm font-medium text-text-muted" aria-live="polite">
-          {props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}
-        </p>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <p class="text-sm font-medium text-text-muted" aria-live="polite">
+            {props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}
+          </p>
+          <Show when={props.room.viewer?.isFacilitator}>
+            <button type="button" class="poker-story-control board-focus-ring" aria-disabled={closing() ? 'true' : undefined} onClick={closeRoom}>
+              Close Room
+            </button>
+          </Show>
+        </div>
       </header>
 
-      <p role="alert" class={props.claimError ? 'mb-4 text-sm font-medium text-[var(--poker-error)]' : 'sr-only'}>
-        {props.claimError}
+      <p role="alert" class={(closeError() || props.claimError) ? 'mb-4 text-sm font-medium text-[var(--poker-error)]' : 'sr-only'}>
+        {closeError() || props.claimError}
       </p>
       <div class="poker-layout">
         <section class="poker-active min-w-0 rounded-xl p-5 sm:p-7" aria-labelledby="poker-active-story">
@@ -84,7 +119,7 @@ export default function PokerWorkspace(props: {
           canManage={props.room.viewer?.isFacilitator === true}
           deck={props.room.deck}
           roundId={props.room.round?.id}
-          discardRoundId={props.room.round?.phase !== 'accepted' ? props.room.round?.id : undefined}
+          discardRoundId={unresolvedPokerRoundId(props.room.round)}
           onChange={props.onChange}
         />
 

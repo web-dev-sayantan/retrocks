@@ -3,7 +3,7 @@ import { createAgent } from '@ui-sdk/solid/agent';
 import { createSignal, untrack } from 'solid-js';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { FIBONACCI_DECK, type PokerResult, type PokerRoomChange, type PokerRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
+import { FIBONACCI_DECK, type PokerResult, type PokerRoomChange, type PokerLiveRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
 import BoardConfirmDialog from '../BoardConfirmDialog';
 import PokerStoryQueue from './PokerStoryQueue';
 import PokerWorkspace from './PokerWorkspace';
@@ -15,8 +15,8 @@ test('a Facilitator can add and move a Story by named controls while keeping its
   const first = { id: 'first', title: 'Save checkout', status: 'pending' } satisfies PokerStory;
   const second = { id: 'second', title: 'Pay with gift card', status: 'pending' } satisfies PokerStory;
   const [stories, setStories] = createSignal([first]);
-  const room: PokerRoomView = {
-    id: 'room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
+  const room: PokerLiveRoomView = {
+    closed: false, id: 'room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
     deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   };
 
@@ -54,8 +54,8 @@ test('a Facilitator can add and move a Story by named controls while keeping its
 
 test('a Participant can read Story statuses and the active Story without queue controls', () => {
   const pending = { id: 'pending', title: 'Restore cart', status: 'pending' } as const;
-  const room: PokerRoomView = {
-    id: 'room',
+  const room: PokerLiveRoomView = {
+    closed: false, id: 'room',
     version: 2,
     viewer: { id: 'sam', displayName: 'Sam', isFacilitator: false },
     participants: [],
@@ -93,8 +93,8 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
   const current = { id: 'checkout', title: 'Save checkout', status: 'pending' } as const;
   const target = { id: 'receipt', title: 'Send receipt', status: 'pending' } as const;
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
-  const room: PokerRoomView = {
-    id: 'room',
+  const room: PokerLiveRoomView = {
+    closed: false, id: 'room',
     version: 1,
     viewer: facilitator,
     participants: [facilitator],
@@ -131,8 +131,8 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
 test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it from the Story queue', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const current = { id: 'checkout', title: 'Save checkout', status: 'pending' } as const;
-  const [room, setRoom] = createSignal<PokerRoomView>({
-    id: 'room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
     activeStoryId: current.id, deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
     deckLocked: true,
@@ -141,7 +141,7 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
   const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
     const r = untrack(room);
     if (command.type === 'confirm-estimate' && r.round?.phase === 'revealed') {
-      const next: PokerRoomView = {
+      const next: PokerLiveRoomView = {
         ...r, version: 2, round: { ...r.round, phase: 'accepted' },
         stories: [{ ...current, status: 'estimated', acceptedEstimate: command.choice }],
       };
@@ -149,7 +149,7 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
       return { ok: true, room: next };
     }
     if (command.type === 'correct-estimate') {
-      const next: PokerRoomView = {
+      const next: PokerLiveRoomView = {
         ...r, version: 3,
         stories: [{ ...r.stories[0], acceptedEstimate: command.choice }],
       };
@@ -193,8 +193,8 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
 
 test('a Facilitator can save an ordered custom Deck through the labeled settings', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
-  const [room, setRoom] = createSignal<PokerRoomView>({
-    id: 'room', version: 1, viewer: facilitator, participants: [], stories: [], activeStoryId: null,
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [], stories: [], activeStoryId: null,
     deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   });
   const change = vi.fn(async (): Promise<PokerResult> => {
@@ -220,4 +220,53 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
   setRoom((current) => ({ ...current, deckLocked: true }));
   await waitFor(() => expect(settings).not.toBeInTheDocument());
   expect(screen.getByText('The Deck is locked.')).toBeVisible();
+});
+
+test('Close Room focuses Cancel and a confirmation stays tied to the original Voting Round', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const initial: PokerLiveRoomView = {
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 'checkout', title: 'Save checkout', status: 'estimated', acceptedEstimate: '5' }],
+    activeStoryId: 'checkout',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'first-round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
+  };
+  const [room, setRoom] = createSignal(initial);
+  const change = vi.fn(async (): Promise<PokerResult> => ({
+    ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed. Check the active Story and try again.',
+  }));
+
+  render(() => (
+    <>
+      <PokerWorkspace room={room()} online={[]} status="live" onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+
+  const close = screen.getByRole('button', { name: 'Close Room' });
+  close.focus();
+  fireEvent.click(close);
+  const dialog = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+  await waitFor(() => expect(cancel).toHaveFocus());
+  fireEvent.click(cancel);
+  await waitFor(() => expect(dialog).not.toBeVisible());
+  await waitFor(() => expect(close).toHaveFocus());
+  expect(change).not.toHaveBeenCalled();
+
+  fireEvent.click(close);
+  const reopened = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  setRoom({
+    ...initial, version: 2,
+    round: { id: 'new-round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
+  });
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Close Room' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({ type: 'close-room', discardRoundId: 'first-round' }));
+  expect(await screen.findByText('The Voting Round has changed. Check the active Story and try again.')).toBeVisible();
 });

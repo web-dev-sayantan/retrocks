@@ -37,6 +37,7 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     const result = this.storage.mutate(id, hash, command);
     if (!result.ok) return result;
     this.broadcastRoom(result.room);
+    if (result.room.closedAt !== undefined) await this.ctx.storage.setAlarm(result.room.expiresAt);
     return { ok: true as const, room: projectPokerRoom(result.room, hash) };
   }
 
@@ -67,20 +68,25 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     if (!room) return new Response(null, { status: 404 });
 
     const hash = request.headers.get(POKER_LIVE_VIEWER_HEADER);
-    const participant = hash && pokerParticipant(room, hash);
-    if (!hash || !participant) return new Response(null, { status: 403 });
+    if (!hash) return new Response(null, { status: 403 });
+    const participant = pokerParticipant(room, hash);
+    if (room.closedAt === undefined && !participant) return new Response(null, { status: 403 });
 
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ hash, participantId: participant.id, lastSeenAt: Date.now() } satisfies Attachment);
+    if (participant) {
+      server.serializeAttachment({ hash, participantId: participant.id, lastSeenAt: Date.now() } satisfies Attachment);
+    }
     this.send(server, { type: 'room:snapshot', room: projectPokerRoom(room, hash) });
-    this.broadcastPresence();
+    if (room.closedAt !== undefined) server.close(1000, 'Room closed');
+    else this.broadcastPresence();
     return new Response(null, { status: 101, webSocket: client });
   }
 
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
     if (message !== 'ping') return;
-    const attachment = socket.deserializeAttachment() as Attachment;
+    const attachment = socket.deserializeAttachment() as Attachment | null;
+    if (!attachment) return;
     const now = Date.now();
     if (now - attachment.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
       socket.close(1001, 'Live connection timed out');
@@ -122,7 +128,8 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     const now = Date.now();
     for (const socket of this.ctx.getWebSockets()) {
       if (socket === excluded || socket.readyState !== WebSocket.OPEN) continue;
-      const attachment = socket.deserializeAttachment() as Attachment;
+      const attachment = socket.deserializeAttachment() as Attachment | null;
+      if (!attachment) continue;
       if (now - attachment.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
         socket.close(1001, 'Live connection timed out');
         continue;
@@ -135,10 +142,17 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   private broadcastRoom(room: StoredPokerRoom): void {
     for (const { socket, attachment } of this.connections()) {
       this.send(socket, { type: 'room:snapshot', room: projectPokerRoom(room, attachment.hash) });
+      if (room.closedAt !== undefined) {
+        socket.serializeAttachment(null);
+        socket.close(1000, 'Room closed');
+      }
     }
   }
 
   private broadcastPresence(excluded?: WebSocket): void {
+    const id = this.ctx.id.name;
+    const room = id ? this.storage.snapshot(id) : null;
+    if (!room || room.closedAt !== undefined) return;
     const active = this.connections(excluded);
     const online = [...new Set(active.map(({ attachment }) => attachment.participantId))];
     for (const { socket } of active) this.send(socket, { type: 'room:presence', online });
