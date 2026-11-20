@@ -1,4 +1,3 @@
-import { Toggle, ToggleGroup } from '@ui-sdk/solid/toggle';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Flag } from 'lucide';
 import {
@@ -8,6 +7,7 @@ import {
   createMemo,
   createSignal,
 } from 'solid-js';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 
 import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
@@ -122,7 +122,7 @@ function ActionItemRow(props: {
             disabled={!props.canEdit || pendingDone() !== null}
             aria-label={`Mark ${props.card.content} as Done`}
             onChange={(event) => void changeDone(event.currentTarget.checked)}
-            class="size-5 cursor-inherit rounded border-border accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
+            class="size-5 cursor-inherit rounded border-border accent-accent board-focus-ring disabled:opacity-50"
           />
         </label>
         <div class="min-w-0 flex-1 space-y-1.5">
@@ -199,8 +199,6 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   let contentEl: HTMLDivElement | undefined;
   const [filter, setFilter] = createSignal<ActionItemFilter>('all');
   const [copyStatus, setCopyStatus] = createSignal('');
-  const selectedFilter = createMemo(() => [filter()]);
-  const activeFilterIndex = createMemo(() => FILTERS.findIndex((option) => option.value === filter()));
 
   // While the drawer is open its layer outranks the paused page, so the
   // same "a" that opened it closes it here.
@@ -289,34 +287,32 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
         </BoardOverlayHeader>
 
         <div class="border-b border-border px-4 py-2 sm:px-5">
-          <ToggleGroup<ActionItemFilter>
+          <SegmentedControl<ActionItemFilter>
             aria-label="Filter Action Items"
-            value={selectedFilter()}
-            deselectable={false}
+            value={filter()}
             onValueChange={(next) => {
-              if (next[0]) setFilter(next[0]);
+              if (next) setFilter(next);
             }}
-            class="segmented-track relative grid w-full max-w-xs grid-cols-3 rounded-xl border border-border/75 p-1"
+            class="segmented-track relative isolate grid w-full max-w-xs grid-cols-3 rounded-xl border border-border/75 p-1"
           >
-            <span
+            <SegmentedControlIndicator
               aria-hidden="true"
-              class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
-              style={{ '--seg-count': String(FILTERS.length), '--seg-index': String(activeFilterIndex()) }}
+              class="segmented-thumb pointer-events-none rounded-lg"
             />
             <For each={FILTERS}>
               {(option) => (
-                <Toggle
+                <SegmentedControlItem
                   value={option.value}
                   class={[
-                    'spring-press relative min-h-11 cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-pressed:text-text sm:min-h-8 sm:text-[13px]',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'spring-press relative board-touch-target cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-checked:text-text sm:min-h-8 sm:text-[13px]',
+                    'board-focus-ring',
                   ]}
                 >
                   {option.label} ({counts[option.value]()})
-                </Toggle>
+                </SegmentedControlItem>
               )}
             </For>
-          </ToggleGroup>
+          </SegmentedControl>
         </div>
 
         <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
@@ -351,7 +347,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
             class={[
               'inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-9',
               'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+              'board-focus-ring',
             ]}
           >
             Copy as Markdown Checklist

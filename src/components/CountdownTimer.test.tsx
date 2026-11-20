@@ -158,9 +158,9 @@ describe('Board Countdown Timer', () => {
       expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toHaveFocus();
       // While the popover is open, its layer owns "t": exactly one listing for it.
       expect(shortcuts.list().filter((entry) => entry.keys === 't')).toHaveLength(1);
-      fireEvent.click(view.getByRole('button', { name: '10m' }));
+      fireEvent.click(view.getByRole('radio', { name: '10m' }));
       flush();
-      expect(view.getByRole('spinbutton', { name: 'Minutes' })).toHaveValue(10);
+      expect(view.getByRole('textbox', { name: 'Minutes' })).toHaveValue('10');
       fireEvent.click(view.getByRole('button', { name: 'Start' }));
       await Promise.resolve();
       await Promise.resolve();
@@ -353,7 +353,7 @@ describe('Board Countdown Timer', () => {
           sendSnapshot(board, SERVER_TIME);
 
           const trigger = view.getByRole('button', { name: 'Countdown Timer' });
-          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9', 'min-w-[5.75rem]');
+          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'board-touch-target', 'min-w-[5.75rem]');
           expect(trigger).toHaveAttribute('data-timer-state', 'idle');
 
           // Transition to running

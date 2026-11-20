@@ -1,5 +1,6 @@
-import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { Textarea } from '@ui-sdk/solid/textarea';
 import {
   Check,
   ChevronLeft,
@@ -34,6 +35,7 @@ import {
 import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
+import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from '../lib/board-session';
@@ -141,24 +143,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     },
   );
 
-  createEffect(
-    () => cardDraft(),
-    (draft) => {
-      if (!composerEl) return;
-      if (draft.length === 0) {
-        composerEl.style.height = '';
-        return;
-      }
-      if (typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content')) {
-        return;
-      }
-      if (composerEl.scrollHeight > 0) {
-        composerEl.style.height = 'auto';
-        composerEl.style.height = `${Math.min(composerEl.scrollHeight, 144)}px`;
-      }
-    },
-  );
-
   function canManageGroup(group: CardGroupDTO): boolean {
     return props.canGroupCards && areAllGroupCardsMine(props, group, props.view.cards);
   }
@@ -186,10 +170,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         setCardError(error);
         if (error === null) {
           setCardDraft('');
-          if (composerEl) {
-            composerEl.value = '';
-            composerEl.style.height = '';
-          }
+          if (composerEl) composerEl.value = '';
         }
       }
     } finally {
@@ -409,7 +390,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     title="Click to rename Column"
                     class={[
                       'min-h-11 w-full cursor-pointer rounded-sm text-left wrap-anywhere hover:underline sm:min-h-7',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {props.view.column.title}
@@ -456,27 +437,15 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     class={[
                       'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-lg sm:border-transparent sm:bg-transparent',
                       'transition-colors hover:bg-surface/80 hover:text-text data-open:bg-surface data-open:text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" strokeWidth={1.9} />
                   </MenuTrigger>
 
-                  <MenuContent
-                    side="bottom"
-                    align="end"
-                    sideOffset={6}
-                    collisionPadding={12}
+                  <BoardMenuContent
                     finalFocus={isRenaming() ? 'none' : undefined}
-                    render={(contentProps) => (
-                      <div
-                        {...contentProps}
-                        aria-labelledby={undefined}
-                        aria-label={`Options for ${props.view.column.title}`}
-                        data-board-overlay="true"
-                        data-print-hide="true"
-                      />
-                    )}
+                    aria-label={`Options for ${props.view.column.title}`}
                     class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg"
                   >
                     <MenuItem
@@ -564,7 +533,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
                       <span>Delete column</span>
                     </MenuItem>
-                  </MenuContent>
+                  </BoardMenuContent>
                 </Menu>
               </div>
             </Show>
@@ -583,16 +552,17 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 : 'border-border/85',
             ]}
           >
-            <textarea
+            <Textarea
               ref={composerEl}
+              autoResize
               aria-label={`Add card to ${props.view.column.title}`}
               placeholder="+ Add Card"
               title="Enter to add · Shift+Enter for new line"
               value={cardDraft()}
               maxlength={MAX_CARD_CONTENT_LENGTH}
               rows={1}
-              onInput={(e) => {
-                setCardDraft(e.currentTarget.value);
+              onValueChange={(value) => {
+                setCardDraft(value);
                 setCardError(null);
               }}
               onKeyDown={handleComposerKeyDown}
@@ -615,7 +585,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
               onClick={() => void submitNewCard()}
               class={[
                 'spring-press mb-0.5 inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-lg px-2.5 text-xs font-semibold transition-colors',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                'board-focus-ring',
                 cardDraft().trim().length > 0 && !isCreatingCard()
                   ? 'bg-accent text-accent-contrast hover:opacity-90'
                   : 'bg-surface-subtle text-text-muted disabled:cursor-not-allowed disabled:opacity-55',
@@ -661,7 +631,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   class={[
                     'spring-press mt-2.5 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
                     'transition-colors hover:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   Reset filters

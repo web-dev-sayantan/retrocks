@@ -76,7 +76,7 @@ export default function CardReactions(props: CardReactionsProps) {
             onClick={() => void handleToggle(item.emoji)}
             class={[
               'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors sm:min-h-6 sm:min-w-0',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-60',
+              'board-focus-ring disabled:cursor-not-allowed disabled:opacity-60',
               {
                 'border-accent bg-accent/10 font-medium text-text': item.isMine,
                 'border-border bg-surface-subtle text-text-muted hover:border-text-muted/50 hover:text-text':
@@ -106,7 +106,7 @@ export default function CardReactions(props: CardReactionsProps) {
             class={[
               'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
               'transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text data-disabled:cursor-not-allowed data-disabled:opacity-60',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+              'board-focus-ring',
             ]}
           >
             <LucideIcon icon={SmilePlus} />
@@ -135,7 +135,7 @@ export default function CardReactions(props: CardReactionsProps) {
                     }}
                     class={[
                       'inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-base transition-colors sm:size-7 sm:text-sm',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                       {
                         'bg-accent/15 ring-1 ring-accent': props.myReactions.includes(emoji),
                         'hover:bg-surface-subtle': !props.myReactions.includes(emoji),

@@ -8,7 +8,7 @@ import LucideIcon from './LucideIcon';
 
 const buttonClass = [
   'spring-press inline-flex h-full min-w-11 cursor-pointer items-center justify-center text-text sm:min-w-7',
-  'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+  'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:z-10 board-focus-ring',
   'disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-50',
 ];
 

@@ -1,6 +1,6 @@
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuItem, MenuSub, MenuSubTrigger, MenuTrigger } from '@ui-sdk/solid/menu';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
-import { Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
+import { ChevronRight, Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
@@ -23,11 +23,11 @@ import {
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
-import { getEnabledMenuItems } from '../lib/menu-keyboard';
 import { isOptimisticId } from '../lib/optimistic-ids';
 import { formatRelativeTime } from '../lib/recent-boards';
 import type { BoardMutations } from '../lib/board-session';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import BoardMenuContent from './BoardMenuContent';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
@@ -88,9 +88,8 @@ export default function CardItem(props: CardItemProps) {
   const actionDone = () => actionDoneDraft() ?? props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
 
-  const [menuPage, setMenuPage] = createSignal<'actions' | 'move' | 'group' | null>(null);
+  const [menuOpen, setMenuOpen] = createSignal(false);
   let menuTrigger: HTMLButtonElement | undefined;
-  let menu: HTMLDivElement | undefined;
   const pendingAction = createMemo(() => {
     if (isMoving()) return 'Moving Card…';
     if (isGrouping()) return 'Grouping Card…';
@@ -139,7 +138,7 @@ export default function CardItem(props: CardItemProps) {
       if (redacted) {
         setActionError('');
         cancelEdit();
-        setMenuPage(null);
+        setMenuOpen(false);
       } else {
         clearPeekTimer();
         setPeekWhisper(null);
@@ -155,19 +154,10 @@ export default function CardItem(props: CardItemProps) {
     (locked) => {
       if (locked) {
         cancelEdit();
-        setMenuPage(null);
+        setMenuOpen(false);
       }
     },
   );
-
-  createEffect(menuPage, (page) => {
-    if (page) getEnabledMenuItems(menu)[0]?.focus({ preventScroll: true });
-  });
-
-  function closeMenu(): void {
-    setMenuPage(null);
-    menuTrigger?.focus();
-  }
 
   const canManage = createMemo(() => canManageCard(props, props.card));
 
@@ -277,7 +267,7 @@ export default function CardItem(props: CardItemProps) {
     textSave.resetError();
     setHasText(props.card.content.trim().length > 0);
     setTextLength(props.card.content.length);
-    setMenuPage(null);
+    setMenuOpen(false);
     cardEdit.start(props.card.id);
   }
 
@@ -339,7 +329,6 @@ export default function CardItem(props: CardItemProps) {
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    closeMenu();
     await runCardAction(
       () => props.actions.moveCard(props.card.id, targetColumnId),
       'Could not move the Card. Try again.',
@@ -353,7 +342,6 @@ export default function CardItem(props: CardItemProps) {
     targetId: string,
   ): Promise<void> {
     if (isGrouping()) return;
-    if (menuPage()) closeMenu();
     await runCardAction(
       () => props.actions.groupCard(cardId, targetType, targetId),
       'Could not group the Card. Try again.',
@@ -506,7 +494,7 @@ export default function CardItem(props: CardItemProps) {
                     class={[
                       'min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     Cancel
@@ -518,7 +506,7 @@ export default function CardItem(props: CardItemProps) {
                     class={[
                       'min-h-11 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {textSave.isSaving() ? 'Saving…' : 'Save'}
@@ -616,7 +604,7 @@ export default function CardItem(props: CardItemProps) {
                   class={[
                     'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 text-[11px] font-medium text-text sm:min-h-7 sm:min-w-0',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   <LucideIcon icon={MessageSquare} class="size-3.5" />
@@ -631,7 +619,7 @@ export default function CardItem(props: CardItemProps) {
                 class={[
                   'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'board-focus-ring',
                 ]}
               >
                 <LucideIcon icon={PanelRightOpen} />
@@ -639,117 +627,103 @@ export default function CardItem(props: CardItemProps) {
 
               <Show when={!props.isLocked}>
                 <Menu
-                  open={menuPage() !== null}
+                  open={menuOpen()}
                   modal={false}
-                  onOpenChange={(open) => setMenuPage(open ? 'actions' : null)}
+                  onOpenChange={(open) => setMenuOpen(open)}
                 >
                   <MenuTrigger
                     ref={menuTrigger}
                     aria-label="Card actions"
                     title="Card actions"
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" />
                   </MenuTrigger>
-                  <MenuContent
-                    ref={menu}
-                    side="bottom"
-                    align="end"
-                    sideOffset={6}
-                    collisionPadding={12}
+                  <BoardMenuContent
+                    aria-label="Card actions"
                     finalFocus={isEditing() ? 'none' : undefined}
-                    render={(contentProps) => (
-                      <div
-                        {...contentProps}
-                        aria-labelledby={undefined}
-                        aria-label={menuPage() === 'move' ? 'Move Card to Column' : menuPage() === 'group' ? 'Group Card with' : 'Card actions'}
-                        data-board-overlay={menuPage() ? 'true' : undefined}
-                        data-print-hide="true"
-                      />
-                    )}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ArrowLeft' && menuPage() !== 'actions') {
-                        event.preventDefault();
-                        setMenuPage('actions');
-                      }
-                    }}
                     class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                   >
-                    <Show when={menuPage() === 'actions'}>
-                      <Show when={canManage()}>
-                        <MenuItem value="edit" class={menuItemClass} onSelect={startEdit}>
-                          <PencilIcon /> Edit Card
-                        </MenuItem>
-                      </Show>
-                      <Show when={canMove()}>
-                        <MenuItem value="move" class={menuItemClass} disabled={isMoving()} closeOnSelect={false} onSelect={() => setMenuPage('move')}>
+                    <Show when={canManage()}>
+                      <MenuItem value="edit" class={menuItemClass} onSelect={startEdit}>
+                        <PencilIcon /> Edit Card
+                      </MenuItem>
+                    </Show>
+                    <Show when={canMove()}>
+                      <MenuSub>
+                        <MenuSubTrigger class={menuItemClass} disabled={isMoving()}>
                           <ArrowRightLeftIcon /> Move to…
-                        </MenuItem>
-                      </Show>
-                      <Show when={canGroup()}>
-                        <MenuItem value="group" class={menuItemClass} disabled={isGrouping()} closeOnSelect={false} onSelect={() => setMenuPage('group')}>
-                          <PlusIcon /> Group with…
-                        </MenuItem>
-                      </Show>
-                      <Show when={props.card.groupId !== null && props.canUngroup}>
-                        <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
-                          Ungroup Card
-                        </MenuItem>
-                      </Show>
-                      <MenuItem
-                        value="flag"
-                        class={menuItemClass}
-                        disabled={isUpdatingAction()}
-                        onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
-                      >
-                        <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
-                      </MenuItem>
-                      <Show when={canManage()}>
-                        <MenuItem
-                          value="delete"
-                          class={menuItemClass}
-                          disabled={isDeleting()}
-                          onSelect={() => {
-                            setActionError('');
-                            void handleDeleteCard();
-                          }}
+                          <LucideIcon icon={ChevronRight} class="ml-auto size-3.5 text-text-muted" />
+                        </MenuSubTrigger>
+                        <BoardMenuContent
+                          aria-label="Move Card to Column"
+                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                         >
-                          <TrashIcon /> Delete Card
-                        </MenuItem>
-                      </Show>
+                          <For each={otherColumns()}>
+                            {(target) => (
+                              <MenuItem value={target.id} class={menuItemClass} onSelect={() => { void handleSelectMoveTarget(target.id); }}>
+                                <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
+                                <span class="min-w-0 wrap-anywhere">{target.title}</span>
+                              </MenuItem>
+                            )}
+                          </For>
+                        </BoardMenuContent>
+                      </MenuSub>
                     </Show>
-                    <Show when={menuPage() === 'move'}>
-                      <For each={otherColumns()}>
-                        {(target) => (
-                          <MenuItem value={target.id} class={menuItemClass} onSelect={() => { void handleSelectMoveTarget(target.id); }}>
-                            <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
-                            <span class="min-w-0 wrap-anywhere">{target.title}</span>
-                          </MenuItem>
-                        )}
-                      </For>
+                    <Show when={canGroup()}>
+                      <MenuSub>
+                        <MenuSubTrigger class={menuItemClass} disabled={isGrouping()}>
+                          <PlusIcon /> Group with…
+                          <LucideIcon icon={ChevronRight} class="ml-auto size-3.5 text-text-muted" />
+                        </MenuSubTrigger>
+                        <BoardMenuContent
+                          aria-label="Group Card with"
+                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                        >
+                          <For each={groupTargets().cards}>
+                            {(target) => (
+                              <MenuItem value={`card:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'card', target.id); }}>
+                                <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.content}</span>
+                              </MenuItem>
+                            )}
+                          </For>
+                          <For each={groupTargets().groups}>
+                            {(target) => (
+                              <MenuItem value={`group:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'group', target.id); }}>
+                                <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.title || 'Card Group'}</span>
+                              </MenuItem>
+                            )}
+                          </For>
+                        </BoardMenuContent>
+                      </MenuSub>
                     </Show>
-                    <Show when={menuPage() === 'group'}>
-                      <For each={groupTargets().cards}>
-                        {(target) => (
-                          <MenuItem value={`card:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'card', target.id); }}>
-                            <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.content}</span>
-                          </MenuItem>
-                        )}
-                      </For>
-                      <For each={groupTargets().groups}>
-                        {(target) => (
-                          <MenuItem value={`group:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'group', target.id); }}>
-                            <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.title || 'Card Group'}</span>
-                          </MenuItem>
-                        )}
-                      </For>
-                    </Show>
-                    <Show when={menuPage() === 'move' || menuPage() === 'group'}>
-                      <MenuItem value="back" class={menuItemClass} closeOnSelect={false} onSelect={() => setMenuPage('actions')}>
-                        Back to Card actions
+                    <Show when={props.card.groupId !== null && props.canUngroup}>
+                      <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
+                        Ungroup Card
                       </MenuItem>
                     </Show>
-                  </MenuContent>
+                    <MenuItem
+                      value="flag"
+                      class={menuItemClass}
+                      disabled={isUpdatingAction()}
+                      onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
+                    >
+                      <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
+                    </MenuItem>
+                    <Show when={canManage()}>
+                      <MenuItem
+                        value="delete"
+                        class={menuItemClass}
+                        disabled={isDeleting()}
+                        onSelect={() => {
+                          setActionError('');
+                          void handleDeleteCard();
+                        }}
+                      >
+                        <TrashIcon /> Delete Card
+                      </MenuItem>
+                    </Show>
+                  </BoardMenuContent>
                 </Menu>
               </Show>
             </div>

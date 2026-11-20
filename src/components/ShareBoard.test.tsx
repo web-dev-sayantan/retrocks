@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
+import { ToastRegion, toast } from '@ui-sdk/solid/toast';
 import { flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -29,12 +30,14 @@ function renderShare(props: { isFacilitator: boolean }) {
     <>
       <ShareBoard boardId="board_0123456789abcdef" isFacilitator={props.isFacilitator} />
       <BoardConfirmDialog />
+      <ToastRegion />
     </>
   ));
 }
 
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   vi.mocked(getFacilitatorLink).mockClear();
   vi.mocked(rotateFacilitatorLink).mockClear();
 });
@@ -103,8 +106,9 @@ describe('<ShareBoard />', () => {
 
     expect(rotateFacilitatorLink).toHaveBeenCalledWith('board_0123456789abcdef');
     expect(view.queryByRole('alertdialog')).toBeNull();
+    // The rotation confirmation arrives as a toast.
     await waitFor(() =>
-      expect(dialog.getByText('Co-Facilitator Link rotated.')).toBeInTheDocument(),
+      expect(view.getByText('Co-Facilitator Link rotated.')).toBeVisible(),
     );
     expect(dialog.getByRole('textbox', { name: 'Co-Facilitator Link' })).toHaveValue(
       new URL('/claim?token=new', window.location.origin).href,

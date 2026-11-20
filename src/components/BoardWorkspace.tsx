@@ -7,13 +7,15 @@ import {
 } from '@ui-sdk/solid/dialog';
 import {
   Menu,
-  MenuContent,
   MenuItem,
   MenuSeparator,
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
+import { Radio, RadioGroup } from '@ui-sdk/solid/radio';
+import { ScrollArea, ScrollAreaContent, ScrollAreaViewport } from '@ui-sdk/solid/scroll-area';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { Textarea } from '@ui-sdk/solid/textarea';
 import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
   Check,
@@ -80,11 +82,12 @@ import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
 import { createDoubleTap } from '../lib/double-tap';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
+import BoardMenuContent from './BoardMenuContent';
 import BoardVotingSettings from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
-import ExportBoardMenu, { type ExportFeedback } from './ExportBoardMenu';
+import ExportBoardMenu from './ExportBoardMenu';
 import { CloseIcon } from './Icons';
 import LucideIcon from './LucideIcon';
 import PageMessage from './PageMessage';
@@ -107,7 +110,7 @@ function BoardHomeLink(props: { href: string; class: string }) {
       class={[
         'spring-press min-h-11 min-w-11 w-fit items-center justify-center gap-2 rounded-full px-2 text-sm font-semibold tracking-tight text-text sm:min-h-10 sm:min-w-10 sm:pr-3',
         'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+        'board-focus-ring',
         props.class,
       ]}
     >
@@ -185,7 +188,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // More disclosure and Board Settings
   const [boardMenuOpen, setBoardMenuOpen] = createSignal(false);
-  const [exportFeedback, setExportFeedback] = createSignal<ExportFeedback | null>(null);
   const [isPrinting, setIsPrinting] = createSignal(false);
   onSettled(() => {
     function preparePrint(): void {
@@ -204,13 +206,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
   const [isBoardSettingsOpen, setIsBoardSettingsOpen] = createSignal(false);
   let boardMenuTriggerEl: HTMLButtonElement | undefined;
-  let boardMenuEl: HTMLDivElement | undefined;
-
-  createEffect(boardMenuOpen, (isOpen) => {
-    if (isOpen && boardMenuEl && !boardMenuEl.contains(document.activeElement)) {
-      boardMenuEl.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
-    }
-  });
 
   function closeBoardMenu(restoreFocus: boolean): void {
     setBoardMenuOpen(false);
@@ -286,6 +281,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     createSignal(false);
   let swipeStart: { x: number; y: number; touchId: number } | undefined;
   let columnTabListEl: HTMLDivElement | undefined;
+  let columnTabViewportEl: HTMLDivElement | undefined;
   let mobileComposerBarEl: HTMLDivElement | undefined;
 
   // Desktop drag-and-drop Card state
@@ -704,33 +700,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  function updateColumnTabEdges(list: HTMLDivElement): void {
-    const offset = Math.abs(list.scrollLeft);
-    list.toggleAttribute('data-fade-start', offset > 1);
-    list.toggleAttribute('data-fade-end', offset < list.scrollWidth - list.clientWidth - 1);
-  }
-
-  createEffect(() => session.board()?.id, () => {
-    const list = columnTabListEl;
-    const track = list?.firstElementChild;
-    if (!list || !track) return;
-    updateColumnTabEdges(list);
-    const observer = new ResizeObserver(() => updateColumnTabEdges(list));
-    observer.observe(list);
-    observer.observe(track);
-    return () => observer.disconnect();
-  });
-
   createEffect(resolvedActiveColumnIndex, (index) => {
-    const list = columnTabListEl;
-    const tab = list?.querySelectorAll<HTMLElement>('[role=tab]')[index];
-    if (!list || !tab) return;
-    const rail = list.getBoundingClientRect();
+    const viewport = columnTabViewportEl;
+    const tab = columnTabListEl?.querySelectorAll<HTMLElement>('[role=tab]')[index];
+    if (!viewport || !tab) return;
+    const rail = viewport.getBoundingClientRect();
     const item = tab.getBoundingClientRect();
     const offset = item.left < rail.left ? item.left - rail.left - 12
       : item.right > rail.right ? item.right - rail.right + 12 : 0;
-    if (offset !== 0) list.scrollLeft += offset;
-    updateColumnTabEdges(list);
+    if (offset !== 0) viewport.scrollLeft += offset;
   });
 
   function handleTouchStart(event: TouchEvent): void {
@@ -796,7 +774,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   class={[
                     'spring-press inline-flex min-h-10 items-center gap-2 rounded-full pl-2 pr-3 text-sm font-semibold tracking-tight text-text',
                     'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   <span
@@ -911,7 +889,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         class={[
                           'spring-press hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-muted sm:inline-flex',
                           'transition-colors hover:bg-surface-subtle/90 hover:text-text',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                          'board-focus-ring',
                         ]}
                       >
                         <LucideIcon icon={Pencil} class="size-3.5" strokeWidth={1.85} />
@@ -955,8 +933,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       disabled={session.isChangingPrivateMode()}
                       onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
                       class={[
-                        'spring-press hidden min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9 sm:min-h-9',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                        'spring-press hidden board-touch-target min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9',
+                        'board-focus-ring disabled:cursor-not-allowed disabled:opacity-50',
                         board().isBlurred
                           ? 'border-transparent bg-accent sm:px-3.5 text-accent-contrast shadow-xs hover:opacity-92'
                           : 'border-border/80 bg-surface text-text hover:bg-surface-subtle',
@@ -985,9 +963,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         setIsActionItemsOpen(true);
                       }}
                       class={[
-                        'spring-press hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9 sm:min-h-9',
+                        'spring-press hidden board-touch-target min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9',
                         'hover:bg-surface-subtle active:bg-surface-subtle',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                        'board-focus-ring',
                       ]}
                     >
                       <LucideIcon icon={Flag} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />
@@ -1012,21 +990,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <MenuTrigger
                         ref={boardMenuTriggerEl}
                         aria-label="More board actions"
-                        class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle sm:h-9 sm:min-h-9"
+                        class="spring-press board-focus-ring inline-flex board-touch-target min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle sm:h-9"
                       >
                         <LucideIcon icon={Ellipsis} class="size-4 shrink-0" strokeWidth={1.9} />
                         <span class="hidden sm:inline">More</span>
                       </MenuTrigger>
 
-                      <MenuContent
-                        ref={boardMenuEl}
-                        finalFocus={isRenamingBoard() ? 'none' : undefined}
-                        side="bottom"
-                        align="end"
+                      <BoardMenuContent
                         sideOffset={8}
-                        collisionPadding={12}
+                        finalFocus={isRenamingBoard() ? 'none' : undefined}
                         aria-label="More board actions"
-                        data-board-overlay="true"
                         class="board-popover max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl p-1.5"
                       >
                         <MenuItem
@@ -1099,9 +1072,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         <ExportBoardMenu
                           board={board()}
                           onClose={() => closeBoardMenu(true)}
-                          onFeedback={setExportFeedback}
                         />
-                      </MenuContent>
+                      </BoardMenuContent>
                     </Menu>
                   </div>
                 </div>
@@ -1152,17 +1124,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <Show when={board().subtitle.length > 0}>
               <p class="board-masthead-subtitle mx-3 max-w-[65ch] sm:mx-0 wrap-anywhere text-sm leading-snug text-text-muted">{board().subtitle}</p>
             </Show>
-            <p
-              data-print-hide="true"
-              aria-live="polite"
-              aria-atomic="true"
-              class={[
-                'board-masthead-feedback mx-3 text-xs empty:sr-only sm:mx-0',
-                exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
-              ]}
-            >
-              {exportFeedback()?.message}
-            </p>
           </header>
 
           <Show when={canFacilitate(board())}>
@@ -1284,45 +1245,46 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 data-print-hide="true"
                 class="board-column-tabs min-w-0 sm:hidden"
               >
-                <TabsList
-                  ref={columnTabListEl}
-                  onScroll={(event) => updateColumnTabEdges(event.currentTarget)}
-                  aria-label="Select Column"
-                  class="scroll-edge-fade overflow-x-auto rounded-full bg-surface-subtle"
-                >
-                  <div class="flex w-max min-w-full items-center gap-0.5 py-0.5 pl-0.5 pr-2">
-                    <For each={view.columnViews}>
-                      {(bucket) => (
-                        <TabsTab
-                          value={bucket.column.id}
-                          title={bucket.column.title}
-                          render={(tabProps) => (
-                            <button
-                              {...tabProps}
-                              id={`column-tab-${bucket.column.id}`}
-                              aria-controls={`column-${bucket.column.id}`}
-                            />
-                          )}
-                          class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
-                        >
-                          <span
-                            aria-hidden="true"
-                            class={[
-                              'h-2 w-2 shrink-0 rounded-full',
-                              COLUMN_ACCENT_STYLES[bucket.column.accent].swatch,
-                            ]}
-                          />
-                          <span class="min-w-0 truncate text-left">{bucket.column.title}</span>
-                          <span class="text-xs text-text-muted tabular-nums">
-                            {view.hasActiveFilter
-                              ? `${bucket.visibleCardCount}/${bucket.column.cardCount}`
-                              : bucket.column.cardCount}
-                          </span>
-                        </TabsTab>
-                      )}
-                    </For>
-                  </div>
-                </TabsList>
+                <ScrollArea class="scroll-edge-fade w-full rounded-full bg-surface-subtle">
+                  <ScrollAreaViewport ref={columnTabViewportEl}>
+                    <ScrollAreaContent>
+                      <TabsList ref={columnTabListEl} aria-label="Select Column">
+                        <div class="flex w-max min-w-full items-center gap-0.5 py-0.5 pl-0.5 pr-2">
+                          <For each={view.columnViews}>
+                            {(bucket) => (
+                              <TabsTab
+                                value={bucket.column.id}
+                                title={bucket.column.title}
+                                render={(tabProps) => (
+                                  <button
+                                    {...tabProps}
+                                    id={`column-tab-${bucket.column.id}`}
+                                    aria-controls={`column-${bucket.column.id}`}
+                                  />
+                                )}
+                                class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  class={[
+                                    'h-2 w-2 shrink-0 rounded-full',
+                                    COLUMN_ACCENT_STYLES[bucket.column.accent].swatch,
+                                  ]}
+                                />
+                                <span class="min-w-0 truncate text-left">{bucket.column.title}</span>
+                                <span class="text-xs text-text-muted tabular-nums">
+                                  {view.hasActiveFilter
+                                    ? `${bucket.visibleCardCount}/${bucket.column.cardCount}`
+                                    : bucket.column.cardCount}
+                                </span>
+                              </TabsTab>
+                            )}
+                          </For>
+                        </div>
+                      </TabsList>
+                    </ScrollAreaContent>
+                  </ScrollAreaViewport>
+                </ScrollArea>
               </nav>
               <div
                 data-board-columns="true"
@@ -1371,7 +1333,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     class={[
                       'spring-press hidden w-fit shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-2xl border border-dashed border-border/85 bg-surface-subtle/25 px-3.5 py-2.5 text-[13px] font-medium text-text-muted',
                       'transition-colors hover:border-control/80 hover:bg-surface hover:text-text active:bg-surface-subtle sm:inline-flex sm:min-h-11',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                       getAddColumnSlotClass(board().columns.length),
                     ]}
                   >
@@ -1419,7 +1381,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
                 <DialogClose
                   aria-label="Close Add Column"
-                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
+                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text board-focus-ring sm:min-h-8 sm:min-w-8"
                 >
                   <LucideIcon icon={X} class="size-4" strokeWidth={2} />
                 </DialogClose>
@@ -1450,41 +1412,32 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span class="block text-xs font-medium text-text-muted">
                     Accent color
                   </span>
-                  <div class="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-8">
+                  <RadioGroup<ColumnAccent>
+                    class="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-8"
+                    value={newColumnAccent()}
+                    onValueChange={(accent) => {
+                      if (accent) setNewColumnAccent(accent);
+                    }}
+                  >
                     <For each={COLUMN_ACCENTS}>
                       {(accent) => (
-                        <button
-                          type="button"
+                        <Radio
+                          value={accent}
                           aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                          aria-pressed={
-                            newColumnAccent() === accent ? 'true' : 'false'
-                          }
-                          onClick={() => setNewColumnAccent(accent)}
-                          class={[
-                            'spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-9',
-                            {
-                              'border-border bg-surface-subtle':
-                                newColumnAccent() === accent,
-                              'border-transparent hover:bg-surface-subtle':
-                                newColumnAccent() !== accent,
-                            },
-                          ]}
+                          class="spring-press inline-flex board-touch-target cursor-pointer items-center justify-center rounded-lg border border-transparent transition-colors hover:bg-surface-subtle data-checked:border-border data-checked:bg-surface-subtle board-focus-ring"
                         >
                           <span
                             aria-hidden="true"
                             class={[
                               'size-4 rounded-full',
                               COLUMN_ACCENT_STYLES[accent].swatch,
-                              {
-                                'ring-2 ring-text ring-offset-2 ring-offset-surface':
-                                  newColumnAccent() === accent,
-                              },
+                              'data-checked:ring-2 data-checked:ring-text data-checked:ring-offset-2 data-checked:ring-offset-surface',
                             ]}
                           />
-                        </button>
+                        </Radio>
                       )}
                     </For>
-                  </div>
+                  </RadioGroup>
                 </div>
 
                 <label class="inline-flex min-h-11 cursor-pointer items-center gap-2.5 text-sm text-text-muted sm:min-h-9">
@@ -1503,7 +1456,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <button
                     type="button"
                     onClick={() => setIsAddingColumn(false)}
-                    class="spring-press min-h-11 cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text sm:min-h-9"
+                    class="spring-press board-touch-target cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text"
                   >
                     Cancel
                   </button>
@@ -1512,7 +1465,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     disabled={
                       session.isSavingColumn() || newColumnTitle().trim().length === 0
                     }
-                    class="spring-press min-h-11 cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                    class="spring-press board-touch-target cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {session.isSavingColumn() ? 'Adding…' : 'Add column'}
                   </button>
@@ -1577,19 +1530,20 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   {(error) => <p role="alert" class="mb-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
                 </Show>
                 <div class="flex items-end gap-2">
-                  <textarea
+                  <Textarea
                     ref={(el) => {
                       mobileComposerEl = el;
                     }}
+                    autoResize
                     aria-label={`Quick add card to ${targetCol().title}`}
                     placeholder={`Add to ${targetCol().title}…`}
                     value={mobileDrafts[targetCol().id]?.content ?? ''}
                     maxlength={MAX_CARD_CONTENT_LENGTH}
                     rows={1}
-                    onInput={(e) => updateMobileDraft(targetCol().id, e.currentTarget.value)}
+                    onValueChange={(value) => updateMobileDraft(targetCol().id, value)}
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
-                      'min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
+                      'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
                       'placeholder:text-text-muted focus:border-focus focus:outline-none',
                     ]}
                   />
@@ -1603,7 +1557,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     class={[
                       'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent px-4 text-xs font-medium text-accent-contrast',
                       'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {isSubmittingMobileCard() ? '...' : 'Add'}

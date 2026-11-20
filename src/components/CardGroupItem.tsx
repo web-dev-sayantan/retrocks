@@ -1,5 +1,6 @@
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/solid/collapsible';
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
@@ -14,6 +15,7 @@ import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import type { BoardMutations } from '../lib/board-session';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from '../lib/board-session';
@@ -55,7 +57,7 @@ export interface CardGroupItemProps {
   onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
 }
 
-const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7';
+const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface board-focus-ring disabled:opacity-50 sm:size-7';
 const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibold text-ellipsis text-text';
 
 export default function CardGroupItem(props: CardGroupItemProps) {
@@ -214,17 +216,24 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   }
 
   return (
-    <article
-      data-group-id={props.group.id}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      class={[
-        'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
-        {
-          'ring-2 ring-focus/70': isDropActive(),
-        },
-      ]}
+    <Collapsible
+      open={expanded()}
+      onOpenChange={setExpanded}
+      render={(rootProps) => (
+        <article
+          {...rootProps}
+          data-group-id={props.group.id}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          class={[
+            'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
+            {
+              'ring-2 ring-focus/70': isDropActive(),
+            },
+          ]}
+        />
+      )}
     >
       <div
         draggable={canManageGroup() && !props.isLocked ? 'true' : 'false'}
@@ -239,21 +248,16 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         ]}
       >
         <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5">
-          <button
-            type="button"
+          <CollapsibleTrigger
             data-print-hide="true"
             aria-label={expanded() ? 'Collapse Card Group' : 'Expand Card Group'}
-            aria-expanded={expanded() ? 'true' : 'false'}
-            onClick={() => setExpanded((prev) => !prev)}
             class={actionButtonClass}
           >
             <LucideIcon
               icon={ChevronRight}
-              class={expanded()
-                ? 'spring-chevron size-4 rotate-90 motion-reduce:transition-none'
-                : 'spring-chevron size-4 motion-reduce:transition-none'}
+              class="spring-chevron size-4 data-open:rotate-90 motion-reduce:transition-none"
             />
-          </button>
+          </CollapsibleTrigger>
 
           <Show
             when={!isRenaming() || !canManageGroup()}
@@ -277,7 +281,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   aria-label="Save Card Group title"
                   disabled={titleSave.isSaving() || !hasTitleText()}
                   onClick={() => groupEdit.end()}
-                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7"
+                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 board-focus-ring disabled:opacity-50 sm:size-7"
                 >
                   <LucideIcon icon={Check} />
                 </button>
@@ -314,7 +318,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   aria-label={`${groupTitle()} — Edit Card Group title`}
                   title={groupTitle()}
                   onClick={startRename}
-                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:py-1"
+                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline board-focus-ring sm:py-1"
                 >
                   <span class={titleTextClass}>{groupTitle()}</span>
                 </button>
@@ -351,19 +355,8 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                     >
                       <LucideIcon icon={ArrowRightLeft} />
                     </MenuTrigger>
-                    <MenuContent
-                      side="bottom"
-                      align="end"
-                      sideOffset={6}
-                      collisionPadding={12}
-                      render={(contentProps) => (
-                        <div
-                          {...contentProps}
-                          aria-labelledby={undefined}
-                          aria-label="Move Card Group to Column"
-                          data-board-overlay={moveMenuOpen() ? 'true' : undefined}
-                        />
-                      )}
+                    <BoardMenuContent
+                      aria-label="Move Card Group to Column"
                       class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                     >
                       <For each={otherColumns()}>
@@ -384,7 +377,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                           </MenuItem>
                         )}
                       </For>
-                    </MenuContent>
+                    </BoardMenuContent>
                   </Menu>
                 </Show>
 
@@ -425,8 +418,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         </Show>
       </div>
 
-      <Show when={expanded()}>
-        <div class="mt-1.5 flex flex-col gap-1.5">
+        <CollapsiblePanel class="mt-1.5 flex flex-col gap-1.5">
           <For each={props.cards}>
             {(card, cardIndex) => (
               <CardItem
@@ -451,8 +443,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
               />
             )}
           </For>
-        </div>
-      </Show>
-    </article>
+        </CollapsiblePanel>
+    </Collapsible>
   );
 }

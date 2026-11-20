@@ -116,24 +116,25 @@ describe('<ActionItemsDrawer />', () => {
       ));
       flush();
 
-      const filters = within(view.getByRole('group', { name: 'Filter Action Items' }));
-      const all = filters.getByRole('button', { name: 'All (2)' });
-      const open = filters.getByRole('button', { name: 'Open (1)' });
-      const done = filters.getByRole('button', { name: 'Done (1)' });
+      const filters = within(view.getByRole('radiogroup', { name: 'Filter Action Items' }));
+      const all = filters.getByRole('radio', { name: 'All (2)' });
+      const open = filters.getByRole('radio', { name: 'Open (1)' });
+      const done = filters.getByRole('radio', { name: 'Done (1)' });
       all.focus();
+      // Arrows move and check, as in any radio group.
       fireEvent.keyDown(all, { key: 'ArrowRight' });
       flush();
       expect(open).toHaveFocus();
+      expect(open).toHaveAttribute('aria-checked', 'true');
+      expect(view.queryByText('Write runbook')).not.toBeInTheDocument();
       fireEvent.keyDown(open, { key: 'ArrowRight' });
       flush();
       expect(done).toHaveFocus();
       fireEvent.keyDown(done, { key: 'ArrowLeft' });
       flush();
       expect(open).toHaveFocus();
-      fireEvent.click(open);
-      flush();
-      expect(open).toHaveAttribute('aria-pressed', 'true');
-      expect(view.queryByText('Write runbook')).not.toBeInTheDocument();
+      expect(view.getByText('Ship the API')).toBeInTheDocument();
+      expect(open).toHaveAttribute('aria-checked', 'true');
     });
     expectNoDiagnostics(artifact);
   });
@@ -160,8 +161,8 @@ describe('<ActionItemsDrawer />', () => {
     expect(drawer.getByText('Ship the API')).toBeInTheDocument();
     expect(drawer.getByText('Write runbook')).toBeInTheDocument();
     expect(drawer.queryByText('Regular card')).not.toBeInTheDocument();
-    expect(drawer.getByRole('button', { name: 'All (2)' })).toHaveAttribute(
-      'aria-pressed',
+    expect(drawer.getByRole('radio', { name: 'All (2)' })).toHaveAttribute(
+      'aria-checked',
       'true',
     );
 
@@ -181,12 +182,12 @@ describe('<ActionItemsDrawer />', () => {
       actionDone: true,
     });
 
-    fireEvent.click(drawer.getByRole('button', { name: 'Open (1)' }));
+    fireEvent.click(drawer.getByRole('radio', { name: 'Open (1)' }));
     flush();
     expect(drawer.getByText('Ship the API')).toBeInTheDocument();
     expect(drawer.queryByText('Write runbook')).not.toBeInTheDocument();
 
-    fireEvent.click(drawer.getByRole('button', { name: 'Done (1)' }));
+    fireEvent.click(drawer.getByRole('radio', { name: 'Done (1)' }));
     flush();
     expect(drawer.queryByText('Ship the API')).not.toBeInTheDocument();
     expect(drawer.getByText('Write runbook')).toBeInTheDocument();
@@ -330,7 +331,7 @@ describe('<ActionItemsDrawer />', () => {
       );
       expect(getByText('Copied 2 Action Items')).toBeInTheDocument();
 
-      fireEvent.click(getByRole('button', { name: 'Open (1)' }));
+      fireEvent.click(getByRole('radio', { name: 'Open (1)' }));
       flush();
       fireEvent.click(
         getByRole('button', { name: 'Copy as Markdown Checklist' }),

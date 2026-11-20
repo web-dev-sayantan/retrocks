@@ -1,5 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
+import { ToastRegion, toast } from '@ui-sdk/solid/toast';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -156,6 +158,7 @@ describe('<ThemeToggle />', () => {
           <>
             <ThemeToggle />
             <ThemeToggle menuItem />
+            <ToastRegion />
           </>
         ));
         flush();
@@ -177,7 +180,11 @@ describe('<ThemeToggle />', () => {
 
         clickTheme(menuItem);
         const message = /(?:Retro 1984|Parchment) unlocked\. Select the theme toggle again to exit\./;
-        expect(screen.getByText(message)).toBeVisible();
+        // The unlock lands in the toast region, visible to sighted users.
+        expect(screen.getByText(message, { selector: '[data-slot="toast-region"] *' })).toBeVisible();
+        // …and in the shared polite announcer, for screen readers.
+        vi.advanceTimersByTime(210);
+        flush();
         expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
         expect(screen.getByRole('status')).toHaveTextContent(message);
         expect(button).toHaveAccessibleName(/^Exit (Retro 1984|Parchment) theme$/);
@@ -185,13 +192,17 @@ describe('<ThemeToggle />', () => {
 
         vi.advanceTimersByTime(2_800);
         flush();
-        expect(screen.queryByText(message)).not.toBeInTheDocument();
+        expect(
+          // The polite announcer keeps its last text; the toast is what leaves.
+          screen.queryByText(message, { selector: '[data-slot="toast-region"] *' }),
+        ).not.toBeInTheDocument();
 
         clickTheme(button);
         expect(button).toHaveAccessibleName('Switch to dark theme');
         expect(menuItem).toHaveAccessibleName('Switch to dark theme');
         for (let i = 0; i < 6; i++) clickTheme(menuItem);
-        expect(screen.getByText(message)).toBeVisible();
+        // The next unlock starts a fresh toast; the announcer was reset by it.
+        expect(screen.getByText(message, { selector: '[data-slot="toast-region"] *' })).toBeVisible();
       },
       { scenario: 'secret-theme-toggle-sync-and-announcements' },
     );

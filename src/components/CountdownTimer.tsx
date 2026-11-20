@@ -6,6 +6,8 @@ import {
   PopoverTrigger,
   createPopoverController,
 } from '@ui-sdk/solid/popover';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
+import { NumberInput, NumberInputControl } from '@ui-sdk/solid/number-input';
 import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import { Clock, Pause, Volume2, VolumeX, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
@@ -19,7 +21,7 @@ import LucideIcon from './LucideIcon';
 const MUTE_STORAGE_KEY = TIMER_MUTE_STORAGE_KEY;
 const presets = [3, 5, 10, 15];
 const controlClass =
-  'spring-press min-h-11 cursor-pointer rounded-lg border border-border/80 bg-surface px-2.5 text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9';
+  'spring-press board-touch-target cursor-pointer rounded-lg border border-border/80 bg-surface px-2.5 text-xs font-medium text-text hover:bg-surface-subtle board-focus-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 function formatCountdown(remainingMs: number): string {
   const totalSeconds = Math.ceil(remainingMs / 1_000);
@@ -54,7 +56,7 @@ export default function CountdownTimer(props: {
   const [muted, setMuted] = createSignal(false);
   const [sampledAt, setSampledAt] = createSignal(0);
   const [open, setOpen] = createSignal(false);
-  const [minutesDraft, setMinutesDraft] = createSignal('5');
+  const [minutesDraft, setMinutesDraft] = createSignal<number | null>(5);
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal('');
   const [timerAnnouncement, setTimerAnnouncement] = createSignal('');
@@ -89,8 +91,8 @@ export default function CountdownTimer(props: {
     Math.min(100, 100 * (remainingMs() ?? 0) / (props.timer.durationMs || 1)),
   );
   const validMinutes = createMemo(() => {
-    const minutes = Number(minutesDraft());
-    return Number.isInteger(minutes) && minutes >= MIN_TIMER_MINUTES && minutes <= MAX_TIMER_MINUTES;
+    const minutes = minutesDraft();
+    return minutes !== null && Number.isInteger(minutes) && minutes >= MIN_TIMER_MINUTES && minutes <= MAX_TIMER_MINUTES;
   });
 
   createEffect(isRunning, (running) => {
@@ -241,12 +243,12 @@ export default function CountdownTimer(props: {
                 : 'Countdown Timer'
           }
           class={[
-            'spring-press relative inline-flex min-h-11 min-w-[5.75rem] cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium text-text tabular-nums transition-colors sm:h-9 sm:min-h-9',
+            'spring-press relative inline-flex board-touch-target min-w-[5.75rem] cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium text-text tabular-nums transition-colors sm:h-9',
             // Idle on phones: a 44px icon button, not an empty oval; running/paused keeps room for the countdown.
             timerState() === 'idle'
               ? 'max-sm:min-w-11 max-sm:w-11 max-sm:gap-0 max-sm:px-0'
               : 'max-sm:min-w-20 max-sm:w-20 max-sm:gap-1',
-            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+            'board-focus-ring',
             timerState() === 'paused'
               ? 'border-col-amber/55 bg-col-amber-tint hover:bg-col-amber-tint'
               : timerState() === 'expired'
@@ -301,7 +303,7 @@ export default function CountdownTimer(props: {
             </PopoverTitle>
             <PopoverClose
               aria-label="Close Countdown Timer"
-              class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-surface-subtle hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:size-8 sm:min-h-8 sm:min-w-8"
+              class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-surface-subtle hover:text-text board-focus-ring sm:size-8 sm:min-h-8 sm:min-w-8"
             >
               <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
             </PopoverClose>
@@ -311,46 +313,60 @@ export default function CountdownTimer(props: {
               class="mt-3 space-y-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (validMinutes()) void updateTimer({ action: 'start', minutes: Number(minutesDraft()) });
+                const minutes = minutesDraft();
+                if (minutes !== null && validMinutes()) void updateTimer({ action: 'start', minutes });
               }}
             >
-              <div class="segmented-track grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1">
+              <SegmentedControl<string>
+                aria-label="Timer presets"
+                value={(() => {
+                  const draft = minutesDraft();
+                  return draft !== null && presets.includes(draft) ? String(draft) : null;
+                })()}
+                onValueChange={(next) => {
+                  if (next) setMinutesDraft(Number(next));
+                }}
+                class="segmented-track relative isolate grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1"
+              >
+                <SegmentedControlIndicator
+                  aria-hidden="true"
+                  class="segmented-thumb pointer-events-none rounded-lg"
+                />
                 <For each={presets}>
                   {(minutes) => (
-                    <button
-                      type="button"
-                      aria-pressed={Number(minutesDraft()) === minutes ? 'true' : 'false'}
+                    <SegmentedControlItem
+                      value={String(minutes)}
                       class={[
-                        'spring-press min-h-11 min-w-11 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-h-8 sm:min-w-0',
-                        'hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        'aria-pressed:bg-surface aria-pressed:font-semibold aria-pressed:text-text aria-pressed:shadow-xs',
+                        'spring-press board-touch-target min-w-11 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-w-0',
+                        'hover:text-text board-focus-ring data-checked:font-semibold data-checked:text-text',
                       ]}
-                      onClick={() => setMinutesDraft(String(minutes))}
                     >
                       {minutes}m
-                    </button>
+                    </SegmentedControlItem>
                   )}
                 </For>
-              </div>
+              </SegmentedControl>
               <div class="flex items-end gap-2">
                 <div class="min-w-0 flex-1">
                   <label for={durationId} class="block text-xs font-medium text-text-muted">Minutes</label>
-                  <input
-                    ref={durationInput}
-                    id={durationId}
-                    type="number"
+                  <NumberInput
+                    value={minutesDraft()}
+                    onValueChange={(next) => setMinutesDraft(next)}
                     min={MIN_TIMER_MINUTES}
                     max={MAX_TIMER_MINUTES}
-                    step="1"
-                    required
-                    value={minutesDraft()}
-                    onInput={(event) => setMinutesDraft(event.currentTarget.value)}
-                    class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
-                  />
+                    step={1}
+                  >
+                    <NumberInputControl
+                      ref={durationInput}
+                      id={durationId}
+                      required
+                      class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
+                    />
+                  </NumberInput>
                 </div>
                 <button
                   type="submit"
-                  class="spring-press min-h-11 cursor-pointer rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-contrast hover:opacity-92 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                  class="spring-press min-h-11 cursor-pointer rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-contrast hover:opacity-92 board-focus-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   disabled={pending() || !validMinutes()}
                 >
                   {hasTimeLeft() ? 'Restart' : 'Start'}

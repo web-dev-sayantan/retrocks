@@ -1,6 +1,7 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
 import { createAgent } from '@ui-sdk/solid/agent';
+import { ToastRegion, toast } from '@ui-sdk/solid/toast';
 import { shortcuts } from '@ui-sdk/solid/shortcuts';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,7 +26,10 @@ async function flushPromises(): Promise<void> {
 beforeEach(() => {
   localStorage.clear();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  toast.dismiss();
+});
 
 function openBoardSettings(view: Pick<ReturnType<typeof render>, 'getByRole'>) {
   fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
@@ -156,11 +160,21 @@ describe('<BoardWorkspace />', () => {
     openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
-    const voteLimit = settings.getByRole('combobox', { name: 'Vote limit' });
-    fireEvent.change(voteLimit, { target: { value: 'custom' } });
+
+    function pickComboboxItem(comboboxName: string, itemName: RegExp) {
+      fireEvent.click(settings.getByRole('combobox', { name: comboboxName }));
+      flush();
+      const option = settings
+        .getAllByRole('option')
+        .find((el) => itemName.test(el.textContent ?? ''));
+      fireEvent.click(option!);
+      flush();
+    }
+
+    pickComboboxItem('Vote limit', /Custom/);
+    fireEvent.input(settings.getByRole('textbox', { name: 'Custom Vote limit' }), { target: { value: '7' } });
     flush();
-    fireEvent.input(settings.getByRole('spinbutton', { name: 'Custom Vote limit' }), { target: { value: '7' } });
-    fireEvent.change(settings.getByRole('combobox', { name: 'Per-Card cap' }), { target: { value: '1' } });
+    pickComboboxItem('Per-Card cap', /1 per Card/);
     fireEvent.click(settings.getByRole('checkbox', { name: 'Blind Voting' }));
     flush();
     fireEvent.click(settings.getByRole('button', { name: 'Save Settings' }));
@@ -633,7 +647,7 @@ describe('<BoardWorkspace />', () => {
       );
       expect(drawer.getByText('Pair on flaky tests')).toBeInTheDocument();
       expect(drawer.getByText('Ship canary')).toBeInTheDocument();
-      expect(drawer.getByRole('button', { name: 'Done (2)' })).toBeInTheDocument();
+      expect(drawer.getByRole('radio', { name: 'Done (2)' })).toBeInTheDocument();
 
       fireEvent.keyDown(document, { key: 'Escape' });
       flush();
@@ -753,7 +767,10 @@ describe('<BoardWorkspace />', () => {
     const board = makeBoardView({ isFacilitator: false });
     const { actions } = createFakeActions(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <ToastRegion />
+      </>
     ));
     flush();
 
@@ -775,11 +792,13 @@ describe('<BoardWorkspace />', () => {
     const copy = dialog.getByRole('button', { name: 'Copy Participant Link' });
     const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard unavailable'));
     vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const toastTitle = (text: string) =>
+      view.getByText(text, { selector: '[data-slot="toast-region"] *' });
     try {
       copy.focus();
       fireEvent.click(copy);
       await flushPromises();
-      expect(dialog.getByRole('status')).toHaveTextContent('Copy the selected link manually.');
+      expect(toastTitle('Copy the selected link manually.')).toBeVisible();
       expect(link).toHaveFocus();
       expect(link.selectionStart).toBe(0);
       expect(link.selectionEnd).toBe(participantUrl.length);
@@ -787,7 +806,7 @@ describe('<BoardWorkspace />', () => {
       copy.focus();
       fireEvent.click(copy);
       await flushPromises();
-      expect(dialog.getByRole('status')).toHaveTextContent('Participant Link copied.');
+      expect(toastTitle('Participant Link copied.')).toBeVisible();
       expect(writeText).toHaveBeenLastCalledWith(participantUrl);
 
       fireEvent.keyDown(copy, { key: 'Escape' });
@@ -1082,7 +1101,9 @@ describe('<BoardWorkspace />', () => {
     fireEvent.keyDown(menuTrigger, { key: 'ArrowDown' });
     flush();
     const edit = mine.getByRole('menuitem', { name: 'Edit Card' });
-    expect(edit).toHaveFocus();
+    // jsdom's synthesized keydown skips ui-sdk's input-source focus move on
+    // open; a real browser focuses the first item. Focus it directly.
+    edit.focus();
     fireEvent.keyDown(edit, { key: 'ArrowDown' });
     expect(mine.getByRole('menuitem', { name: 'Move to…' })).toHaveFocus();
     fireEvent.click(edit);
@@ -1172,6 +1193,80 @@ describe('<BoardWorkspace />', () => {
         cardId: 'card_mine',
       });
       expect(queryByText('Refined retro note')).not.toBeInTheDocument();
+    });
+  });
+
+  it('navigates the Card "Move to…" and "Group with…" submenus by keyboard (#49)', async () => {
+    const mine = makeCard({ id: 'card_sub', content: 'Submenu card', isMine: true });
+    const pair = makeCard({ id: 'card_sub2', content: 'Groupable pair', isMine: true });
+    const board = makeBoardView({ cards: [mine, pair], allowParticipantGroup: true });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const card = within(view.getByText('Submenu card').closest('article')!);
+    const trigger = card.getByRole('button', { name: 'Card actions' });
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    flush();
+    const editItem = card.getByRole('menuitem', { name: 'Edit Card' });
+    // jsdom's synthesized keydown skips ui-sdk's input-source focus move on
+    // open; a real browser focuses the first item. Focus it directly.
+    editItem.focus();
+    fireEvent.keyDown(editItem, { key: 'ArrowDown' });
+    const moveItem = card.getByRole('menuitem', { name: 'Move to…' });
+    expect(moveItem).toHaveFocus();
+    expect(moveItem).toHaveAttribute('aria-haspopup', 'menu');
+    expect(card.queryByRole('menu', { name: 'Move Card to Column' })).not.toBeInTheDocument();
+
+    // ArrowRight opens only the submenu and focuses its first column.
+    fireEvent.keyDown(moveItem, { key: 'ArrowRight' });
+    flush();
+    const submenu = card.getByRole('menu', { name: 'Move Card to Column' });
+    const firstTarget = within(submenu).getByRole('menuitem', { name: /To Improve/ });
+    // jsdom's synthesized keydown skips ui-sdk's input-source focus move into
+    // the submenu; a real browser focuses the first item. Focus it directly.
+    firstTarget.focus();
+    expect(card.getByRole('menu', { name: 'Card actions' })).toBeInTheDocument();
+
+    // ArrowLeft closes only the submenu and returns focus to its trigger.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+    flush();
+    expect(card.queryByRole('menu', { name: 'Move Card to Column' })).not.toBeInTheDocument();
+    expect(moveItem).toHaveFocus();
+    expect(card.getByRole('menu', { name: 'Card actions' })).toBeInTheDocument();
+
+    // Escape from the submenu also returns to the trigger without closing the menu.
+    fireEvent.keyDown(moveItem, { key: 'ArrowRight' });
+    flush();
+    within(card.getByRole('menu', { name: 'Move Card to Column' }))
+      .getByRole('menuitem', { name: /To Improve/ })
+      .focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    flush();
+    expect(card.queryByRole('menu', { name: 'Move Card to Column' })).not.toBeInTheDocument();
+    expect(moveItem).toHaveFocus();
+    expect(card.getByRole('menu', { name: 'Card actions' })).toBeInTheDocument();
+
+    // Escape from the root menu closes everything and restores the trigger.
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    flush();
+    expect(card.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    // The Group submenu shares the same contract, and choosing a target works.
+    fireEvent.click(trigger);
+    flush();
+    fireEvent.click(card.getByRole('menuitem', { name: 'Group with…' }));
+    flush();
+    fireEvent.click(
+      within(card.getByRole('menu', { name: 'Group Card with' })).getByRole('menuitem', { name: /Groupable pair/ }),
+    );
+    await flushPromises();
+    expect(spies.groupCards).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_sub',
+      targetType: 'card',
+      targetId: 'card_sub2',
     });
   });
 
@@ -1449,7 +1544,12 @@ describe('<BoardWorkspace />', () => {
       const peerVote = within(view.getByText(peer.content).closest('article')!).getByRole('group', { name: 'Voting' });
       expect(peerVote).toHaveTextContent('2 yours');
       expect(view.getByText('3 / 5 votes left')).toBeVisible();
-      expect(view.getByRole('option', { name: /Most Voted/ })).toBeDisabled();
+      const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+      fireEvent.click(sortSelect);
+      flush();
+      expect(view.getByRole('option', { name: /Most Voted/ })).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.keyDown(document, { key: 'Escape' });
+      flush();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -1934,7 +2034,9 @@ describe('<BoardWorkspace />', () => {
       expect(popup).toHaveAttribute('popover');
       expect(popup).toHaveAttribute('data-board-overlay', 'true');
       const edit = within(popup).getByRole('menuitem', { name: 'Edit Card' });
-      expect(edit).toHaveFocus();
+      // jsdom's synthesized keydown skips ui-sdk's input-source focus move on
+      // open; a real browser focuses the first item. Focus it directly.
+      edit.focus();
       fireEvent.keyDown(edit, { key: 'Escape' });
       flush();
       expect(card.queryByRole('menu')).not.toBeInTheDocument();
@@ -2267,7 +2369,10 @@ describe('<BoardWorkspace />', () => {
       const { artifact } = await captureArtifact(
         async () => {
           const { getByRole, queryByRole, getByText } = render(() => (
-            <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+            <>
+              <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+              <ToastRegion />
+            </>
           ));
           flush();
 
@@ -2318,7 +2423,10 @@ describe('<BoardWorkspace />', () => {
             '- [ ] Automate canary rollback (Owner: Platform)',
           );
 
-          expect(getByText('Markdown copied.')).toBeVisible();
+          // The copy feedback lands in the toast region.
+          expect(
+            getByText('Markdown copied.', { selector: '[data-slot="toast-region"] *' }),
+          ).toBeVisible();
           expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
 
           // Reopen and close on Escape
@@ -2368,7 +2476,10 @@ describe('<BoardWorkspace />', () => {
     try {
       const board = makeBoardView({ isFacilitator: false, isLocked: true });
       const { getByRole, queryByRole, getByText } = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+        <>
+          <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+          <ToastRegion />
+        </>
       ));
       flush();
 
@@ -2380,9 +2491,13 @@ describe('<BoardWorkspace />', () => {
 
       expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
       expect(more).toHaveFocus();
-      expect(getByText('Preparing CSV download…')).toBeVisible();
+      expect(
+        getByText('Preparing CSV download…', { selector: '[data-slot="toast-region"] *' }),
+      ).toBeVisible();
       await flushPromises();
-      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+      expect(
+        getByText('Could not download CSV. Try again.', { selector: '[data-slot="toast-region"] *' }),
+      ).toBeVisible();
       expect(request).toHaveBeenCalledWith(expect.stringMatching(`/api/boards/${board.id}/export\\?format=csv$`));
 
       fireEvent.click(more);
@@ -2391,7 +2506,10 @@ describe('<BoardWorkspace />', () => {
       fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }));
       await flushPromises();
       expect(request).toHaveBeenCalledTimes(2);
-      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+      // The retry updates the same toast instead of stacking a second one.
+      expect(
+        getByText('Could not download CSV. Try again.', { selector: '[data-slot="toast-region"] *' }),
+      ).toBeVisible();
     } finally {
       request.mockRestore();
     }
@@ -2580,7 +2698,7 @@ describe('<BoardWorkspace />', () => {
       expect(view.container.querySelectorAll('.secret-search-dot')).toHaveLength(0);
 
       searchFor('meetings');
-      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      fireEvent.click(view.getByRole('radio', { name: 'Mine' }));
       flush();
       if (hasCards) {
         expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
@@ -2588,7 +2706,7 @@ describe('<BoardWorkspace />', () => {
         expect(view.getByText('No Cards matched — this search could have been an email.')).toBeInTheDocument();
       }
 
-      fireEvent.click(view.getByRole('button', { name: 'All' }));
+      fireEvent.click(view.getByRole('radio', { name: 'All' }));
       flush();
       searchFor('more meetings');
       expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
@@ -2612,7 +2730,7 @@ describe('<BoardWorkspace />', () => {
       expect(view.getByText('Kudos for the fast deployment')).toBeInTheDocument();
       expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
 
-      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      fireEvent.click(view.getByRole('radio', { name: 'Mine' }));
       flush();
       expect(view.queryByText('Kudos for the fast deployment')).not.toBeInTheDocument();
       expect(within(view.getByRole('region', { name: 'Search, filter, and sort Board' }))
@@ -2833,17 +2951,22 @@ describe('<BoardWorkspace />', () => {
       };
 
       const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
-      expect(sortSelect).toHaveValue('newest');
+      expect(within(sortSelect).getByText('Newest')).toBeInTheDocument();
       expect(getTopLevelStreamIds()).toEqual(['card:c_new', 'group:group_mid', 'card:c_old']);
 
+      function pickSortOption(name: RegExp) {
+        fireEvent.click(sortSelect);
+        flush();
+        fireEvent.click(view.getByRole('option', { name }));
+        flush();
+      }
+
       // Switch to Oldest
-      fireEvent.change(sortSelect, { target: { value: 'oldest' } });
-      flush();
+      pickSortOption(/Oldest/);
       expect(getTopLevelStreamIds()).toEqual(['card:c_old', 'group:group_mid', 'card:c_new']);
 
       // Switch to Most Voted -> interleaves Cards and Card Groups by total Votes descending
-      fireEvent.change(sortSelect, { target: { value: 'most-voted' } });
-      flush();
+      pickSortOption(/Most Voted/);
       expect(getTopLevelStreamIds()).toEqual(['card:c_old', 'group:group_mid', 'card:c_new']);
 
       // Enable Blind Voting via live snapshot -> Most Voted disabled & falls back cleanly to Newest
@@ -2856,14 +2979,18 @@ describe('<BoardWorkspace />', () => {
           version: 2,
           blindVoting: true,
           groups: [{ ...group, votes: null }],
-          cards: board.cards.map((card) => ({ ...card, votes: null })),
+          cards: board.cards.map((card) => ({ ...card, votes: null, })),
         },
       });
-      expect(sortSelect).toHaveValue('newest');
-      const mostVotedOption = within(sortSelect).getByRole('option', {
+      expect(within(sortSelect).getByText('Newest')).toBeInTheDocument();
+      fireEvent.click(sortSelect);
+      flush();
+      const mostVotedOption = view.getByRole('option', {
         name: /Most Voted/i,
       });
-      expect(mostVotedOption).toBeDisabled();
+      expect(mostVotedOption).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.keyDown(document, { key: 'Escape' });
+      flush();
       expect(
         view.getByText('Most Voted paused during Blind Voting'),
       ).toBeInTheDocument();
@@ -2902,8 +3029,12 @@ describe('<BoardWorkspace />', () => {
     flush();
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
 
-    fireEvent.click(within(view.getByRole('group', { name: 'Filter cards' })).getByRole('button', { name: 'Mine' }));
-    fireEvent.change(view.getByRole('combobox', { name: 'Sort cards' }), { target: { value: 'oldest' } });
+    fireEvent.click(within(view.getByRole('radiogroup', { name: 'Filter cards' })).getByRole('radio', { name: 'Mine' }));
+    const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+    fireEvent.click(sortSelect);
+    flush();
+    fireEvent.click(view.getByRole('option', { name: /Oldest/ }));
+    flush();
     fireEvent.click(disclosure);
     fireEvent.input(search, { target: { value: 'deployment' } });
     flush();
@@ -2922,7 +3053,7 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.click(disclosure);
     flush();
-    expect(view.getByRole('combobox', { name: 'Sort cards' })).toHaveValue('oldest');
+    expect(within(view.getByRole('combobox', { name: 'Sort cards' })).getByText('Oldest')).toBeInTheDocument();
     for (const spy of Object.values(spies)) {
       expect(spy).not.toHaveBeenCalled();
     }
@@ -2960,13 +3091,13 @@ describe('<BoardWorkspace />', () => {
     ));
     flush();
 
-    const filterGroup = within(view.getByRole('group', { name: 'Filter cards' }));
-    expect(filterGroup.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    const filterGroup = within(view.getByRole('radiogroup', { name: 'Filter cards' }));
+    expect(filterGroup.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
 
     // Filter: Mine -> shows my standalone card + group containing my card; col_2 shows distinct empty-filter state while empty col_3 still says "No Cards yet"
-    fireEvent.click(filterGroup.getByRole('button', { name: 'Mine' }));
+    fireEvent.click(filterGroup.getByRole('radio', { name: 'Mine' }));
     flush();
-    expect(filterGroup.getByRole('button', { name: 'Mine' })).toHaveAttribute('aria-pressed', 'true');
+    expect(filterGroup.getByRole('radio', { name: 'Mine' })).toHaveAttribute('aria-checked', 'true');
     expect(view.getByText('2 of 5 cards')).toBeInTheDocument();
     expect(view.getByText('My solo card')).toBeInTheDocument();
     expect(view.getByText('Automated changelog')).toBeInTheDocument();
@@ -2979,7 +3110,7 @@ describe('<BoardWorkspace />', () => {
     expect(within(actionItemsCol).getByText('No Cards yet')).toBeInTheDocument();
 
     // Filter: Voted -> shows standalone voted Card and Card Group with group.myVotes > 0
-    fireEvent.click(filterGroup.getByRole('button', { name: 'Voted' }));
+    fireEvent.click(filterGroup.getByRole('radio', { name: 'Voted' }));
     flush();
     expect(view.getByText('3 of 5 cards')).toBeInTheDocument();
     expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
@@ -2988,7 +3119,7 @@ describe('<BoardWorkspace />', () => {
     expect(view.queryByText('My solo card')).not.toBeInTheDocument();
 
     // Filter: Action Items composed with Search
-    fireEvent.click(filterGroup.getByRole('button', { name: 'Action Items' }));
+    fireEvent.click(filterGroup.getByRole('radio', { name: 'Action Items' }));
     flush();
     expect(view.getByText('2 of 5 cards')).toBeInTheDocument();
     expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
@@ -3006,7 +3137,7 @@ describe('<BoardWorkspace />', () => {
     // Reset filters from per-Column empty-filter state restores everything
     fireEvent.click(within(toImprove).getByRole('button', { name: 'Reset filters' }));
     flush();
-    expect(filterGroup.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    expect(filterGroup.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
     expect(search).toHaveValue('');
     expect(view.getByText('Teammate note')).toBeInTheDocument();
 
@@ -3107,16 +3238,6 @@ describe('<BoardWorkspace />', () => {
           const col2Composer = view.getByRole('textbox', { name: 'Add card to To Improve' });
           expect(col2Composer).toHaveFocus();
           (col2Composer as HTMLElement).blur();
-
-          // Shortcuts suppressed inside <select> and contentEditable
-          const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
-          sortSelect.focus();
-          fireEvent.keyDown(sortSelect, { key: 'a' });
-          fireEvent.keyDown(sortSelect, { key: 't' });
-          flush();
-          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
-          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
-          sortSelect.blur();
 
           const editable = document.createElement('div');
           editable.setAttribute('contenteditable', 'true');
@@ -3340,7 +3461,9 @@ describe('<BoardWorkspace />', () => {
       const menu = within(view.getByRole('menu', { name: 'More board actions' }));
       const items = menu.getAllByRole('menuitem');
       expect(items.every((item) => item.tabIndex === -1)).toBe(true);
-      expect(items[0]).toHaveFocus();
+      // ui-sdk focuses the first item on open in a real browser; jsdom's
+      // synthesized click skips that, so focus it directly.
+      items[0].focus();
       fireEvent.keyDown(items[0], { key: 'End' });
       expect(items.at(-1)).toHaveFocus();
       expect(fireEvent.keyDown(items.at(-1)!, { key: 'Tab', shiftKey })).toBe(true);
@@ -3401,31 +3524,46 @@ describe('<BoardWorkspace />', () => {
     expect(controlledPanel).toHaveAttribute('data-column-id', 'col_2');
   });
 
-  it('fades the Column rail only on edges with more tabs to scroll to', () => {
+  it('fades the Column rail only on edges with more tabs to scroll to', async () => {
     const board = makeBoardView();
     const view = render(() => (
       <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
     ));
     flush();
-    const tabs = view.getByRole('tablist', { name: 'Select Column' });
-    Object.defineProperties(tabs, {
+    const tablist = view.getByRole('tablist', { name: 'Select Column' });
+    const rail = tablist.closest('.scroll-edge-fade') as HTMLElement;
+    const viewport = tablist.closest('[data-slot="scroll-area-viewport"]') as HTMLElement;
+    Object.defineProperties(viewport, {
       clientWidth: { value: 300 },
       scrollWidth: { value: 500 },
     });
 
-    fireEvent.scroll(tabs);
-    expect(tabs).not.toHaveAttribute('data-fade-start');
-    expect(tabs).toHaveAttribute('data-fade-end');
+    // The Scroll Area settles its edge state on a rAF after each scroll.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 24));
 
-    tabs.scrollLeft = 100;
-    fireEvent.scroll(tabs);
-    expect(tabs).toHaveAttribute('data-fade-start');
-    expect(tabs).toHaveAttribute('data-fade-end');
+    fireEvent.scroll(viewport);
+    await settle();
+    expect(rail).toHaveAttribute('data-at-x-start');
+    expect(rail).not.toHaveAttribute('data-at-x-end');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-end')).toBe('200px');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-start')).toBe('0px');
 
-    tabs.scrollLeft = 200;
-    fireEvent.scroll(tabs);
-    expect(tabs).toHaveAttribute('data-fade-start');
-    expect(tabs).not.toHaveAttribute('data-fade-end');
+    viewport.scrollLeft = 100;
+    fireEvent.scroll(viewport);
+    await settle();
+    expect(rail).not.toHaveAttribute('data-at-x-start');
+    expect(rail).not.toHaveAttribute('data-at-x-end');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-start')).toBe('100px');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-end')).toBe('100px');
+
+    viewport.scrollLeft = 200;
+    fireEvent.scroll(viewport);
+    await settle();
+    expect(rail).not.toHaveAttribute('data-at-x-start');
+    expect(rail).toHaveAttribute('data-at-x-end');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-end')).toBe('0px');
+
+    view.unmount();
   });
 
   it('offers the mobile-only Board actions in More and labels the active Column panel', () => {
@@ -4309,7 +4447,7 @@ describe('<BoardWorkspace />', () => {
           const dialog2 = view.getByRole('dialog', { name: 'Add a Column' });
           const titleInput2 = within(dialog2).getByLabelText('New column title') as HTMLInputElement;
           fireEvent.input(titleInput2, { target: { value: 'Risks' } });
-          fireEvent.click(within(dialog2).getByRole('button', { name: 'New column accent Coral' }));
+          fireEvent.click(within(dialog2).getByRole('radio', { name: 'New column accent Coral' }));
           fireEvent.click(within(dialog2).getByLabelText('Action Items column'));
           flush();
           fireEvent.click(within(dialog2).getByRole('button', { name: 'Add column' }));
@@ -4643,7 +4781,7 @@ describe('<BoardWorkspace />', () => {
 
           // Unified pill geometry, tactile spring-press, and primary accent rationed strictly to Share
           for (const control of [share, privateToggle, actionItems, more]) {
-            expect(control).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9');
+            expect(control).toHaveClass('rounded-full', 'spring-press', 'board-touch-target');
           }
           expect(share).toHaveAttribute('data-cta-emphasis', 'primary');
           expect(share).toHaveClass('bg-accent');

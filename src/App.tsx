@@ -1,4 +1,5 @@
 import { OverlayHost } from '@ui-sdk/solid/overlays';
+import { Toast, ToastDescription, ToastTitle } from '@ui-sdk/solid/toast';
 import { Title } from '@solidjs/meta';
 import { useLocation } from '@solidjs/router';
 import { Clock, Columns3, ShieldCheck } from 'lucide';
@@ -30,7 +31,7 @@ function AppShell(props: ParentProps) {
                 class={[
                   'spring-press inline-flex min-h-10 items-center gap-2 rounded-full pl-2 pr-3 text-sm font-semibold tracking-tight text-text',
                   'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'board-focus-ring',
                 ]}
               >
                 <span
@@ -84,7 +85,17 @@ function AppShell(props: ParentProps) {
           {props.children}
         </Loading>
       </Errored>
-      <OverlayHost />
+      <OverlayHost
+        toast={{
+          align: 'center',
+          children: () => (
+            <Toast class="board-toast rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text shadow-lg">
+              <ToastTitle />
+              <ToastDescription />
+            </Toast>
+          ),
+        }}
+      />
       <BoardConfirmDialog />
     </>
   );

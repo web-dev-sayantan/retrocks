@@ -176,13 +176,25 @@
 }
 
 @layer components {
+  /* Shared control tokens (#49): one focus ring, one 44px→compact touch target.
+     The press token is `.spring-press` below. Reference these instead of
+     repeating the utility strings. */
+  .board-focus-ring {
+    @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+  }
+
+  .board-touch-target {
+    @apply min-h-11 sm:min-h-9;
+  }
+
   .page-message-action {
     @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
   }
 
-  .theme-unlock-toast {
-    @apply pointer-events-none fixed inset-x-4 z-70 mx-auto w-fit rounded-xl border border-border bg-surface px-4 py-3 text-center text-sm text-text shadow-lg;
-    bottom: max(1rem, env(safe-area-inset-bottom));
+  /* One toast surface, centered at the region's bottom stack; text stays
+     unselectable so pointer swipes dismiss instead of selecting. */
+  .board-toast {
+    @apply w-fit max-w-[calc(100vw-2rem)] select-none;
   }
 
   .board-menu-item {
@@ -258,11 +270,7 @@
   backdrop-filter: blur(18px) saturate(165%);
 }
 
-/* Quick-add grows with its draft like the desktop composer, so wrapped lines stay inside the field. */
-.board-mobile-composer textarea {
-  field-sizing: content;
-  max-height: 8rem;
-}
+/* Quick-add composer surface */
 
 .board-timer-progress {
   --timer-track: color-mix(in srgb, var(--retrocks-accent) 15%, transparent);
@@ -289,26 +297,22 @@
   background: var(--timer-fill);
 }
 
+/* Mobile Column tab rail: the Scroll Area root carries how much content waits
+   past each edge; the mask fades only where that is non-zero. */
 .scroll-edge-fade {
-  --fade-start: 0px;
-  --fade-end: 0px;
+  --fade-start: min(12px, var(--scroll-area-overflow-x-start, 0px));
+  --fade-end: min(12px, var(--scroll-area-overflow-x-end, 0px));
   --fade-direction: to right;
-  scrollbar-width: none;
-  /* Keep focused tabs clear of the fade band at either end. */
-  scroll-padding-inline: 12px;
   mask-image: linear-gradient(var(--fade-direction), transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
-}
-
-.scroll-edge-fade[data-fade-start] {
-  --fade-start: 12px;
-}
-
-.scroll-edge-fade[data-fade-end] {
-  --fade-end: 12px;
 }
 
 .scroll-edge-fade:dir(rtl) {
   --fade-direction: to left;
+}
+
+/* Keep focused tabs clear of the fade band at either end. */
+.scroll-edge-fade [data-slot='scroll-area-viewport'] {
+  scroll-padding-inline: 12px;
 }
 
 @media (width < 40rem) {
@@ -403,8 +407,7 @@
     backdrop-filter: none;
   }
 
-  .board-masthead-subtitle,
-  .board-masthead-feedback:not(:empty) {
+  .board-masthead-subtitle {
     width: min(calc(100% - 3rem), 1552px);
     max-width: 1552px;
     margin-inline: auto;
@@ -514,16 +517,26 @@
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.28);
 }
 
-/* Critically damped spring sliding thumb for segmented tracks */
+/* Critically damped spring sliding thumb for segmented tracks (ui-sdk
+   SegmentedControlIndicator vars; the control provides isolation + relative) */
 .segmented-thumb {
-  width: calc((100% - 0.5rem) / var(--seg-count, 2));
-  translate: calc(var(--seg-index, 0) * 100%) 0;
+  position: absolute;
+  z-index: -1;
+  top: var(--segmented-control-indicator-top);
+  left: var(--segmented-control-indicator-left);
+  width: var(--segmented-control-indicator-width);
+  height: var(--segmented-control-indicator-height);
   background: var(--retrocks-surface);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.07),
     0 0 0 1px color-mix(in srgb, var(--retrocks-border) 75%, transparent);
-  transition: translate 340ms ease-out;
-  transition: translate 340ms linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1);
+  transition-property: top, left, width, height;
+  transition-duration: 340ms;
+  transition-timing-function: linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1);
+}
+
+.segmented-thumb[data-activation-direction='none'] {
+  transition: none;
 }
 
 :is([data-theme='dark'], [data-theme='retro']) .segmented-thumb {
@@ -655,10 +668,8 @@
   }
 }
 
-/* Single-row zero-shift desktop Card composer that grows only on multi-line input */
-.board-composer-textarea {
-  field-sizing: content;
-}
+/* Single-row zero-shift desktop Card composer; height is bound by
+   min-h/max-h and grows through ui-sdk Textarea autoResize */
 
 /* Compact top-layer dialog backdrop & surface (e.g., Add a Column) */
 .board-dialog-backdrop {

@@ -1,4 +1,6 @@
 import type { JSX } from '@solidjs/web';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/solid/collapsible';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 import {
   ArrowDown,
   ArrowUp,
@@ -56,7 +58,7 @@ export interface BoardCreatorProps {
   secondary?: JSX.Element;
 }
 
-const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
+const focusClass = 'board-focus-ring';
 const inputClass = `h-11 w-full rounded-xl border border-control/75 bg-surface px-3.5 text-base text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:border-accent ${focusClass}`;
 const compactInputClass = `h-10 w-full rounded-lg border border-border bg-canvas/55 px-3 text-sm font-medium text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:border-accent focus-visible:bg-surface ${focusClass}`;
 const columnCommandClass = `spring-press inline-flex size-10 cursor-pointer items-center justify-center bg-surface text-text-muted hover:bg-surface-subtle hover:text-text active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-35 ${focusClass}`;
@@ -128,49 +130,54 @@ function DisclosureButton(props: {
   summary: string;
   icon: IconNode;
   open: boolean;
-  onClick: () => void;
+  onOpenChange: (open: boolean) => void;
+  panelClass: string;
   buttonRef?: (button: HTMLButtonElement) => void;
+  children: JSX.Element;
 }) {
   return (
-    <button
-      ref={props.buttonRef}
-      type="button"
-      aria-labelledby={`${props.panelId}-label`}
-      aria-describedby={`${props.panelId}-summary`}
-      aria-expanded={props.open ? 'true' : 'false'}
-      aria-controls={props.open ? props.panelId : undefined}
-      onClick={() => props.onClick()}
-      class={`spring-press group flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-xl px-1 py-2 text-left transition-colors hover:text-text ${focusClass}`}
-    >
-      <span class="inline-flex min-w-0 items-center gap-2.5">
-        <LucideIcon icon={props.icon} class="size-4 text-text-muted transition-colors group-hover:text-text" strokeWidth={1.8} />
-        <span id={`${props.panelId}-label`} class="text-sm font-medium text-text">
-          {props.label}
+    <Collapsible open={props.open} onOpenChange={props.onOpenChange}>
+      <CollapsibleTrigger
+        ref={props.buttonRef}
+        aria-labelledby={`${props.panelId}-label`}
+        aria-describedby={`${props.panelId}-summary`}
+        class={`spring-press group flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-xl px-1 py-2 text-left transition-colors hover:text-text ${focusClass}`}
+      >
+        <span class="inline-flex min-w-0 items-center gap-2.5">
+          <LucideIcon icon={props.icon} class="size-4 text-text-muted transition-colors group-hover:text-text" strokeWidth={1.8} />
+          <span id={`${props.panelId}-label`} class="text-sm font-medium text-text">
+            {props.label}
+          </span>
         </span>
-      </span>
-      <span class="inline-flex shrink-0 items-center gap-2">
-        <span
-          id={`${props.panelId}-summary`}
-          class="text-xs text-text-muted tabular-nums"
-        >
-          {props.summary}
+        <span class="inline-flex shrink-0 items-center gap-2">
+          <span
+            id={`${props.panelId}-summary`}
+            class="text-xs text-text-muted tabular-nums"
+          >
+            {props.summary}
+          </span>
+          <LucideIcon
+            icon={ChevronDown}
+            class="spring-chevron size-4 text-text-muted group-aria-expanded:rotate-180 group-aria-expanded:text-text"
+            strokeWidth={1.8}
+          />
         </span>
-        <LucideIcon
-          icon={ChevronDown}
-          class="spring-chevron size-4 text-text-muted group-aria-expanded:rotate-180 group-aria-expanded:text-text"
-          strokeWidth={1.8}
-        />
-      </span>
-    </button>
+      </CollapsibleTrigger>
+      <CollapsiblePanel id={props.panelId} class={props.panelClass}>
+        {props.children}
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 
 interface SegmentedOption<T> {
+  /** The ui-sdk string key; segmented controls key their items by string. */
+  key: string;
   value: T;
   label: string;
 }
 
-function SegmentedControl<T>(props: {
+function SegmentedField<T>(props: {
   legend: string;
   icon: IconNode;
   options: readonly SegmentedOption<T>[];
@@ -178,17 +185,15 @@ function SegmentedControl<T>(props: {
   onChange: (value: T) => void;
   hint?: string;
 }) {
-  const activeIndex = createMemo(() => {
-    const idx = props.options.findIndex((option) => option.value === props.value);
-    return idx >= 0 ? idx : 0;
-  });
-
   const gridColsClass = () => {
     const count = props.options.length;
     if (count === 2) return 'grid-cols-2';
     if (count === 3) return 'grid-cols-3';
     return 'grid-cols-4';
   };
+
+  const selectedKey = () =>
+    props.options.find((option) => option.value === props.value)?.key ?? null;
 
   return (
     <fieldset class="min-w-0">
@@ -199,39 +204,36 @@ function SegmentedControl<T>(props: {
       <Show when={props.hint}>
         {(text) => <p class="mt-0.5 text-xs text-text-muted">{text()}</p>}
       </Show>
-      <div
+      <SegmentedControl<string>
+        value={selectedKey()}
+        onValueChange={(next) => {
+          const option = props.options.find((item) => item.key === next);
+          if (option) props.onChange(option.value);
+        }}
         class={[
-          'segmented-track relative mt-2 grid rounded-xl border border-border/75 p-1',
+          'segmented-track relative isolate mt-2 grid rounded-xl border border-border/75 p-1',
           gridColsClass(),
         ]}
       >
-        <span
+        <SegmentedControlIndicator
           aria-hidden="true"
-          class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
-          style={{
-            '--seg-count': String(props.options.length),
-            '--seg-index': String(activeIndex()),
-          }}
+          class="segmented-thumb pointer-events-none rounded-lg"
         />
         <For each={props.options}>
           {(option) => (
-            <button
-              type="button"
-              aria-pressed={props.value === option.value ? 'true' : 'false'}
-              onClick={() => props.onChange(option.value)}
+            <SegmentedControlItem
+              value={option.key}
               class={[
                 'relative z-10 min-h-10 cursor-pointer rounded-lg px-2 py-1.5 text-center text-xs font-medium leading-snug transition-colors sm:text-[13px]',
                 focusClass,
-                props.value === option.value
-                  ? 'font-semibold text-text'
-                  : 'text-text-muted hover:text-text',
+                'text-text-muted hover:text-text data-checked:font-semibold data-checked:text-text',
               ]}
             >
               {option.label}
-            </button>
+            </SegmentedControlItem>
           )}
         </For>
-      </div>
+      </SegmentedControl>
     </fieldset>
   );
 }
@@ -383,21 +385,23 @@ function BoardPreview(props: {
 }
 
 const VOTE_LIMIT_ITEMS: readonly SegmentedOption<VoteLimitOption>[] = VOTE_LIMIT_OPTIONS.map((opt) => ({
+  key: opt === null ? 'unlimited' : String(opt),
   value: opt,
   label: opt === null ? 'Unlimited' : String(opt),
 }));
 
 const MAX_VOTES_ITEMS: readonly SegmentedOption<MaxVotesPerCardOption>[] = [
-  { value: null, label: 'Unlimited (stackable)' },
-  { value: 1, label: '1 per Card or Card Group' },
+  { key: 'unlimited', value: null, label: 'Unlimited (stackable)' },
+  { key: '1', value: 1, label: '1 per Card or Card Group' },
 ];
 
 const PRIVATE_MODE_ITEMS: readonly SegmentedOption<boolean>[] = [
-  { value: false, label: 'Off' },
-  { value: true, label: 'On' },
+  { key: 'off', value: false, label: 'Off' },
+  { key: 'on', value: true, label: 'On' },
 ];
 
 const RETENTION_ITEMS: readonly SegmentedOption<RetentionDaysOption>[] = RETENTION_DAYS_OPTIONS.map((days) => ({
+  key: String(days),
   value: days,
   label: `${days} days`,
 }));
@@ -641,47 +645,43 @@ export default function BoardCreator(props: BoardCreatorProps) {
 
         <div class="mt-5">
           <span class="block text-sm font-medium text-text">Template</span>
-          <div class="mt-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5">
-            <div class="flex min-w-0 items-center gap-3">
-              <span
-                aria-hidden="true"
-                class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle text-text-muted"
-              >
-                <LucideIcon icon={LayoutGrid} class="size-4" strokeWidth={1.8} />
-              </span>
-              <div class="min-w-0">
-                <h2 class="truncate text-sm font-semibold text-text">
-                  {getBoardTemplate(templateId()).name}
-                </h2>
-                <p class="truncate text-xs text-text-muted tabular-nums">
-                  {columns.length} {columns.length === 1 ? 'column' : 'columns'}
-                </p>
+          <Collapsible open={templatesOpen()} onOpenChange={setTemplatesOpen}>
+            <div class="mt-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5">
+              <div class="flex min-w-0 items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle text-text-muted"
+                >
+                  <LucideIcon icon={LayoutGrid} class="size-4" strokeWidth={1.8} />
+                </span>
+                <div class="min-w-0">
+                  <h2 class="truncate text-sm font-semibold text-text">
+                    {getBoardTemplate(templateId()).name}
+                  </h2>
+                  <p class="truncate text-xs text-text-muted tabular-nums">
+                    {columns.length} {columns.length === 1 ? 'column' : 'columns'}
+                  </p>
+                </div>
               </div>
+              <CollapsibleTrigger
+                ref={(element) => { templateToggle = element; }}
+                aria-label="Change template"
+                class={[
+                  'spring-press inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-surface-subtle/60 px-3 py-1.5 text-xs font-medium text-text',
+                  'hover:border-control/70 hover:bg-surface-subtle active:bg-surface-subtle aria-expanded:border-accent/50 aria-expanded:bg-surface-subtle',
+                  focusClass,
+                ]}
+              >
+                <span>Change</span>
+                <LucideIcon
+                  icon={ChevronDown}
+                  class="spring-chevron size-3.5 text-text-muted data-open:rotate-180"
+                  strokeWidth={2}
+                />
+              </CollapsibleTrigger>
             </div>
-            <button
-              ref={(element) => { templateToggle = element; }}
-              type="button"
-              aria-label="Change template"
-              aria-expanded={templatesOpen() ? 'true' : 'false'}
-              aria-controls={templatesOpen() ? 'board-templates' : undefined}
-              onClick={() => setTemplatesOpen((open) => !open)}
-              class={[
-                'spring-press inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-surface-subtle/60 px-3 py-1.5 text-xs font-medium text-text',
-                'hover:border-control/70 hover:bg-surface-subtle active:bg-surface-subtle aria-expanded:border-accent/50 aria-expanded:bg-surface-subtle',
-                focusClass,
-              ]}
-            >
-              <span>Change</span>
-              <LucideIcon
-                icon={ChevronDown}
-                class={['spring-chevron size-3.5 text-text-muted', { 'rotate-180': templatesOpen() }]}
-                strokeWidth={2}
-              />
-            </button>
-          </div>
 
-          <Show when={templatesOpen()}>
-            <div id="board-templates" class="disclosure-reveal mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <CollapsiblePanel id="board-templates" class="disclosure-reveal mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <For each={BOARD_TEMPLATES}>
                 {(template) => (
                   <button
@@ -710,8 +710,8 @@ export default function BoardCreator(props: BoardCreatorProps) {
                   </button>
                 )}
               </For>
-            </div>
-          </Show>
+            </CollapsiblePanel>
+          </Collapsible>
         </div>
 
         <Show when={errorMessage()}>
@@ -744,13 +744,11 @@ export default function BoardCreator(props: BoardCreatorProps) {
             summary={customizeSummary()}
             icon={SlidersHorizontal}
             open={customizeOpen()}
-            onClick={() => setCustomizeOpen((open) => !open)}
+            onOpenChange={setCustomizeOpen}
+            panelClass="disclosure-reveal space-y-5 pt-3 pb-4"
             buttonRef={(element) => { customizeToggle = element; }}
-          />
-
-          <Show when={customizeOpen()}>
-            <div id="board-customize" class="disclosure-reveal space-y-5 pt-3 pb-4">
-              <div class="grid gap-2">
+          >
+            <div class="grid gap-2">
                 <label for="board-subtitle-input" class="text-sm font-medium text-text">
                   Subtitle / context <span class="font-normal text-text-muted">(optional)</span>
                 </label>
@@ -918,8 +916,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                   </For>
                 </ul>
               </div>
-            </div>
-          </Show>
+          </DisclosureButton>
         </div>
 
         <div class="border-t border-border/75 pt-2">
@@ -929,12 +926,10 @@ export default function BoardCreator(props: BoardCreatorProps) {
             summary={advancedSummary()}
             icon={Settings2}
             open={advancedOpen()}
-            onClick={() => setAdvancedOpen((open) => !open)}
-          />
-
-          <Show when={advancedOpen()}>
-            <div id="board-advanced" class="disclosure-reveal space-y-5 pt-3 pb-2">
-              <SegmentedControl
+            onOpenChange={setAdvancedOpen}
+            panelClass="disclosure-reveal space-y-5 pt-3 pb-2"
+          >
+              <SegmentedField
                 legend="Votes per Participant"
                 icon={Vote}
                 options={VOTE_LIMIT_ITEMS}
@@ -942,7 +937,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 onChange={setVoteLimit}
               />
 
-              <SegmentedControl
+              <SegmentedField
                 legend="Max Votes per Card or Card Group"
                 icon={Layers}
                 options={MAX_VOTES_ITEMS}
@@ -950,7 +945,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 onChange={setMaxVotesPerCard}
               />
 
-              <SegmentedControl
+              <SegmentedField
                 legend="Start in Private Mode"
                 icon={EyeOff}
                 options={PRIVATE_MODE_ITEMS}
@@ -959,15 +954,14 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 hint="Redacts other Participants' Cards until the Facilitator reveals them."
               />
 
-              <SegmentedControl
+              <SegmentedField
                 legend="Auto-expiry on inactivity"
                 icon={Clock}
                 options={RETENTION_ITEMS}
                 value={retentionDays()}
                 onChange={setRetentionDays}
               />
-            </div>
-          </Show>
+          </DisclosureButton>
         </div>
       </div>
 
