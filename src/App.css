@@ -757,28 +757,6 @@
   line-height: 1.25;
 }
 
-dialog.board-dialog-surface {
-  width: calc(100% - 1.5rem);
-  max-width: 28rem;
-  max-height: calc(100dvh - 1.5rem);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scroll-padding-top: 5rem;
-  padding: 0;
-}
-
-dialog.board-dialog-surface .board-overlay-header {
-  position: sticky;
-  z-index: 10;
-  top: 0;
-  padding-block: 1rem;
-}
-
-dialog.board-dialog-surface .board-overlay-header h2 {
-  font-size: 1.125rem;
-  letter-spacing: -0.025em;
-}
-
 .board-modal-field {
   border: 1px solid color-mix(in srgb, var(--retrocks-border) 85%, transparent);
   border-radius: 0.5rem;
@@ -791,110 +769,43 @@ dialog.board-dialog-surface .board-overlay-header h2 {
   outline-offset: 2px;
 }
 
-.board-drawer-dialog {
-  --board-drawer-offset: 0 100%;
-  --board-drawer-duration: 300ms;
+/* ui-sdk Drawer sheet (Card details, Action Items); the drawer owns translate + backdrop opacity */
+.board-drawer-backdrop {
   position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-  margin: 0;
-  padding: 0;
-  overflow: clip;
-  background: transparent;
-  color: var(--retrocks-text);
-  transition-property: display, overlay;
-  transition-duration: var(--board-drawer-duration);
-  transition-behavior: allow-discrete;
-}
-
-.board-drawer-dialog:not([open]),
-.board-drawer-dialog[data-closing] .board-drawer-panel {
-  pointer-events: none;
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 .board-drawer-panel {
-  position: absolute;
-  inset: auto 0 0;
   display: flex;
-  max-height: 85dvh;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--retrocks-border);
+  background: var(--retrocks-surface);
+  color: var(--retrocks-text);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.28);
+}
+
+.board-drawer-panel[data-side='bottom'] {
+  width: 100%;
+  max-height: 85dvh;
   border-width: 1px 0 0;
   border-radius: 1rem 1rem 0 0;
-  background: var(--retrocks-surface);
-  box-shadow: 0 16px 48px rgb(0 0 0 / 0.28);
-  translate: var(--board-drawer-offset);
-  transition: translate var(--board-drawer-duration) ease-out;
-  transition: translate var(--board-drawer-duration) linear(0, 0.018 2%, 0.07 4%, 0.32 11%, 0.62 20%, 0.81 30%, 0.92 42%, 0.975 56%, 0.995 75%, 1);
 }
 
-.board-drawer-dialog[open]:where(:not([data-closing])) .board-drawer-panel {
-  translate: 0 0;
-}
-
-:is(.board-drawer-dialog, dialog.board-dialog-surface)::backdrop {
-  background-color: transparent;
-  backdrop-filter: blur(3px);
-  transition-property: background-color, display, overlay;
-  transition-duration: 220ms;
-  transition-timing-function: ease-out;
-  transition-behavior: allow-discrete;
-}
-
-:is(.board-drawer-dialog, dialog.board-dialog-surface)[open]:where(:not([data-closing]))::backdrop {
-  background-color: rgb(0 0 0 / 0.45);
-}
-
-@starting-style {
-  dialog.board-dialog-surface[open] {
-    opacity: 0;
-    scale: 0.96;
-    translate: 0 6px;
-  }
-
-  .board-drawer-dialog[open]:where(:not([data-closing])) .board-drawer-panel {
-    translate: var(--board-drawer-offset);
-  }
-
-  :is(.board-drawer-dialog, dialog.board-dialog-surface)[open]:where(:not([data-closing]))::backdrop {
-    background-color: transparent;
-  }
-}
-
-@media (width >= 40rem) {
-  .board-drawer-dialog {
-    --board-drawer-offset: 100% 0;
-  }
-
-  .board-drawer-panel {
-    inset: 0 0 0 auto;
-    width: min(100%, 28rem);
-    max-height: none;
-    border-width: 0 0 0 1px;
-    border-radius: 0;
-  }
+.board-drawer-panel[data-side='right'] {
+  height: 100%;
+  width: min(100%, 28rem);
+  border-width: 0 0 0 1px;
+  border-radius: 0;
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  :is(.board-drawer-dialog, dialog.board-dialog-surface)::backdrop {
+  .board-drawer-backdrop {
     backdrop-filter: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .board-drawer-dialog {
-    --board-drawer-offset: 0 0;
-  }
-
-  @starting-style {
-    dialog.board-dialog-surface[open] {
-      scale: 1;
-      translate: 0 0;
-    }
+    -webkit-backdrop-filter: none;
   }
 }
 

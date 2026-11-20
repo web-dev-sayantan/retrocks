@@ -102,6 +102,7 @@ describe('<ActionItemsDrawer />', () => {
     const { artifact } = await captureArtifact(() => {
       const view = render(() => (
         <ActionItemsDrawer
+          side="right"
           open={true}
           board={makeBoard([openItem, doneItem])}
           isLocked={false}
@@ -137,6 +138,7 @@ describe('<ActionItemsDrawer />', () => {
     const onUpdateActionItem = vi.fn(async () => true);
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
         board={makeBoard([openItem, doneItem, regularCard])}
         isLocked={false}
@@ -194,6 +196,7 @@ describe('<ActionItemsDrawer />', () => {
       .mockResolvedValueOnce(true);
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
         board={makeBoard([openItem])}
         isLocked={false}
@@ -248,6 +251,7 @@ describe('<ActionItemsDrawer />', () => {
       };
       return (
         <ActionItemsDrawer
+          side="right"
           open={true}
           board={board}
           isLocked={false}
@@ -293,6 +297,7 @@ describe('<ActionItemsDrawer />', () => {
     try {
       const { getByRole, getByText } = render(() => (
         <ActionItemsDrawer
+          side="right"
           open={true}
           board={makeBoard([openItem, doneItem])}
           isLocked={false}
@@ -300,7 +305,7 @@ describe('<ActionItemsDrawer />', () => {
           onUpdateActionItem={vi.fn(async () => true)}
         />
       ));
-      flush();
+      await flushPromises();
 
       expect(document.activeElement).toBe(
         getByRole('button', { name: 'Close Action Items' }),
@@ -322,10 +327,8 @@ describe('<ActionItemsDrawer />', () => {
       await flushPromises();
       expect(writeText).toHaveBeenLastCalledWith('- [ ] Ship the API');
 
-      fireEvent(
-        getByRole('dialog', { name: 'Action Items' }),
-        new Event('cancel', { cancelable: true }),
-      );
+      fireEvent.keyDown(getByRole('button', { name: 'Close Action Items' }), { key: 'Escape' });
+      flush();
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
@@ -335,6 +338,7 @@ describe('<ActionItemsDrawer />', () => {
   it('shows an empty state and disables copying when no Action Items exist', () => {
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
         board={makeBoard([regularCard])}
         isLocked={false}
@@ -354,6 +358,7 @@ describe('<ActionItemsDrawer />', () => {
     const participantUpdate = vi.fn(async () => true);
     const participantView = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
         board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: false }}
         isLocked={true}
@@ -374,6 +379,7 @@ describe('<ActionItemsDrawer />', () => {
     const facilitatorUpdate = vi.fn(async () => true);
     const facilitatorView = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
         board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: true }}
         isLocked={true}
@@ -401,9 +407,10 @@ describe('<ActionItemsDrawer />', () => {
     });
   });
 
-  it('wraps Tab and Shift+Tab within Action Items', () => {
+  it('wraps Tab and Shift+Tab within Action Items', async () => {
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
         board={makeBoard([openItem])}
         isLocked={false}
@@ -411,13 +418,15 @@ describe('<ActionItemsDrawer />', () => {
         onUpdateActionItem={vi.fn(async () => true)}
       />
     ));
-    flush();
+    await flushPromises();
 
     const close = view.getByRole('button', { name: 'Close Action Items' });
     const copy = view.getByRole('button', { name: 'Copy as Markdown Checklist' });
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    await flushPromises();
     expect(copy).toHaveFocus();
     fireEvent.keyDown(copy, { key: 'Tab' });
+    await flushPromises();
     expect(close).toHaveFocus();
   });
 
@@ -425,6 +434,7 @@ describe('<ActionItemsDrawer />', () => {
     const { artifact } = await captureArtifact(() => {
       render(() => (
         <ActionItemsDrawer
+          side="right"
           open={true}
           board={makeBoard([openItem, doneItem])}
           isLocked={false}

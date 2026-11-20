@@ -9,6 +9,7 @@ import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import type { BoardEvent, BoardMutationResponse, BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
 import { logPrivacyColophon } from '../lib/easter-eggs';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
+import BoardConfirmDialog from './BoardConfirmDialog';
 import BoardWorkspace from './BoardWorkspace';
 
 function makeCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
@@ -649,13 +650,13 @@ describe('<BoardWorkspace />', () => {
       events: [{ type: 'board:snapshot', version: 4, serverNow: Date.now(), board: resetBoard }],
     });
 
-    const { getByRole, getByText, queryByTitle } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    const { getByRole, getByText, queryByRole, queryByTitle } = render(() => (
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
-    const dialog = getByText('Board Settings', { selector: 'h2' }).closest('dialog')!;
-    dialog.showModal = () => { dialog.open = true; };
-    dialog.close = () => { dialog.open = false; };
     openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
@@ -679,17 +680,24 @@ describe('<BoardWorkspace />', () => {
 
     openBoardSettings({ getByRole });
     flush();
-    const destructiveActions = within(settings.getByRole('region', { name: 'Destructive actions' }));
+    const reopened = within(getByRole('dialog', { name: 'Board Settings' }));
+    const destructiveActions = within(reopened.getByRole('region', { name: 'Destructive actions' }));
     expect(destructiveActions.getByRole('button', { name: 'Delete Board' })).toBeVisible();
     fireEvent.click(destructiveActions.getByRole('button', { name: 'Reset All Votes' }));
-    flush();
-    expect(spies.resetVotes).not.toHaveBeenCalled();
-    fireEvent.click(destructiveActions.getByRole('button', { name: 'Confirm Reset' }));
     await flushPromises();
+    expect(spies.resetVotes).not.toHaveBeenCalled();
 
-    expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id });
-    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
-    expect(getByText('7 / 7 votes left')).toBeInTheDocument();
+    // The shared confirm asks before the destructive reset.
+    const resetConfirm = within(
+      getByRole('alertdialog', { name: 'Remove every Vote from this Board?' }),
+    );
+    fireEvent.click(resetConfirm.getByRole('button', { name: 'Reset All Votes' }));
+    await waitFor(() =>
+      expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id }),
+    );
+    expect(queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(reopened.getByRole('button', { name: 'Close Board Settings' }));
+    await waitFor(() => expect(getByText('7 / 7 votes left')).toBeInTheDocument());
     expect(getByText('0 yours')).toBeInTheDocument();
     expect(getByRole('button', { name: 'Cast Vote' })).toBeEnabled();
     expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
@@ -733,7 +741,12 @@ describe('<BoardWorkspace />', () => {
       events: [{ type: 'comment:deleted' as const, version: 5, cardId: card.id, commentId: 'mine' }],
     }));
     Object.assign(actions, { toggleReaction, createComment, deleteComment });
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const view = render(() => (
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardConfirmDialog />
+      </>
+    ));
     function receive(message: BoardLiveMessage) {
       streams[0].dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
       flush();
@@ -779,12 +792,16 @@ describe('<BoardWorkspace />', () => {
       expect(createComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, content: 'My reply' });
       expect(drawer.getByText('My reply')).toBeInTheDocument();
       fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
-      flush();
-      expect(deleteComment).not.toHaveBeenCalled();
-      fireEvent.click(drawer.getByRole('button', { name: 'Confirm?' }));
       await flushPromises();
-      expect(deleteComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, commentId: 'mine' });
-      expect(drawer.queryByText('My reply')).not.toBeInTheDocument();
+      expect(deleteComment).not.toHaveBeenCalled();
+      fireEvent.click(
+        within(view.getByRole('alertdialog', { name: 'Delete this comment?' }))
+          .getByRole('button', { name: 'Delete comment' }),
+      );
+      await waitFor(() => {
+        expect(deleteComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, commentId: 'mine' });
+        expect(drawer.queryByText('My reply')).not.toBeInTheDocument();
+      });
 
       receive({
         type: 'board:snapshot',
@@ -887,7 +904,7 @@ describe('<BoardWorkspace />', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('dismisses Card details when a press begins and ends on the backdrop', () => {
+  it('dismisses Card details when a press begins and ends on the backdrop', async () => {
     const board = makeBoardView({ cards: [makeCard()] });
     const view = render(() => (
       <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
@@ -896,23 +913,25 @@ describe('<BoardWorkspace />', () => {
 
     const trigger = view.getByRole('button', { name: 'Open Card details' });
     fireEvent.click(trigger);
-    flush();
+    await flushPromises();
 
     const drawer = view.getByRole('dialog', { name: 'Card details' });
+    const backdrop = document.querySelector('[data-slot="drawer-backdrop"]')!;
     const close = within(drawer).getByRole('button', { name: 'Close Card details' });
+    // A press that begins inside the sheet never counts as a backdrop press.
     fireEvent.pointerDown(close, { button: 0 });
-    fireEvent.click(drawer);
+    fireEvent.pointerUp(close, { button: 0 });
     flush();
-    expect(drawer).toBeVisible();
+    expect(view.getByRole('dialog', { name: 'Card details' })).toBeInTheDocument();
 
-    fireEvent.pointerDown(drawer, { button: 0 });
-    fireEvent.click(drawer);
-    flush();
+    fireEvent.pointerDown(backdrop, { button: 0 });
+    fireEvent.pointerUp(backdrop, { button: 0 });
+    await flushPromises();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(trigger).toHaveFocus();
   });
 
-  it('contains focus in Card details and restores it after Escape or explicit close', () => {
+  it('contains focus in Card details and restores it after Escape or explicit close', async () => {
     const card = makeCard({ comments: [], commentCount: 1 });
     const board = makeBoardView({ cards: [card] });
     const { actions } = createFakeActions(board);
@@ -921,31 +940,33 @@ describe('<BoardWorkspace />', () => {
 
     const comments = view.getByRole('button', { name: '1 comment' });
     fireEvent.click(comments);
-    flush();
+    await flushPromises();
     const drawer = within(view.getByRole('dialog', { name: 'Card details' }));
     const close = drawer.getByRole('button', { name: 'Close Card details' });
     const comment = drawer.getByRole('textbox', { name: 'Comment' });
     expect(close).toHaveFocus();
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    await flushPromises();
     expect(comment).toHaveFocus();
     fireEvent.keyDown(comment, { key: 'Tab' });
+    await flushPromises();
     expect(close).toHaveFocus();
 
     fireEvent.keyDown(close, { key: 'Escape' });
-    flush();
+    await flushPromises();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(comments).toHaveFocus();
 
     const open = view.getByRole('button', { name: 'Open Card details' });
     fireEvent.click(open);
-    flush();
+    await flushPromises();
     fireEvent.click(view.getByRole('button', { name: 'Close Card details' }));
-    flush();
+    await flushPromises();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(open).toHaveFocus();
   });
 
-  it('allows Facilitators to delete any revealed comment with inline confirmation and closes Card details on Escape without Solid diagnostics', async () => {
+  it('lets Facilitators delete any revealed comment through the shared confirm and closes Card details on Escape without Solid diagnostics', async () => {
     const card = makeCard({
       isMine: false,
       comments: [
@@ -977,7 +998,10 @@ describe('<BoardWorkspace />', () => {
 
     const { artifact } = await captureArtifact(async () => {
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <>
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardConfirmDialog />
+        </>
       ));
       try {
         flush();
@@ -988,15 +1012,20 @@ describe('<BoardWorkspace />', () => {
         );
         expect(drawer.getByText('Needs follow-up')).toBeInTheDocument();
         fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
-        flush();
-        fireEvent.click(drawer.getByRole('button', { name: 'Confirm?' }));
         await flushPromises();
-        expect(deleteComment).toHaveBeenCalledWith({
-          boardId: board.id,
-          cardId: card.id,
-          commentId: 'other_comment',
+        expect(deleteComment).not.toHaveBeenCalled();
+        fireEvent.click(
+          within(view.getByRole('alertdialog', { name: 'Delete this comment?' }))
+            .getByRole('button', { name: 'Delete comment' }),
+        );
+        await waitFor(() => {
+          expect(deleteComment).toHaveBeenCalledWith({
+            boardId: board.id,
+            cardId: card.id,
+            commentId: 'other_comment',
+          });
+          expect(drawer.queryByText('Needs follow-up')).not.toBeInTheDocument();
         });
-        expect(drawer.queryByText('Needs follow-up')).not.toBeInTheDocument();
 
         fireEvent.keyDown(document, { key: 'Escape' });
         flush();
@@ -1237,7 +1266,10 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(share);
     flush();
     const dialog = within(view.getByRole('dialog', { name: 'Share Board' }));
-    expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus();
+    // A press-open moves focus on the next animation frame.
+    await waitFor(() =>
+      expect(dialog.getByRole('button', { name: 'Close Share' })).toHaveFocus(),
+    );
     expect(dialog.getByRole('img', { name: 'Participant Link QR code' })).toBeInTheDocument();
     expect(dialog.queryByRole('region', { name: 'Co-Facilitator Link' })).toBeNull();
 
@@ -1432,7 +1464,12 @@ describe('<BoardWorkspace />', () => {
       ok: false, code: 'VALIDATION_ERROR', message: 'Grouping failed.',
     });
     spies.deleteCard.mockRejectedValueOnce(new Error('Disconnected'));
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const view = render(() => (
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardConfirmDialog />
+      </>
+    ));
     flush();
     const mine = within(view.getByText(card.content).closest('article')!);
     const trigger = mine.getByRole('button', { name: 'Card actions' });
@@ -1456,20 +1493,31 @@ describe('<BoardWorkspace />', () => {
     await flushPromises();
     expect(mine.getByRole('alert')).toHaveTextContent('Could not group the Card.');
 
+    // A failed delete stays confirmable for a retry through the shared dialog.
     fireEvent.click(trigger);
     flush();
     select('Delete Card');
-    const confirm = mine.getByRole('button', { name: 'Confirm?' });
-    fireEvent.click(confirm);
     await flushPromises();
-    expect(confirm).toBeEnabled();
-    expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.');
-    fireEvent.click(confirm);
+    expect(spies.deleteCard).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(view.getByRole('alertdialog', { name: 'Delete this Card?' }))
+        .getByRole('button', { name: 'Delete Card' }),
+    );
+    await waitFor(() =>
+      expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.'),
+    );
+    fireEvent.click(trigger);
+    flush();
+    select('Delete Card');
     await flushPromises();
-    expect(view.queryByText(card.content)).toBeNull();
+    fireEvent.click(
+      within(view.getByRole('alertdialog', { name: 'Delete this Card?' }))
+        .getByRole('button', { name: 'Delete Card' }),
+    );
+    await waitFor(() => expect(view.queryByText(card.content)).toBeNull());
   });
 
-  it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and inline Delete -> Confirm? confirmation', async () => {
+  it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and Card delete through the shared confirm', async () => {
     const myCard = makeCard({
       id: 'card_mine',
       columnId: 'col_1',
@@ -1507,12 +1555,15 @@ describe('<BoardWorkspace />', () => {
     const { actions, spies } = createFakeActions(board);
 
     const { getByRole, queryByText } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
+      <>
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
 
@@ -1607,28 +1658,28 @@ describe('<BoardWorkspace />', () => {
       targetColumnId: 'col_1',
     });
 
-    // Inline delete confirmation: Delete -> Confirm?
+    // Delete Card asks through the shared confirm
     const movedBack = within(within(wentWell).getByText('Refined retro note').closest('article')!);
     fireEvent.click(movedBack.getByRole('button', { name: 'Card actions' }));
     flush();
     fireEvent.click(movedBack.getByRole('menuitem', { name: 'Delete Card' }));
-    flush();
+    await flushPromises();
     expect(spies.deleteCard).not.toHaveBeenCalled();
 
-    const confirmBtn = within(wentWell).getByRole('button', {
-      name: 'Confirm?',
+    fireEvent.click(
+      within(getByRole('alertdialog', { name: 'Delete this Card?' }))
+        .getByRole('button', { name: 'Delete Card' }),
+    );
+    await waitFor(() => {
+      expect(spies.deleteCard).toHaveBeenCalledWith({
+        boardId: board.id,
+        cardId: 'card_mine',
+      });
+      expect(queryByText('Refined retro note')).not.toBeInTheDocument();
     });
-    fireEvent.click(confirmBtn);
-    await flushPromises();
-
-    expect(spies.deleteCard).toHaveBeenCalledWith({
-      boardId: board.id,
-      cardId: 'card_mine',
-    });
-    expect(queryByText('Refined retro note')).not.toBeInTheDocument();
   });
 
-  it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with non-empty confirmation)', async () => {
+  it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with shared confirmation)', async () => {
     const existingCard = makeCard({
       id: 'card_in_col2',
       columnId: 'col_2',
@@ -1660,12 +1711,15 @@ describe('<BoardWorkspace />', () => {
     const { actions, spies } = createFakeActions(board);
 
     const { getByLabelText, getByRole, queryByRole } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
+      <>
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
 
@@ -1741,7 +1795,7 @@ describe('<BoardWorkspace />', () => {
       columnIds: ['col_2', 'col_1', 'col_new_2'],
     });
 
-    // Delete non-empty Column -> requires confirmation showing Card count
+    // Delete non-empty Column -> shared confirm shows the Card count
     fireEvent.click(
       within(col2Region).getByRole('button', {
         name: 'Column options for To Improve',
@@ -1751,22 +1805,22 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(
       within(col2Region).getByRole('menuitem', { name: 'Delete column' }),
     );
-    flush();
+    await flushPromises();
     expect(spies.deleteColumn).not.toHaveBeenCalled();
-    expect(within(col2Region).getByText(/1 card/i)).toBeInTheDocument();
 
     fireEvent.click(
-      within(col2Region).getByRole('menuitem', { name: 'Confirm delete' }),
+      within(getByRole('alertdialog', { name: 'Delete this Column and its 1 card?' }))
+        .getByRole('button', { name: 'Delete column' }),
     );
-    await flushPromises();
-
-    expect(spies.deleteColumn).toHaveBeenCalledWith({
-      boardId: board.id,
-      columnId: 'col_2',
+    await waitFor(() => {
+      expect(spies.deleteColumn).toHaveBeenCalledWith({
+        boardId: board.id,
+        columnId: 'col_2',
+      });
+      expect(
+        queryByRole('heading', { level: 2, name: 'To Improve' }),
+      ).not.toBeInTheDocument();
     });
-    expect(
-      queryByRole('heading', { level: 2, name: 'To Improve' }),
-    ).not.toBeInTheDocument();
   });
 
   it('toggles Private Mode and reveals all Cards through one HTTP snapshot while preserving local drafts', async () => {
@@ -1973,16 +2027,6 @@ describe('<BoardWorkspace />', () => {
       ));
     flush();
 
-    const dialog = getByText('Board Settings', { selector: 'h2' }).closest(
-      'dialog',
-    )!;
-    dialog.showModal = () => {
-      dialog.open = true;
-    };
-    dialog.close = () => {
-      dialog.open = false;
-    };
-
     // Open Board Settings and Lock the Board
     openBoardSettings({ getByRole });
     flush();
@@ -2078,9 +2122,10 @@ describe('<BoardWorkspace />', () => {
     // Unlock the Board from Board Settings
     openBoardSettings({ getByRole });
     flush();
-    fireEvent.click(settings.getByRole('button', { name: 'Unlock Board' }));
+    const reopened = within(getByRole('dialog', { name: 'Board Settings' }));
+    fireEvent.click(reopened.getByRole('button', { name: 'Unlock Board' }));
     await flushPromises();
-    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
+    fireEvent.click(reopened.getByRole('button', { name: 'Close Board Settings' }));
     flush();
 
     expect(spies.setBoardLock).toHaveBeenLastCalledWith({
@@ -2091,7 +2136,7 @@ describe('<BoardWorkspace />', () => {
     expect(getByRole('button', { name: 'Private Mode' })).toBeEnabled();
   });
 
-  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', () => {
+  it('returns focus to More when the Action Items header entry is hidden while the drawer is open', async () => {
     const board = makeBoardView({ isLocked: true });
     const { actions } = createFakeActions(board);
     const view = render(() => (
@@ -2105,9 +2150,10 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     const close = view.getByRole('button', { name: 'Close Action Items' });
-    expect(close).toHaveFocus();
-    // In the browser the header entry becomes hidden at the compact layout width.
-    entry.hidden = true;
+    await waitFor(() => expect(close).toHaveFocus());
+    // In the browser the header entry becomes hidden at the compact layout width;
+    // jsdom still focuses hidden elements, so simulate it being unavailable.
+    entry.remove();
     fireEvent.click(close);
     flush();
 
@@ -2178,50 +2224,58 @@ describe('<BoardWorkspace />', () => {
     });
     const { actions, spies } = createFakeActions(board);
 
-    const { getByRole, getByText } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
+    const { getByRole, queryByRole } = render(() => (
+      <>
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
-
-    const dialog = getByText('Board Settings', { selector: 'h2' }).closest(
-      'dialog',
-    )!;
-    dialog.showModal = () => {
-      dialog.open = true;
-    };
-    dialog.close = () => {
-      dialog.open = false;
-    };
 
     openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
 
-    // Clicking Delete Board opens confirmation without deleting yet
+    // Clicking Delete Board opens the shared confirm without deleting yet
     fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
-    flush();
+    await flushPromises();
     expect(spies.deleteBoard).not.toHaveBeenCalled();
 
+    const confirmDialog = within(
+      getByRole('alertdialog', { name: 'Permanently delete this Board?' }),
+    );
+
+    // Escape restores the Board Settings without deleting
+    fireEvent.keyDown(confirmDialog.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+    await flushPromises();
+    expect(queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(spies.deleteBoard).not.toHaveBeenCalled();
+    expect(getByRole('dialog', { name: 'Board Settings' })).toBeInTheDocument();
+
     // Cancel aborts deletion
-    fireEvent.click(settings.getByRole('button', { name: 'Cancel Delete' }));
-    flush();
+    fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
+    await flushPromises();
+    fireEvent.click(within(getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
+      .getByRole('button', { name: 'Cancel' }));
+    await flushPromises();
     expect(spies.deleteBoard).not.toHaveBeenCalled();
 
     // Confirming deletes the Board, shows 404 empty state, and removes from Recent Boards
     fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
-    flush();
-    fireEvent.click(settings.getByRole('button', { name: 'Confirm Delete' }));
     await flushPromises();
-
-    expect(spies.deleteBoard).toHaveBeenCalledWith({ boardId: board.id });
-    expect(
-      getByRole('heading', { level: 1, name: 'Board not found or expired' }),
-    ).toBeInTheDocument();
+    fireEvent.click(within(getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
+      .getByRole('button', { name: 'Delete Board' }));
+    await waitFor(() => {
+      expect(spies.deleteBoard).toHaveBeenCalledWith({ boardId: board.id });
+      expect(
+        getByRole('heading', { level: 1, name: 'Board not found or expired' }),
+      ).toBeInTheDocument();
+    });
     expect(
       getByRole('link', { name: 'Create a new board' }),
     ).toBeInTheDocument();
@@ -2298,28 +2352,25 @@ describe('<BoardWorkspace />', () => {
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace
-            board={board}
-            boardId={board.id}
-            homeHref="/"
-            actions={actions}
-          />
+          <>
+            <BoardWorkspace
+              board={board}
+              boardId={board.id}
+              homeHref="/"
+              actions={actions}
+            />
+            <BoardConfirmDialog />
+          </>
         ));
         flush();
-        const dialog = view
-          .getByText('Board Settings', { selector: 'h2' })
-          .closest('dialog')!;
-        dialog.showModal = () => {
-          dialog.open = true;
-        };
-        dialog.close = () => {
-          dialog.open = false;
-        };
         openBoardSettings(view);
         flush();
         fireEvent.click(view.getByRole('button', { name: 'Delete Board' }));
-        flush();
-        fireEvent.click(view.getByRole('button', { name: 'Confirm Delete' }));
+        await flushPromises();
+        fireEvent.click(
+          within(view.getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
+            .getByRole('button', { name: 'Delete Board' }),
+        );
         await flushPromises();
       },
       { scenario: 'board-workspace-locked-delete' },
@@ -3598,16 +3649,13 @@ describe('<BoardWorkspace />', () => {
           await flushPromises();
           expect(spies.setPrivateMode).toHaveBeenCalledWith({ boardId: board.id, isBlurred: true });
 
-          // "Esc" closes Share Board <dialog> and Column options popover
-          const shareDialog = view.getByText('Share Board', { selector: 'h2' }).closest('dialog')!;
-          shareDialog.showModal = () => { shareDialog.open = true; };
-          shareDialog.close = () => { shareDialog.open = false; };
+          // "Esc" closes the Share Board dialog and the Column options popover
           fireEvent.click(view.getByRole('button', { name: 'Share' }));
           flush();
-          expect(shareDialog.open).toBe(true);
+          expect(view.getByRole('dialog', { name: 'Share Board' })).toBeInTheDocument();
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
-          expect(shareDialog.open).toBe(false);
+          expect(view.queryByRole('dialog', { name: 'Share Board' })).not.toBeInTheDocument();
 
           const wentWell = view.getByRole('region', { name: 'Went Well' });
           fireEvent.click(within(wentWell).getByRole('button', { name: 'Column options for Went Well' }));
