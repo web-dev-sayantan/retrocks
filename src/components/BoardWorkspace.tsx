@@ -1493,24 +1493,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         draggingCardId={draggingCardId()}
                         draggingGroupId={draggingGroupId()}
                         draggingSourceColumnId={draggingSourceColumnId()}
+                        actions={session}
                         onResetFilters={resetFilters}
                         onRegisterComposer={registerColumnComposer}
                         onActivateColumn={(colId) => setActiveColumnId(colId)}
-                        onCreateCard={session.createCard}
-                        onUpdateCard={session.updateCard}
-                        onUpdateActionItem={session.updateActionItem}
-                        onMoveCard={session.moveCard}
-                        onDeleteCard={session.deleteCard}
-                        onToggleReaction={session.toggleReaction}
                         onOpenCardDetail={handleOpenCardDetail}
-                        onUpdateColumn={session.updateColumn}
-                        onMoveColumn={session.moveColumn}
-                        onDeleteColumn={session.deleteColumn}
-                        onGroupCard={session.groupCard}
-                        onUngroupCard={session.ungroupCard}
-                        onRenameCardGroup={session.renameCardGroup}
-                        onDissolveCardGroup={session.dissolveCardGroup}
-                        onMoveCardGroup={session.moveCardGroup}
                         onDragStartCard={handleDragStartCard}
                         onDragStartGroup={handleDragStartGroup}
                         onDragEndCard={handleDragEndCard}
