@@ -78,7 +78,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
       data-print-hide="true"
       class="border-b border-border/65"
     >
-      <div class="mx-auto max-w-[1600px] px-3 py-2.5 sm:px-6">
+      <div class="mx-auto max-w-[1600px] px-3 py-0.5 sm:px-6 sm:py-2.5">
         <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 lg:flex-nowrap lg:gap-3">
           <div
             class={[

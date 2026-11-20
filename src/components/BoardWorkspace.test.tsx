@@ -678,10 +678,12 @@ describe('<BoardWorkspace />', () => {
 
     openBoardSettings({ getByRole });
     flush();
-    fireEvent.click(settings.getByRole('button', { name: 'Reset All Votes' }));
+    const destructiveActions = within(settings.getByRole('region', { name: 'Destructive actions' }));
+    expect(destructiveActions.getByRole('button', { name: 'Delete Board' })).toBeVisible();
+    fireEvent.click(destructiveActions.getByRole('button', { name: 'Reset All Votes' }));
     flush();
     expect(spies.resetVotes).not.toHaveBeenCalled();
-    fireEvent.click(settings.getByRole('button', { name: 'Confirm Reset' }));
+    fireEvent.click(destructiveActions.getByRole('button', { name: 'Confirm Reset' }));
     await flushPromises();
 
     expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id });
@@ -955,6 +957,31 @@ describe('<BoardWorkspace />', () => {
     expect(spies.updateActionItem).not.toHaveBeenCalled();
 
     fireEvent.keyDown(picker, { key: 'Escape' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('dismisses Card details when a press begins and ends on the backdrop', () => {
+    const board = makeBoardView({ cards: [makeCard()] });
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+    ));
+    flush();
+
+    const trigger = view.getByRole('button', { name: 'Open Card details' });
+    fireEvent.click(trigger);
+    flush();
+
+    const drawer = view.getByRole('dialog', { name: 'Card details' });
+    const close = within(drawer).getByRole('button', { name: 'Close Card details' });
+    fireEvent.pointerDown(close, { button: 0 });
+    fireEvent.click(drawer);
+    flush();
+    expect(drawer).toBeVisible();
+
+    fireEvent.pointerDown(drawer, { button: 0 });
+    fireEvent.click(drawer);
     flush();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -3820,6 +3847,57 @@ describe('<BoardWorkspace />', () => {
       expect(destination).toHaveFocus();
       expect(trigger).toHaveAttribute('aria-expanded', 'false');
     }
+  });
+
+  it('keeps the primary Board controls together while the Board title and status can scroll away', async () => {
+    const board = makeBoardView({ isFacilitator: true, voteLimit: 5, remainingVotes: 2 });
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      ));
+      try {
+        flush();
+        const controls = within(view.getByRole('group', { name: 'Board controls' }));
+        expect(controls.getByRole('link', { name: 'Retrocks home' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Countdown Timer' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Private Mode' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'More board actions' })).toBeInTheDocument();
+        expect(controls.queryByRole('heading', { level: 1 })).toBeNull();
+        expect(controls.queryByRole('group', { name: 'Board status' })).toBeNull();
+        expect(within(view.getByRole('group', { name: 'Board status' })).getByText('2 / 5 votes left')).toBeInTheDocument();
+      } finally {
+        view.unmount();
+      }
+    }, { scenario: 'compact-mobile-board-controls' });
+    expectNoDiagnostics(artifact);
+  });
+
+  it('fades the Column rail only on edges with more tabs to scroll to', () => {
+    const board = makeBoardView();
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+    ));
+    flush();
+    const tabs = view.getByRole('tablist', { name: 'Select Column' });
+    Object.defineProperties(tabs, {
+      clientWidth: { value: 300 },
+      scrollWidth: { value: 500 },
+    });
+
+    fireEvent.scroll(tabs);
+    expect(tabs).not.toHaveAttribute('data-fade-start');
+    expect(tabs).toHaveAttribute('data-fade-end');
+
+    tabs.scrollLeft = 100;
+    fireEvent.scroll(tabs);
+    expect(tabs).toHaveAttribute('data-fade-start');
+    expect(tabs).toHaveAttribute('data-fade-end');
+
+    tabs.scrollLeft = 200;
+    fireEvent.scroll(tabs);
+    expect(tabs).toHaveAttribute('data-fade-start');
+    expect(tabs).not.toHaveAttribute('data-fade-end');
   });
 
   it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {

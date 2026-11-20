@@ -17,58 +17,6 @@
   }
 }
 
-.card-detail-dialog {
-  transition: display 180ms allow-discrete, overlay 180ms allow-discrete;
-}
-
-.card-detail-dialog:not([open]) {
-  pointer-events: none;
-}
-
-.card-detail-dialog::backdrop {
-  background: transparent;
-  pointer-events: none;
-}
-
-.card-detail-scrim,
-.card-detail-panel {
-  transition: opacity 180ms ease-out, transform 180ms cubic-bezier(0.2, 0.75, 0.35, 1);
-}
-
-.card-detail-panel {
-  --card-detail-offset: translateY(100%);
-}
-
-@media (min-width: 40rem) {
-  .card-detail-panel {
-    --card-detail-offset: translateX(100%);
-  }
-}
-
-.card-detail-dialog:not([open]) :is(.card-detail-scrim, .card-detail-panel) {
-  opacity: 0;
-}
-
-.card-detail-dialog:not([open]) .card-detail-panel {
-  transform: var(--card-detail-offset);
-}
-
-@starting-style {
-  .card-detail-dialog[open] :is(.card-detail-scrim, .card-detail-panel) {
-    opacity: 0;
-  }
-
-  .card-detail-dialog[open] .card-detail-panel {
-    transform: var(--card-detail-offset);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .card-detail-panel {
-    --card-detail-offset: none;
-  }
-}
-
 /* Drive Tailwind dark:* utilities from the zero-FOUC data-theme attribute. */
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *, [data-theme=retro], [data-theme=retro] *));
 
@@ -244,7 +192,9 @@
 
 /* Home & Board floating Dynamic Island header material & depth */
 .home-island,
-.board-island {
+.board-island,
+.board-masthead-desktop-surface,
+.board-masthead-controls {
   background: color-mix(in srgb, var(--retrocks-surface) 82%, transparent);
   backdrop-filter: blur(20px) saturate(165%);
   -webkit-backdrop-filter: blur(20px) saturate(165%);
@@ -255,12 +205,183 @@
     0 10px 28px -10px rgb(0 0 0 / 0.14);
 }
 
-:is([data-theme='dark'], [data-theme='retro']) :is(.home-island, .board-island) {
+:is([data-theme='dark'], [data-theme='retro']) :is(.home-island, .board-island, .board-masthead-desktop-surface, .board-masthead-controls) {
   background: color-mix(in srgb, var(--retrocks-surface) 78%, transparent);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.08),
     0 2px 6px rgb(0 0 0 / 0.3),
     0 16px 34px -12px rgb(0 0 0 / 0.5);
+}
+
+/* One set of Board controls occupies the island on mobile and the toolbar on desktop. */
+.board-masthead,
+.board-masthead-layout {
+  display: contents;
+}
+
+.board-masthead-desktop-surface {
+  display: none;
+}
+
+.board-masthead-controls {
+  position: sticky;
+  top: 4px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 52px;
+  margin: 4px 12px 0;
+  padding: 3px 5px;
+  border-radius: 999px;
+}
+
+.board-mobile-composer {
+  background: var(--retrocks-surface);
+  background: color-mix(in srgb, var(--retrocks-surface) 86%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(165%);
+  backdrop-filter: blur(18px) saturate(165%);
+}
+
+.scroll-edge-fade {
+  --fade-start: 0px;
+  --fade-end: 0px;
+  --fade-direction: to right;
+  scrollbar-width: none;
+  mask-image: linear-gradient(var(--fade-direction), transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
+}
+
+.scroll-edge-fade[data-fade-start] {
+  --fade-start: 10px;
+}
+
+.scroll-edge-fade[data-fade-end] {
+  --fade-end: 10px;
+}
+
+.scroll-edge-fade:dir(rtl) {
+  --fade-direction: to left;
+}
+
+@media (width < 40rem) {
+  .board-column-deck[data-can-manage] .board-column-tabs {
+    margin-inline-end: 48px;
+  }
+
+  .board-column-cap,
+  .board-column-cap-row {
+    display: contents;
+  }
+
+  .board-column-heading:not([data-renaming]) {
+    display: none;
+  }
+
+  .board-column-heading[data-renaming] {
+    margin: 0.25rem;
+  }
+
+  .board-column-options {
+    position: absolute;
+    inset-block-start: 2px;
+    inset-inline-end: 0;
+  }
+
+  .board-masthead-title[data-renaming] {
+    height: 44px;
+  }
+
+  .board-masthead-title[data-renaming] ~ .board-masthead-status {
+    display: none;
+  }
+}
+
+@media (width >= 40rem) {
+  .board-masthead {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: block;
+    padding: 0.75rem 1.5rem 0.625rem;
+    border-bottom: 1px solid var(--retrocks-border);
+    background: var(--retrocks-canvas);
+  }
+
+  .board-island.board-masthead-layout {
+    display: grid;
+    grid-template:
+      "brand title theme" minmax(52px, auto)
+      "subtitle subtitle subtitle" auto
+      "status actions actions" auto
+      "feedback feedback feedback" auto
+      / minmax(8.5rem, 1fr) minmax(0, auto) minmax(8.5rem, 1fr);
+    align-items: center;
+    column-gap: 0.75rem;
+    max-width: 1552px;
+    margin-inline: auto;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .board-masthead-desktop-surface {
+    display: block;
+    grid-area: brand / brand / theme / theme;
+    align-self: stretch;
+    border-radius: 999px;
+  }
+
+  .board-masthead-controls {
+    display: contents;
+  }
+
+  .board-masthead-title {
+    grid-area: title;
+    z-index: 1;
+  }
+
+  .board-masthead-layout [aria-label='Retrocks home'] {
+    z-index: 1;
+    margin-inline-start: 0.5rem;
+  }
+
+  .board-masthead-theme {
+    grid-area: theme;
+    z-index: 1;
+    margin-inline-end: 0.5rem;
+  }
+
+  .board-masthead-subtitle {
+    grid-area: subtitle;
+    margin-block-start: 0.5rem;
+  }
+
+  .board-masthead-status {
+    grid-area: status;
+    margin-block-start: 0.5rem;
+  }
+
+  .board-masthead-actions {
+    grid-area: actions;
+    margin-block-start: 0.5rem;
+  }
+
+  .board-masthead-feedback {
+    grid-area: feedback;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .board-masthead .board-masthead-desktop-surface,
+  .board-masthead .board-masthead-controls,
+  .board-mobile-composer {
+    background: var(--retrocks-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 /* Anchored floating popover/menu surface with critically damped spring reveal */
@@ -597,55 +718,160 @@
   }
 }
 
-/* Keep the drawer in the top layer briefly on close to finish its exit. */
-.action-items-dialog {
-  --action-items-offset: translateY(100%);
-  transition: display 160ms allow-discrete, overlay 160ms allow-discrete;
+.board-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--retrocks-border);
+  background: var(--retrocks-surface);
+  padding: 0.875rem 1.25rem;
 }
 
-.action-items-dialog::backdrop {
-  background-color: transparent;
-  transition: background-color 160ms ease, display 160ms allow-discrete,
-    overlay 160ms allow-discrete;
+.board-overlay-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
-.action-items-dialog .action-items-panel {
-  transform: var(--action-items-offset);
-  transition: transform 160ms ease-in;
+dialog.board-dialog-surface {
+  width: calc(100% - 1.5rem);
+  max-width: 28rem;
+  max-height: calc(100dvh - 1.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-top: 5rem;
+  padding: 0;
 }
 
-.action-items-dialog[open] .action-items-panel {
-  transform: translate(0);
-  transition-timing-function: ease-out;
+dialog.board-dialog-surface .board-overlay-header {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  padding-block: 1rem;
 }
 
-.action-items-dialog[open]::backdrop {
-  background-color: rgb(0 0 0 / 50%);
+dialog.board-dialog-surface .board-overlay-header h2 {
+  font-size: 1.125rem;
+  letter-spacing: -0.025em;
 }
 
-.action-items-dialog:not([open]) {
+.board-modal-field {
+  border: 1px solid color-mix(in srgb, var(--retrocks-border) 85%, transparent);
+  border-radius: 0.5rem;
+  background: var(--retrocks-canvas);
+  color: var(--retrocks-text);
+}
+
+.board-modal-field:focus-visible {
+  outline: 2px solid var(--retrocks-focus);
+  outline-offset: 2px;
+}
+
+.board-drawer-dialog {
+  --board-drawer-offset: 0 100%;
+  --board-drawer-duration: 300ms;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: clip;
+  background: transparent;
+  color: var(--retrocks-text);
+  transition-property: display, overlay;
+  transition-duration: var(--board-drawer-duration);
+  transition-behavior: allow-discrete;
+}
+
+.board-drawer-dialog:not([open]),
+.board-drawer-dialog[data-closing] .board-drawer-panel {
   pointer-events: none;
 }
 
-@media (width >= 40rem) {
-  .action-items-dialog {
-    --action-items-offset: translateX(100%);
-  }
+.board-drawer-panel {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  max-height: 85dvh;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--retrocks-border);
+  border-width: 1px 0 0;
+  border-radius: 1rem 1rem 0 0;
+  background: var(--retrocks-surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.28);
+  translate: var(--board-drawer-offset);
+  transition: translate var(--board-drawer-duration) ease-out;
+  transition: translate var(--board-drawer-duration) linear(0, 0.018 2%, 0.07 4%, 0.32 11%, 0.62 20%, 0.81 30%, 0.92 42%, 0.975 56%, 0.995 75%, 1);
+}
+
+.board-drawer-dialog[open]:where(:not([data-closing])) .board-drawer-panel {
+  translate: 0 0;
+}
+
+:is(.board-drawer-dialog, dialog.board-dialog-surface)::backdrop {
+  background-color: transparent;
+  backdrop-filter: blur(3px);
+  transition-property: background-color, display, overlay;
+  transition-duration: 220ms;
+  transition-timing-function: ease-out;
+  transition-behavior: allow-discrete;
+}
+
+:is(.board-drawer-dialog, dialog.board-dialog-surface)[open]:where(:not([data-closing]))::backdrop {
+  background-color: rgb(0 0 0 / 0.45);
 }
 
 @starting-style {
-  .action-items-dialog[open]::backdrop {
-    background-color: transparent;
+  dialog.board-dialog-surface[open] {
+    opacity: 0;
+    scale: 0.96;
+    translate: 0 6px;
   }
 
-  .action-items-dialog[open] .action-items-panel {
-    transform: var(--action-items-offset);
+  .board-drawer-dialog[open]:where(:not([data-closing])) .board-drawer-panel {
+    translate: var(--board-drawer-offset);
+  }
+
+  :is(.board-drawer-dialog, dialog.board-dialog-surface)[open]:where(:not([data-closing]))::backdrop {
+    background-color: transparent;
+  }
+}
+
+@media (width >= 40rem) {
+  .board-drawer-dialog {
+    --board-drawer-offset: 100% 0;
+  }
+
+  .board-drawer-panel {
+    inset: 0 0 0 auto;
+    width: min(100%, 28rem);
+    max-height: none;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :is(.board-drawer-dialog, dialog.board-dialog-surface)::backdrop {
+    backdrop-filter: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .action-items-dialog .action-items-panel {
-    transform: none !important;
+  .board-drawer-dialog {
+    --board-drawer-offset: 0 0;
+  }
+
+  @starting-style {
+    dialog.board-dialog-surface[open] {
+      scale: 1;
+      translate: 0 0;
+    }
   }
 }
 
