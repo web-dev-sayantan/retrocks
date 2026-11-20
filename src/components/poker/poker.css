@@ -263,3 +263,7 @@
 .poker-deck-input[data-invalid] {
   border-color: var(--poker-error);
 }
+
+.poker-summary {
+  max-inline-size: 48rem;
+}

@@ -44,6 +44,7 @@ function pokerResponse<T extends PokerResult>(result: T) {
     RATE_LIMITED: 429,
     ROUND_CHANGED: 409,
     DECK_LOCKED: 409,
+    ROOM_CLOSED: 409,
   }[result.code];
   return respond(result, { status, revalidate: [] });
 }

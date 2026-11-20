@@ -10,6 +10,12 @@ beforeEach(async () => {
 
 afterEach(() => rooms?.close());
 
+function readLiveRoom(hash: string) {
+  const room = rooms.read('room-a', hash);
+  if (!room || room.closed) throw new Error('Expected a live Room.');
+  return room;
+}
+
 test('creates an empty Room and gives its creator Facilitator access', () => {
   const created = rooms.create('room-a', 'creator', 'Alex');
 
@@ -30,21 +36,22 @@ test('duplicate Display Names identify separate Participants and rejoining prese
   expect(rooms.mutate('room-a', 'first', { type: 'join', displayName: 'Sam' }).ok).toBe(true);
   expect(rooms.mutate('room-a', 'second', { type: 'join', displayName: 'Sam' }).ok).toBe(true);
 
-  const first = rooms.read('room-a', 'first')!.viewer!;
-  const second = rooms.read('room-a', 'second')!.viewer!;
+  const first = readLiveRoom('first').viewer!;
+  const second = readLiveRoom('second').viewer!;
   expect(first.displayName).toBe('Sam');
   expect(second.displayName).toBe('Sam');
   expect(first.id).not.toBe(second.id);
-  expect(rooms.read('room-a', 'creator')?.participants.map((entry) => entry.displayName))
+  expect(readLiveRoom('creator').participants.map((entry) => entry.displayName))
     .toEqual(['Alex', 'Sam', 'Sam']);
 
   rooms.mutate('room-a', 'first', { type: 'join', displayName: 'Another name' });
-  expect(rooms.read('room-a', 'first')?.viewer).toEqual(first);
-  expect(rooms.read('room-a', 'first')?.participants).toHaveLength(3);
+  expect(readLiveRoom('first').viewer).toEqual(first);
+  expect(readLiveRoom('first').participants).toHaveLength(3);
 });
 
 test('Participants see connections arrive and leave without changing the roster', async () => {
-  const creator = rooms.create('room-a', 'creator', 'Alex').viewer!;
+  rooms.create('room-a', 'creator', 'Alex');
+  const creator = readLiveRoom('creator').viewer!;
   const firstConnection = new AbortController();
   const secondConnection = new AbortController();
   const getReader = async (hash: string, signal: AbortSignal) => {
@@ -64,7 +71,7 @@ test('Participants see connections arrive and leave without changing the roster'
 
     const joined = rooms.mutate('room-a', 'second', { type: 'join', displayName: 'Sam' });
     if (!joined.ok) throw new Error(joined.message);
-    const sam = joined.room.viewer!;
+    const sam = readLiveRoom('second').viewer!;
     expect(await nextFrame(first)).toMatchObject({ type: 'room:snapshot', room: {
       viewer: creator, participants: [creator, sam],
     } });
@@ -75,7 +82,7 @@ test('Participants see connections arrive and leave without changing the roster'
     secondConnection.abort();
     expect(await nextFrame(first)).toEqual({ type: 'room:presence', online: [creator.id] });
 
-    expect(rooms.read('room-a', 'second')?.viewer).toEqual(sam);
+    expect(readLiveRoom('second').viewer).toEqual(sam);
   } finally {
     secondConnection.abort();
     firstConnection.abort();

@@ -32,7 +32,8 @@ export type PokerRoundView =
   | { id: string; phase: 'open'; submittedParticipantIds: string[]; ownChoice: string | null }
   | { id: string; phase: 'revealed' | 'accepted'; ballots: { participantId: string; displayName: string; choice: string }[] };
 
-export interface PokerRoomView {
+export interface PokerLiveRoomView {
+  closed: false;
   id: string;
   version: number;
   viewer: PokerParticipant | null;
@@ -44,6 +45,20 @@ export interface PokerRoomView {
   deckType: PokerDeckType;
   deckLocked: boolean;
   round: PokerRoundView | null;
+}
+
+export interface PokerClosedRoomView {
+  closed: true;
+  id: string;
+  version: number;
+  canDelete: boolean;
+  stories: Omit<PokerStory, 'id'>[];
+}
+
+export type PokerRoomView = PokerLiveRoomView | PokerClosedRoomView;
+
+export function unresolvedPokerRoundId(round: Pick<PokerRoundView, 'id' | 'phase'> | null) {
+  return round?.phase === 'open' || round?.phase === 'revealed' ? round.id : undefined;
 }
 
 export type PokerStoryCommand =
@@ -61,13 +76,13 @@ export type PokerVotingCommand =
   | { type: 'skip-story'; roundId: string }
   | { type: 'confirm-estimate'; roundId: string; choice: string };
 
-export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand;
+export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand | { type: 'close-room'; discardRoundId?: string };
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
 export type PokerResult<T = PokerRoomView> =
   | { ok: true; room: T }
-  | { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED'; message: string };
+  | { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'ROOM_CLOSED'; message: string };
 
 export type PokerLiveMessage =
   | { type: 'room:snapshot'; room: PokerRoomView; connectionId?: string }

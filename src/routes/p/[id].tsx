@@ -3,6 +3,7 @@ import { useParams, useSubmissions, type RouteDefinition } from '@solidjs/router
 import { Show, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 
 import PageMessage from '../../components/PageMessage';
+import PokerRoomSummary from '../../components/poker/PokerRoomSummary';
 import PokerWorkspace from '../../components/poker/PokerWorkspace';
 import RoomNameForm from '../../components/poker/RoomNameForm';
 import { takeFacilitatorLinkToken } from '../../lib/facilitator-link';
@@ -10,7 +11,7 @@ import { changePokerRoom, getPokerRoom, joinPokerRoom } from '../../lib/poker-ac
 import { createPokerLive } from '../../lib/poker-live';
 import { pokerRoomPath, pokerSetupPath } from '../../lib/poker-routes';
 import { claimPokerFacilitatorLink } from '../../lib/poker-sharing-actions';
-import type { PokerRoomView, PokerRoomChange } from '../../lib/poker-types';
+import type { PokerLiveRoomView, PokerRoomView, PokerRoomChange } from '../../lib/poker-types';
 
 export const route = {
   preload: ({ params }) => {
@@ -36,7 +37,7 @@ function RoomUnavailable(props: { roomId?: string }) {
   );
 }
 
-function JoinedRoom(props: { room: PokerRoomView; focusHeading: boolean; claimError: string }) {
+function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; claimError: string }) {
   const [liveRoom, setLiveRoom] = createSignal<PokerRoomView | null>(null);
   const [online, setOnline] = createSignal<string[]>([]);
   const [missing, setMissing] = createSignal(false);
@@ -46,8 +47,18 @@ function JoinedRoom(props: { room: PokerRoomView; focusHeading: boolean; claimEr
     return current && current.version >= props.room.version ? current : props.room;
   };
 
+  const closedRoom = () => {
+    const current = room();
+    return current.closed ? current : undefined;
+  };
+  const openRoom = () => {
+    const current = room();
+    return current.closed ? undefined : current;
+  };
+
   function acceptRoom(next: PokerRoomView) {
     if (next.id === props.room.id) {
+      if (next.closed) live()?.dispose();
       setLiveRoom((current) => !current || next.version >= current.version ? next : current);
     }
   }
@@ -74,20 +85,26 @@ function JoinedRoom(props: { room: PokerRoomView; focusHeading: boolean; claimEr
 
   return (
     <Show when={!missing()} fallback={<RoomUnavailable />}>
-      <PokerWorkspace
-        room={room()}
-        online={online()}
-        status={live()?.status() ?? 'connecting'}
-        focusHeading={props.focusHeading}
-        claimError={props.claimError}
-        onChange={onChange}
-      />
+      <Show when={openRoom()} fallback={
+        <Show when={closedRoom()}>{(summary) => <PokerRoomSummary room={summary()} focusHeading />}</Show>
+      }>
+        {(current) => (
+          <PokerWorkspace
+            room={current()}
+            online={online()}
+            status={live()?.status() ?? 'connecting'}
+            focusHeading={props.focusHeading}
+            claimError={props.claimError}
+            onChange={onChange}
+          />
+        )}
+      </Show>
     </Show>
   );
 }
 
-function RoomPage(props: { initialRoom: PokerRoomView }) {
-  const [claimedRoom, setClaimedRoom] = createSignal<PokerRoomView>();
+function LiveRoomPage(props: { initialRoom: PokerLiveRoomView }) {
+  const [claimedRoom, setClaimedRoom] = createSignal<PokerLiveRoomView>();
   const [claimError, setClaimError] = createSignal('');
   const [claimPending, setClaimPending] = createSignal(false);
   const room = () => {
@@ -113,7 +130,8 @@ function RoomPage(props: { initialRoom: PokerRoomView }) {
       void claimPokerFacilitatorLink(id, token).then(
         (result) => {
           if (result.ok) {
-            if (attempt > 0) setClaimedRoom((room) => !room || result.value.version >= room.version ? result.value : room);
+            const claimed = result.value;
+            if (attempt > 0 && !claimed.closed) setClaimedRoom((room) => !room || claimed.version >= room.version ? claimed : room);
           } else if (attempt === currentAttempt) {
             setClaimError(result.message);
           }
@@ -148,6 +166,25 @@ function RoomPage(props: { initialRoom: PokerRoomView }) {
       />
     }>
       <JoinedRoom room={room()} focusHeading={focusHeading()} claimError={claimError()} />
+    </Show>
+  );
+}
+
+function RoomPage(props: { initialRoom: PokerRoomView }) {
+  const openRoom = () => {
+    const current = props.initialRoom;
+    return current.closed ? undefined : current;
+  };
+  const closedRoom = () => {
+    const current = props.initialRoom;
+    return current.closed ? current : undefined;
+  };
+
+  return (
+    <Show when={openRoom()} fallback={
+      <Show when={closedRoom()}>{(summary) => <PokerRoomSummary room={summary()} />}</Show>
+    }>
+      {(room) => <LiveRoomPage initialRoom={room()} />}
     </Show>
   );
 }

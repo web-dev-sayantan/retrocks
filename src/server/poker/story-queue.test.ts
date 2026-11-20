@@ -36,14 +36,22 @@ async function openRoom() {
   const { result: joined, cookie: participant } = await inRequest(() =>
     service.mutatePokerRoomForRequest(id, { type: 'join', displayName: 'Sam' }),
   );
-  if (!joined.ok || !participant) throw new Error('Room join failed.');
+  if (!joined.ok || joined.room.closed || !participant) throw new Error('Room join failed.');
+
+  const mutateRoom = async (input: unknown, cookie = facilitator) =>
+    (await inRequest(() => service.mutatePokerRoomForRequest(id, input), cookie)).result;
 
   return {
     id,
     participant,
     joined: joined.room,
-    mutate: async (input: unknown, cookie = facilitator) =>
-      (await inRequest(() => service.mutatePokerRoomForRequest(id, input), cookie)).result,
+    mutateRoom,
+    async mutate(input: unknown, cookie = facilitator) {
+      const result = await mutateRoom(input, cookie);
+      if (!result.ok) return result;
+      if (result.room.closed) throw new Error('Expected a live Room.');
+      return { ok: true as const, room: result.room };
+    },
     read: async (cookie: string) =>
       (await inRequest(() => service.readPokerRoomForRequest(id), cookie, 'GET')).result,
   };
@@ -118,7 +126,7 @@ test('same-name Participants vote privately, keep their own choice on reconnect,
   const { result: other, cookie: otherSam } = await inRequest(() =>
     service.mutatePokerRoomForRequest(id, { type: 'join', displayName: 'Sam' }),
   );
-  if (!other.ok || !otherSam) throw new Error('Second Sam could not join.');
+  if (!other.ok || other.room.closed || !otherSam) throw new Error('Second Sam could not join.');
   const added = await mutate({ type: 'add-story', title: 'Saved checkout' });
   if (!added.ok) throw new Error('Could not add Story.');
   const selected = await mutate({ type: 'select-story', storyId: added.room.stories[0].id });
@@ -146,7 +154,7 @@ test('same-name Participants vote privately, keep their own choice on reconnect,
           if (done) throw new Error('Live stream ended before a snapshot.');
           const json = new TextDecoder().decode(value).slice('data: '.length);
           const frame = parsePokerLiveMessage(json);
-          if (frame.type === 'room:snapshot') {
+          if (frame.type === 'room:snapshot' && !frame.room.closed) {
             expect(JSON.parse(json)).toMatchObject({ room: { round: frame.room.round } });
             return { raw: JSON.parse(json).room.round, room: frame.room };
           }
@@ -297,7 +305,7 @@ test('a unanimous reveal needs explicit acceptance from the Deck before moving o
       const { value, done } = await reader.read();
       if (done) throw new Error('Live stream ended before the estimate was accepted.');
       snapshot = parsePokerLiveMessage(new TextDecoder().decode(value).slice('data: '.length));
-    } while (snapshot.type !== 'room:snapshot' || snapshot.room.round?.phase !== 'accepted');
+    } while (snapshot.type !== 'room:snapshot' || snapshot.room.closed || snapshot.room.round?.phase !== 'accepted');
     expect(snapshot.room.stories[0].acceptedEstimate).toBe('0');
 
     expect(await mutate({ ...confirm, choice: '13' })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
@@ -528,4 +536,67 @@ test('a Deck save racing the first Voting Round cannot change the Deck after the
   expect(opened.room).toMatchObject({ deck, deckLocked: true });
   if (!changed.ok) expect(changed.code).toBe('DECK_LOCKED');
   expect(await read(participant)).toMatchObject({ deck, deckLocked: true });
+});
+
+test('closing an unresolved Room publishes only the ordered summary and ends live presence', async () => {
+  const { id, participant, mutate, mutateRoom } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Save checkout' });
+  if (!added.ok) throw new Error(added.message);
+  const selected = await mutate({ type: 'select-story', storyId: added.room.stories[0].id });
+  if (!selected.ok || !selected.room.round) throw new Error('Voting did not open.');
+  const roundId = selected.room.round.id;
+  await mutate({ type: 'vote', roundId, choice: '8' }, participant);
+  await mutate({ type: 'reveal', roundId });
+  await mutate({ type: 'confirm-estimate', roundId, choice: '5' });
+  const reconsidering = await mutate({ type: 'restart-round', roundId });
+  if (!reconsidering.ok || !reconsidering.room.round) throw new Error('Voting did not restart.');
+  const discardRoundId = reconsidering.room.round.id;
+  await mutate({ type: 'vote', roundId: discardRoundId, choice: '13' }, participant);
+  await mutate({ type: 'reveal', roundId: discardRoundId });
+  await mutate({ type: 'add-story', title: 'Recover a cart' });
+
+  const connect = () => service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+    headers: { cookie: participant },
+  }));
+  const reader = (await connect()).body!.getReader();
+  const nextJson = async (source: ReadableStreamDefaultReader<Uint8Array>) => {
+    const { value } = await source.read();
+    return new TextDecoder().decode(value).slice('data: '.length);
+  };
+
+  try {
+    expect(parsePokerLiveMessage(await nextJson(reader))).toMatchObject({ room: { round: { phase: 'revealed' } } });
+    expect(parsePokerLiveMessage(await nextJson(reader))).toMatchObject({ type: 'room:presence' });
+    expect(await mutateRoom({ type: 'close-room', discardRoundId }, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(await mutateRoom({ type: 'close-room' })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+    expect(await mutateRoom({ type: 'close-room', discardRoundId: roundId })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+
+    const result = await mutateRoom({ type: 'close-room', discardRoundId });
+    if (!result.ok) throw new Error(result.message);
+    const summary = {
+      id,
+      version: result.room.version,
+      closed: true,
+      canDelete: false,
+      stories: [
+        { title: 'Save checkout', status: 'estimated', acceptedEstimate: '5' },
+        { title: 'Recover a cart', status: 'pending' },
+      ],
+    };
+    expect(result.room).toEqual({ ...summary, canDelete: true });
+    const finalFrame = await nextJson(reader);
+    expect(JSON.parse(finalFrame)).toEqual({ type: 'room:snapshot', room: summary });
+    expect(parsePokerLiveMessage(finalFrame)).toEqual({ type: 'room:snapshot', room: summary });
+    expect(await reader.read()).toMatchObject({ done: true });
+    expect((await inRequest(() => service.readPokerRoomForRequest(id), undefined, 'GET')).result).toEqual(summary);
+    expect(await mutate({ type: 'join', displayName: 'Late Participant' }, '')).toMatchObject({ ok: false, code: 'ROOM_CLOSED' });
+    expect(await mutate({ type: 'add-story', title: 'Too late' })).toMatchObject({ ok: false, code: 'ROOM_CLOSED' });
+    expect(await mutateRoom({ type: 'close-room' })).toEqual({ ok: true, room: result.room });
+
+    const reconnect = (await connect()).body!.getReader();
+    expect(JSON.parse(await nextJson(reconnect))).toEqual({ type: 'room:snapshot', room: summary });
+    expect(await reconnect.read()).toMatchObject({ done: true });
+  } finally {
+    await reader.cancel();
+  }
 });

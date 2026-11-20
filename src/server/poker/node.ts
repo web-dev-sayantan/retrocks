@@ -30,8 +30,14 @@ export async function openNodePokerRooms(dbPath: string) {
   }
 
   function broadcastRoom(room: StoredPokerRoom) {
-    for (const connection of streams.get(room.id) ?? []) {
+    const connections = streams.get(room.id);
+    if (!connections) return;
+    for (const connection of connections) {
       connection.send({ type: 'room:snapshot', room: projectPokerRoom(room, connection.hash) });
+    }
+    if (room.closedAt !== undefined) {
+      streams.delete(room.id);
+      for (const connection of connections) connection.close();
     }
   }
 
@@ -77,6 +83,14 @@ export async function openNodePokerRooms(dbPath: string) {
     connect(id: string, hash: string, request: Request): Response {
       const room = storage.snapshot(id);
       if (!room) return new Response(null, { status: 404 });
+      const headers = {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-store, no-transform',
+        'x-accel-buffering': 'no',
+      };
+      if (room.closedAt !== undefined) {
+        return new Response(`data: ${JSON.stringify({ type: 'room:snapshot', room: projectPokerRoom(room, hash) })}\n\n`, { headers });
+      }
       const participant = pokerParticipant(room, hash);
       if (!participant) return new Response(null, { status: 403 });
       if (request.signal.aborted) return new Response(null, { status: 408 });
@@ -106,7 +120,7 @@ export async function openNodePokerRooms(dbPath: string) {
           };
           unsubscribe = () => {
             request.signal.removeEventListener('abort', connection.close);
-            if (!connections.delete(connection)) return;
+            if (!connections.delete(connection) || streams.get(id) !== connections) return;
             if (connections.size === 0) streams.delete(id);
             else sendPresence(connections);
           };
@@ -119,13 +133,7 @@ export async function openNodePokerRooms(dbPath: string) {
           unsubscribe();
         },
       });
-      return new Response(body, {
-        headers: {
-          'content-type': 'text/event-stream',
-          'cache-control': 'no-store, no-transform',
-          'x-accel-buffering': 'no',
-        },
-      });
+      return new Response(body, { headers });
     },
     heartbeat(id: string, hash: string, request: Request): Response {
       const connectionId = request.headers.get(LIVE_CONNECTION_HEADER);

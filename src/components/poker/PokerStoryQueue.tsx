@@ -110,7 +110,7 @@ export default function PokerStoryQueue(props: {
     setError('');
     try {
       const result = await props.onChange(command);
-      if (result.ok) return result.room;
+      if (result.ok) return result.room.closed ? null : result.room;
       setError(result.message);
     } catch {
       setError('Could not update the Story queue. Try again.');

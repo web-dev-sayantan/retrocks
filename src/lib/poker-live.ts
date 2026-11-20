@@ -6,7 +6,7 @@ export function createPokerLive(id: string, update: (message: PokerLiveMessage) 
   return createLiveStream<PokerLiveMessage>(`/api/poker/${encodeURIComponent(id)}/live`, {
     parse: parsePokerLiveMessage,
     handshake: (message) => message.type === 'room:snapshot' ? message : undefined,
-    isTerminal: (message) => message.type === 'room:missing',
+    isTerminal: (message) => message.type === 'room:missing' || (message.type === 'room:snapshot' && message.room.closed),
     onMessage: update,
     onDisconnect: clearPresence,
   });
