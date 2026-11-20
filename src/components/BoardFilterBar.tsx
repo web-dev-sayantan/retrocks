@@ -1,5 +1,6 @@
 import { ArrowUpDown, ChevronDown, Search, SlidersHorizontal, X } from 'lucide';
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ui-sdk/solid/select';
 import { For, Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 
 import {
@@ -34,11 +35,20 @@ const focusRingClass =
 
 export default function BoardFilterBar(props: BoardFilterBarProps) {
   const searchId = createUniqueId();
-  const sortSelectId = createUniqueId();
   const filterControlsId = createUniqueId();
   const filterStatusId = createUniqueId();
   const [showFilters, setShowFilters] = createSignal(false);
   let searchInput: HTMLInputElement | undefined;
+
+  const sortItems = createMemo(() =>
+    BOARD_SORT_OPTIONS.map((option) => ({
+      ...option,
+      disabled: option.value === 'most-voted' && props.blindVoting,
+      label: option.value === 'most-voted' && props.blindVoting
+        ? `${option.label} (Blind Voting)`
+        : option.label,
+    })),
+  );
 
   const filterLabel = createMemo(() => {
     const filter = props.filter;
@@ -214,46 +224,55 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
             </SegmentedControl>
 
             <div class="flex w-full items-center sm:w-auto">
-              <label for={sortSelectId} class="sr-only">
-                Sort
-              </label>
-              <div class="relative inline-flex w-full items-center sm:w-auto">
-                <LucideIcon
-                  icon={ArrowUpDown}
-                  class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted"
-                  strokeWidth={1.85}
-                />
-                <select
-                  id={sortSelectId}
+              <Select
+                items={sortItems()}
+                value={props.effectiveSortMode}
+                onValueChange={(next) => {
+                  if (next) props.onSortChange(next as BoardSortMode);
+                }}
+              >
+                <SelectTrigger
                   aria-label="Sort cards"
-                  value={props.effectiveSortMode}
-                  onChange={(event) =>
-                    props.onSortChange(event.currentTarget.value as BoardSortMode)
-                  }
                   class={[
-                    'h-11 w-full appearance-none cursor-pointer rounded-xl border border-border/85 bg-surface pr-8 pl-8 text-base font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle/50 focus-visible:border-accent sm:h-9 sm:w-auto sm:text-[13px]',
+                    'relative inline-flex h-11 w-full cursor-pointer items-center gap-2 rounded-xl border border-border/85 bg-surface pl-9 pr-2.5 text-base font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle/50 sm:h-9 sm:w-auto sm:text-[13px]',
                     focusRingClass,
                   ]}
                 >
+                  <LucideIcon
+                    icon={ArrowUpDown}
+                    class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted"
+                    strokeWidth={1.85}
+                  />
+                  <SelectValue />
+                  <LucideIcon
+                    icon={ChevronDown}
+                    class="pointer-events-none size-3.5 text-text-muted"
+                    strokeWidth={2}
+                  />
+                </SelectTrigger>
+                <SelectContent
+                  side="bottom"
+                  align="end"
+                  sideOffset={6}
+                  collisionPadding={8}
+                  data-board-overlay="true"
+                  class="board-popover z-40 max-h-64 w-44 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                >
                   <For each={BOARD_SORT_OPTIONS}>
                     {(option) => (
-                      <option
+                      <SelectItem
                         value={option.value}
                         disabled={option.value === 'most-voted' && props.blindVoting}
+                        class="flex min-h-11 w-full cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8"
                       >
                         {option.value === 'most-voted' && props.blindVoting
                           ? `${option.label} (Blind Voting)`
                           : option.label}
-                      </option>
+                      </SelectItem>
                     )}
                   </For>
-                </select>
-                <LucideIcon
-                  icon={ChevronDown}
-                  class="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-text-muted"
-                  strokeWidth={2}
-                />
-              </div>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

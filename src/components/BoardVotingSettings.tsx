@@ -4,6 +4,14 @@ import {
   DialogContent,
   DialogTitle,
 } from '@ui-sdk/solid/dialog';
+import { NumberInput, NumberInputControl } from '@ui-sdk/solid/number-input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@ui-sdk/solid/select';
 import { ChevronDown } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
 
@@ -25,6 +33,18 @@ const fieldClass = 'board-modal-field min-h-11 w-full px-3 py-2 text-base sm:min
 const mutedButtonClass = [buttonClass, 'border border-border bg-surface text-text hover:bg-surface-subtle'];
 const destructiveButtonClass = [buttonClass, 'bg-rose-700 text-white hover:bg-rose-800'];
 
+const VOTE_LIMIT_ITEMS: { value: string; label: string }[] = [
+  ...VOTE_LIMIT_OPTIONS.map((option) => ({
+    value: option === null ? 'unlimited' : String(option),
+    label: option === null ? 'Unlimited' : String(option),
+  })),
+  { value: 'custom', label: 'Custom' },
+];
+const PER_CARD_CAP_ITEMS: { value: string; label: string }[] = [
+  { value: 'unlimited', label: 'Unlimited (stackable)' },
+  { value: '1', label: '1 per Card' },
+];
+
 export default function BoardVotingSettings(props: {
   board: Pick<
     BoardViewDTO,
@@ -39,7 +59,7 @@ export default function BoardVotingSettings(props: {
 }) {
   const destructiveActionsId = createUniqueId();
   const [voteLimitChoice, setVoteLimitChoice] = createSignal('5');
-  const [customLimit, setCustomLimit] = createSignal('');
+  const [customLimit, setCustomLimit] = createSignal<number | null>(null);
   const [singleVote, setSingleVote] = createSignal(false);
   const [blindVoting, setBlindVoting] = createSignal(false);
   const [allowParticipantGroup, setAllowParticipantGroup] = createSignal(false);
@@ -52,11 +72,15 @@ export default function BoardVotingSettings(props: {
 
   const voteLimit = createMemo(() => {
     const choice = voteLimitChoice();
-    return choice === 'unlimited' ? null : Number(choice === 'custom' ? customLimit() : choice);
+    if (choice === 'unlimited') return null;
+    if (choice === 'custom') return customLimit();
+    return Number(choice);
   });
   const validLimit = createMemo(() => {
     const limit = voteLimit();
-    return limit === null || (Number.isSafeInteger(limit) && limit >= 1);
+    return limit === null
+      ? voteLimitChoice() !== 'custom'
+      : Number.isSafeInteger(limit) && limit >= 1;
   });
 
   createEffect(() => props.open, (open) => {
@@ -71,7 +95,7 @@ export default function BoardVotingSettings(props: {
         allowParticipantGroup,
       };
       setVoteLimitChoice(voteLimit === null ? 'unlimited' : VOTE_LIMIT_OPTIONS.some((option) => option === voteLimit) ? String(voteLimit) : 'custom');
-      setCustomLimit(voteLimit === null ? '' : String(voteLimit));
+      setCustomLimit(voteLimit);
       setSingleVote(maxVotesPerCard === 1);
       setBlindVoting(blindVoting);
       setAllowParticipantGroup(allowParticipantGroup);
@@ -186,54 +210,91 @@ export default function BoardVotingSettings(props: {
             <fieldset disabled={pending() !== null || !canControlFacilitation(props.board)} class="space-y-4">
               <label class="grid gap-1.5 text-sm font-medium">
                 Vote limit
-                <span class="relative grid">
-                  <select
-                    class={[fieldClass, 'appearance-none pr-9']}
-                    value={voteLimitChoice()}
-                    onChange={(event) => setVoteLimitChoice(event.currentTarget.value)}
+                <Select
+                  items={VOTE_LIMIT_ITEMS}
+                  value={voteLimitChoice()}
+                  onValueChange={(next) => {
+                    if (next) setVoteLimitChoice(next);
+                  }}
+                >
+                  <SelectTrigger class={[fieldClass, 'flex cursor-pointer items-center justify-between gap-2 pr-3 text-left']}>
+                    <SelectValue />
+                    <LucideIcon
+                      icon={ChevronDown}
+                      class="pointer-events-none size-4 shrink-0 text-text-muted"
+                    />
+                  </SelectTrigger>
+                  <SelectContent
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    collisionPadding={8}
+                    data-board-overlay="true"
+                    class="board-popover z-40 max-h-64 w-full overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                   >
-                    <For each={VOTE_LIMIT_OPTIONS}>
-                      {(option) => <option value={option ?? 'unlimited'}>{option ?? 'Unlimited'}</option>}
+                    <For each={VOTE_LIMIT_ITEMS}>
+                      {(option) => (
+                        <SelectItem
+                          value={option.value}
+                          class="flex min-h-11 w-full cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-8"
+                        >
+                          {option.label}
+                        </SelectItem>
+                      )}
                     </For>
-                    <option value="custom">Custom</option>
-                  </select>
-                  <LucideIcon
-                    icon={ChevronDown}
-                    class="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-text-muted"
-                  />
-                </span>
+                  </SelectContent>
+                </Select>
               </label>
               <Show when={voteLimitChoice() === 'custom'}>
                 <label class="grid gap-1.5 text-sm font-medium">
                   Custom Vote limit
-                  <input
-                    type="number"
-                    min="1"
-                    max={Number.MAX_SAFE_INTEGER}
-                    step="1"
-                    required
-                    class={fieldClass}
+                  <NumberInput
                     value={customLimit()}
-                    onInput={(event) => setCustomLimit(event.currentTarget.value)}
-                  />
+                    onValueChange={(next) => setCustomLimit(next)}
+                    min={1}
+                    max={Number.MAX_SAFE_INTEGER}
+                    step={1}
+                  >
+                    <NumberInputControl class={fieldClass} />
+                  </NumberInput>
                 </label>
               </Show>
               <label class="grid gap-1.5 text-sm font-medium">
                 Per-Card cap
-                <span class="relative grid">
-                  <select
-                    class={[fieldClass, 'appearance-none pr-9']}
-                    value={singleVote() ? '1' : 'unlimited'}
-                    onChange={(event) => setSingleVote(event.currentTarget.value === '1')}
+                <Select
+                  items={PER_CARD_CAP_ITEMS}
+                  value={singleVote() ? '1' : 'unlimited'}
+                  onValueChange={(next) => {
+                    setSingleVote(next === '1');
+                  }}
+                >
+                  <SelectTrigger class={[fieldClass, 'flex cursor-pointer items-center justify-between gap-2 pr-3 text-left']}>
+                    <SelectValue />
+                    <LucideIcon
+                      icon={ChevronDown}
+                      class="pointer-events-none size-4 shrink-0 text-text-muted"
+                    />
+                  </SelectTrigger>
+                  <SelectContent
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    collisionPadding={8}
+                    data-board-overlay="true"
+                    class="board-popover z-40 max-h-64 w-full overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                   >
-                    <option value="unlimited">Unlimited (stackable)</option>
-                    <option value="1">1 per Card</option>
-                  </select>
-                  <LucideIcon
-                    icon={ChevronDown}
-                    class="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-text-muted"
-                  />
-                </span>
+                    <For each={PER_CARD_CAP_ITEMS}>
+                      {(option) => (
+                        <SelectItem
+                          value={option.value}
+                          class="flex min-h-11 w-full cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-8"
+                        >
+                          {option.label}
+                        </SelectItem>
+                      )}
+                    </For>
+                  </SelectContent>
+                </Select>
               </label>
               <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium sm:min-h-9">
                 <input

@@ -264,7 +264,7 @@ describe('BoardFilterBar', () => {
   it('renders a calm Search field with placeholder, secret-search hook, and a custom-chevron native Sort select with Blind Voting pause state', async () => {
     const { artifact } = await captureArtifact(
       () => {
-        const { view, query, setWidenSearch, setBlindVoting } = renderFilterBar();
+        const { view, query, setWidenSearch, setBlindVoting, requestedSort } = renderFilterBar();
         try {
           // Search field: sr-only label bound to input, clear placeholder, softened border, '/' hint
           const search = view.getByRole('searchbox', {
@@ -304,32 +304,34 @@ describe('BoardFilterBar', () => {
           expect(query()).toBe('');
           expect(search).not.toHaveFocus();
 
-          // Sort selector: sr-only label, native <select> with appearance-none + custom chevron
+          // Sort selector: named ui-sdk combobox with custom chevrons
           const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
-          expect(sortSelect.tagName).toBe('SELECT');
-          expect(sortSelect).toHaveClass('appearance-none');
           expect(sortSelect).not.toHaveClass('border-control');
-          const sortLabel = document.querySelector(`label[for="${sortSelect.id}"]`);
-          expect(sortLabel).toHaveTextContent('Sort');
-          expect(sortLabel).toHaveClass('sr-only');
-          expect(sortSelect.parentElement?.querySelectorAll('svg[aria-hidden="true"]')).toHaveLength(
-            2,
-          );
+          expect(sortSelect.querySelectorAll('svg[aria-hidden="true"]')).toHaveLength(2);
 
-          // Select Most Voted, then enable Blind Voting -> disabled option + inline paused notice
-          fireEvent.change(sortSelect, { target: { value: 'most-voted' } });
+          // Choose Most Voted from the list
+          fireEvent.click(sortSelect);
           flush();
-          expect(sortSelect).toHaveValue('most-voted');
+          fireEvent.click(view.getByRole('option', { name: 'Most Voted' }));
+          flush();
+          expect(requestedSort()).toBe('most-voted');
+          expect(within(sortSelect).getByText('Most Voted')).toBeInTheDocument();
 
+          // Blind Voting pauses Most Voted: falls back to Newest, option disabled
           setBlindVoting(true);
           flush();
-          expect(sortSelect).toHaveValue('newest');
+          expect(within(sortSelect).getByText('Newest')).toBeInTheDocument();
+          fireEvent.click(sortSelect);
+          flush();
           expect(
-            within(sortSelect).getByRole('option', { name: 'Most Voted (Blind Voting)' }),
-          ).toBeDisabled();
+            view.getByRole('option', { name: 'Most Voted (Blind Voting)' }),
+          ).toHaveAttribute('aria-disabled', 'true');
           expect(
             view.getByText('Most Voted paused during Blind Voting'),
           ).toBeVisible();
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(view.queryByRole('listbox')).not.toBeInTheDocument();
         } finally {
           view.unmount();
         }

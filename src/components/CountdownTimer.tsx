@@ -7,6 +7,7 @@ import {
   createPopoverController,
 } from '@ui-sdk/solid/popover';
 import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
+import { NumberInput, NumberInputControl } from '@ui-sdk/solid/number-input';
 import { Clock, Pause, Volume2, VolumeX, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
@@ -58,7 +59,7 @@ export default function CountdownTimer(props: {
   const [muted, setMuted] = createSignal(false);
   const [sampledAt, setSampledAt] = createSignal(0);
   const [open, setOpen] = createSignal(false);
-  const [minutesDraft, setMinutesDraft] = createSignal('5');
+  const [minutesDraft, setMinutesDraft] = createSignal<number | null>(5);
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal('');
   const [timerAnnouncement, setTimerAnnouncement] = createSignal('');
@@ -93,8 +94,8 @@ export default function CountdownTimer(props: {
     Math.min(100, 100 * (remainingMs() ?? 0) / (props.timer.durationMs || 1)),
   );
   const validMinutes = createMemo(() => {
-    const minutes = Number(minutesDraft());
-    return Number.isInteger(minutes) && minutes >= MIN_TIMER_MINUTES && minutes <= MAX_TIMER_MINUTES;
+    const minutes = minutesDraft();
+    return minutes !== null && Number.isInteger(minutes) && minutes >= MIN_TIMER_MINUTES && minutes <= MAX_TIMER_MINUTES;
   });
 
   createEffect(isRunning, (running) => {
@@ -315,14 +316,18 @@ export default function CountdownTimer(props: {
               class="mt-3 space-y-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (validMinutes()) void updateTimer({ action: 'start', minutes: Number(minutesDraft()) });
+                const minutes = minutesDraft();
+                if (minutes !== null && validMinutes()) void updateTimer({ action: 'start', minutes });
               }}
             >
               <SegmentedControl<string>
                 aria-label="Timer presets"
-                value={presets.includes(Number(minutesDraft())) ? String(minutesDraft()) : null}
+                value={(() => {
+                  const draft = minutesDraft();
+                  return draft !== null && presets.includes(draft) ? String(draft) : null;
+                })()}
                 onValueChange={(next) => {
-                  if (next) setMinutesDraft(next);
+                  if (next) setMinutesDraft(Number(next));
                 }}
                 class="segmented-track relative isolate grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1"
               >
@@ -347,18 +352,20 @@ export default function CountdownTimer(props: {
               <div class="flex items-end gap-2">
                 <div class="min-w-0 flex-1">
                   <label for={durationId} class="block text-xs font-medium text-text-muted">Minutes</label>
-                  <input
-                    ref={durationInput}
-                    id={durationId}
-                    type="number"
+                  <NumberInput
+                    value={minutesDraft()}
+                    onValueChange={(next) => setMinutesDraft(next)}
                     min={MIN_TIMER_MINUTES}
                     max={MAX_TIMER_MINUTES}
-                    step="1"
-                    required
-                    value={minutesDraft()}
-                    onInput={(event) => setMinutesDraft(event.currentTarget.value)}
-                    class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
-                  />
+                    step={1}
+                  >
+                    <NumberInputControl
+                      ref={durationInput}
+                      id={durationId}
+                      required
+                      class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
+                    />
+                  </NumberInput>
                 </div>
                 <button
                   type="submit"

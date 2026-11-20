@@ -660,11 +660,21 @@ describe('<BoardWorkspace />', () => {
     openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
-    const voteLimit = settings.getByRole('combobox', { name: 'Vote limit' });
-    fireEvent.change(voteLimit, { target: { value: 'custom' } });
+
+    function pickComboboxItem(comboboxName: string, itemName: RegExp) {
+      fireEvent.click(settings.getByRole('combobox', { name: comboboxName }));
+      flush();
+      const option = settings
+        .getAllByRole('option')
+        .find((el) => itemName.test(el.textContent ?? ''));
+      fireEvent.click(option!);
+      flush();
+    }
+
+    pickComboboxItem('Vote limit', /Custom/);
+    fireEvent.input(settings.getByRole('textbox', { name: 'Custom Vote limit' }), { target: { value: '7' } });
     flush();
-    fireEvent.input(settings.getByRole('spinbutton', { name: 'Custom Vote limit' }), { target: { value: '7' } });
-    fireEvent.change(settings.getByRole('combobox', { name: 'Per-Card cap' }), { target: { value: '1' } });
+    pickComboboxItem('Per-Card cap', /1 per Card/);
     fireEvent.click(settings.getByRole('checkbox', { name: 'Blind Voting' }));
     flush();
     fireEvent.click(settings.getByRole('button', { name: 'Save Settings' }));
@@ -2022,7 +2032,12 @@ describe('<BoardWorkspace />', () => {
       const peerVote = within(view.getByText(peer.content).closest('article')!).getByRole('group', { name: 'Voting' });
       expect(peerVote).toHaveTextContent('2 yours');
       expect(view.getByText('3 / 5 votes left')).toBeVisible();
-      expect(view.getByRole('option', { name: /Most Voted/ })).toBeDisabled();
+      const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+      fireEvent.click(sortSelect);
+      flush();
+      expect(view.getByRole('option', { name: /Most Voted/ })).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.keyDown(document, { key: 'Escape' });
+      flush();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -3408,17 +3423,22 @@ describe('<BoardWorkspace />', () => {
       };
 
       const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
-      expect(sortSelect).toHaveValue('newest');
+      expect(within(sortSelect).getByText('Newest')).toBeInTheDocument();
       expect(getTopLevelStreamIds()).toEqual(['card:c_new', 'group:group_mid', 'card:c_old']);
 
+      function pickSortOption(name: RegExp) {
+        fireEvent.click(sortSelect);
+        flush();
+        fireEvent.click(view.getByRole('option', { name }));
+        flush();
+      }
+
       // Switch to Oldest
-      fireEvent.change(sortSelect, { target: { value: 'oldest' } });
-      flush();
+      pickSortOption(/Oldest/);
       expect(getTopLevelStreamIds()).toEqual(['card:c_old', 'group:group_mid', 'card:c_new']);
 
       // Switch to Most Voted -> interleaves Cards and Card Groups by total Votes descending
-      fireEvent.change(sortSelect, { target: { value: 'most-voted' } });
-      flush();
+      pickSortOption(/Most Voted/);
       expect(getTopLevelStreamIds()).toEqual(['card:c_old', 'group:group_mid', 'card:c_new']);
 
       // Enable Blind Voting via live snapshot -> Most Voted disabled & falls back cleanly to Newest
@@ -3431,14 +3451,18 @@ describe('<BoardWorkspace />', () => {
           version: 2,
           blindVoting: true,
           groups: [{ ...group, votes: null }],
-          cards: board.cards.map((card) => ({ ...card, votes: null })),
+          cards: board.cards.map((card) => ({ ...card, votes: null, })),
         },
       });
-      expect(sortSelect).toHaveValue('newest');
-      const mostVotedOption = within(sortSelect).getByRole('option', {
+      expect(within(sortSelect).getByText('Newest')).toBeInTheDocument();
+      fireEvent.click(sortSelect);
+      flush();
+      const mostVotedOption = view.getByRole('option', {
         name: /Most Voted/i,
       });
-      expect(mostVotedOption).toBeDisabled();
+      expect(mostVotedOption).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.keyDown(document, { key: 'Escape' });
+      flush();
       expect(
         view.getByText('Most Voted paused during Blind Voting'),
       ).toBeInTheDocument();
@@ -3478,7 +3502,11 @@ describe('<BoardWorkspace />', () => {
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
 
     fireEvent.click(within(view.getByRole('radiogroup', { name: 'Filter cards' })).getByRole('radio', { name: 'Mine' }));
-    fireEvent.change(view.getByRole('combobox', { name: 'Sort cards' }), { target: { value: 'oldest' } });
+    const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+    fireEvent.click(sortSelect);
+    flush();
+    fireEvent.click(view.getByRole('option', { name: /Oldest/ }));
+    flush();
     fireEvent.click(disclosure);
     fireEvent.input(search, { target: { value: 'deployment' } });
     flush();
@@ -3497,7 +3525,7 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.click(disclosure);
     flush();
-    expect(view.getByRole('combobox', { name: 'Sort cards' })).toHaveValue('oldest');
+    expect(within(view.getByRole('combobox', { name: 'Sort cards' })).getByText('Oldest')).toBeInTheDocument();
     for (const spy of Object.values(spies)) {
       expect(spy).not.toHaveBeenCalled();
     }
@@ -3672,16 +3700,6 @@ describe('<BoardWorkspace />', () => {
           expect(col2Composer).toHaveFocus();
           (col2Composer as HTMLElement).blur();
 
-          // Shortcuts suppressed inside <select> and contentEditable
-          const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
-          sortSelect.focus();
-          fireEvent.keyDown(sortSelect, { key: 'a' });
-          fireEvent.keyDown(sortSelect, { key: 't' });
-          flush();
-          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
-          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
-          sortSelect.blur();
-
           const editable = document.createElement('div');
           editable.setAttribute('contenteditable', 'true');
           document.body.appendChild(editable);
@@ -3742,6 +3760,20 @@ describe('<BoardWorkspace />', () => {
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
           expect(within(wentWell).queryByRole('menu', { name: 'Options for Went Well' })).not.toBeInTheDocument();
+
+          // Shortcuts stay suppressed while the Sort popup is an open Board overlay
+          const sortSelect = view.getByRole('combobox', { name: 'Sort cards' });
+          fireEvent.click(sortSelect);
+          flush();
+          fireEvent.keyDown(document.activeElement!, { key: 'a' });
+          fireEvent.keyDown(document.activeElement!, { key: 't' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+          fireEvent.pointerDown(document.body);
+          flush();
+          expect(view.queryByRole('listbox')).not.toBeInTheDocument();
+          sortSelect.blur();
         } finally {
           view.unmount();
         }

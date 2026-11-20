@@ -157,7 +157,7 @@ describe('Board Countdown Timer', () => {
       expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toHaveFocus();
       fireEvent.click(view.getByRole('radio', { name: '10m' }));
       flush();
-      expect(view.getByRole('spinbutton', { name: 'Minutes' })).toHaveValue(10);
+      expect(view.getByRole('textbox', { name: 'Minutes' })).toHaveValue('10');
       fireEvent.click(view.getByRole('button', { name: 'Start' }));
       await Promise.resolve();
       await Promise.resolve();
