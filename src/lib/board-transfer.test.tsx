@@ -224,11 +224,7 @@ describe('resolveBoardTransferMove', () => {
   it('maps a cross-Column drop onto moveCard', () => {
     const board = makeBoardView({ ...unlocked, cards: [myCard] });
     expect(
-      resolveBoardTransferMove(board, {
-        key: 'card:card_a',
-        from: 'col_1',
-        to: 'col_2',
-      }),
+      resolveBoardTransferMove(board, { key: 'card:card_a', to: 'col_2' }),
     ).toEqual({ kind: 'move-card', cardId: 'card_a', targetColumnId: 'col_2' });
   });
 
@@ -240,11 +236,7 @@ describe('resolveBoardTransferMove', () => {
       cards: [myCard],
     });
     expect(
-      resolveBoardTransferMove(board, {
-        key: 'group:group_1',
-        from: 'col_1',
-        to: 'col_2',
-      }),
+      resolveBoardTransferMove(board, { key: 'group:group_1', to: 'col_2' }),
     ).toEqual({
       kind: 'move-group',
       groupId: 'group_1',
@@ -263,7 +255,6 @@ describe('resolveBoardTransferMove', () => {
     expect(
       resolveBoardTransferMove(board, {
         key: 'card:card_a',
-        from: 'col_1',
         to: 'on:card:card_b',
       }),
     ).toEqual({
@@ -274,7 +265,6 @@ describe('resolveBoardTransferMove', () => {
     expect(
       resolveBoardTransferMove(board, {
         key: 'card:card_a',
-        from: 'col_1',
         to: 'on:group:group_1',
       }),
     ).toEqual({
@@ -295,40 +285,40 @@ describe('resolveBoardTransferMove', () => {
     expect(
       resolveBoardTransferMove(board, {
         key: 'card:card_a',
-        from: 'col_1',
         to: 'on:card:card_b',
       }),
     ).toEqual({ kind: 'move-card', cardId: 'card_a', targetColumnId: 'col_2' });
     expect(
       resolveBoardTransferMove(board, {
         key: 'card:card_a',
-        from: 'col_1',
         to: 'on:group:group_1',
       }),
     ).toEqual({ kind: 'move-card', cardId: 'card_a', targetColumnId: 'col_2' });
   });
 
-  it('returns null for source-Column no-ops and unknown items', () => {
+  it('returns null for home-Column no-ops, own-Group members, and unknown items', () => {
     const board = makeBoardView({ ...unlocked, cards: [myCard] });
     expect(
-      resolveBoardTransferMove(board, {
-        key: 'card:card_a',
-        from: 'col_1',
-        to: 'col_1',
-      }),
+      resolveBoardTransferMove(board, { key: 'card:card_a', to: 'col_1' }),
     ).toBeNull();
     expect(
-      resolveBoardTransferMove(board, {
-        key: 'card:missing',
-        from: 'col_1',
-        to: 'col_2',
-      }),
+      resolveBoardTransferMove(board, { key: 'card:missing', to: 'col_2' }),
     ).toBeNull();
     expect(
-      resolveBoardTransferMove(null, {
+      resolveBoardTransferMove(null, { key: 'card:card_a', to: 'col_2' }),
+    ).toBeNull();
+
+    const member = { ...myCard, groupId: 'group_1' };
+    const group = makeGroup({ cardIds: ['card_a'] });
+    const grouped = makeBoardView({
+      ...unlocked,
+      groups: [group],
+      cards: [member],
+    });
+    expect(
+      resolveBoardTransferMove(grouped, {
         key: 'card:card_a',
-        from: 'col_1',
-        to: 'col_2',
+        to: 'on:group:group_1',
       }),
     ).toBeNull();
   });
@@ -362,7 +352,8 @@ describe('buildBoardTransferLists', () => {
     expect(buildBoardTransferLists(view)).toEqual({
       col_1: ['group:group_1', 'card:card_loose'],
       col_2: [],
-      'on:group:group_1': [],
+      // A Card Group’s drop zone doubles as the transfer list of its members.
+      'on:group:group_1': ['card:card_g1'],
       'on:card:card_loose': [],
     });
   });

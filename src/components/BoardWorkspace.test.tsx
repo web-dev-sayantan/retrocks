@@ -30,9 +30,14 @@ function stubRect(el: Element, box: [number, number, number, number]): void {
   } as DOMRect);
 }
 
+/** Reads createTransfer's assertive live region once its 100ms settle elapses. */
+async function readAnnouncement(): Promise<string> {
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  return document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '';
+}
+
 /** Simulates a complete pointer drag gesture: press, moves, release. */
-function pointerDrag(from: Element, points: { x: number; y: number }[]): void {
-  const [start, ...rest] = points;
+function pointerDrag(from: Element, points: { x: number; y: number }[]): void {  const [start, ...rest] = points;
   const end = rest.at(-1) ?? start;
   const init = (x: number, y: number) => ({
     button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true, pointerId: 7,
@@ -1242,6 +1247,282 @@ describe('<BoardWorkspace />', () => {
     expect(
       within(toImprove).getByText('Drag me over'),
     ).toBeInTheDocument();
+  });
+
+  it('groups Cards when one is dropped onto another Card or onto a Card Group', async () => {
+    const loose = makeCard({
+      id: 'card_loose',
+      columnId: 'col_1',
+      content: 'Drag onto card',
+      isMine: true,
+    });
+    const neighbour = makeCard({
+      id: 'card_other',
+      columnId: 'col_1',
+      content: 'Plain neighbour',
+      isMine: false,
+    });
+    const member = makeCard({
+      id: 'card_member',
+      columnId: 'col_1',
+      content: 'Existing member',
+      groupId: 'group_keep',
+      isMine: true,
+    });
+    const group: CardGroupDTO = {
+      id: 'group_keep',
+      columnId: 'col_1',
+      title: 'Keep going',
+      cardIds: ['card_member'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: 1_760_000_005_000,
+    };
+    const board = makeBoardView({
+      isFacilitator: true,
+      cards: [loose, neighbour, member],
+      groups: [group],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    const looseEl = within(wentWell).getByText('Drag onto card').closest('article') as HTMLElement;
+    const neighbourEl = within(wentWell).getByText('Plain neighbour').closest('article') as HTMLElement;
+    const groupEl = within(wentWell).getByText('Keep going').closest('article') as HTMLElement;
+    stubRect(wentWell, [0, 0, 300, 600]);
+    stubRect(looseEl, [10, 60, 290, 160]);
+    stubRect(neighbourEl, [10, 180, 290, 280]);
+    stubRect(groupEl, [10, 300, 290, 560]);
+
+    pointerDrag(looseEl, [
+      { x: 50, y: 100 },
+      { x: 150, y: 230 },
+    ]);
+    await flushPromises();
+    expect(spies.groupCards).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_loose',
+      targetType: 'card',
+      targetId: 'card_other',
+    });
+
+    // The applied mutation regroups the stream, so re-stub the moved card.
+    const movedLoose = within(wentWell).getByText('Drag onto card').closest('article') as HTMLElement;
+    stubRect(movedLoose, [10, 60, 290, 160]);
+    pointerDrag(movedLoose, [
+      { x: 50, y: 100 },
+      { x: 150, y: 480 },
+    ]);
+    await flushPromises();
+    expect(spies.groupCards).toHaveBeenLastCalledWith({
+      boardId: board.id,
+      cardId: 'card_loose',
+      targetType: 'group',
+      targetId: 'group_keep',
+    });
+  });
+
+  it('moves a whole Card Group to another Column by dragging its header', async () => {
+    const group: CardGroupDTO = {
+      id: 'group_move',
+      columnId: 'col_1',
+      title: 'CI stability',
+      cardIds: ['card_g1', 'card_g2'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: 1_760_000_002_000,
+    };
+    const board = makeBoardView({
+      isFacilitator: true,
+      groups: [group],
+      cards: [
+        makeCard({ id: 'card_g1', columnId: 'col_1', content: 'CI flakiness', groupId: 'group_move', isMine: true }),
+        makeCard({ id: 'card_g2', columnId: 'col_1', content: 'Flaky CI checks', groupId: 'group_move', isMine: true }),
+      ],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    const toImprove = getByRole('region', { name: 'To Improve' });
+    const groupEl = within(wentWell).getByText('CI stability').closest('article') as HTMLElement;
+    const headerEl = groupEl.querySelector('[data-slot="board-transfer-group-item"]') as HTMLElement;
+    stubRect(wentWell, [0, 0, 300, 600]);
+    stubRect(toImprove, [320, 0, 620, 600]);
+    stubRect(groupEl, [10, 60, 290, 400]);
+
+    pointerDrag(headerEl, [
+      { x: 150, y: 100 },
+      { x: 420, y: 100 },
+    ]);
+    await flushPromises();
+
+    expect(spies.moveCardGroup).toHaveBeenCalledWith({
+      boardId: board.id,
+      groupId: 'group_move',
+      targetColumnId: 'col_2',
+    });
+    // Every member Card travels with its Group.
+    const movedGroup = within(toImprove).getByText('CI stability').closest('article')!;
+    expect(within(movedGroup).getByText('CI flakiness')).toBeInTheDocument();
+    expect(within(movedGroup).getByText('Flaky CI checks')).toBeInTheDocument();
+  });
+
+  it('rejects dropping a Card onto a redacted Card in Private Mode', async () => {
+    const mine = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      content: 'Visible note',
+      isMine: true,
+    });
+    const hidden = makeCard({
+      id: 'card_hidden',
+      columnId: 'col_1',
+      content: '',
+      redacted: true,
+      placeholderLines: 2,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      isBlurred: true,
+      cards: [mine, hidden],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    const mineEl = within(wentWell).getByText('Visible note').closest('article') as HTMLElement;
+    const hiddenEl = within(wentWell).getByLabelText('Hidden Card in Private Mode').closest('article') as HTMLElement;
+    stubRect(wentWell, [0, 0, 300, 600]);
+    stubRect(mineEl, [10, 60, 290, 160]);
+    stubRect(hiddenEl, [10, 180, 290, 280]);
+
+    pointerDrag(mineEl, [
+      { x: 50, y: 100 },
+      { x: 150, y: 230 },
+    ]);
+    await flushPromises();
+
+    expect(spies.groupCards).not.toHaveBeenCalled();
+    expect(spies.moveCard).not.toHaveBeenCalled();
+    expect(hiddenEl.getAttribute('data-drop-active')).toBeNull();
+  });
+
+  it('cancels a pointer drag with Escape and commits nothing', () => {
+    vi.useFakeTimers();
+    try {
+      const mine = makeCard({
+        id: 'card_esc',
+        columnId: 'col_1',
+        content: 'Escape hatch',
+        isMine: true,
+      });
+      const board = makeBoardView({ isFacilitator: false, cards: [mine] });
+      const { actions, spies } = createFakeActions(board);
+
+      const { getByRole } = render(() => (
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+      ));
+      flush();
+
+      const wentWell = getByRole('region', { name: 'Went Well' });
+      const toImprove = getByRole('region', { name: 'To Improve' });
+      const cardEl = within(wentWell).getByText('Escape hatch').closest('article') as HTMLElement;
+      stubRect(wentWell, [0, 0, 300, 600]);
+      stubRect(toImprove, [320, 0, 620, 600]);
+      stubRect(cardEl, [10, 60, 290, 160]);
+
+      fireEvent.pointerDown(cardEl, { button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true, pointerId: 9, clientX: 50, clientY: 100 });
+      fireEvent.pointerMove(document.body, { pointerId: 9, clientX: 420, clientY: 100 });
+      vi.advanceTimersByTime(16);
+      flush();
+      // The Card had crossed into “To Improve” before Escape intervened.
+      expect(toImprove.getAttribute('data-drop-active')).toBe('');
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.pointerUp(document.body, { pointerId: 9, clientX: 420, clientY: 100 });
+      fireEvent.click(document.body);
+      vi.advanceTimersByTime(150);
+
+      expect(spies.moveCard).not.toHaveBeenCalled();
+      expect(
+        document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '',
+      ).toContain('back to Column Went Well');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('moves a focused Card across Columns with the keyboard alone', async () => {
+    const mine = makeCard({
+      id: 'card_keys',
+      columnId: 'col_1',
+      content: 'Keyboard courier',
+      isMine: true,
+    });
+    const board = makeBoardView({ isFacilitator: false, cards: [mine] });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const cardEl = within(getByRole('region', { name: 'Went Well' }))
+      .getByText('Keyboard courier')
+      .closest('article') as HTMLElement;
+    cardEl.focus();
+    expect(cardEl).toHaveFocus();
+
+    fireEvent.keyDown(cardEl, { key: ' ' });
+    fireEvent.keyDown(cardEl, { key: 'ArrowRight' });
+    fireEvent.keyDown(cardEl, { key: ' ' });
+    await flushPromises();
+
+    expect(spies.moveCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_keys',
+      targetColumnId: 'col_2',
+    });
+    expect(await readAnnouncement()).toContain('Dropped Keyboard courier in Column To Improve');
   });
 
   it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with shared confirmation)', async () => {

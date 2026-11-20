@@ -125,17 +125,23 @@ export function acceptsBoardDrop(
   );
 }
 
-/** The commit seam: which mutation a finished transfer stands for, or null. */
+/**
+ * The commit seam: which mutation a finished transfer stands for, or null.
+ * `to` is a Column id, or an `on:`-prefixed Card / Card Group target.
+ */
 export function resolveBoardTransferMove(
   board: BoardViewDTO | null,
-  move: { key: string; from: string; to: string },
+  move: { key: string; to: string },
 ): BoardTransferMove | null {
-  if (!board || move.to === move.from) return null;
+  if (!board) return null;
   const item = findBoardItem(board, move.key);
   if (!item) return null;
 
   const target = parseBoardTargetKey(move.to);
   if (!target) {
+    const homeColumn =
+      item.kind === 'card' ? item.card.columnId : item.group.columnId;
+    if (move.to === homeColumn) return null;
     return item.kind === 'card'
       ? { kind: 'move-card', cardId: item.card.id, targetColumnId: move.to }
       : { kind: 'move-group', groupId: item.group.id, targetColumnId: move.to };
@@ -148,25 +154,34 @@ export function resolveBoardTransferMove(
       ? { kind: 'group-with-card', cardId: item.card.id, targetCardId: landing.card.id }
       : { kind: 'move-card', cardId: item.card.id, targetColumnId: landing.card.columnId };
   }
+  // Already a member: the drop happened inside its own Group, a plain no-op.
   return landing.group.columnId === item.card.columnId
-    ? { kind: 'group-with-group', cardId: item.card.id, targetGroupId: landing.group.id }
+    ? landing.group.cardIds.includes(item.card.id)
+      ? null
+      : { kind: 'group-with-group', cardId: item.card.id, targetGroupId: landing.group.id }
     : { kind: 'move-card', cardId: item.card.id, targetColumnId: landing.group.columnId };
 }
 
 /**
- * The transfer lists value: each Column's rendered stream order, plus an
- * empty target list per visible Card / Card Group so a held draft survives
- * board changes while hovering one (createTransfer rebases against the value).
+ * The transfer lists value: each Column's rendered stream order, an empty
+ * target list per visible loose Card, and — per visible Card Group — the
+ * member list under its drop-zone key, so grouped Cards stay grabbable and a
+ * held draft rebases against the value while hovering (#52).
  */
 export function buildBoardTransferLists(
   view: BoardViewProjection | null,
 ): TransferLists {
   const lists: TransferLists = {};
   for (const [columnId, column] of view?.columns ?? []) {
-    lists[columnId] = column.items.map((item) => item.key);
+    const keys: string[] = [];
     for (const item of column.items) {
-      lists[BOARD_TARGET_PREFIX + item.key] = [];
+      keys.push(item.key);
+      lists[BOARD_TARGET_PREFIX + item.key] =
+        item.kind === 'group'
+          ? item.cards.map((card) => `card:${card.id}`)
+          : [];
     }
+    lists[columnId] = keys;
   }
   return lists;
 }
@@ -295,6 +310,13 @@ export const boardTransfer = definePrimitive({
       return !!moving && listWith(transfer.lists(state), moving.key) === listKey;
     }
 
+    // The dragged item's home Column, so its own Column never poses as a target.
+    function homeColumnOf(itemKey: string): string | undefined {
+      const item = findBoardItem(read().board(), itemKey);
+      if (!item) return undefined;
+      return item.kind === 'card' ? item.card.columnId : item.group.columnId;
+    }
+
     return {
       transfer: {
         ...transfer,
@@ -302,10 +324,10 @@ export const boardTransfer = definePrimitive({
         bindTarget: (el: HTMLElement, itemKey: string) =>
           bindZone(el, BOARD_TARGET_PREFIX + itemKey),
         armedColumn: (state: BoardTransferState, columnId: string) =>
-          state.moving !== null && state.moving.from !== columnId,
+          state.moving !== null && homeColumnOf(state.moving.key) !== columnId,
         overColumn: (state: BoardTransferState, columnId: string) =>
           state.moving !== null &&
-          state.moving.from !== columnId &&
+          homeColumnOf(state.moving.key) !== columnId &&
           overList(state, columnId),
         overTarget: (state: BoardTransferState, itemKey: string) =>
           overList(state, BOARD_TARGET_PREFIX + itemKey),
