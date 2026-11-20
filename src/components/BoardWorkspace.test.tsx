@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -2370,6 +2370,75 @@ describe('<BoardWorkspace />', () => {
       },
       { scenario: 'board-workspace-locked-delete' },
     );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('shows completed Action Items with one status and announces updates off-layout', async () => {
+    const actionCard = makeCard({
+      id: 'card_action',
+      content: 'Document the rollout',
+      isActionItem: true,
+      actionDone: true,
+      actionOwner: 'Platform',
+    });
+    const board = makeBoardView({ cards: [actionCard] });
+    const { actions, spies } = createFakeActions(board);
+    const update = Promise.withResolvers<BoardMutationResponse>();
+    spies.updateActionItem.mockReturnValueOnce(update.promise);
+
+    const { artifact } = await captureArtifact(async () => {
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      flush();
+      const card = within(view.getByText(actionCard.content).closest('article')!);
+      expect(card.getByText(actionCard.content).closest('.line-through')).toBeInTheDocument();
+      expect(card.queryByText('Action Item')).not.toBeInTheDocument();
+      expect(card.getByText('Done')).toBeVisible();
+      expect(card.getByText('Platform')).toBeVisible();
+      const status = card.getByRole('checkbox');
+      expect(status).toBeChecked();
+      fireEvent.click(status);
+      flush();
+      const pending = card.getByText('Updating Action Item…');
+      expect(pending).toHaveAttribute('aria-live', 'polite');
+      expect(pending).toHaveClass('sr-only');
+      update.resolve({ ok: false, code: 'VALIDATION_ERROR', message: 'Try again.' });
+      await waitFor(() => expect(status).toBeChecked());
+    }, { scenario: 'card-action-status' });
+
+    expectNoDiagnostics(artifact);
+  });
+
+  it('opens Card actions off-layout and returns keyboard focus to the trigger', async () => {
+    const ownCard = makeCard({ id: 'card_menu', content: 'Review the release checklist' });
+    const board = makeBoardView({ cards: [ownCard], isFacilitator: true });
+    const { actions } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      flush();
+      const card = within(view.getByText(ownCard.content).closest('article')!);
+      const trigger = card.getByRole('button', { name: 'Card actions' });
+      trigger.focus();
+      fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+      flush();
+
+      const popup = card.getByRole('menu', { name: 'Card actions' });
+      expect(popup).toHaveAttribute('popover');
+      expect(popup).toHaveAttribute('data-board-overlay', 'true');
+      const edit = within(popup).getByRole('menuitem', { name: 'Edit Card' });
+      expect(edit).toHaveFocus();
+      fireEvent.keyDown(edit, { key: 'Escape' });
+      flush();
+      expect(card.queryByRole('menu')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+
+      fireEvent.click(trigger);
+      flush();
+      fireEvent.pointerDown(view.getByRole('region', { name: 'Went Well' }));
+      flush();
+      expect(card.queryByRole('menu')).not.toBeInTheDocument();
+    }, { scenario: 'card-actions-popup' });
+
     expectNoDiagnostics(artifact);
   });
 

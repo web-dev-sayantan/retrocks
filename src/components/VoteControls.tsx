@@ -1,7 +1,9 @@
+import { Minus, Plus } from 'lucide';
 import { Show, createMemo } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
+import LucideIcon from './LucideIcon';
 
 type VoteDelta = ChangeVoteInput['delta'];
 
@@ -18,7 +20,7 @@ export interface WorkspaceVoting {
 }
 
 const buttonClass = [
-  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center px-2 text-sm font-medium text-text sm:min-h-7 sm:min-w-7',
+  'spring-press inline-flex h-full min-w-11 cursor-pointer items-center justify-center text-text sm:min-w-7',
   'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
   'disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-50',
 ];
@@ -41,7 +43,14 @@ export default function VoteControls(props: {
   );
 
   return (
-    <div role="group" aria-label="Voting" class="inline-flex w-fit max-w-full shrink-0 items-center rounded-lg border border-border bg-canvas">
+    <div
+      role="group"
+      aria-label="Voting"
+      class={[
+        'inline-flex h-11 w-fit shrink-0 items-center rounded-lg border transition-colors sm:h-7',
+        myVotes() > 0 ? 'border-accent/30 bg-accent/10' : 'border-border/75 bg-surface-subtle/75',
+      ]}
+    >
       <Show when={!props.isLocked}>
         <button
           type="button"
@@ -51,11 +60,11 @@ export default function VoteControls(props: {
           disabled={props.voting.pending || myVotes() === 0}
           onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, -1)}
         >
-          −
+          <LucideIcon icon={Minus} class="size-3.5" strokeWidth={2} />
         </button>
       </Show>
       <span
-        class="min-w-0 wrap-anywhere px-1.5 text-center text-xs font-medium text-text tabular-nums"
+        class="min-w-[2.5ch] px-0.5 text-center text-xs font-medium whitespace-nowrap text-text tabular-nums"
         title={votes() === null ? `${myVotes()} of your Votes` : `${votes()} total Votes · ${myVotes()} yours`}
       >
         {votes() === null ? `${myVotes()} yours` : votes()}
@@ -69,7 +78,7 @@ export default function VoteControls(props: {
           disabled={props.voting.pending || !canCast()}
           onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, 1)}
         >
-          +
+          <LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} />
         </button>
       </Show>
     </div>
