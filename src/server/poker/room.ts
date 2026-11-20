@@ -68,9 +68,15 @@ const discardRequired = {
   message: 'Confirm that you want to discard the current Voting Round before switching Stories.',
 } as const;
 
+const invalidDeckChoice = {
+  ok: false,
+  code: 'INVALID_INPUT',
+  message: 'Choose a value from the Deck.',
+} as const;
+
 interface StoredVotingRound {
   id: string;
-  phase: 'open' | 'revealed';
+  phase: 'open' | 'revealed' | 'accepted';
   ballots: Record<string, string>;
 }
 
@@ -124,7 +130,7 @@ function projectRound(room: StoredPokerRoom, viewerId: string): PokerRoundView |
 
   return {
     id: round.id,
-    phase: 'revealed',
+    phase: round.phase,
     ballots: room.participants.flatMap(({ id, displayName }) => {
       const choice = round.ballots[id];
       return choice === undefined ? [] : [{ participantId: id, displayName, choice }];
@@ -245,9 +251,6 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
-          if (story.status !== 'pending') {
-            return { ok: false, code: 'INVALID_INPUT', message: 'Only pending Stories can be edited.' };
-          }
           if (story.title === command.title) return { ok: true, room };
           story.title = command.title;
           if (room.activeStoryId === story.id && room.round?.phase === 'open') {
@@ -270,18 +273,45 @@ export class PokerRoomStorage {
           room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
+        case 'correct-estimate': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const story = room.stories?.find((entry) => entry.id === command.storyId);
+          if (!story) return storyMissing;
+          if (story.acceptedEstimate !== command.expectedEstimate) {
+            return { ok: false, code: 'INVALID_INPUT', message: 'The Accepted Estimate changed. Reopen the editor and try again.' };
+          }
+          if (!(room.deck ?? FIBONACCI_DECK).includes(command.choice)) return invalidDeckChoice;
+          if (story.acceptedEstimate === command.choice) return { ok: true, room };
+          story.acceptedEstimate = command.choice;
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'return-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const story = room.stories?.find((entry) => entry.id === command.storyId);
+          if (!story) return storyMissing;
+          if (story.status === 'pending') return { ok: true, room };
+          if (story.status !== 'skipped') {
+            return { ok: false, code: 'INVALID_INPUT', message: 'Choose a skipped Story.' };
+          }
+          story.status = 'pending';
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
         case 'select-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
-          if (story.status !== 'pending') {
-            return { ok: false, code: 'INVALID_INPUT', message: 'Choose a pending Story.' };
+          if (story.status === 'skipped') {
+            return { ok: false, code: 'INVALID_INPUT', message: 'Return this Story to the queue before selecting it.' };
           }
           if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) {
             return roundChanged;
           }
           if (room.round && room.activeStoryId === story.id) return { ok: true, room };
-          if (room.round && command.discardRoundId === undefined) return discardRequired;
+          if (room.round && room.round.phase !== 'accepted' && command.discardRoundId === undefined) {
+            return discardRequired;
+          }
           room.activeStoryId = story.id;
           room.round = startVotingRound();
           room.expiresAt = now + ROOM_TTL_MS;
@@ -294,7 +324,7 @@ export class PokerRoomStorage {
           if (round?.id !== command.roundId || round.phase !== 'open') return roundChanged;
           const { choice } = command;
           if (choice !== null && !(room.deck ?? FIBONACCI_DECK).includes(choice)) {
-            return { ok: false, code: 'INVALID_INPUT', message: 'Choose a value from the Deck.' };
+            return invalidDeckChoice;
           }
           if ((round.ballots[participant.id] ?? null) === choice) return { ok: true, room };
           if (choice === null) delete round.ballots[participant.id];
@@ -310,6 +340,40 @@ export class PokerRoomStorage {
             return { ok: false, code: 'INVALID_INPUT', message: 'At least one vote is required to reveal.' };
           }
           round.phase = 'revealed';
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'restart-round': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const round = room.round;
+          if (round?.id !== command.roundId || round.phase === 'open') return roundChanged;
+          room.round = startVotingRound();
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'skip-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const round = room.round;
+          if (round?.id !== command.roundId || round.phase !== 'revealed') return roundChanged;
+          const story = room.stories?.find((entry) => entry.id === room.activeStoryId);
+          if (!story) return storyMissing;
+          if (story.acceptedEstimate === undefined) story.status = 'skipped';
+          room.activeStoryId = null;
+          room.round = null;
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'confirm-estimate': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const round = room.round;
+          if (round?.id !== command.roundId || round.phase !== 'revealed') return roundChanged;
+          const story = room.stories?.find((entry) => entry.id === room.activeStoryId);
+          if (!story) return storyMissing;
+          if (!(room.deck ?? FIBONACCI_DECK).includes(command.choice)) return invalidDeckChoice;
+
+          story.acceptedEstimate = command.choice;
+          story.status = 'estimated';
+          round.phase = 'accepted';
           room.expiresAt = now + ROOM_TTL_MS;
           break;
         }

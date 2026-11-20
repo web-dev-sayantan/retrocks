@@ -3,19 +3,23 @@ import { Radio, RadioGroup } from '@ui-sdk/solid/radio';
 import { For, Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 
 import type { PokerResult, PokerRoundView, PokerVotingCommand } from '../../lib/poker-types';
+import PokerEstimateForm from './PokerEstimateForm';
 
 export default function PokerVotingRound(props: {
   round: PokerRoundView;
   deck: readonly string[];
-  canReveal: boolean;
+  canManage: boolean;
+  hasEstimate: boolean;
+  onSkip: () => void;
   onChange: (command: PokerVotingCommand) => Promise<PokerResult>;
 }) {
   const headingId = createUniqueId();
+  let heading!: HTMLHeadingElement;
   const [pendingRound, setPendingRound] = createSignal<string>();
   const [failure, setFailure] = createSignal<{ roundId: string; message: string }>();
   const busy = () => pendingRound() !== undefined;
   const open = createMemo(() => props.round.phase === 'open' ? props.round : null);
-  const revealed = createMemo(() => props.round.phase === 'revealed' ? props.round : null);
+  const revealed = createMemo(() => props.round.phase !== 'open' ? props.round : null);
   const error = () => {
     const current = failure();
     return current?.roundId === props.round.id ? current.message : '';
@@ -23,11 +27,18 @@ export default function PokerVotingRound(props: {
 
   async function change(command: PokerVotingCommand) {
     if (busy()) return;
+    const control = heading.ownerDocument.activeElement;
+    const hadFocus = control !== null && heading.parentElement?.contains(control);
     setPendingRound(command.roundId);
     setFailure(undefined);
     try {
       const result = await props.onChange(command);
-      if (!result.ok) setFailure({ roundId: command.roundId, message: result.message });
+      if (!result.ok) {
+        setFailure({ roundId: command.roundId, message: result.message });
+      } else if (hadFocus && !control.isConnected && control.ownerDocument.activeElement === control.ownerDocument.body) {
+        if (command.type === 'skip-story') props.onSkip();
+        else heading.focus();
+      }
     } catch {
       setFailure({ roundId: command.roundId, message: 'Could not update the Voting Round. Try again.' });
     } finally {
@@ -37,7 +48,7 @@ export default function PokerVotingRound(props: {
 
   return (
     <div class="poker-voting mt-5 border-t pt-4">
-      <h3 id={headingId} class="text-base font-semibold">
+      <h3 ref={heading} id={headingId} tabindex={-1} class="text-base font-semibold">
         {open() ? 'Cast your vote' : 'Revealed votes'}
       </h3>
       <Show when={open()}>
@@ -71,7 +82,7 @@ export default function PokerVotingRound(props: {
                   </Button>
                 </Show>
               </div>
-              <Show when={props.canReveal}>
+              <Show when={props.canManage}>
                 <Button
                   type="button"
                   class="poker-primary board-focus-ring aria-disabled:cursor-default aria-disabled:opacity-65"
@@ -89,7 +100,9 @@ export default function PokerVotingRound(props: {
       <Show when={revealed()}>
         {(round) => (
           <>
-            <p class="mt-1 text-sm" role="status">Waiting for an Accepted Estimate.</p>
+            <Show when={round().phase === 'revealed' && !props.canManage}>
+              <p class="mt-1 text-sm" role="status">Waiting for an Accepted Estimate.</p>
+            </Show>
             <ul aria-labelledby={headingId} class="mt-3 grid gap-2 sm:grid-cols-2">
               <For each={round().ballots} keyed={(ballot) => ballot.participantId}>
                 {(ballot) => (
@@ -100,6 +113,39 @@ export default function PokerVotingRound(props: {
                 )}
               </For>
             </ul>
+            <Show when={props.canManage}>
+              <Show when={round().phase === 'revealed' && round().id} keyed>
+                {(roundId) => (
+                  <PokerEstimateForm
+                    deck={props.deck}
+                    busy={busy()}
+                    onSave={(choice) => void change({ type: 'confirm-estimate', roundId, choice })}
+                  />
+                )}
+              </Show>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  class="poker-secondary board-focus-ring"
+                  disabled={busy()}
+                  focusableWhenDisabled
+                  onClick={() => void change({ type: 'restart-round', roundId: round().id })}
+                >
+                  {round().phase === 'accepted' ? 'Reconsider Story' : 'Start fresh round'}
+                </Button>
+                <Show when={round().phase === 'revealed'}>
+                  <Button
+                    type="button"
+                    class="poker-secondary board-focus-ring"
+                    disabled={busy()}
+                    focusableWhenDisabled
+                    onClick={() => void change({ type: 'skip-story', roundId: round().id })}
+                  >
+                    {props.hasEstimate ? 'Skip this round' : 'Skip Story'}
+                  </Button>
+                </Show>
+              </div>
+            </Show>
           </>
         )}
       </Show>

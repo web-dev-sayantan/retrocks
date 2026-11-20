@@ -251,3 +251,180 @@ test('Editing the active Story invalidates old vote, reveal, and switch commands
     room: { activeStoryId: receipt.id, stories: [{ status: 'pending' }, { status: 'pending' }] },
   });
 });
+
+test('a unanimous reveal needs explicit acceptance from the Deck before moving on', async () => {
+  const { id, participant, mutate, read } = await openRoom();
+  await mutate({ type: 'add-story', title: 'Restore checkout' });
+  const added = await mutate({ type: 'add-story', title: 'Send receipt' });
+  if (!added.ok) throw new Error('Could not add Stories.');
+  const [checkout, receipt] = added.room.stories;
+  const selected = await mutate({ type: 'select-story', storyId: checkout.id });
+  if (!selected.ok || !selected.room.round) throw new Error('Could not open Voting Round.');
+  const roundId = selected.room.round.id;
+  const confirm = { type: 'confirm-estimate', roundId, choice: '0' };
+  const switchStory = { type: 'select-story', storyId: receipt.id };
+
+  expect(await mutate(confirm)).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate({ type: 'vote', roundId, choice: '5' }, participant)).toMatchObject({ ok: true });
+  expect(await mutate({ type: 'vote', roundId, choice: '5' })).toMatchObject({ ok: true });
+  expect(await mutate({ type: 'reveal', roundId })).toMatchObject({
+    ok: true, room: { stories: [checkout, receipt], round: { phase: 'revealed' } },
+  });
+  expect(await mutate(switchStory)).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate(confirm, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  expect(await mutate({ ...confirm, choice: '4' })).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+
+  const response = await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+    headers: { cookie: participant },
+  }));
+  const reader = response.body!.getReader();
+  try {
+    const accepted = await mutate(confirm);
+    expect(accepted).toMatchObject({
+      ok: true,
+      room: {
+        stories: [{ ...checkout, status: 'estimated', acceptedEstimate: '0' }, receipt],
+        round: { id: roundId, phase: 'accepted', ballots: [
+          { displayName: 'Alex', choice: '5' }, { displayName: 'Sam', choice: '5' },
+        ] },
+      },
+    });
+    let snapshot;
+    do {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('Live stream ended before the estimate was accepted.');
+      snapshot = parsePokerLiveMessage(new TextDecoder().decode(value).slice('data: '.length));
+    } while (snapshot.type !== 'room:snapshot' || snapshot.room.round?.phase !== 'accepted');
+    expect(snapshot.room.stories[0].acceptedEstimate).toBe('0');
+
+    expect(await mutate({ ...confirm, choice: '13' })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+    expect(await mutate(switchStory)).toMatchObject({
+      ok: true,
+      room: { round: { phase: 'open', submittedParticipantIds: [] }, activeStoryId: receipt.id },
+    });
+    expect(await read(participant)).toMatchObject({
+      stories: [{ ...checkout, status: 'estimated', acceptedEstimate: '0' }, receipt],
+      activeStoryId: receipt.id,
+    });
+  } finally {
+    await reader.cancel();
+  }
+});
+
+test('restarting or skipping a revealed reconsideration preserves the earlier estimate and rejects stale round commands', async () => {
+  const { participant, mutate } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Restore checkout' });
+  if (!added.ok) throw new Error('Could not add Story.');
+  const [checkout] = added.room.stories;
+  const selected = await mutate({ type: 'select-story', storyId: checkout.id });
+  if (!selected.ok || !selected.room.round) throw new Error('Could not open Voting Round.');
+  const firstRound = selected.room.round.id;
+
+  async function reveal(roundId: string) {
+    expect(await mutate({ type: 'vote', roundId, choice: '5' }, participant)).toMatchObject({ ok: true });
+    expect(await mutate({ type: 'reveal', roundId })).toMatchObject({ ok: true });
+  }
+
+  await reveal(firstRound);
+  expect(await mutate({ type: 'confirm-estimate', roundId: firstRound, choice: '3' })).toMatchObject({ ok: true });
+  const restart = { type: 'restart-round', roundId: firstRound };
+  expect(await mutate(restart, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  const restarted = await mutate(restart);
+  const estimated = { ...checkout, acceptedEstimate: '3', status: 'estimated' };
+  expect(restarted).toMatchObject({
+    ok: true,
+    room: { stories: [estimated], round: { phase: 'open', submittedParticipantIds: [] } },
+  });
+  if (!restarted.ok || !restarted.room.round) throw new Error('Could not open reconsideration.');
+  const secondRound = restarted.room.round.id;
+  expect(secondRound).not.toBe(firstRound);
+  await reveal(secondRound);
+
+  for (const stale of [
+    restart, { type: 'skip-story', roundId: firstRound }, { type: 'confirm-estimate', roundId: firstRound, choice: '8' },
+  ]) {
+    expect(await mutate(stale)).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  }
+  const fresh = await mutate({ type: 'restart-round', roundId: secondRound });
+  if (!fresh.ok || !fresh.room.round) throw new Error('Could not re-run reconsideration.');
+  const thirdRound = fresh.room.round.id;
+  expect(thirdRound).not.toBe(secondRound);
+  await reveal(thirdRound);
+  expect(await mutate({ type: 'skip-story', roundId: thirdRound })).toMatchObject({
+    ok: true,
+    room: { activeStoryId: null, round: null, stories: [estimated] },
+  });
+  expect(await mutate({ type: 'select-story', storyId: checkout.id })).toMatchObject({
+    ok: true,
+    room: { activeStoryId: checkout.id, round: { phase: 'open' }, stories: [estimated] },
+  });
+});
+
+test('a skipped Story returns to the queue without the votes from its old round', async () => {
+  const { participant, mutate } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Restore checkout' });
+  if (!added.ok) throw new Error('Could not add Story.');
+  const [checkout] = added.room.stories;
+  const select = { type: 'select-story', storyId: checkout.id };
+  const selected = await mutate(select);
+  if (!selected.ok || !selected.room.round) throw new Error('Could not open Voting Round.');
+  const roundId = selected.room.round.id;
+  expect(await mutate({ type: 'vote', roundId, choice: '8' }, participant)).toMatchObject({ ok: true });
+  expect(await mutate({ type: 'reveal', roundId })).toMatchObject({ ok: true });
+
+  expect(await mutate({ type: 'skip-story', roundId }, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  expect(await mutate({ type: 'skip-story', roundId })).toMatchObject({
+    ok: true, room: { activeStoryId: null, round: null, stories: [{ ...checkout, status: 'skipped' }] },
+  });
+  expect(await mutate(select)).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+
+  const restore = { type: 'return-story', storyId: checkout.id };
+  expect(await mutate(restore, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  expect(await mutate(restore)).toMatchObject({
+    ok: true, room: { activeStoryId: null, round: null, stories: [checkout] },
+  });
+  const reopened = await mutate(select);
+  expect(reopened).toMatchObject({ ok: true, room: { round: { phase: 'open', submittedParticipantIds: [] } } });
+  expect(reopened.ok && reopened.room.round?.id).not.toBe(roundId);
+});
+
+test('direct estimate and title corrections preserve the round and reject a stale correction', async () => {
+  const { participant, mutate } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Restore chekout' });
+  if (!added.ok) throw new Error('Could not add Story.');
+  const [checkout] = added.room.stories;
+  const selected = await mutate({ type: 'select-story', storyId: checkout.id });
+  if (!selected.ok || !selected.room.round) throw new Error('Could not open Voting Round.');
+  const roundId = selected.room.round.id;
+  const correct = { type: 'correct-estimate', storyId: checkout.id, expectedEstimate: '3', choice: '5' };
+  expect(await mutate({ ...correct, expectedEstimate: undefined })).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+  expect(await mutate(correct)).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+
+  expect(await mutate({ type: 'vote', roundId, choice: '8' }, participant)).toMatchObject({ ok: true });
+  expect(await mutate({ type: 'reveal', roundId })).toMatchObject({ ok: true });
+  const accepted = await mutate({ type: 'confirm-estimate', roundId, choice: '3' });
+  if (!accepted.ok) throw new Error('Could not record estimate.');
+  const acceptedRound = accepted.room.round;
+
+  expect(await mutate(correct, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  expect(await mutate({ ...correct, choice: '4' })).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+  expect(await mutate({ ...correct, choice: '3' })).toEqual(accepted);
+  expect(await mutate(correct)).toMatchObject({
+    ok: true, room: { round: acceptedRound, stories: [{ status: 'estimated', acceptedEstimate: '5' }] },
+  });
+  expect(await mutate({ ...correct, choice: '0' })).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+
+  expect(await mutate({ type: 'edit-story', storyId: checkout.id, title: 'Restore checkout' })).toMatchObject({
+    ok: true,
+    room: { round: acceptedRound, stories: [{ id: checkout.id, title: 'Restore checkout', acceptedEstimate: '5' }] },
+  });
+  const restarted = await mutate({ type: 'restart-round', roundId });
+  if (!restarted.ok || !restarted.room.round) throw new Error('Could not open reconsideration.');
+  const replacementRound = restarted.room.round.id;
+  await mutate({ type: 'vote', roundId: replacementRound, choice: '13' }, participant);
+  await mutate({ type: 'reveal', roundId: replacementRound });
+  expect(await mutate({ type: 'confirm-estimate', roundId: replacementRound, choice: '13' })).toMatchObject({
+    ok: true, room: { stories: [{ status: 'estimated', acceptedEstimate: '13' }], round: { phase: 'accepted' } },
+  });
+  expect(await mutate({ ...correct, expectedEstimate: '5' })).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+});
