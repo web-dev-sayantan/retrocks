@@ -20,7 +20,9 @@ import {
   canInteractWithCard,
   canManageCard,
 } from '../lib/board-permissions';
+import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
 import { getEnabledMenuItems } from '../lib/menu-keyboard';
+import { isOptimisticId } from '../lib/optimistic-ids';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardReactions from './CardReactions';
@@ -265,7 +267,7 @@ export default function CardItem(props: CardItemProps) {
   const textTap = createDoubleTap(isTextEditTarget, startEdit);
 
   function isTextEditTarget(target: EventTarget | null): boolean {
-    if (!canManage() || props.card.id.startsWith('optimistic:')) return false;
+    if (!canManage() || isOptimisticId(props.card.id)) return false;
     return !(target instanceof Element && target.closest('a'));
   }
 
@@ -428,8 +430,8 @@ export default function CardItem(props: CardItemProps) {
     }
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', props.card.id);
-      event.dataTransfer.setData('application/x-retrocks-card', props.card.id);
+      event.dataTransfer.setData(DRAG_FALLBACK_MIME, props.card.id);
+      event.dataTransfer.setData(CARD_DRAG_MIME, props.card.id);
     }
     props.onDragStartCard(props.card.id, props.card.columnId);
   }

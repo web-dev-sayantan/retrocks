@@ -1,6 +1,6 @@
-import type { JSX } from '@solidjs/web';
+import { Dynamic, type JSX } from '@solidjs/web';
 import type { IconNode } from 'lucide';
-import { For, Match, Switch } from 'solid-js';
+import { For } from 'solid-js';
 
 export interface LucideIconProps {
   icon: IconNode;
@@ -20,31 +20,14 @@ export default function LucideIcon(props: LucideIconProps) {
       stroke-linejoin="round"
       class={props.class ?? 'size-4 shrink-0'}
     >
+      {/* xmlns pins every child to the SVG namespace so unknown shape tags still render. */}
       <For each={props.icon}>
         {(node) => (
-          <Switch>
-            <Match when={node[0] === 'path'}>
-              <path {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-            <Match when={node[0] === 'circle'}>
-              <circle {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-            <Match when={node[0] === 'rect'}>
-              <rect {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-            <Match when={node[0] === 'line'}>
-              <line {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-            <Match when={node[0] === 'polyline'}>
-              <polyline {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-            <Match when={node[0] === 'polygon'}>
-              <polygon {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-            <Match when={node[0] === 'ellipse'}>
-              <ellipse {...(node[1] as Record<string, string | number | undefined>)} />
-            </Match>
-          </Switch>
+          <Dynamic
+            component={node[0]}
+            xmlns="http://www.w3.org/2000/svg"
+            {...node[1]}
+          />
         )}
       </For>
     </svg>

@@ -30,6 +30,7 @@ import {
   canDeleteColumn as canDeleteColumnPermission,
   passesPrivateMode,
 } from '../lib/board-permissions';
+import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
@@ -311,16 +312,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function handleDragOver(event: DragEvent): void {
     if (props.isLocked) return;
-    const cardData =
-      event.dataTransfer?.getData('application/x-retrocks-card') ?? '';
-    const groupData =
-      event.dataTransfer?.getData('application/x-retrocks-group') ?? '';
+    const cardData = event.dataTransfer?.getData(CARD_DRAG_MIME) ?? '';
+    const groupData = event.dataTransfer?.getData(GROUP_DRAG_MIME) ?? '';
     const isGroupDrag =
       props.draggingGroupId !== null ||
       (!props.draggingCardId && Boolean(groupData) && !cardData);
     const cardId =
       props.draggingCardId ??
-      (cardData || event.dataTransfer?.getData('text/plain') || '');
+      (cardData || event.dataTransfer?.getData(DRAG_FALLBACK_MIME) || '');
     if (!isGroupDrag && !cardId) return;
     if (
       props.draggingSourceColumnId &&
@@ -348,10 +347,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     event.preventDefault();
     setIsDropActive(false);
     if (props.isLocked) return;
-    const cardData =
-      event.dataTransfer?.getData('application/x-retrocks-card') || '';
-    const groupData =
-      event.dataTransfer?.getData('application/x-retrocks-group') || '';
+    const cardData = event.dataTransfer?.getData(CARD_DRAG_MIME) || '';
+    const groupData = event.dataTransfer?.getData(GROUP_DRAG_MIME) || '';
     const groupId =
       props.draggingGroupId ||
       (!props.draggingCardId && groupData && !cardData ? groupData : '');
@@ -364,7 +361,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     const cardId =
       props.draggingCardId ||
       cardData ||
-      event.dataTransfer?.getData('text/plain') ||
+      event.dataTransfer?.getData(DRAG_FALLBACK_MIME) ||
       '';
     if (!cardId) return;
     if (props.draggingSourceColumnId === props.column.id) return;

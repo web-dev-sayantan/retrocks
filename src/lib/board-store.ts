@@ -5,6 +5,7 @@ import type {
   CardViewDTO,
   ReactionEmoji,
 } from './board-types';
+import { REACTION_EMOJIS } from './board-types';
 
 function adjustColumnCardCount(
   draft: BoardViewDTO,
@@ -35,15 +36,13 @@ function patchReactionsRecord(
   target: Partial<Record<ReactionEmoji, number>>,
   next: Partial<Record<ReactionEmoji, number>>,
 ): void {
-  for (const key of Object.keys(target) as ReactionEmoji[]) {
-    if (next[key] === undefined) {
-      delete target[key];
+  for (const emoji of REACTION_EMOJIS) {
+    if (target[emoji] !== undefined && next[emoji] === undefined) {
+      delete target[emoji];
     }
-  }
-  for (const key of Object.keys(next) as ReactionEmoji[]) {
-    const value = next[key];
-    if (value !== undefined && target[key] !== value) {
-      target[key] = value;
+    const value = next[emoji];
+    if (value !== undefined && target[emoji] !== value) {
+      target[emoji] = value;
     }
   }
 }

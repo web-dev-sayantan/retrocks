@@ -13,6 +13,7 @@ import {
   MAX_GROUP_TITLE_LENGTH,
   REACTION_EMOJIS,
   RETENTION_DAYS_OPTIONS,
+  VOTE_LIMIT_OPTIONS,
 } from './board-types';
 import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES } from './timer';
 
@@ -56,12 +57,12 @@ export const CardContentSchema = v.pipe(
   ),
 );
 
-export const VoteLimitSchema = v.union([
-  v.literal(3),
-  v.literal(5),
-  v.literal(10),
-  v.null(),
-]);
+// picklist cannot hold null, so the union is derived from the shared options list.
+export const VoteLimitSchema = v.union(
+  VOTE_LIMIT_OPTIONS.map((option) =>
+    option === null ? v.null() : v.literal(option),
+  ),
+);
 
 export const MaxVotesPerCardSchema = v.union([v.literal(1), v.null()]);
 
@@ -72,7 +73,10 @@ export const CreateBoardInputSchema = v.object({
     v.pipe(
       v.string(),
       v.trim(),
-      v.maxLength(120, 'Board title must be 120 characters or fewer'),
+      v.maxLength(
+        MAX_BOARD_TITLE_LENGTH,
+        `Board title must be ${MAX_BOARD_TITLE_LENGTH} characters or fewer`,
+      ),
     ),
     '',
   ),
@@ -80,7 +84,10 @@ export const CreateBoardInputSchema = v.object({
     v.pipe(
       v.string(),
       v.trim(),
-      v.maxLength(240, 'Board subtitle must be 240 characters or fewer'),
+      v.maxLength(
+        MAX_BOARD_SUBTITLE_LENGTH,
+        `Board subtitle must be ${MAX_BOARD_SUBTITLE_LENGTH} characters or fewer`,
+      ),
     ),
     '',
   ),
@@ -89,7 +96,10 @@ export const CreateBoardInputSchema = v.object({
     v.pipe(
       v.array(CreateColumnInputSchema),
       v.minLength(1, 'A Board requires at least 1 Column'),
-      v.maxLength(10, 'A Board can have at most 10 Columns'),
+      v.maxLength(
+        MAX_COLUMNS_PER_BOARD,
+        `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns`,
+      ),
     ),
   ),
   voteLimit: v.optional(VoteLimitSchema, 5),
@@ -339,7 +349,7 @@ const StartTimerSchema = v.object({
     v.number(),
     v.integer('Enter a whole number of minutes.'),
     v.minValue(MIN_TIMER_MINUTES, 'Choose at least one minute.'),
-    v.maxValue(MAX_TIMER_MINUTES, 'Choose at most 60 minutes.'),
+    v.maxValue(MAX_TIMER_MINUTES, `Choose at most ${MAX_TIMER_MINUTES} minutes.`),
   ),
 });
 

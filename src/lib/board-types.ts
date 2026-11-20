@@ -37,6 +37,13 @@ export type RetentionDaysOption = (typeof RETENTION_DAYS_OPTIONS)[number];
 export const REACTION_EMOJIS = ['👍', '❤️', '🎉', '🤔', '🔥', '👀'] as const;
 export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
 
+const REACTION_EMOJI_VALUES = new Set<string>(REACTION_EMOJIS);
+
+/** Reaction rows are only written after REACTION_EMOJIS validation; this narrows DB reads back. */
+export function isReactionEmoji(value: string): value is ReactionEmoji {
+  return REACTION_EMOJI_VALUES.has(value);
+}
+
 export const MAX_COLUMNS_PER_BOARD = 10;
 export const MAX_CARDS_PER_BOARD = 500;
 export const MAX_COMMENTS_PER_CARD = 50;
@@ -108,8 +115,8 @@ export interface CardViewDTO {
   actionOwner: string;
   votes: number | null;
   myVotes: number;
-  reactions: Record<string, number>;
-  myReactions: string[];
+  reactions: Partial<Record<ReactionEmoji, number>>;
+  myReactions: ReactionEmoji[];
   commentCount: number;
   comments: CommentViewDTO[];
   createdAt: number;
