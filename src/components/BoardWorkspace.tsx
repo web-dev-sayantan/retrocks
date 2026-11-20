@@ -60,15 +60,12 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
   type BoardViewDTO,
-  type CardGroupDTO,
-  type CardViewDTO,
   type ColumnAccent,
 } from '../lib/board-types';
 import {
-  projectBoardView,
+  createBoardProjection,
   type BoardQuickFilter,
   type BoardSortMode,
-  type ColumnStreamItem,
 } from '../lib/board-view';
 import {
   RETROSPECTIVE_PRIME_DIRECTIVE,
@@ -122,12 +119,7 @@ function BoardHomeLink(props: { href: string; class: string }) {
   );
 }
 
-const EMPTY_CARDS: readonly CardViewDTO[] = [];
-const EMPTY_GROUPS: readonly CardGroupDTO[] = [];
-const EMPTY_STREAM_ITEMS: readonly ColumnStreamItem[] = [];
-
-function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): string {
-  if (columnCount <= 1) return showAddColumn
+function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): string {  if (columnCount <= 1) return showAddColumn
     ? 'sm:grid sm:grid-cols-[minmax(0,1fr)_auto] lg:max-w-3xl'
     : 'sm:grid sm:grid-cols-1 lg:max-w-2xl';
   if (columnCount === 2) return showAddColumn
@@ -492,49 +484,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return cols[resolvedActiveColumnIndex()] ?? null;
   });
 
-  const cardsByColumn = createMemo(() => {
-    const grouped = new Map<string, CardViewDTO[]>();
-    const board = session.board();
-    if (!board) return grouped;
-    for (const card of board.cards) {
-      let list = grouped.get(card.columnId);
-      if (!list) {
-        list = [];
-        grouped.set(card.columnId, list);
-      }
-      list.push(card);
-    }
-    return grouped;
-  });
-
-  const groupsByColumn = createMemo(() => {
-    const grouped = new Map<string, CardGroupDTO[]>();
-    const board = session.board();
-    if (!board) return grouped;
-    for (const group of board.groups) {
-      let list = grouped.get(group.columnId);
-      if (!list) {
-        list = [];
-        grouped.set(group.columnId, list);
-      }
-      list.push(group);
-    }
-    return grouped;
-  });
-
-  const boardView = createMemo(() => {
-    const board = session.board();
-    if (!board) return null;
-    return projectBoardView(board, {
-      query: searchQuery(),
-      filter: quickFilter(),
-      sortMode: sortMode(),
-    });
+  // The one keyed projection (#51): identity, ordering, totals, and the
+  // per-Column Card/Group lists all come from here — no regrouping memos.
+  const view = createBoardProjection(() => session.board(), {
+    query: searchQuery,
+    filter: quickFilter,
+    sortMode,
   });
 
   const secretSearch = createMemo(() => {
-    const view = boardView();
-    if (!view?.hasSearchQuery || view.matchedCardCount !== 0) return;
+    if (!view.hasSearchQuery || view.matchedCardCount !== 0) return;
     if (view.totalCardCount !== 0 && quickFilter() !== 'all') return;
     return matchSecretSearch(searchQuery());
   });
@@ -546,7 +505,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const openDetailCard = createMemo(() => {
     const id = openCardDetailId();
     if (!id) return null;
-    const card = session.board()?.cards.find((item) => item.id === id) ?? null;
+    const card = view.cards.find((item) => item.id === id) ?? null;
     if (!card || card.redacted) return null;
     return card;
   });
@@ -1222,29 +1181,25 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </Show>
 
           {/* Viewer-local Search, Quick Filter & Sort toolbar */}
-          <Show when={boardView()}>
-            {(view) => (
-              <BoardFilterBar
-                query={searchQuery()}
-                filter={quickFilter()}
-                requestedSortMode={sortMode()}
-                effectiveSortMode={view().effectiveSortMode}
-                blindVoting={board().blindVoting}
-                hasActiveFilter={view().hasActiveFilter}
-                hasSearchQuery={view().hasSearchQuery}
-                widenSearch={secretSearch()?.id === 'scope-creep'}
-                matchedCardCount={view().matchedCardCount}
-                totalCardCount={view().totalCardCount}
-                onQueryChange={setSearchQuery}
-                onFilterChange={setQuickFilter}
-                onSortChange={setSortMode}
-                onResetFilters={resetFilters}
-                onSearchInputRef={(el) => {
-                  searchInputEl = el;
-                }}
-              />
-            )}
-          </Show>
+          <BoardFilterBar
+            query={searchQuery()}
+            filter={quickFilter()}
+            requestedSortMode={sortMode()}
+            effectiveSortMode={view.effectiveSortMode}
+            blindVoting={board().blindVoting}
+            hasActiveFilter={view.hasActiveFilter}
+            hasSearchQuery={view.hasSearchQuery}
+            widenSearch={secretSearch()?.id === 'scope-creep'}
+            matchedCardCount={view.matchedCardCount}
+            totalCardCount={view.totalCardCount}
+            onQueryChange={setSearchQuery}
+            onFilterChange={setQuickFilter}
+            onSortChange={setSortMode}
+            onResetFilters={resetFilters}
+            onSearchInputRef={(el) => {
+              searchInputEl = el;
+            }}
+          />
 
           {/* Inline dismissible error feedback */}
           <Show when={session.errorMessage()}>
@@ -1336,16 +1291,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   class="scroll-edge-fade overflow-x-auto rounded-full bg-surface-subtle"
                 >
                   <div class="flex w-max min-w-full items-center gap-0.5 py-0.5 pl-0.5 pr-2">
-                    <For each={board().columns}>
-                      {(column) => (
+                    <For each={view.columnViews}>
+                      {(bucket) => (
                         <TabsTab
-                          value={column.id}
-                          title={column.title}
+                          value={bucket.column.id}
+                          title={bucket.column.title}
                           render={(tabProps) => (
                             <button
                               {...tabProps}
-                              id={`column-tab-${column.id}`}
-                              aria-controls={`column-${column.id}`}
+                              id={`column-tab-${bucket.column.id}`}
+                              aria-controls={`column-${bucket.column.id}`}
                             />
                           )}
                           class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
@@ -1354,14 +1309,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                             aria-hidden="true"
                             class={[
                               'h-2 w-2 shrink-0 rounded-full',
-                              COLUMN_ACCENT_STYLES[column.accent].swatch,
+                              COLUMN_ACCENT_STYLES[bucket.column.accent].swatch,
                             ]}
                           />
-                          <span class="min-w-0 truncate text-left">{column.title}</span>
+                          <span class="min-w-0 truncate text-left">{bucket.column.title}</span>
                           <span class="text-xs text-text-muted tabular-nums">
-                            {boardView()?.hasActiveFilter
-                              ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
-                              : column.cardCount}
+                            {view.hasActiveFilter
+                              ? `${bucket.visibleCardCount}/${bucket.column.cardCount}`
+                              : bucket.column.cardCount}
                           </span>
                         </TabsTab>
                       )}
@@ -1377,86 +1332,36 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   { 'secret-search-pivot': secretSearch()?.id === 'pivot' },
                 ]}
               >
-                <For each={board().columns}>
-                  {(column, index) => {
-                    const columnCards = createMemo(
-                      () => cardsByColumn().get(column.id) ?? EMPTY_CARDS,
-                      {
-                        equals: (prev, next) =>
-                          prev.length === next.length &&
-                          prev.every((card, i) => card === next[i]),
-                      },
-                    );
-                    const columnGroups = createMemo(
-                      () => groupsByColumn().get(column.id) ?? EMPTY_GROUPS,
-                      {
-                        equals: (prev, next) =>
-                          prev.length === next.length &&
-                          prev.every((group, i) => group === next[i]),
-                      },
-                    );
-                    const columnStreamItems = createMemo(
-                      () =>
-                        boardView()?.columns.get(column.id)?.items ??
-                        EMPTY_STREAM_ITEMS,
-                      {
-                        equals: (prev, next) =>
-                          prev.length === next.length &&
-                          prev.every((item, i) => {
-                            const other = next[i];
-                            if (item.kind !== other.kind || item.key !== other.key) {
-                              return false;
-                            }
-                            if (item.kind === 'card' && other.kind === 'card') {
-                              return item.card === other.card;
-                            }
-                            if (item.kind === 'group' && other.kind === 'group') {
-                              return (
-                                item.group === other.group &&
-                                item.cards.length === other.cards.length &&
-                                item.cards.every((c, j) => c === other.cards[j])
-                              );
-                            }
-                            return false;
-                          }),
-                      },
-                    );
-                    return (
-                      <ColumnPanel
-                        column={column}
-                        columnIndex={index()}
-                        totalColumns={board().columns.length}
-                        columns={board().columns}
-                        cards={columnCards()}
-                        groups={columnGroups()}
-                        streamItems={columnStreamItems()}
-                        visibleCardCount={
-                          boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
-                        }
-                        hasActiveFilter={boardView()?.hasActiveFilter ?? false}
-                        voting={session.voting()}
-                        isFacilitator={board().isFacilitator}
-                        isLocked={board().isLocked}
-                        isBlurred={board().isBlurred}
-                        canGroupCards={canManageGrouping(board())}
-                        nowMs={session.nowMs()}
-                        isMobile={isMobileBoard()}
-                        isMobileActive={resolvedActiveColumnIndex() === index()}
-                        isHorizontalSnap={isHorizontalSnap()}
-                        draggingCardId={draggingCardId()}
-                        draggingGroupId={draggingGroupId()}
-                        draggingSourceColumnId={draggingSourceColumnId()}
-                        actions={session}
-                        onResetFilters={resetFilters}
-                        onRegisterComposer={registerColumnComposer}
-                        onActivateColumn={(colId) => setActiveColumnId(colId)}
-                        onOpenCardDetail={handleOpenCardDetail}
-                        onDragStartCard={handleDragStartCard}
-                        onDragStartGroup={handleDragStartGroup}
-                        onDragEndCard={handleDragEndCard}
-                      />
-                    );
-                  }}
+                <For each={view.columnViews}>
+                  {(bucket, index) => (
+                    <ColumnPanel
+                      view={bucket}
+                      columnIndex={index()}
+                      totalColumns={view.columns.length}
+                      columns={view.columns}
+                      hasActiveFilter={view.hasActiveFilter}
+                      voting={session.voting()}
+                      isFacilitator={board().isFacilitator}
+                      isLocked={board().isLocked}
+                      isBlurred={board().isBlurred}
+                      canGroupCards={canManageGrouping(board())}
+                      nowMs={session.nowMs()}
+                      isMobile={isMobileBoard()}
+                      isMobileActive={resolvedActiveColumnIndex() === index()}
+                      isHorizontalSnap={isHorizontalSnap()}
+                      draggingCardId={draggingCardId()}
+                      draggingGroupId={draggingGroupId()}
+                      draggingSourceColumnId={draggingSourceColumnId()}
+                      actions={session}
+                      onResetFilters={resetFilters}
+                      onRegisterComposer={registerColumnComposer}
+                      onActivateColumn={(colId) => setActiveColumnId(colId)}
+                      onOpenCardDetail={handleOpenCardDetail}
+                      onDragStartCard={handleDragStartCard}
+                      onDragStartGroup={handleDragStartGroup}
+                      onDragEndCard={handleDragEndCard}
+                    />
+                  )}
                 </For>
                 <Show when={canAddColumn()}>
                   <button
@@ -1642,6 +1547,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           {/* Action Items Drawer / Bottom Sheet */}
           <ActionItemsDrawer
             board={board()}
+            cards={view.cards}
             open={isActionItemsOpen()}
             side={isMobileBoard() ? 'bottom' : 'right'}
             isLocked={board().isLocked}

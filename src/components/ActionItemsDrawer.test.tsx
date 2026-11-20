@@ -102,11 +102,13 @@ afterEach(cleanup);
 describe('<ActionItemsDrawer />', () => {
   it('moves focus between Action Items filters with the arrow keys', async () => {
     const { artifact } = await captureArtifact(() => {
+      const board = makeBoard([openItem, doneItem]);
       const view = render(() => (
         <ActionItemsDrawer
           side="right"
           open={true}
-          board={makeBoard([openItem, doneItem])}
+          board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={() => {}}
           onUpdateActionItem={() => Promise.resolve(true)}
@@ -138,11 +140,13 @@ describe('<ActionItemsDrawer />', () => {
 
   it('lists only Action Items with All/Open/Done filters and inline completion and owner edits', async () => {
     const onUpdateActionItem = vi.fn(async () => true);
+    const board = makeBoard([openItem, doneItem, regularCard]);
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={makeBoard([openItem, doneItem, regularCard])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={onUpdateActionItem}
@@ -196,11 +200,13 @@ describe('<ActionItemsDrawer />', () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('Disconnected'))
       .mockResolvedValueOnce(true);
+    const board = makeBoard([openItem]);
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={makeBoard([openItem])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={onUpdate}
@@ -256,6 +262,7 @@ describe('<ActionItemsDrawer />', () => {
           side="right"
           open={true}
           board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={() => {}}
           onUpdateActionItem={applyUpdate}
@@ -297,11 +304,13 @@ describe('<ActionItemsDrawer />', () => {
     });
     const onClose = vi.fn();
     try {
+      const board = makeBoard([openItem, doneItem]);
       const { getByRole, getByText } = render(() => (
         <ActionItemsDrawer
           side="right"
           open={true}
-          board={makeBoard([openItem, doneItem])}
+          board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={onClose}
           onUpdateActionItem={vi.fn(async () => true)}
@@ -338,11 +347,13 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('shows an empty state and disables copying when no Action Items exist', () => {
+    const board = makeBoard([regularCard]);
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={makeBoard([regularCard])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={vi.fn(async () => true)}
@@ -358,11 +369,13 @@ describe('<ActionItemsDrawer />', () => {
 
   it('disables Action Item edits for Participants when Locked, but allows Facilitators to update done and owner', async () => {
     const participantUpdate = vi.fn(async () => true);
+    const participantBoard = { ...makeBoard([openItem]), isLocked: true, isFacilitator: false };
     const participantView = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: false }}
+        board={participantBoard}
+        cards={participantBoard.cards}
         isLocked={true}
         onClose={() => {}}
         onUpdateActionItem={participantUpdate}
@@ -379,11 +392,13 @@ describe('<ActionItemsDrawer />', () => {
     cleanup();
 
     const facilitatorUpdate = vi.fn(async () => true);
+    const facilitatorBoard = { ...makeBoard([openItem]), isLocked: true, isFacilitator: true };
     const facilitatorView = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: true }}
+        board={facilitatorBoard}
+        cards={facilitatorBoard.cards}
         isLocked={true}
         onClose={() => {}}
         onUpdateActionItem={facilitatorUpdate}
@@ -410,11 +425,13 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('wraps Tab and Shift+Tab within Action Items', async () => {
+    const board = makeBoard([openItem]);
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={makeBoard([openItem])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={vi.fn(async () => true)}
@@ -433,13 +450,15 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('lets Escape close the drawer while the owner text is unchanged, and cancels only the edit once it changed', async () => {
+    const board = makeBoard([openItem, doneItem]);
     const onClose = vi.fn();
     const onUpdateActionItem = vi.fn(async () => true);
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
         open={true}
-        board={makeBoard([openItem, doneItem])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={onClose}
         onUpdateActionItem={onUpdateActionItem}
@@ -468,11 +487,13 @@ describe('<ActionItemsDrawer />', () => {
 
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {
     const { artifact } = await captureArtifact(() => {
+      const board = makeBoard([openItem, doneItem]);
       render(() => (
         <ActionItemsDrawer
           side="right"
           open={true}
-          board={makeBoard([openItem, doneItem])}
+          board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={() => {}}
           onUpdateActionItem={vi.fn(async () => true)}

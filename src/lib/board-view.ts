@@ -1,4 +1,7 @@
-import type { BoardViewDTO, CardGroupDTO, CardViewDTO } from './board-types';
+import { createMemo, createProjection, mapArray, type Store } from 'solid-js';
+
+import type { BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from './board-types';
+import { cloneCardGroup, cloneCardView } from './board-types';
 
 export type BoardSortMode = 'newest' | 'oldest' | 'most-voted';
 export type BoardQuickFilter = 'all' | 'mine' | 'voted' | 'action-items';
@@ -42,20 +45,32 @@ export type ColumnStreamItem =
     };
 
 export interface ColumnViewProjection {
-  columnId: string;
+  /** Column id — the reconcile key for this bucket. */
+  id: string;
+  column: ColumnDTO;
+  /** Every Card in this Column, unfiltered — grouping targets and drag checks read these. */
+  cards: CardViewDTO[];
+  /** Every Card Group in this Column, unfiltered. */
+  groups: CardGroupDTO[];
+  /** Filtered and sorted Card/Card Group stream for this Column. */
   items: ColumnStreamItem[];
   visibleCardCount: number;
   totalCardCount: number;
 }
 
 export interface BoardViewProjection {
+  /** Every Column DTO in board order — Column/Card move menus read these. */
+  columns: ColumnDTO[];
+  /** Per-Column buckets — the Column panels' single grouping source. */
+  columnViews: ColumnViewProjection[];
+  /** Every Card in board order — Action Items and open-detail lookups read these. */
+  cards: CardViewDTO[];
   effectiveSortMode: BoardSortMode;
   hasActiveFilter: boolean;
   hasSearchQuery: boolean;
   normalizedQuery: string;
   totalCardCount: number;
   matchedCardCount: number;
-  columns: Map<string, ColumnViewProjection>;
 }
 
 export function normalizeSearchQuery(query: string): string {
@@ -134,15 +149,20 @@ export function projectBoardView(
     board.blindVoting,
   );
 
+  // Inputs arrive as per-item defensive copies (see createBoardProjection), so
+  // the same clone safely serves the flat list, the Column bucket, and the
+  // stream entry — they stay one store target after adoption.
+  const { columns, cards, groups } = board;
+
   const cardsByColumn = new Map<string, CardViewDTO[]>();
   const groupsByColumn = new Map<string, CardGroupDTO[]>();
 
-  for (const column of board.columns) {
+  for (const column of columns) {
     cardsByColumn.set(column.id, []);
     groupsByColumn.set(column.id, []);
   }
 
-  for (const card of board.cards) {
+  for (const card of cards) {
     let list = cardsByColumn.get(card.columnId);
     if (!list) {
       list = [];
@@ -151,7 +171,7 @@ export function projectBoardView(
     list.push(card);
   }
 
-  for (const group of board.groups) {
+  for (const group of groups) {
     let list = groupsByColumn.get(group.columnId);
     if (!list) {
       list = [];
@@ -160,10 +180,10 @@ export function projectBoardView(
     list.push(group);
   }
 
-  const columns = new Map<string, ColumnViewProjection>();
+  const columnViews: ColumnViewProjection[] = [];
   let matchedCardCount = 0;
 
-  for (const column of board.columns) {
+  for (const column of columns) {
     const columnCards = cardsByColumn.get(column.id) ?? [];
     const columnGroups = groupsByColumn.get(column.id) ?? [];
     const items: ColumnStreamItem[] = [];
@@ -226,8 +246,11 @@ export function projectBoardView(
     });
 
     matchedCardCount += visibleCardCount;
-    columns.set(column.id, {
-      columnId: column.id,
+    columnViews.push({
+      id: column.id,
+      column,
+      cards: columnCards,
+      groups: columnGroups,
       items,
       visibleCardCount,
       totalCardCount: columnCards.length,
@@ -235,14 +258,95 @@ export function projectBoardView(
   }
 
   return {
+    columns,
+    columnViews,
+    cards,
     effectiveSortMode,
     hasActiveFilter,
     hasSearchQuery,
     normalizedQuery,
-    totalCardCount: board.cards.length,
+    totalCardCount: cards.length,
     matchedCardCount,
-    columns,
   };
+}
+
+/** Viewer-local reactive inputs to the Board projection. */
+export interface BoardProjectionInputs {
+  query: () => string;
+  filter: () => BoardQuickFilter;
+  sortMode: () => BoardSortMode;
+}
+
+// Reconcile identity: Cards, Card Groups, Columns, and buckets carry `id`;
+// Column stream items carry their `key` (`card:`/`group:` prefixed).
+function projectionKey(item: { id?: string; key?: string }): unknown {
+  return item.id ?? item.key;
+}
+
+const EMPTY_BOARD_VIEW: BoardViewProjection = {
+  columns: [],
+  columnViews: [],
+  cards: [],
+  effectiveSortMode: 'newest',
+  hasActiveFilter: false,
+  hasSearchQuery: false,
+  normalizedQuery: '',
+  totalCardCount: 0,
+  matchedCardCount: 0,
+};
+
+/**
+ * The single keyed projection over the Board store (#51): reads the Board and
+ * the viewer-local filter inputs, then reconciles the rebuilt view by key so
+ * surviving Cards, Card Groups, and stream items keep their store identity
+ * across upserts, reorders, and filter changes. `columnViews` groups Cards
+ * and Card Groups per Column once — consumers never regroup or re-diff.
+ *
+ * The defensive copies are produced by per-item `mapArray` rows, not in the
+ * derive: each Card's clone re-runs only when that Card changes, so no single
+ * scope tracks every field of every Card.
+ */
+export function createBoardProjection(
+  board: () => BoardViewDTO | null,
+  inputs: BoardProjectionInputs,
+): Store<BoardViewProjection> {
+  const clonedCards = mapArray(
+    () => board()?.cards,
+    (card) => createMemo(() => cloneCardView(card)),
+    { name: 'board-projection-cards' },
+  );
+  const clonedGroups = mapArray(
+    () => board()?.groups,
+    (group) => createMemo(() => cloneCardGroup(group)),
+    { name: 'board-projection-groups' },
+  );
+  const clonedColumns = mapArray(
+    () => board()?.columns,
+    (column) => createMemo(() => ({ ...column })),
+    { name: 'board-projection-columns' },
+  );
+
+  return createProjection(
+    () => {
+      const current = board();
+      if (current === null) return EMPTY_BOARD_VIEW;
+      return projectBoardView(
+        {
+          columns: clonedColumns().map((column) => column()),
+          cards: clonedCards().map((card) => card()),
+          groups: clonedGroups().map((group) => group()),
+          blindVoting: current.blindVoting,
+        },
+        {
+          query: inputs.query(),
+          filter: inputs.filter(),
+          sortMode: inputs.sortMode(),
+        },
+      );
+    },
+    null,
+    { key: projectionKey },
+  );
 }
 
 export function formatMatchCountSummary(
