@@ -1,3 +1,5 @@
+import { Toggle, ToggleGroup } from '@ui-sdk/solid/toggle';
+import { Flag } from 'lucide';
 import {
   For,
   Show,
@@ -19,8 +21,10 @@ import {
   type BoardViewDTO,
   type CardViewDTO,
 } from '../lib/board-types';
+import { closeBoardDrawer, showBoardDrawer } from './board-drawer';
+import BoardOverlayHeader from './BoardOverlayHeader';
 import CardText from './CardText';
-import { CloseIcon, FlagIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 
 const FILTERS: readonly { value: ActionItemFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -175,6 +179,10 @@ function ActionItemRow(props: {
   );
 }
 
+function sameCards(previous: readonly CardViewDTO[], next: readonly CardViewDTO[]): boolean {
+  return previous.length === next.length && previous.every((card, index) => card === next[index]);
+}
+
 export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   const titleId = createUniqueId();
   let dialog!: HTMLDialogElement;
@@ -184,19 +192,25 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   const [hasOpened, setHasOpened] = createSignal(false);
   const [filter, setFilter] = createSignal<ActionItemFilter>('all');
   const [copyStatus, setCopyStatus] = createSignal('');
+  const selectedFilter = createMemo(() => [filter()]);
+  const activeFilterIndex = createMemo(() => FILTERS.findIndex((option) => option.value === filter()));
 
-  const allItems = createMemo(() => filterActionItems(props.board.cards, 'all'));
-  const visibleItems = createMemo(() =>
-    filterActionItems(props.board.cards, filter()),
+  const allItems = createMemo(
+    () => filterActionItems(props.board.cards, 'all'),
+    { equals: sameCards },
+  );
+  const visibleItems = createMemo(
+    () => filter() === 'all' ? allItems() : filterActionItems(allItems(), filter()),
+    { equals: sameCards },
   );
   const openCount = createMemo(
     () => allItems().filter((card) => !card.actionDone).length,
   );
-  const counts = createMemo(() => ({
-    all: allItems().length,
-    open: openCount(),
-    done: allItems().length - openCount(),
-  }));
+  const counts = {
+    all: () => allItems().length,
+    open: openCount,
+    done: () => allItems().length - openCount(),
+  };
   const columnTitles = createMemo(
     () => new Map(props.board.columns.map((column) => [column.id, column.title])),
   );
@@ -212,17 +226,20 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
 
   createEffect(() => props.open, (open) => {
     if (open) {
-      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (!dialog.open) {
+        previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      }
       setFilter('all');
       setCopyStatus('');
       setHasOpened(true);
-      dialog.showModal();
+      backdropPressed = false;
+      showBoardDrawer(dialog);
       closeButton?.focus();
     } else if (dialog.open) {
-      dialog.close();
-      backdropPressed = false;
-      if (props.onRestoreFocus) props.onRestoreFocus(previousFocus);
-      else previousFocus?.focus({ preventScroll: true });
+      return closeBoardDrawer(dialog, () => {
+        if (props.onRestoreFocus) props.onRestoreFocus(previousFocus);
+        else previousFocus?.focus({ preventScroll: true });
+      });
     }
   });
 
@@ -264,7 +281,8 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
       ref={dialog}
       aria-labelledby={titleId}
       data-print-hide="true"
-      class="action-items-dialog fixed inset-0 m-0 h-dvh max-h-none w-full max-w-none overflow-hidden bg-transparent p-0 text-text"
+      data-board-overlay={props.open ? 'true' : undefined}
+      class="board-drawer-dialog"
       onKeyDown={wrapTabFocus}
       onCancel={(event) => {
         event.preventDefault();
@@ -279,62 +297,52 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
       }}
     >
       <Show when={hasOpened()}>
-        <div
-          class={[
-            'action-items-panel absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-2xl border-t border-border bg-surface text-text shadow-xl',
-            'sm:inset-y-0 sm:right-0 sm:left-auto sm:max-h-none sm:w-full sm:max-w-lg sm:rounded-none sm:border-t-0 sm:border-l',
-          ]}
-        >
-          <div class="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
+        <div class="board-drawer-panel">
+          <BoardOverlayHeader
+            closeRef={(button) => { closeButton = button; }}
+            closeLabel="Close Action Items"
+            onClose={() => props.onClose()}
+          >
             <div class="flex min-w-0 items-center gap-2">
-              <FlagIcon class="h-4 w-4 shrink-0 text-text-muted" />
-              <h2 id={titleId} class="truncate text-sm font-semibold text-text">
+              <LucideIcon icon={Flag} class="size-4 shrink-0 text-text-muted" />
+              <h2 id={titleId} class="truncate">
                 Action Items
               </h2>
               <span class="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text tabular-nums">
                 {openCount()} open
               </span>
             </div>
-            <button
-              ref={closeButton}
-              type="button"
-              aria-label="Close Action Items"
-              onClick={() => props.onClose()}
-              class={[
-                'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8',
-                'transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-              ]}
-            >
-              <CloseIcon />
-            </button>
-          </div>
+          </BoardOverlayHeader>
 
           <div class="border-b border-border px-4 py-2 sm:px-5">
-            <div
-              role="group"
+            <ToggleGroup<ActionItemFilter>
               aria-label="Filter Action Items"
-              class="inline-flex flex-wrap rounded-lg border border-border bg-canvas p-0.5"
+              value={selectedFilter()}
+              deselectable={false}
+              onValueChange={(next) => {
+                if (next[0]) setFilter(next[0]);
+              }}
+              class="segmented-track relative grid w-full max-w-xs grid-cols-3 rounded-xl border border-border/75 p-1"
             >
+              <span
+                aria-hidden="true"
+                class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
+                style={{ '--seg-count': String(FILTERS.length), '--seg-index': String(activeFilterIndex()) }}
+              />
               <For each={FILTERS}>
                 {(option) => (
-                  <button
-                    type="button"
-                    aria-pressed={filter() === option.value ? 'true' : 'false'}
-                    onClick={() => setFilter(option.value)}
+                  <Toggle
+                    value={option.value}
                     class={[
-                      'min-h-11 min-w-11 cursor-pointer rounded-md px-2 text-xs font-medium transition-colors active:bg-surface-subtle sm:min-h-9 sm:px-2.5',
+                      'spring-press relative min-h-11 cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-pressed:text-text sm:min-h-8 sm:text-[13px]',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                      filter() === option.value
-                        ? 'bg-surface text-text shadow-2xs'
-                        : 'text-text-muted hover:text-text',
                     ]}
                   >
-                    {option.label} ({counts()[option.value]})
-                  </button>
+                    {option.label} ({counts[option.value]()})
+                  </Toggle>
                 )}
               </For>
-            </div>
+            </ToggleGroup>
           </div>
 
           <div class="flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
