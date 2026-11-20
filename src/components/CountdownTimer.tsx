@@ -244,7 +244,7 @@ export default function CountdownTimer(props: {
                 : 'Countdown Timer'
           }
           class={[
-            'spring-press relative inline-flex min-h-11 min-w-[5.75rem] cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-3 text-[13px] leading-none font-medium text-text tabular-nums transition-colors sm:h-9 sm:min-h-9',
+            'spring-press relative inline-flex min-h-11 min-w-11 sm:min-w-[5.75rem] cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-2.5 text-[13px] sm:px-3 leading-none font-medium text-text tabular-nums transition-colors sm:h-9 sm:min-h-9',
             'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
             timerState() === 'paused'
               ? 'border-col-amber/55 bg-col-amber-tint hover:bg-col-amber-tint'
@@ -271,7 +271,7 @@ export default function CountdownTimer(props: {
               <LucideIcon icon={Pause} class="size-3 shrink-0" strokeWidth={2.2} />
             </span>
           </Show>
-          <Show when={isConfigured()} fallback={<span>Timer</span>}>
+          <Show when={isConfigured()} fallback={<span class="hidden sm:inline">Timer</span>}>
             <span>{timeLabel()}</span>
             <span
               aria-hidden="true"
