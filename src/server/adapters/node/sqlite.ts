@@ -41,8 +41,8 @@ export function wrapDatabaseSync(db: NodeDatabaseSync): SqlRunner {
       if (inTransaction) {
         return fn();
       }
-      inTransaction = true;
       db.exec('BEGIN IMMEDIATE');
+      inTransaction = true;
       try {
         const result = fn();
         db.exec('COMMIT');

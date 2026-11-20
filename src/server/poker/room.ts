@@ -7,6 +7,7 @@ import {
   POKER_DECK_PRESETS,
   unresolvedPokerRoundId,
   type PokerDeckType,
+  type PokerDeleteResult,
   type PokerParticipant,
   type PokerResult,
   type PokerRoomCommand,
@@ -219,6 +220,14 @@ export class PokerRoomStorage {
     this.ready = true;
   }
 
+  isAvailable(id: string, now = Date.now()): boolean {
+    return this.hasSchema() && Boolean(this.db.get(
+      'SELECT 1 FROM poker_rooms WHERE id = ? AND expires_at > ?',
+      id,
+      now,
+    ));
+  }
+
   snapshot(id: string, now = Date.now()): StoredPokerRoom | null {
     if (!this.hasSchema()) return null;
     const row = this.db.get<{ data: string }>(
@@ -266,12 +275,10 @@ export class PokerRoomStorage {
     return room;
   }
 
-  mutate(id: string, hash: string, command: PokerRoomCommand): PokerResult<StoredPokerRoom> {
-    const now = Date.now();
-    if (!this.writeLimiter.check(id, hash, now).allowed) {
-      return rateLimited;
-    }
+  mutate(id: string, hash: string, command: PokerRoomCommand): PokerResult<StoredPokerRoom> & { updated?: true } {
+    if (!this.writeLimiter.check(id, hash, Date.now()).allowed) return rateLimited;
     return this.db.transaction(() => {
+      const now = Date.now();
       const room = this.snapshot(id, now);
       if (!room) return notFound;
 
@@ -285,7 +292,6 @@ export class PokerRoomStorage {
           if (!pokerCanDeleteRoom(room, hash)) return forbidden;
           if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;
           room.closedAt = now;
-          room.expiresAt = now + ROOM_TTL_MS;
           room.closedFacilitatorHashes = room.participants.filter((p) => p.isFacilitator).map((p) => p.hash);
           room.participants = [];
           delete room.facilitatorCapability;
@@ -318,13 +324,11 @@ export class PokerRoomStorage {
             && room.deck.every((choice, index) => choice === choices[index])) return { ok: true, room };
           room.deckType = deck.type;
           room.deck = choices;
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending' });
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'edit-story': {
@@ -336,7 +340,6 @@ export class PokerRoomStorage {
           if (room.activeStoryId === story.id && room.round?.phase === 'open') {
             room.round = startVotingRound();
           }
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'move-story': {
@@ -350,7 +353,6 @@ export class PokerRoomStorage {
           if (from === insertAt) return { ok: true, room };
           const [story] = stories.splice(from, 1);
           stories.splice(insertAt, 0, story);
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'correct-estimate': {
@@ -363,7 +365,6 @@ export class PokerRoomStorage {
           if (!pokerDeckContains(room, command.choice)) return invalidDeckChoice;
           if (story.acceptedEstimate === command.choice) return { ok: true, room };
           story.acceptedEstimate = command.choice;
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'return-story': {
@@ -375,7 +376,6 @@ export class PokerRoomStorage {
             return { ok: false, code: 'INVALID_INPUT', message: 'Choose a skipped Story.' };
           }
           story.status = 'pending';
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'select-story': {
@@ -395,7 +395,6 @@ export class PokerRoomStorage {
           room.activeStoryId = story.id;
           room.deckLocked = true;
           room.round = startVotingRound();
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'vote': {
@@ -410,7 +409,6 @@ export class PokerRoomStorage {
           if ((round.ballots[participant.id] ?? null) === choice) return { ok: true, room };
           if (choice === null) delete round.ballots[participant.id];
           else round.ballots[participant.id] = choice;
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'reveal': {
@@ -421,7 +419,6 @@ export class PokerRoomStorage {
             return { ok: false, code: 'INVALID_INPUT', message: 'At least one vote is required to reveal.' };
           }
           round.phase = 'revealed';
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'restart-round': {
@@ -429,7 +426,6 @@ export class PokerRoomStorage {
           const round = room.round;
           if (round?.id !== command.roundId || round.phase === 'open') return roundChanged;
           room.round = startVotingRound();
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'skip-story': {
@@ -441,7 +437,6 @@ export class PokerRoomStorage {
           if (story.acceptedEstimate === undefined) story.status = 'skipped';
           room.activeStoryId = null;
           room.round = null;
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'confirm-estimate': {
@@ -455,13 +450,24 @@ export class PokerRoomStorage {
           story.acceptedEstimate = command.choice;
           story.status = 'estimated';
           round.phase = 'accepted';
-          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
       }
 
+      if (room.closedAt !== undefined) room.expiresAt = room.closedAt + ROOM_TTL_MS;
+      else if (command.type !== 'join') room.expiresAt = Math.max(room.expiresAt, now + ROOM_TTL_MS);
       this.save(room);
-      return { ok: true, room };
+      return { ok: true, room, updated: true };
+    });
+  }
+
+  delete(id: string, hash: string): PokerDeleteResult {
+    return this.db.transaction(() => {
+      const room = this.snapshot(id);
+      if (!room) return notFound;
+      if (!pokerCanDeleteRoom(room, hash)) return forbidden;
+      this.db.run('DELETE FROM poker_rooms WHERE id = ?', id);
+      return { ok: true };
     });
   }
 

@@ -3,6 +3,7 @@ import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { unresolvedPokerRoundId, type PokerResult, type PokerLiveRoomView, type PokerRoomChange } from '../../lib/poker-types';
 import PokerDeckSettings from './PokerDeckSettings';
+import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerVotingRound from './PokerVotingRound';
 import PokerStoryQueue from './PokerStoryQueue';
@@ -14,6 +15,7 @@ export default function PokerWorkspace(props: {
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
   claimError?: string;
+  onUnavailable: () => void;
   onChange: (command: PokerRoomChange) => Promise<PokerResult>;
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
@@ -67,6 +69,7 @@ export default function PokerWorkspace(props: {
             <button type="button" class="poker-story-control board-focus-ring" aria-disabled={closing() ? 'true' : undefined} onClick={closeRoom}>
               Close Room
             </button>
+            <PokerRoomDeletion roomId={props.room.id} onUnavailable={props.onUnavailable} />
           </Show>
         </div>
       </header>
@@ -160,6 +163,7 @@ export default function PokerWorkspace(props: {
           />
         </section>
       </div>
+      <p class="mt-5 text-sm text-text-muted">This Room expires 90 days after creation or its most recent vote or content change, whichever is later.</p>
     </main>
   );
 }

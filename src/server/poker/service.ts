@@ -3,7 +3,7 @@ import { getRequestEvent } from '@solidjs/web';
 import { safeParse } from 'valibot';
 
 import { PokerCommand, PokerRoomId } from '../../lib/poker-schemas';
-import type { PokerResult, PokerRoomView } from '../../lib/poker-types';
+import type { PokerDeleteResult, PokerResult, PokerRoomView } from '../../lib/poker-types';
 import { generateEntityId, hashTokenWithSalt } from '../crypto';
 import { checkBoardCreateRateLimit } from '../rate-limit';
 import { ensureParticipantSession, getSessionFromRequest, type RetrocksSession } from '../session';
@@ -55,6 +55,16 @@ export async function mutatePokerRoomForRequest(id: string, input: unknown): Pro
   const session = await ensureParticipantSession({ renew: true });
   const room = await getPokerRoomAccess(id);
   return room.mutate(await hashPokerParticipant(id, session), command.output);
+}
+
+export async function deletePokerRoomForRequest(id: string): Promise<PokerDeleteResult> {
+  if (!safeParse(PokerRoomId, id).success) {
+    return { ok: false, code: 'ROOM_NOT_FOUND', message: 'This Room is no longer available.' };
+  }
+
+  const session = await ensureParticipantSession({ renew: true });
+  const room = await getPokerRoomAccess(id);
+  return room.delete(await hashPokerParticipant(id, session));
 }
 
 export async function handlePokerLiveRequest(id: string, request: Request): Promise<Response> {

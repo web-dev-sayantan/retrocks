@@ -18,6 +18,15 @@ interface Connection {
 }
 
 const encoder = new TextEncoder();
+const streamHeaders = {
+  'content-type': 'text/event-stream',
+  'cache-control': 'no-store, no-transform',
+  'x-accel-buffering': 'no',
+};
+
+function formatFrame(message: PokerLiveMessage) {
+  return `data: ${JSON.stringify(message)}\n\n`;
+}
 
 export async function openNodePokerRooms(dbPath: string) {
   const db = await openNodeDatabase(dbPath);
@@ -41,13 +50,24 @@ export async function openNodePokerRooms(dbPath: string) {
     }
   }
 
+  function endRoom(id: string) {
+    const connections = streams.get(id);
+    if (!connections) return;
+    streams.delete(id);
+    for (const connection of connections) {
+      connection.send({ type: 'room:missing' });
+      connection.close();
+    }
+  }
+
   const heartbeat = setInterval(() => {
     const now = Date.now();
     for (const [id, connections] of streams) {
-      const expired = storage.snapshot(id, now) === null;
-      for (const connection of connections) {
-        if (expired) connection.send({ type: 'room:missing' });
-        if (expired || now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) connection.close();
+      if (!storage.isAvailable(id, now)) endRoom(id);
+      else {
+        for (const connection of connections) {
+          if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) connection.close();
+        }
       }
     }
   }, LIVE_HEARTBEAT_MS);
@@ -64,8 +84,13 @@ export async function openNodePokerRooms(dbPath: string) {
     mutate(id: string, hash: string, command: PokerRoomCommand) {
       const result = storage.mutate(id, hash, command);
       if (!result.ok) return result;
-      broadcastRoom(result.room);
+      if (result.updated) broadcastRoom(result.room);
       return { ok: true as const, room: projectPokerRoom(result.room, hash) };
+    },
+    delete(id: string, hash: string) {
+      const result = storage.delete(id, hash);
+      if (result.ok) endRoom(id);
+      return result;
     },
     getFacilitatorCapability: (id: string, hash: string) => storage.getFacilitatorCapability(id, hash),
     replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
@@ -82,14 +107,9 @@ export async function openNodePokerRooms(dbPath: string) {
     },
     connect(id: string, hash: string, request: Request): Response {
       const room = storage.snapshot(id);
-      if (!room) return new Response(null, { status: 404 });
-      const headers = {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-store, no-transform',
-        'x-accel-buffering': 'no',
-      };
+      if (!room) return new Response(formatFrame({ type: 'room:missing' }), { headers: streamHeaders });
       if (room.closedAt !== undefined) {
-        return new Response(`data: ${JSON.stringify({ type: 'room:snapshot', room: projectPokerRoom(room, hash) })}\n\n`, { headers });
+        return new Response(formatFrame({ type: 'room:snapshot', room: projectPokerRoom(room, hash) }), { headers: streamHeaders });
       }
       const participant = pokerParticipant(room, hash);
       if (!participant) return new Response(null, { status: 403 });
@@ -110,7 +130,7 @@ export async function openNodePokerRooms(dbPath: string) {
                 queueMicrotask(connection.close);
                 return;
               }
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(message)}\n\n`));
+              controller.enqueue(encoder.encode(formatFrame(message)));
             },
             close() {
               if (!connections.has(connection)) return;
@@ -133,13 +153,17 @@ export async function openNodePokerRooms(dbPath: string) {
           unsubscribe();
         },
       });
-      return new Response(body, { headers });
+      return new Response(body, { headers: streamHeaders });
     },
     heartbeat(id: string, hash: string, request: Request): Response {
       const connectionId = request.headers.get(LIVE_CONNECTION_HEADER);
       for (const connection of streams.get(id) ?? []) {
         if (connection.hash !== hash || connection.id !== connectionId) continue;
         const now = Date.now();
+        if (!storage.isAvailable(id, now)) {
+          endRoom(id);
+          return new Response(null, { status: 204 });
+        }
         if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
           connection.close();
           break;

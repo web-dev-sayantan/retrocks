@@ -19,8 +19,11 @@ export const route = {
   },
 } satisfies RouteDefinition;
 
-function RoomUnavailable(props: { roomId?: string }) {
+function RoomUnavailable(props: { roomId?: string; focusHeading?: boolean }) {
+  let heading!: HTMLHeadingElement;
+
   onSettled(() => {
+    if (props.focusHeading) heading.focus();
     function scrubFragment() {
       const id = untrack(() => props.roomId);
       if (id) takeFacilitatorLinkToken(pokerRoomPath(id));
@@ -31,16 +34,19 @@ function RoomUnavailable(props: { roomId?: string }) {
   });
 
   return (
-    <PageMessage title="Room unavailable" message="This link does not lead to an available Pointing Poker Room.">
+    <PageMessage
+      title="Room unavailable"
+      message="This link does not lead to an available Pointing Poker Room."
+      headingRef={props.focusHeading ? (element) => { heading = element; } : undefined}
+    >
       <a class="page-message-action" href={pokerSetupPath}>Create a Room</a>
     </PageMessage>
   );
 }
 
-function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; claimError: string }) {
+function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; claimError: string; onUnavailable: () => void }) {
   const [liveRoom, setLiveRoom] = createSignal<PokerRoomView | null>(null);
   const [online, setOnline] = createSignal<string[]>([]);
-  const [missing, setMissing] = createSignal(false);
   const [live, setLive] = createSignal<ReturnType<typeof createPokerLive> | null>(null);
   const room = () => {
     const current = liveRoom();
@@ -66,6 +72,7 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
   async function onChange(command: PokerRoomChange) {
     const result = await changePokerRoom(props.room.id, command);
     if (result.ok) acceptRoom(result.room);
+    else if (result.code === 'ROOM_NOT_FOUND') props.onUnavailable();
     return result;
   }
 
@@ -76,7 +83,7 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
       } else if (message.type === 'room:presence') {
         setOnline(message.online);
       } else if (message.type === 'room:missing') {
-        setMissing(true);
+        props.onUnavailable();
       }
     }, () => setOnline([]));
     setLive(stream);
@@ -84,26 +91,27 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
   });
 
   return (
-    <Show when={!missing()} fallback={<RoomUnavailable />}>
-      <Show when={openRoom()} fallback={
-        <Show when={closedRoom()}>{(summary) => <PokerRoomSummary room={summary()} focusHeading />}</Show>
-      }>
-        {(current) => (
-          <PokerWorkspace
-            room={current()}
-            online={online()}
-            status={live()?.status() ?? 'connecting'}
-            focusHeading={props.focusHeading}
-            claimError={props.claimError}
-            onChange={onChange}
-          />
-        )}
+    <Show when={openRoom()} fallback={
+      <Show when={closedRoom()}>
+        {(summary) => <PokerRoomSummary room={summary()} onUnavailable={props.onUnavailable} focusHeading />}
       </Show>
+    }>
+      {(current) => (
+        <PokerWorkspace
+          room={current()}
+          online={online()}
+          status={live()?.status() ?? 'connecting'}
+          focusHeading={props.focusHeading}
+          claimError={props.claimError}
+          onChange={onChange}
+          onUnavailable={props.onUnavailable}
+        />
+      )}
     </Show>
   );
 }
 
-function LiveRoomPage(props: { initialRoom: PokerLiveRoomView }) {
+function LiveRoomPage(props: { initialRoom: PokerLiveRoomView; onUnavailable: () => void }) {
   const [claimedRoom, setClaimedRoom] = createSignal<PokerLiveRoomView>();
   const [claimError, setClaimError] = createSignal('');
   const [claimPending, setClaimPending] = createSignal(false);
@@ -165,12 +173,14 @@ function LiveRoomPage(props: { initialRoom: PokerLiveRoomView }) {
         error={latest()?.result?.message ?? (latest()?.error ? 'Could not join the Room. Try again.' : claimError())}
       />
     }>
-      <JoinedRoom room={room()} focusHeading={focusHeading()} claimError={claimError()} />
+      <JoinedRoom room={room()} focusHeading={focusHeading()} claimError={claimError()} onUnavailable={props.onUnavailable} />
     </Show>
   );
 }
 
 function RoomPage(props: { initialRoom: PokerRoomView }) {
+  const [unavailable, setUnavailable] = createSignal(false);
+  const onUnavailable = () => setUnavailable(true);
   const openRoom = () => {
     const current = props.initialRoom;
     return current.closed ? undefined : current;
@@ -181,10 +191,14 @@ function RoomPage(props: { initialRoom: PokerRoomView }) {
   };
 
   return (
-    <Show when={openRoom()} fallback={
-      <Show when={closedRoom()}>{(summary) => <PokerRoomSummary room={summary()} />}</Show>
-    }>
-      {(room) => <LiveRoomPage initialRoom={room()} />}
+    <Show when={!unavailable()} fallback={<RoomUnavailable roomId={props.initialRoom.id} focusHeading />}>
+      <Show when={openRoom()} fallback={
+        <Show when={closedRoom()}>
+          {(summary) => <PokerRoomSummary room={summary()} onUnavailable={onUnavailable} />}
+        </Show>
+      }>
+        {(room) => <LiveRoomPage initialRoom={room()} onUnavailable={onUnavailable} />}
+      </Show>
     </Show>
   );
 }

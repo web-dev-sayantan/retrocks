@@ -16,6 +16,7 @@ export async function getPokerRoomAccess(id: string) {
       read: (hash: string) => room.read(id, hash),
       create: (hash: string, displayName: string) => room.create(id, hash, displayName),
       mutate: (hash: string, command: PokerRoomCommand) => room.mutate(id, hash, command),
+      delete: (hash: string) => room.delete(id, hash),
       getFacilitatorCapability: (hash: string) => room.getFacilitatorCapability(id, hash),
       replaceFacilitatorCapability: (hash: string, revision: number, capability: PokerFacilitatorCapability) =>
         room.replaceFacilitatorCapability(id, hash, revision, capability),
@@ -35,6 +36,7 @@ export async function getPokerRoomAccess(id: string) {
     read: (hash: string) => rooms.read(id, hash),
     create: (hash: string, displayName: string) => rooms.create(id, hash, displayName),
     mutate: (hash: string, command: PokerRoomCommand) => rooms.mutate(id, hash, command),
+    delete: (hash: string) => rooms.delete(id, hash),
     getFacilitatorCapability: (hash: string) => rooms.getFacilitatorCapability(id, hash),
     replaceFacilitatorCapability: (hash: string, revision: number, capability: PokerFacilitatorCapability) =>
       rooms.replaceFacilitatorCapability(id, hash, revision, capability),

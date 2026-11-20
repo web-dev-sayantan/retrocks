@@ -71,7 +71,7 @@ test('a Participant can read Story statuses and the active Story without queue c
     ],
   };
   render(() => (
-    <PokerWorkspace room={room} online={[]} status="live" onChange={() => {
+    <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={() => {
       throw new Error('A Participant should have no Story mutation controls.');
     }} />
   ));
@@ -108,7 +108,7 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
   render(() => (
     <>
-      <PokerWorkspace room={room} online={[]} status="live" onChange={change} />
+      <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />
       <BoardConfirmDialog />
     </>
   ));
@@ -159,7 +159,7 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
     throw new Error('Unexpected Room command.');
   });
 
-  render(() => <PokerWorkspace room={room()} online={[]} status="live" onChange={change} />);
+  render(() => <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
   const active = screen.getByRole('region', { name: 'Active Story' });
   const estimate = within(active).getByRole('radiogroup', { name: 'Accepted Estimate' });
   expect(within(estimate).queryByRole('radio', { checked: true })).toBeNull();
@@ -202,7 +202,7 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
     setRoom(next);
     return { ok: true, room: next };
   });
-  render(() => <PokerWorkspace room={room()} online={[]} status="live" onChange={change} />);
+  render(() => <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
 
   const settings = screen.getByRole('form', { name: 'Deck settings' });
   fireEvent.click(within(settings).getByRole('radio', { name: 'Custom' }));
@@ -244,7 +244,7 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
 
   render(() => (
     <>
-      <PokerWorkspace room={room()} online={[]} status="live" onChange={change} />
+      <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />
       <BoardConfirmDialog />
     </>
   ));

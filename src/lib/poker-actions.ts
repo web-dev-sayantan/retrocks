@@ -2,7 +2,7 @@ import { formAction, query } from '@solidjs/router';
 import { httpStatus, redirect, respond } from '@solidjs/web';
 
 import { pokerRoomPath } from './poker-routes';
-import type { PokerResult, PokerRoomView, PokerRoomChange } from './poker-types';
+import type { PokerDeleteResult, PokerResult, PokerRoomView, PokerRoomChange } from './poker-types';
 
 export const getPokerRoom = query(async (id: string): Promise<PokerRoomView | null> => {
   'use server';
@@ -36,7 +36,13 @@ export async function changePokerRoom(id: string, command: PokerRoomChange): Pro
   return pokerResponse(await mutatePokerRoomForRequest(id, command));
 }
 
-function pokerResponse<T extends PokerResult>(result: T) {
+export async function deletePokerRoom(id: string): Promise<PokerDeleteResult> {
+  'use server';
+  const { deletePokerRoomForRequest } = await import('../server/poker/service');
+  return pokerResponse(await deletePokerRoomForRequest(id));
+}
+
+function pokerResponse<T extends PokerResult | PokerDeleteResult>(result: T) {
   const status = result.ok ? 200 : {
     ROOM_NOT_FOUND: 404,
     INVALID_INPUT: 400,

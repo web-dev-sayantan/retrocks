@@ -80,9 +80,10 @@ export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeck
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
-export type PokerResult<T = PokerRoomView> =
-  | { ok: true; room: T }
-  | { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'ROOM_CLOSED'; message: string };
+type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'ROOM_CLOSED'; message: string };
+
+export type PokerResult<T = PokerRoomView> = { ok: true; room: T } | PokerFailure;
+export type PokerDeleteResult = { ok: true } | PokerFailure;
 
 export type PokerLiveMessage =
   | { type: 'room:snapshot'; room: PokerRoomView; connectionId?: string }
