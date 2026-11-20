@@ -1,4 +1,5 @@
 import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
@@ -21,6 +22,7 @@ import {
   canManageCard,
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
 import { getEnabledMenuItems } from '../lib/menu-keyboard';
 import { isOptimisticId } from '../lib/optimistic-ids';
@@ -78,10 +80,6 @@ const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
 const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
 
 export default function CardItem(props: CardItemProps) {
-  const [isEditing, setIsEditing] = createSignal(false);
-  const [editDraft, setEditDraft] = createSignal('');
-  const [isSaving, setIsSaving] = createSignal(false);
-  const [editError, setEditError] = createSignal<string | null>(null);
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
@@ -95,7 +93,6 @@ export default function CardItem(props: CardItemProps) {
   const [menuPage, setMenuPage] = createSignal<'actions' | 'move' | 'group' | null>(null);
   let menuTrigger: HTMLButtonElement | undefined;
   let menu: HTMLDivElement | undefined;
-  let editor: HTMLTextAreaElement | undefined;
   const pendingAction = createMemo(() => {
     if (isMoving()) return 'Moving Card…';
     if (isGrouping()) return 'Grouping Card…';
@@ -165,11 +162,6 @@ export default function CardItem(props: CardItemProps) {
     },
   );
 
-  createEffect(isEditing, (editing, wasEditing) => {
-    if (editing) editor?.focus();
-    else if (wasEditing) menuTrigger?.focus();
-  });
-
   createEffect(menuPage, (page) => {
     if (page) getEnabledMenuItems(menu)[0]?.focus({ preventScroll: true });
   });
@@ -180,6 +172,31 @@ export default function CardItem(props: CardItemProps) {
   }
 
   const canManage = createMemo(() => canManageCard(props, props.card));
+
+  // Card text inline editing: createInlineEdit owns the session, input, and keyboard contract.
+  const textField = usePrimitive(inlineEdit, () => ({
+    value: () => props.card.content,
+    commit: (text) => textSave.commit(text),
+    disabled: () => !canManage() || isOptimisticId(props.card.id),
+  }));
+  const cardEdit = textField.api.edit;
+  const textSave = createInlineEditSave(saveCardText, () => cardEdit.cancel());
+  const isEditing = () => textField.present('input');
+  const [hasText, setHasText] = createSignal(true);
+  const [textLength, setTextLength] = createSignal(0);
+  let editorEl: HTMLTextAreaElement | undefined;
+
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isEditing, (editing) => {
+    if (editing && editorEl) cardEdit.bindInput(editorEl);
+  });
+
+  // A menu item that starts the edit unmounts, so fall back to the Card actions trigger.
+  createEffect(isEditing, (editing, wasEditing) => {
+    if (!editing && wasEditing && document.activeElement === document.body) {
+      menuTrigger?.focus();
+    }
+  });
 
   const otherColumns = createMemo(
     () => props.columns.filter((col) => col.id !== props.card.columnId),
@@ -271,50 +288,25 @@ export default function CardItem(props: CardItemProps) {
 
   function startEdit(): void {
     textTap.reset();
-    setEditError(null);
-    setEditDraft(props.card.content);
+    textSave.resetError();
+    setHasText(props.card.content.trim().length > 0);
+    setTextLength(props.card.content.length);
     setMenuPage(null);
-    setIsEditing(true);
+    cardEdit.start(props.card.id);
   }
 
   function cancelEdit(): void {
     textTap.reset();
-    setIsEditing(false);
-    setEditDraft('');
-    setEditError(null);
+    textSave.resetError();
+    cardEdit.cancel();
   }
 
-  async function saveEdit(): Promise<void> {
-    const trimmed = editDraft().trim();
-    if (trimmed.length === 0 || isSaving() || !canManage()) return;
-    if (trimmed === props.card.content) {
-      setIsEditing(false);
-      return;
-    }
-    setIsSaving(true);
-    setEditError(null);
-    try {
-      const error = await props.onUpdateCard(props.card.id, trimmed);
-      if (error === null) cancelEdit();
-      else {
-        setEditError(error);
-        editor?.focus();
-      }
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function handleEditKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelEdit();
-      return;
-    }
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      void saveEdit();
-    }
+  async function saveCardText(text: string): Promise<InlineEditOutcome> {
+    if (!canManage()) return false;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+    const error = await props.onUpdateCard(props.card.id, trimmed);
+    return error === null ? true : error;
   }
 
   async function runCardAction(
@@ -498,15 +490,18 @@ export default function CardItem(props: CardItemProps) {
           fallback={
             <div class="space-y-2">
               <textarea
-                ref={editor}
+                ref={(el) => { editorEl = el; }}
                 aria-label="Edit card text"
-                aria-invalid={editError() ? 'true' : undefined}
-                readonly={isSaving()}
-                value={editDraft()}
+                aria-invalid={textSave.error() ? 'true' : undefined}
+                readonly={textSave.isSaving()}
                 maxlength={MAX_CARD_CONTENT_LENGTH}
                 rows={3}
-                onInput={(e) => setEditDraft(e.currentTarget.value)}
-                onKeyDown={handleEditKeyDown}
+                onKeyDown={(event) => cardEdit.inputKeydown(event)}
+                onFocusOut={(event) => cardEdit.end('focus-out', event)}
+                onInput={(e) => {
+                  setHasText(e.currentTarget.value.trim().length > 0);
+                  setTextLength(e.currentTarget.value.length);
+                }}
                 class={[
                   'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-base text-text',
                   'placeholder:text-text-muted focus:border-focus focus:outline-none',
@@ -514,13 +509,13 @@ export default function CardItem(props: CardItemProps) {
               />
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span class="text-[11px] text-text-muted tabular-nums">
-                  {editDraft().length}/{MAX_CARD_CONTENT_LENGTH}
+                  {textLength()}/{MAX_CARD_CONTENT_LENGTH}
                 </span>
                 <div class="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={cancelEdit}
-                    disabled={isSaving()}
+                    disabled={textSave.isSaving()}
                     class={[
                       'min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
@@ -531,20 +526,20 @@ export default function CardItem(props: CardItemProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void saveEdit()}
-                    disabled={isSaving() || editDraft().trim().length === 0}
+                    onClick={() => cardEdit.end()}
+                    disabled={textSave.isSaving() || !hasText()}
                     class={[
                       'min-h-11 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
                   >
-                    {isSaving() ? 'Saving…' : 'Save'}
+                    {textSave.isSaving() ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </div>
-              <Show when={editError()}>
-                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{editError()}</p>
+              <Show when={textSave.error()}>
+                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{textSave.error()}</p>
               </Show>
             </div>
           }

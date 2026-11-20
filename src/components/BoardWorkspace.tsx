@@ -13,6 +13,7 @@ import {
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import {
   Check,
   Columns3,
@@ -45,6 +46,7 @@ import {
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
 import { createBoardLive, type BoardLive } from '../lib/board-live';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
   canContribute,
@@ -286,18 +288,31 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  // Board inline rename state
-  const [isRenamingBoard, setIsRenamingBoard] = createSignal(false);
-  const [boardTitleDraft, setBoardTitleDraft] = createSignal('');
-  const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
-  let boardTitleInputEl: HTMLInputElement | undefined;
+  // Board title inline editing: createInlineEdit owns the session, input, and keyboard contract.
+  const boardTitleField = usePrimitive(inlineEdit, () => ({
+    value: () => workspace.board?.title ?? '',
+    commit: (text: string) => boardTitleSave.commit(text),
+    disabled: () => {
+      const board = workspace.board;
+      return !board || !canControlFacilitation(board);
+    },
+  }));
+  const boardTitleEdit = boardTitleField.api.edit;
+  const boardTitleSave = createInlineEditSave(saveBoardTitleText, () => boardTitleEdit.cancel());
+  const isRenamingBoard = () => boardTitleField.present('input');
+  const [hasBoardTitleText, setHasBoardTitleText] = createSignal(true);
   let renameBoardButtonEl: HTMLButtonElement | undefined;
+  let boardTitleInputEl: HTMLInputElement | undefined;
   const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
 
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isRenamingBoard, (renaming) => {
+    if (renaming && boardTitleInputEl) boardTitleEdit.bindInput(boardTitleInputEl);
+  });
+
+  // The mobile menu that starts a rename unmounts, so restore the header's fallback focus chain.
   createEffect(isRenamingBoard, (renaming, wasRenaming) => {
-    if (renaming) {
-      boardTitleInputEl?.focus();
-    } else if (wasRenaming && document.activeElement === document.body) {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
       renameBoardButtonEl?.focus();
       if (document.activeElement === document.body) boardMenuTriggerEl?.focus();
     }
@@ -405,7 +420,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     if (nextBoard === null) {
       setErrorMessage(null);
-      setIsRenamingBoard(false);
+      boardTitleSave.resetError();
+      boardTitleEdit.cancel();
       setIsAddingColumn(false);
       setOpenCardDetailId(null);
       setIsCardDetailOpen(false);
@@ -482,7 +498,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     () => workspace.board?.isLocked ?? false,
     (locked) => {
       if (locked) {
-        setIsRenamingBoard(false);
+        boardTitleEdit.cancel();
         setIsAddingColumn(false);
       }
     },
@@ -878,49 +894,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function startBoardRename(): void {
     boardTitleTap.reset();
     const board = workspace.board;
-    if (!board || !canControlFacilitation(board)) return;
-    setBoardTitleDraft(board.title);
-    setIsRenamingBoard(true);
+    if (!board) return;
+    setHasBoardTitleText(board.title.trim().length > 0);
+    boardTitleEdit.start(board.id);
   }
 
   function cancelBoardRename(): void {
     boardTitleTap.reset();
-    setIsRenamingBoard(false);
-    setBoardTitleDraft('');
+    boardTitleSave.resetError();
+    boardTitleEdit.cancel();
   }
 
-  async function saveBoardRename(): Promise<void> {
+  async function saveBoardTitleText(text: string): Promise<InlineEditOutcome> {
     const board = workspace.board;
-    const trimmed = boardTitleDraft().trim();
-    if (!board || trimmed.length === 0 || isSavingBoardTitle()) return;
-    if (trimmed === board.title) {
-      setIsRenamingBoard(false);
-      return;
-    }
-    setIsSavingBoardTitle(true);
-    try {
-      const response = await actions().renameBoard({
-        boardId: board.id,
-        title: trimmed,
-      });
-      if (applyMutationResponse(board.id, response)) {
-        setIsRenamingBoard(false);
-      }
-    } finally {
-      setIsSavingBoardTitle(false);
-    }
-  }
-
-  function handleBoardTitleKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelBoardRename();
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void saveBoardRename();
-    }
+    const trimmed = text.trim();
+    if (!board || trimmed.length === 0) return false;
+    const response = await actions().renameBoard({
+      boardId: board.id,
+      title: trimmed,
+    });
+    return applyMutationResponse(board.id, response) ? true : false;
   }
 
   function removeOptimisticCard(boardId: string, tempId: string): void {
@@ -1596,12 +1589,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         ref={boardTitleInputEl}
                         type="text"
                         aria-label="Board title"
-                        value={boardTitleDraft()}
                         maxlength={MAX_BOARD_TITLE_LENGTH}
+                        onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
+                        onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
                         onInput={(e) =>
-                          setBoardTitleDraft(e.currentTarget.value)
+                          setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
                         }
-                        onKeyDown={handleBoardTitleKeyDown}
                         class={[
                           'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
                           'focus:border-focus focus:outline-none',
@@ -1610,11 +1603,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <button
                         type="button"
                         aria-label="Save Board title"
-                        disabled={
-                          isSavingBoardTitle() ||
-                          boardTitleDraft().trim().length === 0
-                        }
-                        onClick={() => void saveBoardRename()}
+                        disabled={boardTitleSave.isSaving() || !hasBoardTitleText()}
+                        onClick={() => boardTitleEdit.end()}
                         class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
                       >
                         <LucideIcon icon={Check} class="size-4" strokeWidth={2} />

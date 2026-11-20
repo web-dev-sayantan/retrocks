@@ -1,4 +1,5 @@
 import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import {
   Check,
   ChevronLeft,
@@ -24,6 +25,7 @@ import {
 } from '../lib/board-types';
 import type { ColumnStreamItem } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
+import { inlineEdit, createInlineEditSave, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   areAllGroupCardsMine,
   canContribute,
@@ -105,9 +107,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
 
   const [menuOpen, setMenuOpen] = createSignal(false);
-  const [isRenaming, setIsRenaming] = createSignal(false);
-  const [renameDraft, setRenameDraft] = createSignal('');
-  const [isSavingRename, setIsSavingRename] = createSignal(false);
   const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
 
@@ -116,8 +115,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     (locked) => {
       if (locked) {
         setMenuOpen(false);
-        setIsRenaming(false);
-        setRenameDraft('');
+        cancelRename();
       }
     },
   );
@@ -133,6 +131,31 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const canDeleteColumn = createMemo(() =>
     canDeleteColumnPermission(props, props.totalColumns, props.cards),
   );
+
+  // Inline title editing: createInlineEdit owns the session, input, and keyboard contract.
+  const titleField = usePrimitive(inlineEdit, () => ({
+    value: () => props.column.title,
+    commit: (text) => titleSave.commit(text),
+    disabled: () => !canManageColumn(),
+  }));
+  const columnEdit = titleField.api.edit;
+  const titleSave = createInlineEditSave(saveColumnTitle, () => columnEdit.cancel());
+  const isRenaming = () => titleField.present('input');
+  const [hasTitleText, setHasTitleText] = createSignal(true);
+  let titleButtonEl: HTMLButtonElement | undefined;
+  let renameInputEl: HTMLInputElement | undefined;
+
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isRenaming, (renaming) => {
+    if (renaming && renameInputEl) columnEdit.bindInput(renameInputEl);
+  });
+
+  // The title button re-mounts while editing ends, so guide focus back when nothing took it.
+  createEffect(isRenaming, (renaming, wasRenaming) => {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
+      titleButtonEl?.focus();
+    }
+  });
 
   const streamKeys = createMemo(
     () => props.streamItems.map((item) => item.key),
@@ -150,14 +173,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     return map;
   });
 
-  let renameInputEl: HTMLInputElement | undefined;
   let composerEl: HTMLTextAreaElement | undefined;
-
-  createEffect(isRenaming, (renaming) => {
-    if (renaming) {
-      renameInputEl?.focus();
-    }
-  });
 
   createEffect(
     () => (props.isLocked ? null : props.column.id),
@@ -235,45 +251,21 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function startRename(): void {
     setMenuOpen(false);
-    setRenameDraft(props.column.title);
-    setIsRenaming(true);
+    setHasTitleText(props.column.title.trim().length > 0);
+    columnEdit.start(props.column.id);
   }
 
   function cancelRename(): void {
-    setIsRenaming(false);
-    setRenameDraft('');
+    titleSave.resetError();
+    columnEdit.cancel();
   }
 
-  async function saveRename(): Promise<void> {
-    const trimmed = renameDraft().trim();
-    if (trimmed.length === 0 || isSavingRename()) return;
-    if (trimmed === props.column.title) {
-      setIsRenaming(false);
-      return;
-    }
-    setIsSavingRename(true);
-    try {
-      const ok = await props.onUpdateColumn(props.column.id, {
-        title: trimmed,
-      });
-      if (ok) {
-        setIsRenaming(false);
-      }
-    } finally {
-      setIsSavingRename(false);
-    }
-  }
-
-  function handleRenameKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelRename();
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void saveRename();
-    }
+  async function saveColumnTitle(text: string): Promise<InlineEditOutcome> {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+    return (await props.onUpdateColumn(props.column.id, { title: trimmed }))
+      ? true
+      : false;
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
@@ -419,10 +411,12 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     ref={renameInputEl}
                     type="text"
                     aria-label="Column title"
-                    value={renameDraft()}
                     maxlength={MAX_COLUMN_TITLE_LENGTH}
-                    onInput={(e) => setRenameDraft(e.currentTarget.value)}
-                    onKeyDown={handleRenameKeyDown}
+                    onKeyDown={(event) => columnEdit.inputKeydown(event)}
+                    onFocusOut={(event) => columnEdit.end('focus-out', event)}
+                    onInput={(e) =>
+                      setHasTitleText(e.currentTarget.value.trim().length > 0)
+                    }
                     class={[
                       'min-w-0 flex-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
                       'focus:border-accent focus:outline-none',
@@ -431,8 +425,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   <button
                     type="button"
                     aria-label="Save column title"
-                    disabled={isSavingRename() || renameDraft().trim().length === 0}
-                    onClick={() => void saveRename()}
+                    disabled={titleSave.isSaving() || !hasTitleText()}
+                    onClick={() => columnEdit.end()}
                     class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={Check} class="size-3.5" strokeWidth={2.2} />
@@ -454,6 +448,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   fallback={props.column.title}
                 >
                   <button
+                    ref={titleButtonEl}
                     type="button"
                     onClick={startRename}
                     title="Click to rename Column"
