@@ -1,3 +1,4 @@
+import { Button } from '@ui-sdk/solid/button';
 import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
@@ -36,7 +37,8 @@ export default function PokerWorkspace(props: {
       if (discardRoundId !== undefined && !await confirmBoardAction({
         title: 'Close Room?',
         description: 'Closing discards the current Voting Round and its votes. Accepted Estimates stay in the read-only summary.',
-        confirmLabel: 'Close Room',
+        confirmLabel: 'Close and discard votes',
+        agentConfirm: 'Closes the Room permanently and discards the current Voting Round and its votes.',
       })) return;
 
       setClosing(true);
@@ -66,9 +68,17 @@ export default function PokerWorkspace(props: {
             {props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}
           </p>
           <Show when={props.room.viewer?.isFacilitator}>
-            <button type="button" class="poker-story-control board-focus-ring" aria-disabled={closing() ? 'true' : undefined} onClick={closeRoom}>
+            <Button
+              class="poker-story-control board-focus-ring"
+              disabled={closing()}
+              focusableWhenDisabled
+              data-agent-confirm={unresolvedPokerRoundId(props.room.round) === undefined
+                ? 'Closes the Room permanently. Accepted Estimates remain in the read-only summary.'
+                : undefined}
+              onClick={() => void closeRoom()}
+            >
               Close Room
-            </button>
+            </Button>
             <PokerRoomDeletion roomId={props.room.id} onUnavailable={props.onUnavailable} />
           </Show>
         </div>

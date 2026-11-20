@@ -8,8 +8,14 @@ import BoardConfirmDialog from '../BoardConfirmDialog';
 import PokerStoryQueue from './PokerStoryQueue';
 import PokerWorkspace from './PokerWorkspace';
 
-const agent = createAgent();
-afterEach(cleanup);
+let approve = false;
+const allow = vi.fn((step: { confirm?: string }) => !step.confirm || approve);
+const agent = createAgent({ allow });
+afterEach(() => {
+  cleanup();
+  allow.mockClear();
+  approve = false;
+});
 
 test('a Facilitator can add and move a Story by named controls while keeping its row and focus', async () => {
   const first = { id: 'first', title: 'Save checkout', status: 'pending' } satisfies PokerStory;
@@ -173,19 +179,24 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
   fireEvent.keyDown(zero, { key: 'ArrowRight' });
   await waitFor(() => expect(within(estimate).getByRole('radio', { name: '1' })).toHaveAttribute('aria-checked', 'true'));
   expect(change).not.toHaveBeenCalled();
-  const confirmed = await agent.act({ steps: [{ ref: 'Confirm estimate', action: 'press' }] });
+  const confirmed = await agent.act({ steps: [
+    { ref: 'Accepted Estimate', action: 'setValue', args: ['2'] },
+    { ref: 'Confirm estimate', action: 'press' },
+  ] });
   expect(confirmed.ok, confirmed.error?.message).toBe(true);
-  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ type: 'confirm-estimate', roundId: 'round', choice: '1' }));
+  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ type: 'confirm-estimate', roundId: 'round', choice: '2' }));
 
   const edit = await agent.act({ steps: [{ ref: 'Edit estimate for Save checkout', action: 'press' }] });
   expect(edit.ok, edit.error?.message).toBe(true);
   const correcting = await screen.findByRole('radiogroup', { name: 'Correct Accepted Estimate' });
-  expect(within(correcting).getByRole('radio', { name: '1' })).toHaveFocus();
-  fireEvent.click(within(correcting).getByRole('radio', { name: '0' }));
-  const saved = await agent.act({ steps: [{ ref: 'Save estimate', action: 'press' }] });
+  expect(within(correcting).getByRole('radio', { name: '2' })).toHaveFocus();
+  const saved = await agent.act({ steps: [
+    { ref: 'Correct Accepted Estimate', action: 'setValue', args: ['0'] },
+    { ref: 'Save estimate', action: 'press' },
+  ] });
   expect(saved.ok, saved.error?.message).toBe(true);
   await waitFor(() => expect(change).toHaveBeenLastCalledWith({
-    type: 'correct-estimate', storyId: current.id, expectedEstimate: '1', choice: '0',
+    type: 'correct-estimate', storyId: current.id, expectedEstimate: '2', choice: '0',
   }));
   expect(await screen.findByText('Estimated · 0')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Edit estimate for Save checkout' })).toHaveFocus();
@@ -205,7 +216,11 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
   render(() => <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
 
   const settings = screen.getByRole('form', { name: 'Deck settings' });
-  fireEvent.click(within(settings).getByRole('radio', { name: 'Custom' }));
+  for (const name of ['T-shirt', 'Fibonacci', 'Custom']) {
+    const selected = await agent.act({ steps: [{ ref: 'Deck', action: 'setValue', args: [name] }] });
+    expect(selected.ok, selected.error?.message).toBe(true);
+    expect(within(settings).getByRole('radio', { name })).toHaveAttribute('aria-checked', 'true');
+  }
   const choices = await within(settings).findByRole('textbox', { name: 'Custom choices' });
   expect(choices).toHaveAccessibleDescription('Enter one choice per line, in the order they should appear.');
   expect(within(settings).getByRole('button', { name: 'Save Deck' })).toBeEnabled();
@@ -260,13 +275,101 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
   await waitFor(() => expect(close).toHaveFocus());
   expect(change).not.toHaveBeenCalled();
 
-  fireEvent.click(close);
+  expect(agent.snapshot().some((entry) => !entry.offPage && entry.label === 'Close Room')).toBe(true);
+  const open = () => agent.act({ steps: [{ ref: 'Close Room', action: 'press' }] });
+  const finish = () => agent.act({ steps: [
+    { ref: 'Close Room?', action: 'press', args: ['Close and discard votes'] },
+  ] });
+  const opened = await open();
+  expect(opened.ok, opened.error?.message).toBe(true);
   const reopened = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  expect((await finish()).ok).toBe(false);
+  expect(allow).toHaveBeenCalledWith(expect.objectContaining({
+    confirm: 'Closes the Room permanently and discards the current Voting Round and its votes.',
+  }), expect.anything());
+  expect(change).not.toHaveBeenCalled();
+  expect(reopened).toBeVisible();
+
   setRoom({
     ...initial, version: 2,
     round: { id: 'new-round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
   });
-  fireEvent.click(within(reopened).getByRole('button', { name: 'Close Room' }));
+  approve = true;
+  const confirmed = await finish();
+  expect(confirmed.ok, confirmed.error?.message).toBe(true);
   await waitFor(() => expect(change).toHaveBeenCalledWith({ type: 'close-room', discardRoundId: 'first-round' }));
   expect(await screen.findByText('The Voting Round has changed. Check the active Story and try again.')).toBeVisible();
+});
+
+test('a Facilitator can cast, clear, and reveal votes through named agent controls', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
+    stories: [{ id: 'checkout', title: 'Save checkout', status: 'pending' }], activeStoryId: 'checkout',
+    deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: true,
+    round: { id: 'round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
+  });
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    const round = current.round;
+    if (round?.phase !== 'open' || !('roundId' in command) || command.roundId !== round.id) {
+      throw new Error('Expected a command for the open Voting Round.');
+    }
+    const next: PokerLiveRoomView = { ...current, version: current.version + 1 };
+    if (command.type === 'vote') {
+      next.round = {
+        ...round, ownChoice: command.choice, submittedParticipantIds: command.choice === null ? [] : [facilitator.id],
+      };
+    } else if (command.type === 'reveal' && round.ownChoice !== null) {
+      next.round = {
+        id: round.id, phase: 'revealed',
+        ballots: [{ participantId: facilitator.id, displayName: facilitator.displayName, choice: round.ownChoice }],
+      };
+    } else {
+      throw new Error('Expected a vote or reveal.');
+    }
+    setRoom(next);
+    return { ok: true, room: next };
+  });
+  render(() => <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const active = screen.getByRole('region', { name: 'Active Story' });
+  const cast = await agent.act({ steps: [{ ref: 'Cast your vote', action: 'setValue', args: ['5'] }] });
+  expect(cast.ok, cast.error?.message).toBe(true);
+  expect(await within(active).findByText('Your vote is 5.')).toBeVisible();
+
+  const cleared = await agent.act({ steps: [{ ref: 'Clear vote', action: 'press' }] });
+  expect(cleared.ok, cleared.error?.message).toBe(true);
+  expect(await within(active).findByText('Your vote is private until reveal.')).toBeVisible();
+  expect(within(active).getByRole('button', { name: 'Reveal votes' })).toHaveAttribute('aria-disabled', 'true');
+
+  const reveal = await agent.act({ steps: [
+    { ref: 'Cast your vote', action: 'setValue', args: ['8'] },
+    { ref: 'Reveal votes', action: 'press' },
+  ] });
+  expect(reveal.ok, reveal.error?.message).toBe(true);
+  const ballots = await within(active).findByRole('list', { name: 'Revealed votes' });
+  expect(within(ballots).getByRole('listitem')).toHaveTextContent('Alex8');
+});
+
+test('agent closure requires approval even when there is no unresolved Voting Round', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const room: PokerLiveRoomView = {
+    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
+    stories: [], activeStoryId: null, deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
+  };
+  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
+  render(() => <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const close = () => agent.act({ steps: [{ ref: 'Close Room', action: 'press' }] });
+  expect((await close()).ok).toBe(false);
+  expect(allow).toHaveBeenCalledWith(expect.objectContaining({
+    confirm: 'Closes the Room permanently. Accepted Estimates remain in the read-only summary.',
+  }), expect.anything());
+  expect(change).not.toHaveBeenCalled();
+
+  approve = true;
+  const confirmed = await close();
+  expect(confirmed.ok, confirmed.error?.message).toBe(true);
+  expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'close-room' });
 });

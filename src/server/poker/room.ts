@@ -337,7 +337,7 @@ export class PokerRoomStorage {
           if (!story) return storyMissing;
           if (story.title === command.title) return { ok: true, room };
           story.title = command.title;
-          if (room.activeStoryId === story.id && room.round?.phase === 'open') {
+          if (room.activeStoryId === story.id && unresolvedPokerRoundId(room.round) !== undefined) {
             room.round = startVotingRound();
           }
           break;

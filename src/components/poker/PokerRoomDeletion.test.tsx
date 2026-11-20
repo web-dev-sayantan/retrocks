@@ -8,7 +8,8 @@ import PokerRoomDeletion from './PokerRoomDeletion';
 
 const roomId = 'abcdefghijklmnopqrstuv';
 let approve = false;
-const agent = createAgent({ allow: (step) => !step.confirm || approve });
+const allow = vi.fn((step: { confirm?: string }) => !step.confirm || approve);
+const agent = createAgent({ allow });
 
 vi.mock('../../lib/poker-actions', () => ({
   deletePokerRoom: vi.fn(async () => ({ ok: true })),
@@ -39,8 +40,11 @@ test('the Room deletion dialog focuses Cancel and requires explicit confirmation
   for (const control of controls) expect(control.label).toBeTruthy();
   expect(controls.map((control) => control.label)).toContain('Delete Room');
 
-  const steps = [{ ref: 'Delete Room', action: 'press', args: ['Delete Room'] }];
+  const steps = [{ ref: 'Delete Room', action: 'press', args: ['Delete permanently'] }];
   expect((await agent.act({ steps })).ok).toBe(false);
+  expect(allow).toHaveBeenCalledWith(expect.objectContaining({
+    confirm: 'Permanently deletes the Room, its Stories, and its estimates for everyone.',
+  }), expect.anything());
   expect(deletePokerRoom).not.toHaveBeenCalled();
   approve = true;
   const response = await agent.act({ steps });

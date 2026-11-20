@@ -11,7 +11,10 @@ export interface BoardCreateRateLimiter {
   check(request: Request): Promise<RateLimitResult>;
 }
 
+type CreateRateLimitScope = 'poker';
+
 export interface InMemoryRateLimiter extends BoardCreateRateLimiter {
+  check(request: Request, scope?: CreateRateLimitScope): Promise<RateLimitResult>;
   reset(): void;
   getActiveKeySnapshotForTests(): string[];
 }
@@ -42,9 +45,10 @@ function extractTransientClientAddress(request: Request): string {
   return 'local';
 }
 
-async function deriveTransientRateLimitKey(request: Request): Promise<string> {
+async function deriveTransientRateLimitKey(request: Request, scope?: CreateRateLimitScope): Promise<string> {
   const address = extractTransientClientAddress(request);
-  return sha256Hex(`${getEphemeralSalt()}:${address}`);
+  const hash = await sha256Hex(`${getEphemeralSalt()}:${address}`);
+  return scope ? `${scope}:${hash}` : hash;
 }
 
 function createSlidingWindowLimiter(limit: number, windowMs: number) {
@@ -102,8 +106,8 @@ export function createInMemoryRateLimiter(options?: {
   );
 
   return {
-    async check(request: Request): Promise<RateLimitResult> {
-      const key = await deriveTransientRateLimitKey(request);
+    async check(request: Request, scope?: CreateRateLimitScope): Promise<RateLimitResult> {
+      const key = await deriveTransientRateLimitKey(request, scope);
       return windowLimiter.checkKey(key, Date.now());
     },
     reset(): void {
@@ -128,25 +132,23 @@ export function resetDefaultRateLimiterForTests(): void {
   defaultInMemoryLimiter.reset();
 }
 
-/**
- * Enforces Board-creation rate limiting using Cloudflare's `BOARD_CREATE_LIMITER`
- * binding when running on Workers, or the in-memory sliding-window limiter on Node.
- */
-export async function checkBoardCreateRateLimit(
-  request: Request,
-): Promise<RateLimitResult> {
-  if (testLimiterOverride) {
-    return testLimiterOverride.check(request);
-  }
+export function checkBoardCreateRateLimit(request: Request): Promise<RateLimitResult> {
+  return testLimiterOverride?.check(request) ?? checkCreateRateLimit(request);
+}
 
+export function checkPokerCreateRateLimit(request: Request): Promise<RateLimitResult> {
+  return checkCreateRateLimit(request, 'poker');
+}
+
+async function checkCreateRateLimit(request: Request, scope?: CreateRateLimitScope): Promise<RateLimitResult> {
   const cfEnv = getCloudflareEnv();
   if (cfEnv?.BOARD_CREATE_LIMITER) {
-    const key = await deriveTransientRateLimitKey(request);
+    const key = await deriveTransientRateLimitKey(request, scope);
     const { success } = await cfEnv.BOARD_CREATE_LIMITER.limit({ key });
     return { allowed: success };
   }
 
-  return defaultInMemoryLimiter.check(request);
+  return defaultInMemoryLimiter.check(request, scope);
 }
 
 export interface BoardWriteRateLimiter {

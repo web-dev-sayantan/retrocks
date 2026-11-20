@@ -5,7 +5,7 @@ import { safeParse } from 'valibot';
 import { PokerCommand, PokerRoomId } from '../../lib/poker-schemas';
 import type { PokerDeleteResult, PokerResult, PokerRoomView } from '../../lib/poker-types';
 import { generateEntityId, hashTokenWithSalt } from '../crypto';
-import { checkBoardCreateRateLimit } from '../rate-limit';
+import { checkPokerCreateRateLimit } from '../rate-limit';
 import { ensureParticipantSession, getSessionFromRequest, type RetrocksSession } from '../session';
 import { pokerDisplayName } from './room';
 import { getPokerRoomAccess } from './runtime';
@@ -19,7 +19,7 @@ export async function createPokerRoomForRequest(input: unknown): Promise<PokerRe
   if (!displayName) return { ok: false, code: 'INVALID_INPUT', message: 'Enter a valid Display Name.' };
   const request = getRequestEvent()?.request;
   if (!request) throw new Error('A request is required to create a Room.');
-  if (!(await checkBoardCreateRateLimit(request)).allowed) {
+  if (!(await checkPokerCreateRateLimit(request)).allowed) {
     return { ok: false, code: 'RATE_LIMITED', message: 'Too many Rooms created recently. Try again shortly.' };
   }
 

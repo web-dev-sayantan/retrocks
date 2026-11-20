@@ -44,10 +44,11 @@ export default function PokerRoomDeletion(props: { roomId: string; onUnavailable
           <AlertDialogClose class="poker-story-control board-focus-ring">Cancel</AlertDialogClose>
           <AlertDialogClose
             class="board-focus-ring min-h-11 cursor-pointer rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 aria-disabled:cursor-wait sm:min-h-9"
-            data-agent-confirm
+            data-agent-confirm="Permanently deletes the Room, its Stories, and its estimates for everyone."
+            value="confirm"
             action={removeRoom}
           >
-            {(state) => state.pending ? 'Deleting Room…' : 'Delete Room'}
+            {(state) => state.pending ? 'Deleting Room…' : 'Delete permanently'}
           </AlertDialogClose>
         </div>
         <p role="alert" class={error() ? 'mt-3 text-sm font-medium text-text' : 'sr-only'}>{error()}</p>

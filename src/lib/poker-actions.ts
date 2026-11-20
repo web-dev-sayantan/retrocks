@@ -20,15 +20,17 @@ export const createPokerRoom = formAction(async (form: FormData) => {
   return pokerResponse(result);
 });
 
-export const joinPokerRoom = formAction(async (id: string, form: FormData) => {
+export const joinPokerRoom = formAction(submitPokerRoomJoin);
+
+export async function submitPokerRoomJoin(id: string, form: FormData) {
   'use server';
   const { mutatePokerRoomForRequest } = await import('../server/poker/service');
   const result = await mutatePokerRoomForRequest(id, {
     type: 'join', displayName: form.get('displayName'),
   });
-  if (result.ok) return redirect(pokerRoomPath(id));
+  if (result.ok || result.code === 'ROOM_CLOSED') return redirect(pokerRoomPath(id));
   return pokerResponse(result);
-});
+}
 
 export async function changePokerRoom(id: string, command: PokerRoomChange): Promise<PokerResult> {
   'use server';

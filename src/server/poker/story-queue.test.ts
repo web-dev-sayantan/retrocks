@@ -2,7 +2,10 @@ import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 
+import { submitPokerRoomJoin } from '../../lib/poker-actions';
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
+import { runWithCloudflareEnv } from '../adapters/cloudflare-context';
+import { checkBoardCreateRateLimit } from '../rate-limit';
 
 let testClient = 0;
 const origin = 'https://retrocks.test';
@@ -598,5 +601,101 @@ test('closing an unresolved Room publishes only the ordered summary and ends liv
     expect(await reconnect.read()).toMatchObject({ done: true });
   } finally {
     await reader.cancel();
+  }
+});
+
+test('editing a revealed Story resets its unresolved round and preserves its last Accepted Estimate', async () => {
+  const { participant, mutate, read } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Checkout' });
+  if (!added.ok) throw new Error(added.message);
+  const storyId = added.room.stories[0].id;
+  const selected = await mutate({ type: 'select-story', storyId });
+  if (!selected.ok || !selected.room.round) throw new Error('Could not open Voting Round.');
+  const firstRoundId = selected.room.round.id;
+  await mutate({ type: 'vote', roundId: firstRoundId, choice: '5' }, participant);
+  await mutate({ type: 'reveal', roundId: firstRoundId });
+  expect(await mutate({ type: 'confirm-estimate', roundId: firstRoundId, choice: '5' })).toMatchObject({ ok: true });
+
+  expect(await mutate({ type: 'edit-story', storyId, title: 'Save checkout' })).toMatchObject({
+    ok: true, room: {
+      round: { id: firstRoundId, phase: 'accepted' },
+      stories: [{ title: 'Save checkout', acceptedEstimate: '5' }],
+    },
+  });
+  const restarted = await mutate({ type: 'restart-round', roundId: firstRoundId });
+  if (!restarted.ok || !restarted.room.round) throw new Error('Could not start another Voting Round.');
+  const revealedRoundId = restarted.room.round.id;
+  await mutate({ type: 'vote', roundId: revealedRoundId, choice: '8' }, participant);
+  expect(await mutate({ type: 'reveal', roundId: revealedRoundId })).toMatchObject({ ok: true });
+
+  expect(await mutate({ type: 'edit-story', storyId, title: 'Restore checkout' })).toMatchObject({ ok: true });
+  const updated = await read(participant);
+  expect(updated).toMatchObject({
+    activeStoryId: storyId,
+    stories: [{ title: 'Restore checkout', status: 'estimated', acceptedEstimate: '5' }],
+    round: { phase: 'open', ownChoice: null, submittedParticipantIds: [] },
+  });
+  expect(updated && !updated.closed && updated.round?.id).not.toBe(revealedRoundId);
+  expect(await mutate({ type: 'confirm-estimate', roundId: revealedRoundId, choice: '8' }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+});
+
+test('submitting a Display Name after a Room closes redirects its participant link to the summary', async () => {
+  const { id, mutateRoom } = await openRoom();
+  expect((await inRequest(() => service.readPokerRoomForRequest(id), undefined, 'GET')).result)
+    .toMatchObject({ closed: false, viewer: null });
+  expect(await mutateRoom({ type: 'close-room' })).toMatchObject({ ok: true, room: { closed: true } });
+  const form = new FormData();
+  form.set('displayName', 'Jo');
+
+  const { result } = await inRequest(() => submitPokerRoomJoin(id, form));
+  expect(result).toBeInstanceOf(Response);
+  if (!(result instanceof Response)) throw new Error('Expected a redirect response.');
+  expect(result.status).toBe(302);
+  expect(result.headers.get('location')).toBe(`/p/${id}`);
+  expect((await inRequest(() => service.readPokerRoomForRequest(id), undefined, 'GET')).result)
+    .toMatchObject({ closed: true, canDelete: false });
+});
+
+test.each(['Node', 'Cloudflare'])('Board and Poker creation have independent budgets on %s', async (runtime) => {
+  const address = runtime === 'Node' ? '198.51.100.60' : '198.51.100.61';
+  const request = new Request(origin, { headers: { 'cf-connecting-ip': address } });
+  const buckets = new Map<string, number>();
+
+  async function exerciseBudgets() {
+    for (let count = 0; count < 10; count++) {
+      expect(await checkBoardCreateRateLimit(request)).toEqual({ allowed: true });
+    }
+    expect(await checkBoardCreateRateLimit(request)).toEqual({ allowed: false });
+    if (runtime === 'Cloudflare') {
+      expect([...buckets.keys()]).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/)]);
+    }
+
+    for (let count = 0; count < 10; count++) {
+      const { result } = await inRequest(
+        () => service.createPokerRoomForRequest('Alex'), undefined, 'POST', address,
+      );
+      expect(result.ok).toBe(true);
+    }
+    const { result } = await inRequest(
+      () => service.createPokerRoomForRequest('Alex'), undefined, 'POST', address,
+    );
+    expect(result).toMatchObject({ ok: false, code: 'RATE_LIMITED' });
+    expect(await checkBoardCreateRateLimit(request)).toEqual({ allowed: false });
+  }
+
+  if (runtime === 'Node') {
+    await exerciseBudgets();
+  } else {
+    const env = {
+      BOARD_CREATE_LIMITER: {
+        async limit({ key }: { key: string }) {
+          const count = (buckets.get(key) ?? 0) + 1;
+          buckets.set(key, count);
+          return { success: count <= 10 };
+        },
+      },
+    };
+    await runWithCloudflareEnv(env as Cloudflare.Env, exerciseBudgets);
   }
 });
