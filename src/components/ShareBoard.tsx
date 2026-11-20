@@ -1,8 +1,10 @@
+import { Share2 } from 'lucide';
 import { Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 import { encode } from 'uqr';
 
 import { getFacilitatorLink, rotateFacilitatorLink } from '../lib/sharing-actions';
 import { CloseIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 
 const buttonClass = [
   'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium',
@@ -184,6 +186,7 @@ function FacilitatorSharing(props: { boardId: string }) {
 export default function ShareBoard(props: {
   boardId: string;
   isFacilitator: boolean;
+  emphasis?: 'primary' | 'secondary';
 }) {
   let dialog!: HTMLDialogElement;
   let trigger!: HTMLButtonElement;
@@ -191,6 +194,7 @@ export default function ShareBoard(props: {
   const titleId = createUniqueId();
   const participantTitleId = createUniqueId();
   const [participantLink, setParticipantLink] = createSignal('');
+  const emphasis = () => props.emphasis ?? 'primary';
 
   function openDialog() {
     const link = new URL(`/b/${props.boardId}`, window.location.origin).href;
@@ -225,14 +229,19 @@ export default function ShareBoard(props: {
       <button
         ref={trigger}
         type="button"
+        data-cta-emphasis={emphasis()}
         class={[
-          'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text sm:min-h-9',
-          'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+          'spring-press inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium sm:h-9 sm:min-h-9',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+          emphasis() === 'primary'
+            ? 'border-transparent bg-accent text-accent-contrast shadow-xs hover:opacity-92 active:opacity-85'
+            : 'border-border/80 bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle',
         ]}
         onClick={openDialog}
         aria-haspopup="dialog"
       >
-        Share
+        <LucideIcon icon={Share2} class="size-3.5 shrink-0" strokeWidth={1.9} />
+        <span>Share</span>
       </button>
       <dialog
         ref={dialog}

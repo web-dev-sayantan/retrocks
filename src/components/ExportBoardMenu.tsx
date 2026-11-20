@@ -1,3 +1,4 @@
+import { MenuItem, MenuSeparator } from '@ui-sdk/solid/menu';
 import { For, Show, createMemo } from 'solid-js';
 
 import {
@@ -102,45 +103,49 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
 
   return (
     <>
-      <button
-        type="button"
-        role="menuitem"
-        tabindex={-1}
-        onClick={() => void handleCopyMarkdown()}
+      <MenuItem
+        value="copy-markdown"
+        onSelect={() => void handleCopyMarkdown()}
         class="board-menu-item"
       >
         <span>Copy Markdown</span>
         <span aria-hidden="true" class="text-[11px] font-normal text-text-muted">
           Clipboard
         </span>
-      </button>
+      </MenuItem>
 
       <For each={downloads}>
         {(download) => (
-          <a
-            role="menuitem"
-            tabindex={-1}
-            href={buildExportUrl(props.board.id, download.format)}
-            download={buildExportFilename(props.board.title, download.format)}
-            onClick={(event) => void handleDownload(event, download.label)}
+          <MenuItem
+            value={`download-${download.format}`}
             class="board-menu-item"
-          >
-            <span>Download {download.label}</span>
-            <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
-              .{download.format}
-            </span>
-          </a>
+            render={(itemProps) => (
+              <a
+                {...itemProps}
+                href={buildExportUrl(props.board.id, download.format)}
+                download={buildExportFilename(props.board.title, download.format)}
+                onClick={(event) => {
+                  void handleDownload(event, download.label);
+                }}
+              >
+                <span>Download {download.label}</span>
+                <span aria-hidden="true" class="font-mono text-[11px] font-normal text-text-muted">
+                  .{download.format}
+                </span>
+              </a>
+            )}
+          />
         )}
       </For>
 
-      <div class="my-1 border-t border-border" role="separator" />
+      <MenuSeparator class="my-1 border-t border-border/75" />
 
-      <button type="button" role="menuitem" tabindex={-1} onClick={handlePrint} class="board-menu-item">
+      <MenuItem value="print-board" onSelect={handlePrint} class="board-menu-item">
         Print / Save as PDF
-      </button>
+      </MenuItem>
 
       <Show when={visibilityNote()}>
-        <p class="mt-1 border-t border-border px-2.5 pt-2 pb-1 text-xs leading-snug text-text-muted">
+        <p class="mt-1 border-t border-border/75 px-2.5 pt-2 pb-1 text-xs leading-snug text-text-muted">
           {visibilityNote()}
         </p>
       </Show>

@@ -1,3 +1,12 @@
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+  createPopoverController,
+} from '@ui-sdk/solid/popover';
+import { Clock, Pause, Volume2, VolumeX, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
 import type { BoardMutationResponse, TimerStateDTO } from '../lib/board-types';
@@ -8,12 +17,12 @@ import {
 import type { TimerChange } from '../lib/schemas';
 import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES, type ServerClockSample } from '../lib/timer';
 import { TIMER_MUTE_STORAGE_KEY, createTimerChime } from '../lib/timer-chime';
-import { CloseIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 
 const MUTE_STORAGE_KEY = TIMER_MUTE_STORAGE_KEY;
 const presets = [3, 5, 10, 15];
 const controlClass =
-  'min-h-11 rounded-lg border border-border px-2.5 text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-9';
+  'spring-press min-h-11 cursor-pointer rounded-lg border border-border/80 bg-surface px-2.5 text-xs font-medium text-text hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9';
 
 function formatCountdown(remainingMs: number): string {
   const totalSeconds = Math.ceil(remainingMs / 1_000);
@@ -38,13 +47,10 @@ export default function CountdownTimer(props: {
   canControl: boolean;
   onChange: (change: TimerChange) => Promise<BoardMutationResponse>;
 }) {
-  const panelId = createUniqueId();
-  const titleId = createUniqueId();
   const durationId = createUniqueId();
-  let root!: HTMLDivElement;
-  let trigger!: HTMLButtonElement;
-  let panel: HTMLDivElement | undefined;
+  const popover = createPopoverController();
   let durationInput: HTMLInputElement | undefined;
+  let panel: HTMLDivElement | undefined;
   let observedDeadline: number | null = null;
 
   const chime = createTimerChime();
@@ -69,6 +75,12 @@ export default function CountdownTimer(props: {
   const isPaused = createMemo(() => props.timer.remainingMs !== null);
   const isConfigured = createMemo(() => props.timer.durationMs !== null);
   const hasTimeLeft = createMemo(() => isPaused() || (props.timer.endsAt !== null && remainingMs() !== 0));
+  const timerState = createMemo<'idle' | 'running' | 'paused' | 'expired'>(() => {
+    if (!isConfigured()) return 'idle';
+    if (isPaused()) return 'paused';
+    if (isRunning()) return 'running';
+    return 'expired';
+  });
   const expiryAnnounced = createMemo(() =>
     props.timer.endsAt !== null && props.timer.endsAt === announcedDeadline(),
   );
@@ -131,15 +143,16 @@ export default function CountdownTimer(props: {
     },
   );
 
-  createEffect(open, (isOpen) => {
-    if (isOpen) panel?.focus();
-  });
-
-  function closePanel(restoreFocus: boolean) {
-    setOpen(false);
-    setError('');
-    if (restoreFocus) trigger.focus();
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next) setError('');
   }
+
+  createEffect(open, (isOpen) => {
+    if (isOpen && panel && !panel.contains(document.activeElement)) {
+      panel.focus();
+    }
+  });
 
   onSettled(() => {
     try {
@@ -160,40 +173,27 @@ export default function CountdownTimer(props: {
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || event.isComposing) return;
-      if (open() && event.key === 'Escape') {
-        event.preventDefault();
-        closePanel(true);
-        return;
-      }
       if (!props.canControl || event.repeat || event.key.toLowerCase() !== 't' ||
           event.altKey || event.ctrlKey || event.metaKey) return;
       if (isTypingInEditableElement(event)) return;
       if (open()) {
         event.preventDefault();
-        closePanel(true);
+        popover.close({ reason: 'shortcut', event });
         return;
       }
       if (hasOpenBoardOverlay()) return;
       event.preventDefault();
-      setOpen(true);
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      if (open() && event.target instanceof Node && !root.contains(event.target)) {
-        closePanel(false);
-      }
+      void popover.open({ reason: 'shortcut', event });
     }
 
     document.addEventListener('click', prepareChime, true);
     document.addEventListener('keydown', prepareChime, true);
     document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('storage', syncMute);
     return () => {
       document.removeEventListener('click', prepareChime, true);
       document.removeEventListener('keydown', prepareChime, true);
       document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('storage', syncMute);
       chime.dispose();
     };
@@ -229,90 +229,106 @@ export default function CountdownTimer(props: {
   }
 
   return (
-    <div
-      ref={root}
-      class="shrink-0 @min-[28rem]:relative"
-      onFocusOut={(event) => {
-        if (open() && event.relatedTarget instanceof Node &&
-            !event.currentTarget.contains(event.relatedTarget)) {
-          closePanel(false);
-        }
-      }}
-    >
-      <button
-        ref={trigger}
-        type="button"
-        aria-label={isConfigured() ? `Countdown Timer, ${isPaused() ? 'paused at ' : ''}${timeLabel()}` : 'Countdown Timer'}
-        aria-keyshortcuts={props.canControl ? 'T' : undefined}
-        aria-haspopup="dialog"
-        aria-expanded={open() ? 'true' : 'false'}
-        aria-controls={open() ? panelId : undefined}
-        onClick={() => {
-          if (open()) closePanel(true);
-          else setOpen(true);
-        }}
-        class={[
-          'relative inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 overflow-hidden rounded-full border border-border bg-surface px-2.5 text-xs font-semibold text-text tabular-nums hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-9 sm:px-3',
-          expiryAnnounced() && 'motion-safe:animate-[timer-expiry-pulse_1.2s_ease-in-out_2]',
-        ]}
-      >
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          aria-hidden="true"
-          class="size-4 shrink-0"
+    <div class="shrink-0">
+      <Popover controller={popover} open={open()} onOpenChange={handleOpenChange} modal={false}>
+        <PopoverTrigger
+          aria-label={isConfigured() ? `Countdown Timer, ${isPaused() ? 'paused at ' : ''}${timeLabel()}` : 'Countdown Timer'}
+          aria-keyshortcuts={props.canControl ? 'T' : undefined}
+          aria-haspopup="dialog"
+          data-timer-state={timerState()}
+          title={
+            isPaused()
+              ? `Timer paused at ${timeLabel()}`
+              : props.canControl
+                ? 'Countdown Timer (T)'
+                : 'Countdown Timer'
+          }
+          class={[
+            'spring-press relative inline-flex min-h-11 min-w-[5.75rem] cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-3 text-[13px] leading-none font-medium text-text tabular-nums transition-colors sm:h-9 sm:min-h-9',
+            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+            timerState() === 'paused'
+              ? 'border-col-amber/55 bg-col-amber-tint hover:bg-col-amber-tint'
+              : timerState() === 'expired'
+                ? 'border-col-rose/55 bg-col-rose-tint hover:bg-col-rose-tint'
+                : timerState() === 'running'
+                  ? 'border-accent/45 bg-surface hover:bg-surface-subtle'
+                  : 'border-border/80 bg-surface hover:bg-surface-subtle',
+            expiryAnnounced() && 'motion-safe:animate-[timer-expiry-pulse_1.2s_ease-in-out_2]',
+          ]}
         >
-          <Show when={isPaused()} fallback={<path d="M8 4.75V8l2 1.25" />}>
-            <path d="M6.5 5.5v5m3-5v5" />
+          <Show
+            when={isPaused()}
+            fallback={
+              <LucideIcon
+                icon={Clock}
+                class={['size-3.5 shrink-0', isRunning() ? 'text-accent' : 'text-text-muted']}
+                strokeWidth={1.9}
+              />
+            }
+          >
+            <span aria-hidden="true" class="inline-flex items-center gap-1 text-col-amber">
+              <span class="size-1.5 rounded-full bg-col-amber" />
+              <LucideIcon icon={Pause} class="size-3 shrink-0" strokeWidth={2.2} />
+            </span>
           </Show>
-          <circle cx="8" cy="8" r="6" />
-        </svg>
-        <Show when={isConfigured()} fallback={<span>Timer</span>}>
-          <Show when={isPaused()}><span>Paused</span></Show>
-          <span>{timeLabel()}</span>
-          <span aria-hidden="true" class="absolute inset-x-0 bottom-0 h-0.5 bg-accent/15">
-            <span class="block h-full bg-accent/80" style={{ width: `${progress()}%` }} />
-          </span>
-        </Show>
-      </button>
-      <span aria-live="polite" aria-atomic="true" class="sr-only">
-        {expiryAnnounced() ? 'Time is up.' : timerAnnouncement()}
-      </span>
+          <Show when={isConfigured()} fallback={<span>Timer</span>}>
+            <span>{timeLabel()}</span>
+            <span
+              aria-hidden="true"
+              class={[
+                'absolute inset-x-0 bottom-0 h-0.5',
+                isPaused() ? 'bg-col-amber/20' : 'bg-accent/15',
+              ]}
+            >
+              <span
+                class={['block h-full', isPaused() ? 'bg-col-amber/80' : 'bg-accent/80']}
+                style={{ width: `${progress()}%` }}
+              />
+            </span>
+          </Show>
+        </PopoverTrigger>
 
-      <Show when={open()}>
-        <div
+        <PopoverContent
           ref={panel}
-          id={panelId}
-          role="dialog"
-          aria-labelledby={titleId}
-          tabindex={-1}
-          data-board-overlay
-          class="fixed inset-x-4 top-14 z-30 mx-auto max-h-[calc(100dvh-4rem)] max-w-[20rem] overflow-y-auto rounded-xl border border-border bg-surface p-3.5 text-text shadow-lg focus:outline-none @min-[28rem]:absolute @min-[28rem]:inset-x-auto @min-[28rem]:top-full @min-[28rem]:left-0 @min-[28rem]:mt-2 @min-[28rem]:w-64"
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={12}
+          initialFocus="content"
+          finalFocus="trigger"
+          data-board-overlay="true"
+          class="board-popover max-h-[calc(100dvh-4rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl p-4 text-text focus:outline-none"
         >
           <div class="flex items-center justify-between gap-2">
-            <h2 id={titleId} class="text-sm font-semibold">Countdown Timer</h2>
-            <button type="button" class={`${controlClass} inline-flex min-w-11 items-center justify-center sm:min-w-9`} aria-label="Close Countdown Timer" onClick={() => closePanel(true)}>
-              <CloseIcon />
-            </button>
+            <PopoverTitle class="text-sm font-semibold tracking-tight text-text">
+              Countdown Timer
+            </PopoverTitle>
+            <PopoverClose
+              aria-label="Close Countdown Timer"
+              class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full text-text-muted hover:bg-surface-subtle hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:size-8 sm:min-h-8 sm:min-w-8"
+            >
+              <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
+            </PopoverClose>
           </div>
           <Show when={props.canControl}>
             <form
-              class="mt-3 space-y-2.5"
+              class="mt-3 space-y-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (validMinutes()) void updateTimer({ action: 'start', minutes: Number(minutesDraft()) });
               }}
             >
-              <div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,3rem),1fr))] gap-1.5">
+              <div class="segmented-track grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1">
                 <For each={presets}>
                   {(minutes) => (
                     <button
                       type="button"
                       aria-pressed={Number(minutesDraft()) === minutes ? 'true' : 'false'}
-                      class={`${controlClass} aria-pressed:border-focus aria-pressed:bg-surface-subtle`}
+                      class={[
+                        'spring-press min-h-10 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-h-8',
+                        'hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                        'aria-pressed:bg-surface aria-pressed:font-semibold aria-pressed:text-text aria-pressed:shadow-xs',
+                      ]}
                       onClick={() => setMinutesDraft(String(minutes))}
                     >
                       {minutes}m
@@ -333,12 +349,12 @@ export default function CountdownTimer(props: {
                     required
                     value={minutesDraft()}
                     onInput={(event) => setMinutesDraft(event.currentTarget.value)}
-                    class="mt-1 min-h-11 w-full rounded-lg border border-border bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
+                    class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
                   />
                 </div>
                 <button
                   type="submit"
-                  class="min-h-11 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-contrast hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-9"
+                  class="spring-press min-h-11 cursor-pointer rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-contrast hover:opacity-92 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   disabled={pending() || !validMinutes()}
                 >
                   {hasTimeLeft() ? 'Restart' : 'Start'}
@@ -369,11 +385,22 @@ export default function CountdownTimer(props: {
             class={`${controlClass} mt-3 flex w-full items-center justify-between gap-2`}
             onClick={toggleMute}
           >
-            Mute timer chime
+            <span class="inline-flex items-center gap-1.5">
+              <Show
+                when={muted()}
+                fallback={<LucideIcon icon={Volume2} class="size-3.5 text-text-muted" strokeWidth={1.9} />}
+              >
+                <LucideIcon icon={VolumeX} class="size-3.5 text-text-muted" strokeWidth={1.9} />
+              </Show>
+              <span>Mute timer chime</span>
+            </span>
             <span aria-hidden="true" class="text-text-muted">{muted() ? 'On' : 'Off'}</span>
           </button>
-        </div>
-      </Show>
+        </PopoverContent>
+      </Popover>
+      <span aria-live="polite" aria-atomic="true" class="sr-only">
+        {expiryAnnounced() ? 'Time is up.' : timerAnnouncement()}
+      </span>
     </div>
   );
 }

@@ -4445,4 +4445,255 @@ describe('<BoardWorkspace />', () => {
       vi.useRealTimers();
     }
   });
+
+  it('renders a Home-style floating Dynamic Island header with synced theme toggle and supports double-click / double-tap Board title rename for Facilitators', async () => {
+    const board = makeBoardView({
+      title: 'Sprint 42 Retro',
+      isFacilitator: true,
+      isLocked: false,
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace
+            board={board}
+            boardId={board.id}
+            homeHref="/"
+            actions={actions}
+          />
+        ));
+        try {
+          flush();
+
+          // Floating Dynamic Island header holds brand link, centered title, and island ThemeToggle
+          const banner = view.getByRole('banner');
+          const island = banner.querySelector('.board-island');
+          expect(island).not.toBeNull();
+          const withinIsland = within(island as HTMLElement);
+          expect(withinIsland.getByRole('link', { name: /Retrocks/i })).toHaveAttribute('href', '/');
+          const heading = withinIsland.getByRole('heading', { level: 1, name: 'Sprint 42 Retro' });
+          expect(heading).toBeVisible();
+          const islandThemeToggle = withinIsland.getByRole('button', { name: /Switch to (light|dark) theme/ });
+          expect(islandThemeToggle).toHaveAttribute('aria-pressed');
+
+          // Island ThemeToggle and More menu theme item stay synced and toggle cleanly once
+          fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
+          flush();
+          const moreMenu = view.getByRole('menu', { name: 'More board actions' });
+          expect(moreMenu).toHaveAttribute('data-slot', 'menu-content');
+          expect(moreMenu).toHaveAttribute('data-board-overlay', 'true');
+          expect(moreMenu).toHaveClass('board-popover');
+          const menuThemeItem = within(moreMenu).getByRole('menuitem', { name: /Switch to (light|dark) theme/ });
+          const initialTheme = document.documentElement.dataset.theme ?? 'light';
+          fireEvent.click(menuThemeItem);
+          flush();
+          const toggledTheme = initialTheme === 'dark' ? 'light' : 'dark';
+          expect(document.documentElement.dataset.theme).toBe(toggledTheme);
+          expect(islandThemeToggle).toHaveAttribute('aria-pressed', toggledTheme === 'dark' ? 'true' : 'false');
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+
+          // Double-clicking the Board title enters inline rename, focuses input, and saves on Enter
+          fireEvent.dblClick(heading);
+          flush();
+          const titleInput = withinIsland.getByRole('textbox', { name: 'Board title' });
+          expect(titleInput).toHaveFocus();
+          expect(titleInput).toHaveValue('Sprint 42 Retro');
+          fireEvent.input(titleInput, { target: { value: 'Q4 Platform Retro' } });
+          flush();
+          fireEvent.keyDown(titleInput, { key: 'Enter' });
+          await flushPromises();
+
+          expect(spies.renameBoard).toHaveBeenCalledWith({
+            boardId: board.id,
+            title: 'Q4 Platform Retro',
+          });
+          expect(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' })).toBeVisible();
+
+          // Escape cancels rename and keeps the current title
+          fireEvent.dblClick(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' }));
+          flush();
+          const cancelInput = withinIsland.getByRole('textbox', { name: 'Board title' });
+          expect(cancelInput).toHaveFocus();
+          fireEvent.input(cancelInput, { target: { value: 'Unsaved Draft' } });
+          flush();
+          fireEvent.keyDown(cancelInput, { key: 'Escape' });
+          flush();
+          expect(withinIsland.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+          expect(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' })).toBeVisible();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'board-island-header-and-title-rename' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('guards Board title double-tap/double-click against slow taps, drags, Participants, and Locked Boards', () => {
+    vi.useFakeTimers();
+    try {
+      // 1. Participant cannot double-click or double-tap to rename
+      const participantBoard = makeBoardView({
+        title: 'Participant View',
+        isFacilitator: false,
+      });
+      const participantView = render(() => (
+        <BoardWorkspace
+          board={participantBoard}
+          boardId={participantBoard.id}
+          homeHref="/"
+          actions={createFakeActions(participantBoard).actions}
+        />
+      ));
+      flush();
+      fireEvent.dblClick(participantView.getByRole('heading', { level: 1, name: 'Participant View' }));
+      flush();
+      expect(participantView.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+      participantView.unmount();
+
+      // 2. Facilitator on a Locked Board cannot double-click to rename
+      const lockedBoard = makeBoardView({
+        title: 'Locked Retro',
+        isFacilitator: true,
+        isLocked: true,
+      });
+      const lockedView = render(() => (
+        <BoardWorkspace
+          board={lockedBoard}
+          boardId={lockedBoard.id}
+          homeHref="/"
+          actions={createFakeActions(lockedBoard).actions}
+        />
+      ));
+      flush();
+      fireEvent.dblClick(lockedView.getByRole('heading', { level: 1, name: 'Locked Retro' }));
+      flush();
+      expect(lockedView.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+      lockedView.unmount();
+
+      // 3. Facilitator on unlocked Board: touch double-tap gesture guards
+      const facilitatorBoard = makeBoardView({
+        title: 'Touch Rename Retro',
+        isFacilitator: true,
+        isLocked: false,
+      });
+      const view = render(() => (
+        <BoardWorkspace
+          board={facilitatorBoard}
+          boardId={facilitatorBoard.id}
+          homeHref="/"
+          actions={createFakeActions(facilitatorBoard).actions}
+        />
+      ));
+      try {
+        flush();
+        const heading = view.getByRole('heading', { level: 1, name: 'Touch Rename Retro' });
+        const tapAt = (target: Element, x: number, y: number, pointerId: number) => {
+          fireEvent.pointerDown(target, { pointerType: 'touch', isPrimary: true, pointerId, clientX: x, clientY: y });
+          vi.advanceTimersByTime(40);
+          fireEvent.pointerUp(target, { pointerType: 'touch', isPrimary: true, pointerId, clientX: x, clientY: y });
+          flush();
+        };
+
+        // Slow taps (500ms apart) do not open rename
+        tapAt(heading, 120, 30, 1);
+        vi.advanceTimersByTime(500);
+        tapAt(heading, 120, 30, 2);
+        expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+
+        // Touch drag (> 16px) does not count as a tap
+        vi.advanceTimersByTime(100);
+        fireEvent.pointerDown(heading, { pointerType: 'touch', isPrimary: true, pointerId: 3, clientX: 120, clientY: 30 });
+        vi.advanceTimersByTime(40);
+        fireEvent.pointerUp(heading, { pointerType: 'touch', isPrimary: true, pointerId: 3, clientX: 120, clientY: 70 });
+        flush();
+        expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+
+        // Two quick taps within threshold enter inline rename
+        tapAt(heading, 120, 30, 4);
+        vi.advanceTimersByTime(120);
+        tapAt(heading, 124, 32, 5);
+        const titleInput = view.getByRole('textbox', { name: 'Board title' });
+        expect(titleInput).toHaveFocus();
+        expect(titleInput).toHaveValue('Touch Rename Retro');
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rations primary accent between Share and Reveal All and keeps Private Mode inline without bloating the header bar', async () => {
+    const board = makeBoardView({
+      isFacilitator: true,
+      isBlurred: false,
+      isLocked: false,
+      cards: [makeCard({ isActionItem: true, actionDone: false })],
+    });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockImplementation(async (input) => ({
+      ok: true,
+      version: input.isBlurred ? 2 : 3,
+      events: [{
+        type: 'board:snapshot',
+        version: input.isBlurred ? 2 : 3,
+        serverNow: Date.now(),
+        board: { ...board, version: input.isBlurred ? 2 : 3, isBlurred: input.isBlurred },
+      }],
+    }));
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace
+            board={board}
+            boardId={board.id}
+            homeHref="/"
+            actions={actions}
+          />
+        ));
+        try {
+          flush();
+          const share = view.getByRole('button', { name: 'Share' });
+          const privateToggle = view.getByRole('button', { name: 'Private Mode' });
+          const actionItems = view.getByRole('button', { name: 'Action Items 1 open' });
+          const more = view.getByRole('button', { name: 'More board actions' });
+
+          // Unified pill geometry, tactile spring-press, and primary accent rationed strictly to Share
+          for (const control of [share, privateToggle, actionItems, more]) {
+            expect(control).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9');
+          }
+          expect(share).toHaveAttribute('data-cta-emphasis', 'primary');
+          expect(share).toHaveClass('bg-accent');
+          expect(privateToggle).not.toHaveClass('bg-accent');
+
+          // Toggling Private Mode ON shifts primary accent strictly to Reveal All and yields Share
+          fireEvent.click(privateToggle);
+          await flushPromises();
+
+          const revealAll = view.getByRole('button', { name: 'Reveal All' });
+          expect(revealAll).toHaveAttribute('data-cta-emphasis', 'primary');
+          expect(revealAll).toHaveClass('bg-accent');
+          expect(share).toHaveAttribute('data-cta-emphasis', 'secondary');
+          expect(share).not.toHaveClass('bg-accent');
+
+          // Private Mode status stays inline without appending a wrapping basis-full paragraph
+          const statusGroup = view.getByRole('group', { name: 'Board status' });
+          expect(within(statusGroup).getByText('Private Mode')).toBeVisible();
+          expect(statusGroup.querySelector('p.basis-full')).toBeNull();
+          expect(
+            within(statusGroup).getByText('Private Mode').closest('[title]'),
+          ).toHaveAttribute('title', 'Only you can read your Cards until they’re revealed.');
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'header-accent-rationing-and-zero-cls-private-mode' },
+    );
+    expectNoDiagnostics(artifact);
+  });
 });

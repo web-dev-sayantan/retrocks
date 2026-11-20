@@ -1,11 +1,15 @@
-import { Portal } from '@solidjs/web';
+import { Portal, type JSX } from '@solidjs/web';
 import { Moon, Sun } from 'lucide';
 import { Show, createSignal, onSettled } from 'solid-js';
 
 import { getSecretTheme, subscribeTheme, toggleTheme, type ActiveTheme } from '../lib/theme';
 import LucideIcon from './LucideIcon';
 
-export default function ThemeToggle(props: { menuItem?: boolean; variant?: 'default' | 'island' }) {
+export default function ThemeToggle(props: {
+  menuItem?: boolean;
+  variant?: 'default' | 'island';
+  menuItemProps?: JSX.ButtonHTMLAttributes<HTMLButtonElement>;
+}) {
   // Start with light to match SSR, then sync with the pre-painted document.
   const [theme, setTheme] = createSignal<ActiveTheme>('light');
   const [announcement, setAnnouncement] = createSignal<string | null>(null);
@@ -40,6 +44,15 @@ export default function ThemeToggle(props: { menuItem?: boolean; variant?: 'defa
     ];
   };
 
+  function handleClick(event: MouseEvent & { currentTarget: HTMLButtonElement; target: Element }) {
+    const menuClick = props.menuItemProps?.onClick;
+    if (typeof menuClick === 'function') {
+      menuClick(event);
+      return;
+    }
+    toggleTheme();
+  }
+
   return (
     <>
       <Show when={announcement() !== null}>
@@ -53,9 +66,10 @@ export default function ThemeToggle(props: { menuItem?: boolean; variant?: 'defa
       </Show>
       <button
         type="button"
-        onClick={toggleTheme}
-        role={props.menuItem ? 'menuitem' : undefined}
-        tabindex={props.menuItem ? -1 : undefined}
+        {...props.menuItemProps}
+        onClick={handleClick}
+        role={props.menuItemProps?.role ?? (props.menuItem ? 'menuitem' : undefined)}
+        tabindex={props.menuItemProps?.tabindex ?? (props.menuItem ? -1 : undefined)}
         aria-pressed={props.menuItem ? undefined : dark() ? 'true' : 'false'}
         aria-label={label()}
         title={label()}
