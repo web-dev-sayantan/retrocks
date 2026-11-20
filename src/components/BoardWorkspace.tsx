@@ -2354,10 +2354,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </Dialog>
 
           {/* Card Detail Drawer / Bottom Sheet */}
-          <Show when={openDetailCard() && openCardDetailId()} keyed>
-            {(_id) => (
+          <Show when={openDetailCard()} keyed>
+            {(card) => (
               <CardDetailDrawer
-                card={openDetailCard()!}
+                card={card}
                 column={openDetailColumn()}
                 isFacilitator={board().isFacilitator}
                 isLocked={board().isLocked}

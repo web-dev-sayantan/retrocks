@@ -5,6 +5,7 @@ import type {
   CardViewDTO,
   ColumnAccent,
   ColumnDTO,
+  ReactionEmoji,
 } from './board-types';
 
 export const EXPORT_FORMATS = ['md', 'csv', 'json'] as const;
@@ -65,7 +66,7 @@ export interface BoardExportJson {
     actionDone: boolean;
     actionOwner: string;
     votes: number | null;
-    reactions: Record<string, number>;
+    reactions: Partial<Record<ReactionEmoji, number>>;
     comments: Array<{
       id: string;
       content: string;
@@ -277,7 +278,7 @@ export function escapeCsvCell(value: string): string {
   return safe;
 }
 
-function formatReactionsSummary(reactions: Record<string, number>): string {
+function formatReactionsSummary(reactions: CardViewDTO['reactions']): string {
   return Object.entries(reactions)
     .filter(([, count]) => count > 0)
     .map(([emoji, count]) => `${emoji} ${count}`)
