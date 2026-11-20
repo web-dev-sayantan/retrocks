@@ -1,6 +1,7 @@
 import { For, Show, createMemo, onSettled } from 'solid-js';
 
-import type { PokerResult, PokerRoomView, PokerStoryCommand, PokerVotingCommand } from '../../lib/poker-types';
+import type { PokerResult, PokerRoomView, PokerRoomChange } from '../../lib/poker-types';
+import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerVotingRound from './PokerVotingRound';
 import PokerStoryQueue from './PokerStoryQueue';
@@ -12,7 +13,7 @@ export default function PokerWorkspace(props: {
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
   claimError?: string;
-  onChange: (command: PokerStoryCommand | PokerVotingCommand) => Promise<PokerResult>;
+  onChange: (command: PokerRoomChange) => Promise<PokerResult>;
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
   const submitted = createMemo(() => {
@@ -55,7 +56,15 @@ export default function PokerWorkspace(props: {
               </>
             )}
           </Show>
-          <Show when={props.room.round}>
+          <Show when={props.room.round} fallback={
+            <PokerDeckSettings
+              deck={props.room.deck}
+              deckType={props.room.deckType}
+              locked={props.room.deckLocked}
+              canManage={props.room.viewer?.isFacilitator === true}
+              onChange={props.onChange}
+            />
+          }>
             {(round) => (
               <PokerVotingRound
                 round={round()}

@@ -8,14 +8,26 @@ export const PokerDisplayName = v.pipe(v.string(), v.trim(), v.minLength(1), v.m
 
 const PokerStoryTitle = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(POKER_STORY_TITLE_LIMIT));
 
+export const PokerDeckChoice = v.pipe(
+  v.union([v.string(), v.pipe(v.number(), v.finite())]),
+  v.transform((choice) => String(choice).trim()),
+  v.nonEmpty('Enter a value for each Deck choice.'),
+);
+
+const CustomDeckChoices = v.pipe(
+  v.array(PokerDeckChoice),
+  v.minLength(2, 'Enter at least two Deck choices.'),
+  v.check((choices) => new Set(choices).size === choices.length, 'Give each Deck choice a different value.'),
+);
+
 export const PokerCommand = v.variant('type', [
   v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
   v.object({ type: v.literal('add-story'), title: PokerStoryTitle }),
   v.object({
     type: v.literal('correct-estimate'),
     storyId: PokerEntityId,
-    expectedEstimate: v.string(),
-    choice: v.string(),
+    expectedEstimate: PokerDeckChoice,
+    choice: PokerDeckChoice,
   }),
   v.object({ type: v.literal('return-story'), storyId: PokerEntityId }),
   v.object({ type: v.literal('edit-story'), storyId: PokerEntityId, title: PokerStoryTitle }),
@@ -30,11 +42,19 @@ export const PokerCommand = v.variant('type', [
     storyId: PokerEntityId,
     discardRoundId: v.optional(PokerEntityId),
   }),
-  v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(v.string()) }),
+  v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(PokerDeckChoice) }),
   v.object({ type: v.literal('reveal'), roundId: PokerEntityId }),
   v.object({ type: v.literal('restart-round'), roundId: PokerEntityId }),
   v.object({ type: v.literal('skip-story'), roundId: PokerEntityId }),
-  v.object({ type: v.literal('confirm-estimate'), roundId: PokerEntityId, choice: v.string() }),
+  v.object({ type: v.literal('confirm-estimate'), roundId: PokerEntityId, choice: PokerDeckChoice }),
+  v.object({
+    type: v.literal('set-deck'),
+    deck: v.variant('type', [
+      v.object({ type: v.literal('fibonacci') }),
+      v.object({ type: v.literal('t-shirt') }),
+      v.object({ type: v.literal('custom'), choices: CustomDeckChoices }),
+    ]),
+  }),
 ]);
 
 const Participant = v.object({
@@ -77,6 +97,8 @@ const Room = v.object({
   stories: v.array(Story),
   activeStoryId: v.nullable(PokerEntityId),
   deck: v.array(v.string()),
+  deckType: v.picklist(['fibonacci', 't-shirt', 'custom']),
+  deckLocked: v.boolean(),
   round: v.nullable(Round),
 });
 

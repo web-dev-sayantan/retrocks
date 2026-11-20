@@ -3,7 +3,7 @@ import { createAgent } from '@ui-sdk/solid/agent';
 import { createSignal, untrack } from 'solid-js';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { FIBONACCI_DECK, type PokerResult, type PokerRoomView, type PokerStory, type PokerStoryCommand, type PokerVotingCommand } from '../../lib/poker-types';
+import { FIBONACCI_DECK, type PokerResult, type PokerRoomChange, type PokerRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
 import BoardConfirmDialog from '../BoardConfirmDialog';
 import PokerStoryQueue from './PokerStoryQueue';
 import PokerWorkspace from './PokerWorkspace';
@@ -17,7 +17,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
   const [stories, setStories] = createSignal([first]);
   const room: PokerRoomView = {
     id: 'room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
-    deck: FIBONACCI_DECK, round: null,
+    deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   };
 
   async function change(command: PokerStoryCommand): Promise<PokerResult> {
@@ -61,6 +61,8 @@ test('a Participant can read Story statuses and the active Story without queue c
     participants: [],
     activeStoryId: pending.id,
     deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: false,
     round: null,
     stories: [
       pending,
@@ -99,6 +101,8 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
     stories: [current, target],
     activeStoryId: current.id,
     deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
     round: { id: 'checkout-round', phase: 'open', submittedParticipantIds: [], ownChoice: null },
   };
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
@@ -130,9 +134,11 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
   const [room, setRoom] = createSignal<PokerRoomView>({
     id: 'room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
     activeStoryId: current.id, deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
     round: { id: 'round', phase: 'revealed', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
   });
-  const change = vi.fn(async (command: PokerStoryCommand | PokerVotingCommand): Promise<PokerResult> => {
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
     const r = untrack(room);
     if (command.type === 'confirm-estimate' && r.round?.phase === 'revealed') {
       const next: PokerRoomView = {
@@ -183,4 +189,35 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
   }));
   expect(await screen.findByText('Estimated · 0')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Edit estimate for Save checkout' })).toHaveFocus();
+});
+
+test('a Facilitator can save an ordered custom Deck through the labeled settings', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerRoomView>({
+    id: 'room', version: 1, viewer: facilitator, participants: [], stories: [], activeStoryId: null,
+    deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
+  });
+  const change = vi.fn(async (): Promise<PokerResult> => {
+    const next = { ...untrack(room), deck: ['Under an hour', '0'], deckType: 'custom' as const };
+    setRoom(next);
+    return { ok: true, room: next };
+  });
+  render(() => <PokerWorkspace room={room()} online={[]} status="live" onChange={change} />);
+
+  const settings = screen.getByRole('form', { name: 'Deck settings' });
+  fireEvent.click(within(settings).getByRole('radio', { name: 'Custom' }));
+  const choices = await within(settings).findByRole('textbox', { name: 'Custom choices' });
+  expect(choices).toHaveAccessibleDescription('Enter one choice per line, in the order they should appear.');
+  expect(within(settings).getByRole('button', { name: 'Save Deck' })).toBeEnabled();
+  const entered = await agent.act({ steps: [
+    { ref: 'Custom choices', action: 'setValue', args: ['Under an hour\n0'] },
+    { ref: 'Save Deck', action: 'press' },
+  ] });
+  expect(entered.ok, entered.error?.message).toBe(true);
+  expect(change).toHaveBeenCalledWith({ type: 'set-deck', deck: { type: 'custom', choices: ['Under an hour', '0'] } });
+  expect(await screen.findByText('Under an hour, 0')).toBeVisible();
+
+  setRoom((current) => ({ ...current, deckLocked: true }));
+  await waitFor(() => expect(settings).not.toBeInTheDocument());
+  expect(screen.getByText('The Deck is locked.')).toBeVisible();
 });

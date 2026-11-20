@@ -2,7 +2,7 @@ import { formAction, query } from '@solidjs/router';
 import { httpStatus, redirect, respond } from '@solidjs/web';
 
 import { pokerRoomPath } from './poker-routes';
-import type { PokerResult, PokerRoomView, PokerStoryCommand, PokerVotingCommand } from './poker-types';
+import type { PokerResult, PokerRoomView, PokerRoomChange } from './poker-types';
 
 export const getPokerRoom = query(async (id: string): Promise<PokerRoomView | null> => {
   'use server';
@@ -30,7 +30,7 @@ export const joinPokerRoom = formAction(async (id: string, form: FormData) => {
   return pokerResponse(result);
 });
 
-export async function changePokerRoom(id: string, command: PokerStoryCommand | PokerVotingCommand): Promise<PokerResult> {
+export async function changePokerRoom(id: string, command: PokerRoomChange): Promise<PokerResult> {
   'use server';
   const { mutatePokerRoomForRequest } = await import('../server/poker/service');
   return pokerResponse(await mutatePokerRoomForRequest(id, command));
@@ -43,6 +43,7 @@ function pokerResponse<T extends PokerResult>(result: T) {
     FORBIDDEN: 403,
     RATE_LIMITED: 429,
     ROUND_CHANGED: 409,
+    DECK_LOCKED: 409,
   }[result.code];
   return respond(result, { status, revalidate: [] });
 }
