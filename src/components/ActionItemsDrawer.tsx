@@ -1,4 +1,5 @@
 import { Toggle, ToggleGroup } from '@ui-sdk/solid/toggle';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Flag } from 'lucide';
 import {
   For,
@@ -6,7 +7,6 @@ import {
   createEffect,
   createMemo,
   createSignal,
-  untrack,
 } from 'solid-js';
 
 import { useShortcut } from '@ui-sdk/solid/shortcuts';
@@ -28,6 +28,7 @@ import {
   DrawerTitle,
 } from '@ui-sdk/solid/drawer';
 import { canEditActionItems } from '../lib/board-permissions';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
@@ -57,23 +58,27 @@ function ActionItemRow(props: {
   canEdit: boolean;
   onUpdate: ActionItemsDrawerProps['onUpdateActionItem'];
 }) {
-  const [ownerDraft, setOwnerDraft] = createSignal(
-    untrack(() => props.card.actionOwner),
-  );
-  const [isSavingOwner, setIsSavingOwner] = createSignal(false);
   const [pendingDone, setPendingDone] = createSignal<boolean | null>(null);
-  const [ownerFailed, setOwnerFailed] = createSignal(false);
   const [doneFailed, setDoneFailed] = createSignal(false);
-  const isSaving = () => isSavingOwner() || pendingDone() !== null;
-  let ownerSave: Promise<boolean> | undefined;
   let savingDone = false;
+  let ownerInputEl: HTMLInputElement | undefined;
 
-  createEffect(
-    () => props.card.actionOwner,
-    (owner) => {
-      setOwnerDraft(owner);
-    },
-  );
+  // The owner input edits in place: createInlineEdit owns the draft-and-save
+  // contract, with the session starting on the first change so an untouched
+  // Escape still reaches the drawer.
+  const ownerField = usePrimitive(inlineEdit, () => ({
+    value: () => props.card.actionOwner,
+    commit: (text) => ownerSave.commit(text),
+    disabled: () => !props.canEdit,
+  }));
+  const ownerEdit = ownerField.api.edit;
+  const ownerSave = createInlineEditSave(saveOwnerText, () => ownerEdit.cancel());
+  const ownerEditing = () => ownerField.present('input');
+  const isSaving = () => ownerSave.isSaving() || pendingDone() !== null;
+
+  function bindOwnerInput(el: HTMLInputElement): void {
+    ownerInputEl = el;
+  }
 
   async function update(patch: ActionItemPatch): Promise<boolean> {
     if (!props.canEdit) return false;
@@ -84,23 +89,12 @@ function ActionItemRow(props: {
     }
   }
 
-  async function saveOwner(value: string): Promise<void> {
-    if (!props.canEdit || ownerSave || savingDone) return;
-    const trimmed = value.trim();
-    if (trimmed === props.card.actionOwner) {
-      setOwnerDraft(trimmed);
-      return;
-    }
-    setIsSavingOwner(true);
-    setOwnerFailed(false);
-    ownerSave = update({ actionOwner: trimmed });
-    if (await ownerSave) {
-      setOwnerDraft(trimmed);
-    } else {
-      setOwnerFailed(true);
-    }
-    ownerSave = undefined;
-    setIsSavingOwner(false);
+  async function saveOwnerText(text: string): Promise<InlineEditOutcome> {
+    if (!props.canEdit || savingDone) return false;
+    const trimmed = text.trim();
+    const ok = await update({ actionOwner: trimmed });
+    if (ok && ownerInputEl) ownerInputEl.value = trimmed;
+    return ok ? true : 'Could not save the owner. Try again.';
   }
 
   async function changeDone(checked: boolean): Promise<void> {
@@ -108,8 +102,9 @@ function ActionItemRow(props: {
     savingDone = true;
     setPendingDone(checked);
     setDoneFailed(false);
-    // A click on Done can start the Owner save as the input loses focus.
-    if (ownerSave) await ownerSave;
+    // A click on Done can start the owner save as the input loses focus.
+    const ownerInFlight = ownerSave.saving();
+    if (ownerInFlight) await ownerInFlight;
     if (!await update({ actionDone: checked })) setDoneFailed(true);
     savingDone = false;
     setPendingDone(null);
@@ -142,29 +137,38 @@ function ActionItemRow(props: {
               {props.columnTitle}
             </span>
             <input
+              ref={bindOwnerInput}
               type="text"
               aria-label={`Owner for ${props.card.content}`}
               placeholder="Owner (optional)"
-              value={ownerDraft()}
+              // Uncontrolled: seeded once per mounted row; typing and saves live in the DOM.
+              defaultValue={props.card.actionOwner}
               maxlength={MAX_ACTION_OWNER_LENGTH}
               disabled={!props.canEdit}
               readonly={isSaving()}
-              onInput={(event) => setOwnerDraft(event.currentTarget.value)}
-              onBlur={(event) => void saveOwner(event.currentTarget.value)}
+              onInput={(event) => {
+                if (!ownerEditing() && event.currentTarget.value !== props.card.actionOwner) {
+                  ownerEdit.start(props.card.id, { reason: 'type', text: event.currentTarget.value });
+                  ownerEdit.bindInput(event.currentTarget);
+                }
+              }}
               onKeyDown={(event) => {
-                if (event.isComposing || ownerSave || savingDone) return;
+                if (event.isComposing || isSaving()) return;
                 const input = event.currentTarget;
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  void saveOwner(input.value);
-                } else if (event.key === 'Escape' && input.value !== props.card.actionOwner) {
+                  ownerEdit.end('enter-key', event);
+                } else if (event.key === 'Escape') {
+                  // Unchanged text lets the drawer's Escape close it.
+                  if (input.value === props.card.actionOwner) return;
                   event.preventDefault();
                   event.stopPropagation();
+                  ownerSave.resetError();
+                  ownerEdit.cancel();
                   input.value = props.card.actionOwner;
-                  setOwnerDraft(input.value);
-                  setOwnerFailed(false);
                 }
               }}
+              onFocusOut={(event) => ownerEdit.end('focus-out', event)}
               class={[
                 'min-h-11 w-40 max-w-full rounded-md border border-control bg-surface px-2 py-1 text-base text-text sm:min-h-9 sm:text-sm',
                 'placeholder:text-text-muted focus:border-focus focus:outline-none read-only:opacity-50 disabled:opacity-50',
@@ -174,8 +178,10 @@ function ActionItemRow(props: {
           <Show when={isSaving()}>
             <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
           </Show>
-          <Show when={ownerFailed()}>
-            <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">Could not save the owner. Try again.</p>
+          <Show when={ownerSave.error()}>
+            {(error) => (
+              <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">{error()}</p>
+            )}
           </Show>
           <Show when={doneFailed()}>
             <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">Could not update Done. Try again.</p>

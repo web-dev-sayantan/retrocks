@@ -13,6 +13,7 @@ import {
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
   Check,
@@ -43,6 +44,7 @@ import {
   defaultBoardWorkspaceActions,
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
   canControlFacilitation,
@@ -225,17 +227,31 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  // Board inline rename state
-  const [isRenamingBoard, setIsRenamingBoard] = createSignal(false);
-  const [boardTitleDraft, setBoardTitleDraft] = createSignal('');
-  let boardTitleInputEl: HTMLInputElement | undefined;
+  // Board title inline editing: createInlineEdit owns the session, input, and keyboard contract.
+  const boardTitleField = usePrimitive(inlineEdit, () => ({
+    value: () => session.board()?.title ?? '',
+    commit: (text: string) => boardTitleSave.commit(text),
+    disabled: () => {
+      const board = session.board();
+      return !board || !canControlFacilitation(board);
+    },
+  }));
+  const boardTitleEdit = boardTitleField.api.edit;
+  const boardTitleSave = createInlineEditSave(saveBoardTitleText, () => boardTitleEdit.cancel());
+  const isRenamingBoard = () => boardTitleField.present('input');
+  const [hasBoardTitleText, setHasBoardTitleText] = createSignal(true);
   let renameBoardButtonEl: HTMLButtonElement | undefined;
+  let boardTitleInputEl: HTMLInputElement | undefined;
   const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
 
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isRenamingBoard, (renaming) => {
+    if (renaming && boardTitleInputEl) boardTitleEdit.bindInput(boardTitleInputEl);
+  });
+
+  // The mobile menu that starts a rename unmounts, so restore the header's fallback focus chain.
   createEffect(isRenamingBoard, (renaming, wasRenaming) => {
-    if (renaming) {
-      boardTitleInputEl?.focus();
-    } else if (wasRenaming && document.activeElement === document.body) {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
       renameBoardButtonEl?.focus();
       if (document.activeElement === document.body) boardMenuTriggerEl?.focus();
     }
@@ -347,7 +363,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     (boardId, previousBoardId) => {
       if (boardId) return;
       if (previousBoardId) unavailableHeading?.focus();
-      setIsRenamingBoard(false);
+      boardTitleSave.resetError();
+      boardTitleEdit.cancel();
       setIsAddingColumn(false);
       setOpenCardDetailId(null);
       setIsCardDetailOpen(false);
@@ -361,7 +378,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     () => session.board()?.isLocked ?? false,
     (locked) => {
       if (locked) {
-        setIsRenamingBoard(false);
+        boardTitleEdit.cancel();
         setIsAddingColumn(false);
       }
     },
@@ -639,40 +656,22 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function startBoardRename(): void {
     boardTitleTap.reset();
     const board = session.board();
-    if (!board || !canControlFacilitation(board)) return;
-    setBoardTitleDraft(board.title);
-    setIsRenamingBoard(true);
+    if (!board) return;
+    setHasBoardTitleText(board.title.trim().length > 0);
+    boardTitleEdit.start(board.id);
   }
 
   function cancelBoardRename(): void {
     boardTitleTap.reset();
-    setIsRenamingBoard(false);
-    setBoardTitleDraft('');
+    boardTitleSave.resetError();
+    boardTitleEdit.cancel();
   }
 
-  async function saveBoardRename(): Promise<void> {
+  async function saveBoardTitleText(text: string): Promise<InlineEditOutcome> {
     const board = session.board();
-    const trimmed = boardTitleDraft().trim();
-    if (!board || trimmed.length === 0 || session.isSavingBoardTitle()) return;
-    if (trimmed === board.title) {
-      setIsRenamingBoard(false);
-      return;
-    }
-    if (await session.renameBoard(trimmed)) {
-      setIsRenamingBoard(false);
-    }
-  }
-
-  function handleBoardTitleKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelBoardRename();
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void saveBoardRename();
-    }
+    const trimmed = text.trim();
+    if (!board || trimmed.length === 0) return false;
+    return (await session.renameBoard(trimmed)) ? true : false;
   }
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
@@ -891,12 +890,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         ref={boardTitleInputEl}
                         type="text"
                         aria-label="Board title"
-                        value={boardTitleDraft()}
                         maxlength={MAX_BOARD_TITLE_LENGTH}
+                        onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
+                        onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
                         onInput={(e) =>
-                          setBoardTitleDraft(e.currentTarget.value)
+                          setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
                         }
-                        onKeyDown={handleBoardTitleKeyDown}
                         class={[
                           'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
                           'focus:border-focus focus:outline-none',
@@ -905,11 +904,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <button
                         type="button"
                         aria-label="Save Board title"
-                        disabled={
-                          session.isSavingBoardTitle() ||
-                          boardTitleDraft().trim().length === 0
-                        }
-                        onClick={() => void saveBoardRename()}
+                        disabled={boardTitleSave.isSaving() || !hasBoardTitleText()}
+                        onClick={() => boardTitleEdit.end()}
                         class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
                       >
                         <LucideIcon icon={Check} class="size-4" strokeWidth={2} />

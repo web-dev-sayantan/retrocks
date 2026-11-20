@@ -15,6 +15,8 @@ import BoardWorkspace from './BoardWorkspace';
 
 
 async function flushPromises(): Promise<void> {
+  // Inline-edit saves settle through a shared commit wrapper, adding one microtask hop.
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
   flush();
@@ -1341,7 +1343,7 @@ describe('<BoardWorkspace />', () => {
         }],
       };
     });
-    const { getByRole, getByText, queryByText, getAllByLabelText } = render(() => (
+    const { getByRole, getByText, queryByText, queryByRole, getAllByLabelText } = render(() => (
       <BoardWorkspace board={board} boardId={board.id} actions={actions} />
     ));
     flush();
@@ -1372,7 +1374,15 @@ describe('<BoardWorkspace />', () => {
     await flushPromises();
     expect(spies.setPrivateMode).toHaveBeenCalledTimes(1);
 
+    // Moving focus to Reveal All blurs the card editor, which now commits the edit inline.
     getByRole('button', { name: 'Reveal All' }).focus();
+    await flushPromises();
+    expect(spies.updateCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'own',
+      content: 'Editing my Card',
+    });
+    expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
     fireEvent.keyDown(document, { key: 'b' });
     await flushPromises();
     expect(spies.setPrivateMode).toHaveBeenLastCalledWith({ boardId: board.id, isBlurred: false });
@@ -1380,7 +1390,6 @@ describe('<BoardWorkspace />', () => {
       expect(getByText(card.content)).toBeInTheDocument();
     }
     expect(getByText('All Cards revealed.')).toHaveAttribute('aria-live', 'polite');
-    expect(getByRole('textbox', { name: 'Edit card text' })).toBe(editor);
     expect(getByRole('textbox', { name: 'Add card to Went Well' })).toBe(composer);
   });
 
@@ -4664,5 +4673,118 @@ describe('<BoardWorkspace />', () => {
       { scenario: 'header-accent-rationing-and-zero-cls-private-mode' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('saves the Board title on blur, restores focus, and skips the network for unchanged text', async () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+    const { getByRole, queryByRole } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+    ));
+    flush();
+
+    fireEvent.dblClick(getByRole('heading', { level: 1, name: 'Sprint 42 Retro' }));
+    flush();
+    const titleInput = getByRole('textbox', { name: 'Board title' });
+    fireEvent.input(titleInput, { target: { value: 'Sprint 43 Retro' } });
+    flush();
+    fireEvent.focusOut(titleInput);
+    await flushPromises();
+
+    expect(spies.renameBoard).toHaveBeenCalledWith({ boardId: board.id, title: 'Sprint 43 Retro' });
+    expect(queryByRole('textbox', { name: 'Board title' })).toBeNull();
+    expect(getByRole('button', { name: 'Rename Board' })).toHaveFocus();
+
+    // Blurring an untouched editor finishes the session without a save.
+    fireEvent.dblClick(getByRole('heading', { level: 1, name: 'Sprint 43 Retro' }));
+    flush();
+    fireEvent.focusOut(getByRole('textbox', { name: 'Board title' }));
+    await flushPromises();
+    expect(spies.renameBoard).toHaveBeenCalledTimes(1);
+    expect(queryByRole('textbox', { name: 'Board title' })).toBeNull();
+  });
+
+  it('saves the Column title on blur and returns focus to the column title button', async () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+    ));
+    flush();
+
+    const wentWell = view.getByRole('region', { name: 'Went Well' });
+    fireEvent.click(within(wentWell).getByRole('button', { name: 'Column options for Went Well' }));
+    flush();
+    fireEvent.click(within(wentWell).getByRole('menuitem', { name: 'Rename column' }));
+    flush();
+    const columnInput = view.getByRole('textbox', { name: 'Column title' });
+    expect(columnInput).toHaveFocus();
+    fireEvent.input(columnInput, { target: { value: 'Wins' } });
+    flush();
+    fireEvent.focusOut(columnInput);
+    await flushPromises();
+
+    expect(spies.updateColumn).toHaveBeenCalledWith({ boardId: board.id, columnId: 'col_1', title: 'Wins' });
+    expect(view.queryByRole('textbox', { name: 'Column title' })).toBeNull();
+    expect(within(wentWell).getByRole('button', { name: 'Wins' })).toHaveFocus();
+  });
+
+  it('saves the Card Group title on blur and returns focus to the group title button', async () => {
+    const group: CardGroupDTO = {
+      id: 'group_1',
+      columnId: 'col_1',
+      title: 'CI stability',
+      cardIds: ['card_1', 'card_2'],
+      votes: 3,
+      myVotes: 1,
+      createdAt: 1_760_000_002_000,
+    };
+    const cards = [
+      makeCard({ id: 'card_1', columnId: 'col_1', content: 'CI flakiness', groupId: 'group_1', votes: 1 }),
+      makeCard({ id: 'card_2', columnId: 'col_1', content: 'Flaky CI checks', groupId: 'group_1', isMine: true }),
+    ];
+    const board = makeBoardView({ cards, groups: [group], isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+    ));
+    flush();
+
+    const wentWell = view.getByRole('region', { name: 'Went Well' });
+    fireEvent.click(within(wentWell).getByRole('button', { name: 'CI stability — Edit Card Group title' }));
+    flush();
+    const groupInput = view.getByRole('textbox', { name: 'Card Group title' });
+    expect(groupInput).toHaveFocus();
+    fireEvent.input(groupInput, { target: { value: 'CI wins' } });
+    flush();
+    fireEvent.focusOut(groupInput);
+    await flushPromises();
+
+    expect(spies.renameCardGroup).toHaveBeenCalledWith({ boardId: board.id, groupId: 'group_1', title: 'CI wins' });
+    expect(view.queryByRole('textbox', { name: 'Card Group title' })).toBeNull();
+    expect(within(wentWell).getByRole('button', { name: 'CI wins — Edit Card Group title' })).toHaveFocus();
+  });
+
+  it('saves the Card text on blur and returns focus to the Card actions trigger', async () => {
+    const board = makeBoardView({ cards: [makeCard({ id: 'blur_card', content: 'Old note' })], isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+    ));
+    flush();
+
+    const article = view.getByText('Old note').closest('article')!;
+    fireEvent.dblClick(within(article).getByText('Old note'));
+    flush();
+    const editBox = view.getByRole('textbox', { name: 'Edit card text' });
+    expect(editBox).toHaveFocus();
+    fireEvent.input(editBox, { target: { value: 'New note' } });
+    flush();
+    fireEvent.focusOut(editBox);
+    await flushPromises();
+
+    expect(spies.updateCard).toHaveBeenCalledWith({ boardId: board.id, cardId: 'blur_card', content: 'New note' });
+    expect(view.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+    expect(within(article).getByRole('button', { name: 'Card actions' })).toHaveFocus();
   });
 });

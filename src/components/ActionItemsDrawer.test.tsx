@@ -90,6 +90,8 @@ const regularCard = makeCard({
 });
 
 async function flushPromises(): Promise<void> {
+  // Inline-edit saves settle through a shared commit wrapper, adding one microtask hop.
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
   flush();
@@ -428,6 +430,40 @@ describe('<ActionItemsDrawer />', () => {
     fireEvent.keyDown(copy, { key: 'Tab' });
     await flushPromises();
     expect(close).toHaveFocus();
+  });
+
+  it('lets Escape close the drawer while the owner text is unchanged, and cancels only the edit once it changed', async () => {
+    const onClose = vi.fn();
+    const onUpdateActionItem = vi.fn(async () => true);
+    const view = render(() => (
+      <ActionItemsDrawer
+        side="right"
+        open={true}
+        board={makeBoard([openItem, doneItem])}
+        isLocked={false}
+        onClose={onClose}
+        onUpdateActionItem={onUpdateActionItem}
+      />
+    ));
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Action Items' }));
+
+    // Unchanged: Escape belongs to the drawer and closes it.
+    const owner = drawer.getByLabelText('Owner for Ship the API');
+    owner.focus();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onUpdateActionItem).not.toHaveBeenCalled();
+
+    // Changed: Escape cancels the edit only, restoring the committed owner.
+    fireEvent.input(owner, { target: { value: 'Platform' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(owner).toHaveValue('');
+    expect(onUpdateActionItem).not.toHaveBeenCalled();
   });
 
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {

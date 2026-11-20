@@ -1,4 +1,5 @@
 import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
@@ -10,6 +11,7 @@ import type {
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
 import { canContribute, isGroupRedacted } from '../lib/board-permissions';
 import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import type { BoardMutations } from '../lib/board-session';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
@@ -58,15 +60,13 @@ const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibo
 
 export default function CardGroupItem(props: CardGroupItemProps) {
   const [expanded, setExpanded] = createSignal(true);
-  const [isRenaming, setIsRenaming] = createSignal(false);
-  const [renameDraft, setRenameDraft] = createSignal('');
-  const [isSaving, setIsSaving] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
   const [moveFailed, setMoveFailed] = createSignal(false);
   const [isDissolving, setIsDissolving] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
   let moveTrigger: HTMLButtonElement | undefined;
+  let titleButtonEl: HTMLButtonElement | undefined;
 
   createEffect(isMoving, (moving, wasMoving) => {
     if (!moving && wasMoving && moveFailed()) moveTrigger?.focus({ preventScroll: true });
@@ -99,6 +99,30 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     () => props.canManage && !isGroupRedacted(props.group),
   );
 
+  // Inline title editing: createInlineEdit owns the session, input, and keyboard contract.
+  const titleField = usePrimitive(inlineEdit, () => ({
+    value: () => props.group.title,
+    commit: (text) => titleSave.commit(text),
+    disabled: () => !canManageGroup(),
+  }));
+  const groupEdit = titleField.api.edit;
+  const titleSave = createInlineEditSave(saveGroupTitle, () => groupEdit.cancel());
+  const isRenaming = () => titleField.present('input');
+  const [hasTitleText, setHasTitleText] = createSignal(true);
+  let renameInputEl: HTMLInputElement | undefined;
+
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isRenaming, (renaming) => {
+    if (renaming && renameInputEl) groupEdit.bindInput(renameInputEl);
+  });
+
+  // The title button re-mounts while editing ends, so guide focus back when nothing took it.
+  createEffect(isRenaming, (renaming, wasRenaming) => {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
+      titleButtonEl?.focus();
+    }
+  });
+
   const canAcceptDrop = createMemo(() => {
     const card = draggingCard();
     return (
@@ -111,42 +135,22 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   });
 
   function startRename(): void {
-    setRenameDraft(props.group.title);
+    setHasTitleText(props.group.title.trim().length > 0);
     setMoveMenuOpen(false);
-    setIsRenaming(true);
+    groupEdit.start(props.group.id);
   }
 
   function cancelRename(): void {
-    setIsRenaming(false);
-    setRenameDraft('');
+    titleSave.resetError();
+    groupEdit.cancel();
   }
 
-  async function saveRename(): Promise<void> {
-    const title = renameDraft().trim();
-    if (title.length === 0 || isSaving()) return;
-    if (title === props.group.title) {
-      setIsRenaming(false);
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const ok = await props.actions.renameCardGroup(props.group.id, title);
-      if (ok) setIsRenaming(false);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function handleRenameKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelRename();
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void saveRename();
-    }
+  async function saveGroupTitle(text: string): Promise<InlineEditOutcome> {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+    return (await props.actions.renameCardGroup(props.group.id, trimmed))
+      ? true
+      : false;
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
@@ -261,20 +265,23 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             fallback={
               <div class="col-span-2 flex min-w-0 items-center gap-1">
                 <input
+                  ref={renameInputEl}
                   type="text"
                   aria-label="Card Group title"
-                  value={renameDraft()}
-                  readonly={isSaving()}
+                  readonly={titleSave.isSaving()}
                   maxlength={MAX_GROUP_TITLE_LENGTH}
-                  onInput={(event) => setRenameDraft(event.currentTarget.value)}
-                  onKeyDown={handleRenameKeyDown}
+                  onKeyDown={(event) => groupEdit.inputKeydown(event)}
+                  onFocusOut={(event) => groupEdit.end('focus-out', event)}
+                  onInput={(event) =>
+                    setHasTitleText(event.currentTarget.value.trim().length > 0)
+                  }
                   class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text focus:border-focus focus:outline-none sm:min-h-7"
                 />
                 <button
                   type="button"
                   aria-label="Save Card Group title"
-                  disabled={isSaving() || renameDraft().trim().length === 0}
-                  onClick={() => void saveRename()}
+                  disabled={titleSave.isSaving() || !hasTitleText()}
+                  onClick={() => groupEdit.end()}
                   class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7"
                 >
                   <LucideIcon icon={Check} />
@@ -307,6 +314,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 }
               >
                 <button
+                  ref={titleButtonEl}
                   type="button"
                   aria-label={`${groupTitle()} — Edit Card Group title`}
                   title={groupTitle()}
@@ -417,7 +425,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             </p>
           </Show>
           <p role="status" class="sr-only">
-            {isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
+            {titleSave.isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
           </p>
         </Show>
       </div>
