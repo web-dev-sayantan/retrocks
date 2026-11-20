@@ -3,6 +3,7 @@ import {
   DrawerBackdrop,
   DrawerContent,
 } from '@ui-sdk/solid/drawer';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Trash2 } from 'lucide';
 import {
   For,
@@ -25,6 +26,7 @@ import {
   type ReactionEmoji,
 } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canContribute,
   canDeleteComment,
@@ -61,9 +63,6 @@ export interface CardDetailDrawerProps {
 
 export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const actionOwnerId = createUniqueId();
-  const [ownerDraft, setOwnerDraft] = createSignal(
-    untrack(() => props.card.actionOwner),
-  );
   const [isSavingAction, setIsSavingAction] = createSignal(false);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [commentDraft, setCommentDraft] = createSignal('');
@@ -73,6 +72,23 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const [deletingCommentId, setDeletingCommentId] = createSignal<string | null>(
     null,
   );
+  let ownerInputEl: HTMLInputElement | undefined;
+
+  // The owner input edits in place: createInlineEdit owns the draft-and-save
+  // contract, with the session starting on the first change so an untouched
+  // Escape still reaches the drawer.
+  const ownerField = usePrimitive(inlineEdit, () => ({
+    value: () => props.card.actionOwner,
+    commit: (text) => ownerSave.commit(text),
+    disabled: () => !canEditActionItemFollowUp(props, props.card),
+  }));
+  const ownerEdit = ownerField.api.edit;
+  const ownerSave = createInlineEditSave(saveActionOwnerText, () => ownerEdit.cancel());
+  const ownerEditing = () => ownerField.present('input');
+
+  function bindOwnerInput(el: HTMLInputElement): void {
+    ownerInputEl = el;
+  }
 
   onSettled(() => () => {
     // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
@@ -84,13 +100,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
 
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
-  );
-
-  createEffect(
-    () => props.card.actionOwner,
-    (owner) => {
-      setOwnerDraft(owner);
-    },
   );
 
   createEffect(() => props.isOpen, (open, wasOpen) => {
@@ -114,15 +123,12 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     }
   }
 
-  async function saveActionOwner(value: string): Promise<void> {
-    if (!canEditActionItemFollowUp(props, props.card) || isSavingAction()) return;
-    const trimmed = value.trim();
-    if (trimmed === props.card.actionOwner) {
-      setOwnerDraft(props.card.actionOwner);
-      return;
-    }
+  async function saveActionOwnerText(text: string): Promise<InlineEditOutcome> {
+    if (!canEditActionItemFollowUp(props, props.card)) return false;
+    const trimmed = text.trim();
     const ok = await updateAction({ actionOwner: trimmed });
-    if (ok) setOwnerDraft(trimmed);
+    if (ok && ownerInputEl) ownerInputEl.value = trimmed;
+    return ok ? true : false;
   }
 
   async function submitComment(): Promise<void> {
@@ -308,29 +314,38 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     Owner (optional)
                   </label>
                   <input
+                    ref={bindOwnerInput}
                     id={actionOwnerId}
                     type="text"
                     aria-label="Action owner"
                     placeholder={'e.g. "Platform"'}
-                    value={ownerDraft()}
+                    // Uncontrolled: seeded once per mounted drawer; typing and saves live in the DOM.
+                    defaultValue={props.card.actionOwner}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
                     disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
-                    onInput={(event) => setOwnerDraft(event.currentTarget.value)}
-                    onBlur={(event) => void saveActionOwner(event.currentTarget.value)}
+                    onInput={(event) => {
+                      if (!ownerEditing() && event.currentTarget.value !== props.card.actionOwner) {
+                        ownerEdit.start(props.card.id, { reason: 'type', text: event.currentTarget.value });
+                        ownerEdit.bindInput(event.currentTarget);
+                      }
+                    }}
                     onKeyDown={(event) => {
                       if (event.isComposing) return;
                       const input = event.currentTarget;
                       if (event.key === 'Enter') {
                         event.preventDefault();
-                        void saveActionOwner(input.value);
-                      } else if (event.key === 'Escape' && input.value !== props.card.actionOwner) {
+                        ownerEdit.end('enter-key', event);
+                      } else if (event.key === 'Escape') {
+                        // Unchanged text lets the drawer's Escape close it.
+                        if (input.value === props.card.actionOwner) return;
                         event.preventDefault();
                         event.stopPropagation();
+                        ownerEdit.cancel();
                         input.value = props.card.actionOwner;
-                        setOwnerDraft(input.value);
                         setActionError(null);
                       }
                     }}
+                    onFocusOut={(event) => ownerEdit.end('focus-out', event)}
                     class={[
                       'mt-1 min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text sm:min-h-9',
                       'placeholder:text-text-muted focus:border-focus focus:outline-none disabled:opacity-50',
