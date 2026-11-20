@@ -5,10 +5,9 @@ import RecentBoardsList from '../components/RecentBoardsList';
 
 export default function Home() {
   return (
-    <main class="mx-auto max-w-xl px-4 py-6 sm:px-6 sm:py-10 lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,33rem)_minmax(0,25rem)] lg:items-start lg:gap-x-16 lg:py-14 xl:gap-x-20">
+    <main class="mx-auto max-w-xl px-4 pt-6 pb-12 sm:px-6 sm:pt-10 sm:pb-16 lg:max-w-6xl lg:pt-12 lg:pb-20">
       <Title>Retrocks — Instant, Privacy-First Retrospectives</Title>
-      <BoardCreator />
-      <RecentBoardsList />
+      <BoardCreator secondary={<RecentBoardsList />} />
     </main>
   );
 }

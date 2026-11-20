@@ -1,9 +1,11 @@
 import { Portal } from '@solidjs/web';
+import { Moon, Sun } from 'lucide';
 import { Show, createSignal, onSettled } from 'solid-js';
 
 import { getSecretTheme, subscribeTheme, toggleTheme, type ActiveTheme } from '../lib/theme';
+import LucideIcon from './LucideIcon';
 
-export default function ThemeToggle(props: { menuItem?: boolean }) {
+export default function ThemeToggle(props: { menuItem?: boolean; variant?: 'default' | 'island' }) {
   // Start with light to match SSR, then sync with the pre-painted document.
   const [theme, setTheme] = createSignal<ActiveTheme>('light');
   const [announcement, setAnnouncement] = createSignal<string | null>(null);
@@ -18,6 +20,24 @@ export default function ThemeToggle(props: { menuItem?: boolean }) {
     const secret = getSecretTheme(theme());
     if (secret) return `Exit ${secret.name} theme`;
     return dark() ? 'Switch to light theme' : 'Switch to dark theme';
+  };
+
+  const buttonClass = () => {
+    if (props.menuItem) return 'board-menu-item';
+    if (props.variant === 'island') {
+      return [
+        'spring-press inline-flex size-10 cursor-pointer items-center justify-center rounded-full',
+        'border border-transparent bg-surface-subtle/75 text-text-muted',
+        'hover:border-border/80 hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+      ];
+    }
+    return [
+      'spring-press inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg',
+      'border border-border bg-surface text-text-muted',
+      'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
+      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+    ];
   };
 
   return (
@@ -39,53 +59,16 @@ export default function ThemeToggle(props: { menuItem?: boolean }) {
         aria-pressed={props.menuItem ? undefined : dark() ? 'true' : 'false'}
         aria-label={label()}
         title={label()}
-        class={props.menuItem ? 'board-menu-item' : [
-          'inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg',
-          'border border-border bg-surface text-text-muted transition-colors',
-          'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
-          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-        ]}
+        class={buttonClass()}
       >
         <Show when={props.menuItem}>
           <span>{label()}</span>
         </Show>
         <Show
           when={dark()}
-          fallback={
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.75"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="h-4 w-4"
-            >
-              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
-            </svg>
-          }
+          fallback={<LucideIcon icon={Moon} class="size-4" strokeWidth={1.8} />}
         >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.75"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="h-4 w-4"
-          >
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v2" />
-            <path d="M12 20v2" />
-            <path d="m4.93 4.93 1.41 1.41" />
-            <path d="m17.66 17.66 1.41 1.41" />
-            <path d="M2 12h2" />
-            <path d="M20 12h2" />
-            <path d="m6.34 17.66-1.41 1.41" />
-            <path d="m19.07 4.93-1.41 1.41" />
-          </svg>
+          <LucideIcon icon={Sun} class="size-4" strokeWidth={1.8} />
         </Show>
       </button>
     </>

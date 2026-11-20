@@ -1,3 +1,24 @@
+import type { JSX } from '@solidjs/web';
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  Clock,
+  EyeOff,
+  Flag,
+  GripVertical,
+  Layers,
+  LayoutGrid,
+  Plus,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Vote,
+  X,
+  type IconNode,
+} from 'lucide';
 import { For, Show, createMemo, createSignal, createStore } from 'solid-js';
 
 import { createBoard } from '../lib/board-actions';
@@ -21,6 +42,7 @@ import {
   getBoardTemplate,
   type TemplateColumnDef,
 } from '../lib/templates';
+import LucideIcon from './LucideIcon';
 
 interface EditableColumn {
   localId: string;
@@ -31,20 +53,13 @@ interface EditableColumn {
 
 export interface BoardCreatorProps {
   onSubmit?: (input: CreateBoardInput) => Promise<ActionError | void>;
+  secondary?: JSX.Element;
 }
 
 const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
-const inputClass = `min-h-11 w-full rounded-lg border border-control bg-surface px-3 py-2 text-base text-text placeholder:text-text-muted ${focusClass}`;
-
-const optionClass = (selected: boolean) => [
-  'min-h-11 min-w-11 cursor-pointer rounded-lg border px-3 py-2 text-sm font-medium transition-colors active:bg-surface-subtle active:text-text',
-  focusClass,
-  selected
-    ? 'border-accent bg-accent text-accent-contrast'
-    : 'border-control bg-surface text-text hover:bg-surface-subtle',
-];
-const columnCommandClass = `inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-control bg-surface text-base text-text hover:bg-surface-subtle active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`;
-const suggestionButtonClass = `min-h-11 shrink-0 cursor-pointer rounded-full px-2 hover:bg-surface hover:text-text ${focusClass}`;
+const inputClass = `h-11 w-full rounded-xl border border-control/75 bg-surface px-3.5 text-base text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:border-accent ${focusClass}`;
+const compactInputClass = `h-10 w-full rounded-lg border border-border bg-canvas/55 px-3 text-sm font-medium text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:border-accent focus-visible:bg-surface ${focusClass}`;
+const columnCommandClass = `spring-press inline-flex size-10 cursor-pointer items-center justify-center bg-surface text-text-muted hover:bg-surface-subtle hover:text-text active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-35 ${focusClass}`;
 
 function HiddenTemplateSuggestion(props: {
   name: string;
@@ -52,27 +67,52 @@ function HiddenTemplateSuggestion(props: {
   onDismiss: () => void;
 }) {
   return (
-    <div class="flex w-fit max-w-full items-center gap-1 rounded-full border border-border bg-surface-subtle pl-3 pr-1 text-sm text-text-muted">
-      <span class="min-w-0 truncate">Try {props.name}</span>
-      <button type="button" class={`${suggestionButtonClass} font-semibold text-text`} onClick={() => props.onApply()}>
-        Apply
-      </button>
-      <button type="button" class={suggestionButtonClass} onClick={() => props.onDismiss()}>
-        Dismiss
-      </button>
+    <div class="disclosure-reveal flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/30 bg-surface px-3 py-2 text-sm text-text-muted">
+      <span class="inline-flex min-w-0 items-center gap-2">
+        <LucideIcon icon={Sparkles} class="size-4 shrink-0 text-accent" strokeWidth={1.85} />
+        <span class="truncate font-medium text-text">Try {props.name}</span>
+      </span>
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class={`spring-press min-h-9 cursor-pointer rounded-lg bg-surface-subtle px-2.5 py-1 text-xs font-semibold text-text hover:bg-border/45 ${focusClass}`}
+          onClick={() => props.onApply()}
+        >
+          Apply
+        </button>
+        <button
+          type="button"
+          class={`spring-press min-h-9 cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text ${focusClass}`}
+          onClick={() => props.onDismiss()}
+        >
+          Dismiss
+        </button>
+      </div>
     </div>
+  );
+}
+
+function TemplateMiniBars(props: { columns: readonly TemplateColumnDef[] }) {
+  return (
+    <span aria-hidden="true" class="flex w-full gap-1">
+      <For each={props.columns}>
+        {(column) => (
+          <span class={['h-1.5 flex-1 rounded-full', COLUMN_ACCENT_STYLES[column.accent].bar]} />
+        )}
+      </For>
+    </span>
   );
 }
 
 function ColumnPreview(props: { columns: readonly TemplateColumnDef[]; id?: string }) {
   return (
-    <span id={props.id} class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-text-muted">
+    <span id={props.id} class="flex flex-wrap gap-x-2.5 gap-y-1 text-xs leading-relaxed text-text-muted">
       <For each={props.columns}>
         {(column) => (
-          <span class="flex min-w-0 items-baseline gap-2">
+          <span class="inline-flex min-w-0 items-center gap-1.5">
             <span
               aria-hidden="true"
-              class={['relative -top-0.5 size-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[column.accent].bar]}
+              class={['size-1.5 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[column.accent].bar]}
             />
             <span class="min-w-0 [overflow-wrap:anywhere]">{column.title || 'Untitled Column'}</span>
           </span>
@@ -85,6 +125,8 @@ function ColumnPreview(props: { columns: readonly TemplateColumnDef[]; id?: stri
 function DisclosureButton(props: {
   panelId: string;
   label: string;
+  summary: string;
+  icon: IconNode;
   open: boolean;
   onClick: () => void;
   buttonRef?: (button: HTMLButtonElement) => void;
@@ -93,27 +135,272 @@ function DisclosureButton(props: {
     <button
       ref={props.buttonRef}
       type="button"
+      aria-labelledby={`${props.panelId}-label`}
+      aria-describedby={`${props.panelId}-summary`}
       aria-expanded={props.open ? 'true' : 'false'}
       aria-controls={props.open ? props.panelId : undefined}
       onClick={() => props.onClick()}
-      class={`group flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-base font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle ${focusClass}`}
+      class={`spring-press group flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-xl px-1 py-2 text-left transition-colors hover:text-text ${focusClass}`}
     >
-      {props.label}
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="size-4 shrink-0 group-aria-expanded:rotate-180"
-      >
-        <path d="m4 6 4 4 4-4" />
-      </svg>
+      <span class="inline-flex min-w-0 items-center gap-2.5">
+        <LucideIcon icon={props.icon} class="size-4 text-text-muted transition-colors group-hover:text-text" strokeWidth={1.8} />
+        <span id={`${props.panelId}-label`} class="text-sm font-medium text-text">
+          {props.label}
+        </span>
+      </span>
+      <span class="inline-flex shrink-0 items-center gap-2">
+        <span
+          id={`${props.panelId}-summary`}
+          class="text-xs text-text-muted tabular-nums"
+        >
+          {props.summary}
+        </span>
+        <LucideIcon
+          icon={ChevronDown}
+          class="spring-chevron size-4 text-text-muted group-aria-expanded:rotate-180 group-aria-expanded:text-text"
+          strokeWidth={1.8}
+        />
+      </span>
     </button>
   );
 }
+
+interface SegmentedOption<T> {
+  value: T;
+  label: string;
+}
+
+function SegmentedControl<T>(props: {
+  legend: string;
+  icon: IconNode;
+  options: readonly SegmentedOption<T>[];
+  value: T;
+  onChange: (value: T) => void;
+  hint?: string;
+}) {
+  const activeIndex = createMemo(() => {
+    const idx = props.options.findIndex((option) => option.value === props.value);
+    return idx >= 0 ? idx : 0;
+  });
+
+  const gridColsClass = () => {
+    const count = props.options.length;
+    if (count === 2) return 'grid-cols-2';
+    if (count === 3) return 'grid-cols-3';
+    return 'grid-cols-4';
+  };
+
+  return (
+    <fieldset class="min-w-0">
+      <legend class="inline-flex items-center gap-2 text-sm font-medium text-text">
+        <LucideIcon icon={props.icon} class="size-3.5 text-text-muted" strokeWidth={1.85} />
+        <span>{props.legend}</span>
+      </legend>
+      <Show when={props.hint}>
+        {(text) => <p class="mt-0.5 text-xs text-text-muted">{text()}</p>}
+      </Show>
+      <div
+        class={[
+          'segmented-track relative mt-2 grid rounded-xl border border-border/75 p-1',
+          gridColsClass(),
+        ]}
+      >
+        <span
+          aria-hidden="true"
+          class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
+          style={{
+            '--seg-count': String(props.options.length),
+            '--seg-index': String(activeIndex()),
+          }}
+        />
+        <For each={props.options}>
+          {(option) => (
+            <button
+              type="button"
+              aria-pressed={props.value === option.value ? 'true' : 'false'}
+              onClick={() => props.onChange(option.value)}
+              class={[
+                'relative z-10 min-h-10 cursor-pointer rounded-lg px-2 py-1.5 text-center text-xs font-medium leading-snug transition-colors sm:text-[13px]',
+                focusClass,
+                props.value === option.value
+                  ? 'font-semibold text-text'
+                  : 'text-text-muted hover:text-text',
+              ]}
+            >
+              {option.label}
+            </button>
+          )}
+        </For>
+      </div>
+    </fieldset>
+  );
+}
+
+const PREVIEW_CARD_WIDTHS: readonly [string, string][] = [
+  ['w-4/5', 'w-3/5'],
+  ['w-11/12', 'w-1/2'],
+  ['w-3/4', 'w-2/3'],
+  ['w-5/6', 'w-7/12'],
+];
+
+function BoardPreview(props: {
+  title: string;
+  subtitle: string;
+  columns: readonly EditableColumn[];
+  voteLimit: VoteLimitOption;
+  maxVotesPerCard: MaxVotesPerCardOption;
+  isBlurred: boolean;
+  retentionDays: RetentionDaysOption;
+}) {
+  const columnGridClass = () => {
+    const count = props.columns.length;
+    if (count <= 1) return 'grid-cols-1';
+    if (count === 2) return 'grid-cols-2';
+    if (count === 3) return 'grid-cols-1 sm:grid-cols-3';
+    if (count === 4) return 'grid-cols-2';
+    return 'grid-cols-2 sm:grid-cols-3';
+  };
+
+  const voteSummary = () => {
+    if (props.voteLimit === null) return 'Unlimited votes';
+    return `${props.voteLimit} votes`;
+  };
+
+  return (
+    <aside
+      aria-label="Board preview"
+      data-preview-private={props.isBlurred ? 'true' : 'false'}
+      class="home-preview-frame overflow-hidden rounded-2xl border border-border bg-surface"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-border/75 px-4 py-3.5 sm:px-5 sm:py-4">
+        <div class="min-w-[12rem] flex-1">
+          <p class="truncate text-base font-semibold tracking-[-0.02em] text-text">
+            {props.title}
+          </p>
+          <Show when={props.subtitle}>
+            <p class="mt-0.5 truncate text-xs text-text-muted">{props.subtitle}</p>
+          </Show>
+        </div>
+
+        <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+          <Show when={props.isBlurred}>
+            <span class="preview-pill-enter inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text">
+              <LucideIcon icon={EyeOff} class="size-3 text-text-muted" strokeWidth={2} />
+              <span>Private Mode</span>
+            </span>
+          </Show>
+          <span class="inline-flex items-center gap-1.5 rounded-full bg-surface-subtle px-2.5 py-1 text-xs font-medium text-text-muted tabular-nums">
+            <LucideIcon icon={Vote} class="size-3" strokeWidth={1.9} />
+            <span>{voteSummary()}</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="bg-canvas/70 p-3.5 sm:p-4">
+        <div class={['grid gap-2.5 sm:gap-3', columnGridClass()]}>
+          <For each={props.columns}>
+            {(column, index) => (
+              <div class="preview-column-item flex min-w-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-surface">
+                <div
+                  aria-hidden="true"
+                  class={['h-1 w-full transition-colors duration-200', COLUMN_ACCENT_STYLES[column.accent].bar]}
+                />
+                <div
+                  class={[
+                    'flex items-center justify-between gap-1.5 border-b border-border/60 px-3 py-2 transition-colors duration-200',
+                    COLUMN_ACCENT_STYLES[column.accent].tint,
+                  ]}
+                >
+                  <span class="min-w-0 text-xs font-semibold text-text [overflow-wrap:anywhere]">
+                    {column.title || 'Untitled Column'}
+                  </span>
+                  <Show when={column.isActionColumn}>
+                    <span
+                      title="Action Column"
+                      class="inline-flex shrink-0 items-center text-col-sky"
+                    >
+                      <LucideIcon icon={Flag} class="size-3" strokeWidth={2} />
+                    </span>
+                  </Show>
+                </div>
+
+                <div aria-hidden="true" class="space-y-2 p-2.5">
+                  <div class="preview-card-ghost rounded-lg border border-border/55 bg-canvas/85 p-2">
+                    <div
+                      class={[
+                        'h-2 rounded-full bg-border/75',
+                        PREVIEW_CARD_WIDTHS[index() % PREVIEW_CARD_WIDTHS.length][0],
+                      ]}
+                    />
+                    <div
+                      class={[
+                        'mt-1.5 h-1.5 rounded-full bg-border/45',
+                        PREVIEW_CARD_WIDTHS[index() % PREVIEW_CARD_WIDTHS.length][1],
+                      ]}
+                    />
+                  </div>
+                  <Show when={props.columns.length <= 4}>
+                    <div class="preview-card-ghost rounded-lg border border-border/55 bg-canvas/85 p-2">
+                      <div
+                        class={[
+                          'h-2 rounded-full bg-border/70',
+                          PREVIEW_CARD_WIDTHS[(index() + 1) % PREVIEW_CARD_WIDTHS.length][0],
+                        ]}
+                      />
+                      <div
+                        class={[
+                          'mt-1.5 h-1.5 rounded-full bg-border/40',
+                          PREVIEW_CARD_WIDTHS[(index() + 2) % PREVIEW_CARD_WIDTHS.length][1],
+                        ]}
+                      />
+                    </div>
+                  </Show>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+
+        <Show when={props.isBlurred}>
+          <p class="disclosure-reveal mt-3 text-center text-xs text-text-muted">
+            Cards stay hidden until the Facilitator reveals them.
+          </p>
+        </Show>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 bg-surface px-4 py-2.5 text-xs text-text-muted sm:px-5">
+        <span class="inline-flex items-center gap-1.5">
+          <LucideIcon icon={ShieldCheck} class="size-3.5 text-accent" strokeWidth={1.9} />
+          <span>No account required</span>
+        </span>
+        <span class="inline-flex items-center gap-1.5 tabular-nums">
+          <LucideIcon icon={Clock} class="size-3.5" strokeWidth={1.8} />
+          <span>Expires after {props.retentionDays} days of inactivity</span>
+        </span>
+      </div>
+    </aside>
+  );
+}
+
+const VOTE_LIMIT_ITEMS: readonly SegmentedOption<VoteLimitOption>[] = VOTE_LIMIT_OPTIONS.map((opt) => ({
+  value: opt,
+  label: opt === null ? 'Unlimited' : String(opt),
+}));
+
+const MAX_VOTES_ITEMS: readonly SegmentedOption<MaxVotesPerCardOption>[] = [
+  { value: null, label: 'Unlimited (stackable)' },
+  { value: 1, label: '1 per Card or Card Group' },
+];
+
+const PRIVATE_MODE_ITEMS: readonly SegmentedOption<boolean>[] = [
+  { value: false, label: 'Off' },
+  { value: true, label: 'On' },
+];
+
+const RETENTION_ITEMS: readonly SegmentedOption<RetentionDaysOption>[] = RETENTION_DAYS_OPTIONS.map((days) => ({
+  value: days,
+  label: `${days} days`,
+}));
 
 let columnKeyCounter = 0;
 function nextColumnLocalId(): string {
@@ -162,6 +449,19 @@ export default function BoardCreator(props: BoardCreatorProps) {
   let customizeToggle: HTMLButtonElement;
   let titleInput: HTMLInputElement;
   let subtitleInput: HTMLInputElement;
+
+  const customizeSummary = createMemo(() => {
+    const colLabel = columns.length === 1 ? '1 column' : `${columns.length} columns`;
+    return subtitle().trim() ? `${colLabel}, subtitle` : colLabel;
+  });
+
+  const advancedSummary = createMemo(() => {
+    const parts: string[] = [];
+    if (isBlurred()) parts.push('Private');
+    parts.push(voteLimit() === null ? 'Unlimited' : `${voteLimit()} votes`);
+    parts.push(`${retentionDays()}d`);
+    return parts.join(', ');
+  });
 
   const handleDismissTemplate = (id: HiddenTemplateId, input: HTMLInputElement) => {
     setHandledTemplates((ids) => [...ids, id]);
@@ -300,366 +600,390 @@ export default function BoardCreator(props: BoardCreatorProps) {
   };
 
   return (
-    <form class="min-w-0" onSubmit={handleSubmit} novalidate>
-      <h1 class="text-3xl font-semibold tracking-tight text-text sm:text-4xl">
-        Create a board
-      </h1>
+    <form
+      class="grid min-w-0 grid-cols-1 gap-y-8 lg:grid-cols-[minmax(0,26.5rem)_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16"
+      onSubmit={handleSubmit}
+      novalidate
+    >
+      {/* Left creation rail — quiet, flush-aligned controls directly on the canvas */}
+      <div class="min-w-0 lg:col-start-1">
+        <h1 class="text-[2rem] leading-[1.12] font-semibold tracking-[-0.03em] text-text sm:text-[2.25rem]">
+          Create a board
+        </h1>
+        <p class="mt-2 max-w-[42ch] text-[15px] leading-relaxed text-text-muted">
+          Name your retrospective, pick a column layout, and share the link to begin.
+        </p>
 
-      <div class="mt-5 grid gap-2">
-        <label for="board-title-input" class="text-base font-medium text-text">
-          Board title <span class="font-normal text-text-muted">(optional)</span>
-        </label>
-        <input
-          ref={(element) => { titleInput = element; }}
-          id="board-title-input"
-          type="text"
-          maxlength={120}
-          value={title()}
-          onInput={(e) => setTitle(e.currentTarget.value)}
-          placeholder={defaultTitlePlaceholder}
-          class={inputClass}
-        />
-        <Show when={titleTemplate() ?? (!customizeOpen() && subtitleTemplate())} keyed>
-          {(template) => (
-            <HiddenTemplateSuggestion
-              name={template.name}
-              onApply={() => handleApplyTemplate(template)}
-              onDismiss={() => handleDismissTemplate(template.id, titleInput)}
-            />
-          )}
-        </Show>
-      </div>
-
-      <div class="mt-4">
-        <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border border-border bg-surface px-3 py-2">
-          <h2 class="text-base font-semibold text-text [overflow-wrap:anywhere]">
-            {getBoardTemplate(templateId()).name}
-          </h2>
-          <button
-            ref={(element) => { templateToggle = element; }}
-            type="button"
-            aria-label="Change template"
-            aria-expanded={templatesOpen() ? 'true' : 'false'}
-            aria-controls={templatesOpen() ? 'board-templates' : undefined}
-            onClick={() => setTemplatesOpen((open) => !open)}
-            class={[
-              'min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-2 text-sm font-medium text-text-muted',
-              'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle aria-expanded:bg-surface-subtle aria-expanded:text-text',
-              'sm:col-start-2 sm:row-span-2 sm:row-start-1',
-              focusClass,
-            ]}
-          >
-            Change
-          </button>
-          <div class="col-span-2 pb-1 sm:col-span-1 sm:col-start-1 sm:row-start-2">
-            <ColumnPreview columns={columns} />
-          </div>
-        </div>
-        <Show when={templatesOpen()}>
-          <div id="board-templates" class="mt-2 grid gap-2 sm:grid-cols-2">
-            <For each={BOARD_TEMPLATES}>
-              {(template) => (
-                <button
-                  type="button"
-                  aria-label={template.name}
-                  aria-pressed={templateId() === template.id ? 'true' : 'false'}
-                  aria-describedby={`template-${template.id}-columns`}
-                  onClick={() => handleSelectTemplate(template.id)}
-                  class={[
-                    'min-h-11 min-w-0 cursor-pointer space-y-2 rounded-xl border p-3 text-left transition-colors hover:bg-surface-subtle active:bg-surface-subtle',
-                    focusClass,
-                    templateId() === template.id
-                      ? 'border-accent bg-surface-subtle'
-                      : 'border-control bg-surface',
-                  ]}
-                >
-                  <span class="block text-base font-semibold text-text">{template.name}</span>
-                  <ColumnPreview id={`template-${template.id}-columns`} columns={template.columns} />
-                </button>
-              )}
-            </For>
-          </div>
-        </Show>
-      </div>
-
-      <Show when={errorMessage()}>
-        {(msg) => (
-          <p
-            role="alert"
-            class="mt-4 rounded-lg border border-col-rose bg-col-rose-tint px-3 py-2 text-base text-text"
-          >
-            {msg()}
-          </p>
-        )}
-      </Show>
-      <button
-        type="submit"
-        disabled={submitting()}
-        class={[
-          'mt-4 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-5 py-2 text-base font-semibold text-accent-contrast sm:w-auto',
-          'transition-opacity hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60',
-          focusClass,
-        ]}
-      >
-        {submitting() ? 'Creating board…' : 'Create board'}
-      </button>
-
-      <div class="mt-5 space-y-1">
-        <DisclosureButton
-          panelId="board-customize"
-          label="Customize board"
-          open={customizeOpen()}
-          onClick={() => setCustomizeOpen((open) => !open)}
-          buttonRef={(element) => { customizeToggle = element; }}
-        />
-        <Show when={customizeOpen()}>
-          <div id="board-customize" class="space-y-4 px-2 py-3">
-            <div class="grid gap-2">
-              <label for="board-subtitle-input" class="text-base font-medium text-text">
-                Subtitle / context <span class="font-normal text-text-muted">(optional)</span>
-              </label>
-              <input
-                ref={(element) => { subtitleInput = element; }}
-                id="board-subtitle-input"
-                type="text"
-                maxlength={240}
-                value={subtitle()}
-                onInput={(e) => setSubtitle(e.currentTarget.value)}
-                placeholder="e.g., Sprint 42 · Checkout Team"
-                class={inputClass}
+        <div class="mt-7 grid gap-2">
+          <label for="board-title-input" class="text-sm font-medium text-text">
+            Board title <span class="font-normal text-text-muted">(optional)</span>
+          </label>
+          <input
+            ref={(element) => { titleInput = element; }}
+            id="board-title-input"
+            type="text"
+            maxlength={120}
+            value={title()}
+            onInput={(e) => setTitle(e.currentTarget.value)}
+            placeholder={defaultTitlePlaceholder}
+            class={inputClass}
+          />
+          <Show when={titleTemplate() ?? (!customizeOpen() && subtitleTemplate())} keyed>
+            {(template) => (
+              <HiddenTemplateSuggestion
+                name={template.name}
+                onApply={() => handleApplyTemplate(template)}
+                onDismiss={() => handleDismissTemplate(template.id, titleInput)}
               />
-              <Show when={!titleTemplate() && subtitleTemplate()} keyed>
-                {(template) => (
-                  <HiddenTemplateSuggestion
-                    name={template.name}
-                    onApply={() => handleApplyTemplate(template)}
-                    onDismiss={() => handleDismissTemplate(template.id, subtitleInput)}
-                  />
-                )}
-              </Show>
-            </div>
+            )}
+          </Show>
+        </div>
 
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <h2 class="text-base font-semibold text-text">
-                Columns <span class="font-normal text-text-muted tabular-nums">({columns.length} / 10)</span>
-              </h2>
-              <button
-                type="button"
-                disabled={columns.length >= 10}
-                onClick={handleAddColumn}
-                class={`min-h-11 cursor-pointer rounded-lg border border-control bg-surface px-3 py-2 text-sm font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`}
+        <div class="mt-5">
+          <span class="block text-sm font-medium text-text">Template</span>
+          <div class="mt-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5">
+            <div class="flex min-w-0 items-center gap-3">
+              <span
+                aria-hidden="true"
+                class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle text-text-muted"
               >
-                Add Column
-              </button>
+                <LucideIcon icon={LayoutGrid} class="size-4" strokeWidth={1.8} />
+              </span>
+              <div class="min-w-0">
+                <h2 class="truncate text-sm font-semibold text-text">
+                  {getBoardTemplate(templateId()).name}
+                </h2>
+                <p class="truncate text-xs text-text-muted tabular-nums">
+                  {columns.length} {columns.length === 1 ? 'column' : 'columns'}
+                </p>
+              </div>
             </div>
+            <button
+              ref={(element) => { templateToggle = element; }}
+              type="button"
+              aria-label="Change template"
+              aria-expanded={templatesOpen() ? 'true' : 'false'}
+              aria-controls={templatesOpen() ? 'board-templates' : undefined}
+              onClick={() => setTemplatesOpen((open) => !open)}
+              class={[
+                'spring-press inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-surface-subtle/60 px-3 py-1.5 text-xs font-medium text-text',
+                'hover:border-control/70 hover:bg-surface-subtle active:bg-surface-subtle aria-expanded:border-accent/50 aria-expanded:bg-surface-subtle',
+                focusClass,
+              ]}
+            >
+              <span>Change</span>
+              <LucideIcon
+                icon={ChevronDown}
+                class={['spring-chevron size-3.5 text-text-muted', { 'rotate-180': templatesOpen() }]}
+                strokeWidth={2}
+              />
+            </button>
+          </div>
 
-            <ul class="space-y-2" role="list">
-              <For each={columns}>
-                {(col, index) => (
-                  <li
-                    draggable="true"
-                    onDragStart={() => setDragIndex(index())}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => {
-                      const from = dragIndex();
-                      if (from !== null) {
-                        handleMoveColumn(from, index());
-                      }
-                      setDragIndex(null);
-                    }}
-                    onDragEnd={() => setDragIndex(null)}
-                    class="space-y-3 rounded-xl border border-border bg-surface p-3"
+          <Show when={templatesOpen()}>
+            <div id="board-templates" class="disclosure-reveal mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <For each={BOARD_TEMPLATES}>
+                {(template) => (
+                  <button
+                    type="button"
+                    aria-label={template.name}
+                    aria-pressed={templateId() === template.id ? 'true' : 'false'}
+                    aria-describedby={`template-${template.id}-columns`}
+                    onClick={() => handleSelectTemplate(template.id)}
+                    class={[
+                      'spring-press flex min-h-11 min-w-0 cursor-pointer flex-col items-start justify-start gap-2 rounded-xl border p-3 text-left',
+                      focusClass,
+                      template.id === 'custom' ? 'sm:col-span-2 border-dashed' : '',
+                      templateId() === template.id
+                        ? 'border-accent bg-surface ring-1 ring-accent'
+                        : 'border-border bg-surface hover:border-control/80 hover:bg-surface-subtle/45',
+                    ]}
                   >
-                    <div class="flex items-center gap-2">
-                      <span
-                        aria-hidden="true"
-                        class={['h-6 w-1 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[col.accent].bar]}
-                      />
-                      <input
-                        type="text"
-                        aria-label={`Column ${index() + 1} title`}
-                        maxlength={60}
-                        value={col.title}
-                        onInput={(e) =>
-                          handleRenameColumn(index(), e.currentTarget.value)
-                        }
-                        class={`min-w-0 ${inputClass}`}
-                      />
-                    </div>
-
-                    <div
-                      class="flex flex-wrap gap-1"
-                      role="group"
-                      aria-label={`Column ${index() + 1} accent color`}
-                    >
-                      <For each={COLUMN_ACCENTS}>
-                        {(accent) => (
-                          <button
-                            type="button"
-                            onClick={() => handleColumnAccent(index(), accent)}
-                            aria-label={`${COLUMN_ACCENT_STYLES[accent].label} accent`}
-                            aria-pressed={col.accent === accent ? 'true' : 'false'}
-                            class={[
-                              'inline-grid size-11 cursor-pointer place-items-center rounded-lg border border-transparent hover:bg-surface-subtle active:bg-surface-subtle',
-                              focusClass,
-                              { 'border-control bg-surface-subtle': col.accent === accent },
-                            ]}
-                          >
-                            <span
-                              aria-hidden="true"
-                              class={[
-                                'size-5 rounded-full',
-                                COLUMN_ACCENT_STYLES[accent].swatch,
-                                { 'ring-2 ring-text ring-offset-2 ring-offset-surface': col.accent === accent },
-                              ]}
-                            />
-                          </button>
-                        )}
-                      </For>
-                    </div>
-
-                    <div class="flex flex-wrap items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        aria-pressed={col.isActionColumn ? 'true' : 'false'}
-                        onClick={() => handleToggleActionColumn(index())}
-                        title="Auto-flag new Cards in this Column as Action Items"
-                        class={optionClass(col.isActionColumn)}
-                      >
-                        Action Column
-                      </button>
-
-                      <div class="flex flex-wrap gap-1">
-                        <button
-                          type="button"
-                          disabled={index() === 0}
-                          onClick={() => handleMoveColumn(index(), index() - 1)}
-                          aria-label={`Move Column ${index() + 1} up`}
-                          class={columnCommandClass}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          disabled={index() === columns.length - 1}
-                          onClick={() => handleMoveColumn(index(), index() + 1)}
-                          aria-label={`Move Column ${index() + 1} down`}
-                          class={columnCommandClass}
-                        >
-                          ↓
-                        </button>
-                        <button
-                          type="button"
-                          disabled={columns.length <= 1}
-                          onClick={() => handleRemoveColumn(index())}
-                          aria-label={`Remove Column ${index() + 1}`}
-                          class={columnCommandClass}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    </div>
-                  </li>
+                    <span class="flex w-full items-center justify-between gap-2">
+                      <span class="text-sm font-semibold text-text">{template.name}</span>
+                      <Show when={templateId() === template.id}>
+                        <LucideIcon icon={Check} class="size-3.5 shrink-0 text-accent" strokeWidth={2.4} />
+                      </Show>
+                    </span>
+                    <TemplateMiniBars columns={template.columns} />
+                    <ColumnPreview id={`template-${template.id}-columns`} columns={template.columns} />
+                  </button>
                 )}
               </For>
-            </ul>
-          </div>
+            </div>
+          </Show>
+        </div>
+
+        <Show when={errorMessage()}>
+          {(msg) => (
+            <p
+              role="alert"
+              class="disclosure-reveal mt-4 rounded-xl border border-col-rose bg-col-rose-tint px-3.5 py-2.5 text-sm text-text"
+            >
+              {msg()}
+            </p>
+          )}
         </Show>
+
+        <button
+          type="submit"
+          disabled={submitting()}
+          class={[
+            'spring-press mt-5 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl bg-accent px-5 py-2.5 text-base font-semibold text-accent-contrast',
+            'hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-60',
+            focusClass,
+          ]}
+        >
+          {submitting() ? 'Creating board…' : 'Create board'}
+        </button>
+
+        <div class="mt-6 border-t border-border/75 pt-2">
+          <DisclosureButton
+            panelId="board-customize"
+            label="Customize board"
+            summary={customizeSummary()}
+            icon={SlidersHorizontal}
+            open={customizeOpen()}
+            onClick={() => setCustomizeOpen((open) => !open)}
+            buttonRef={(element) => { customizeToggle = element; }}
+          />
+
+          <Show when={customizeOpen()}>
+            <div id="board-customize" class="disclosure-reveal space-y-5 pt-3 pb-4">
+              <div class="grid gap-2">
+                <label for="board-subtitle-input" class="text-sm font-medium text-text">
+                  Subtitle / context <span class="font-normal text-text-muted">(optional)</span>
+                </label>
+                <input
+                  ref={(element) => { subtitleInput = element; }}
+                  id="board-subtitle-input"
+                  type="text"
+                  maxlength={240}
+                  value={subtitle()}
+                  onInput={(e) => setSubtitle(e.currentTarget.value)}
+                  placeholder="e.g., Sprint 42 · Checkout Team"
+                  class={inputClass}
+                />
+                <Show when={!titleTemplate() && subtitleTemplate()} keyed>
+                  {(template) => (
+                    <HiddenTemplateSuggestion
+                      name={template.name}
+                      onApply={() => handleApplyTemplate(template)}
+                      onDismiss={() => handleDismissTemplate(template.id, subtitleInput)}
+                    />
+                  )}
+                </Show>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between gap-2">
+                  <h2 class="text-sm font-semibold text-text">
+                    Columns{' '}
+                    <span class="font-normal text-text-muted tabular-nums">({columns.length} / 10)</span>
+                  </h2>
+                  <button
+                    type="button"
+                    disabled={columns.length >= 10}
+                    onClick={handleAddColumn}
+                    class={`spring-press inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text hover:border-control hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`}
+                  >
+                    <LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} />
+                    <span>Add Column</span>
+                  </button>
+                </div>
+
+                <ul class="mt-2.5 space-y-2.5" role="list">
+                  <For each={columns}>
+                    {(col, index) => (
+                      <li
+                        draggable="true"
+                        onDragStart={() => setDragIndex(index())}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => {
+                          const from = dragIndex();
+                          if (from !== null) {
+                            handleMoveColumn(from, index());
+                          }
+                          setDragIndex(null);
+                        }}
+                        onDragEnd={() => setDragIndex(null)}
+                        class="space-y-2.5 rounded-xl border border-border bg-surface p-3"
+                      >
+                        <div class="flex items-center gap-2">
+                          <LucideIcon
+                            icon={GripVertical}
+                            class="size-4 shrink-0 cursor-grab text-text-muted/60 active:cursor-grabbing"
+                            strokeWidth={1.75}
+                          />
+                          <span
+                            aria-hidden="true"
+                            class={['h-5 w-1 shrink-0 rounded-full transition-colors duration-200', COLUMN_ACCENT_STYLES[col.accent].bar]}
+                          />
+                          <input
+                            type="text"
+                            aria-label={`Column ${index() + 1} title`}
+                            maxlength={60}
+                            value={col.title}
+                            onInput={(e) =>
+                              handleRenameColumn(index(), e.currentTarget.value)
+                            }
+                            class={`min-w-0 flex-1 ${compactInputClass}`}
+                          />
+                          <div class="inline-flex shrink-0 divide-x divide-border overflow-hidden rounded-lg border border-border bg-surface">
+                            <button
+                              type="button"
+                              disabled={index() === 0}
+                              onClick={() => handleMoveColumn(index(), index() - 1)}
+                              aria-label={`Move Column ${index() + 1} up`}
+                              class={columnCommandClass}
+                            >
+                              <LucideIcon icon={ArrowUp} class="size-3.5" strokeWidth={1.9} />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index() === columns.length - 1}
+                              onClick={() => handleMoveColumn(index(), index() + 1)}
+                              aria-label={`Move Column ${index() + 1} down`}
+                              class={columnCommandClass}
+                            >
+                              <LucideIcon icon={ArrowDown} class="size-3.5" strokeWidth={1.9} />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={columns.length <= 1}
+                              onClick={() => handleRemoveColumn(index())}
+                              aria-label={`Remove Column ${index() + 1}`}
+                              class={columnCommandClass}
+                            >
+                              <LucideIcon icon={X} class="size-3.5" strokeWidth={1.9} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                          <div
+                            class="grid grid-cols-8 gap-0.5"
+                            role="group"
+                            aria-label={`Column ${index() + 1} accent color`}
+                          >
+                            <For each={COLUMN_ACCENTS}>
+                              {(accent) => (
+                                <button
+                                  type="button"
+                                  onClick={() => handleColumnAccent(index(), accent)}
+                                  aria-label={`${COLUMN_ACCENT_STYLES[accent].label} accent`}
+                                  aria-pressed={col.accent === accent ? 'true' : 'false'}
+                                  class={[
+                                    'spring-press inline-grid size-8 cursor-pointer place-items-center rounded-lg border border-transparent hover:bg-surface-subtle',
+                                    focusClass,
+                                    { 'border-border bg-surface-subtle': col.accent === accent },
+                                  ]}
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    class={[
+                                      'size-4 rounded-full',
+                                      COLUMN_ACCENT_STYLES[accent].swatch,
+                                      { 'ring-2 ring-text ring-offset-2 ring-offset-surface': col.accent === accent },
+                                    ]}
+                                  />
+                                </button>
+                              )}
+                            </For>
+                          </div>
+
+                          <button
+                            type="button"
+                            aria-pressed={col.isActionColumn ? 'true' : 'false'}
+                            onClick={() => handleToggleActionColumn(index())}
+                            title="Auto-flag new Cards in this Column as Action Items"
+                            class={[
+                              'spring-press inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium',
+                              focusClass,
+                              col.isActionColumn
+                                ? 'border-col-sky/60 bg-col-sky-tint text-text'
+                                : 'border-border bg-surface text-text-muted hover:bg-surface-subtle hover:text-text',
+                            ]}
+                          >
+                            <LucideIcon
+                              icon={Flag}
+                              class={['size-3.5', col.isActionColumn ? 'text-col-sky' : 'text-text-muted']}
+                              strokeWidth={1.9}
+                            />
+                            <span>Action Column</span>
+                          </button>
+                        </div>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </div>
+            </div>
+          </Show>
+        </div>
+
+        <div class="border-t border-border/75 pt-2">
+          <DisclosureButton
+            panelId="board-advanced"
+            label="Advanced options"
+            summary={advancedSummary()}
+            icon={Settings2}
+            open={advancedOpen()}
+            onClick={() => setAdvancedOpen((open) => !open)}
+          />
+
+          <Show when={advancedOpen()}>
+            <div id="board-advanced" class="disclosure-reveal space-y-5 pt-3 pb-2">
+              <SegmentedControl
+                legend="Votes per Participant"
+                icon={Vote}
+                options={VOTE_LIMIT_ITEMS}
+                value={voteLimit()}
+                onChange={setVoteLimit}
+              />
+
+              <SegmentedControl
+                legend="Max Votes per Card or Card Group"
+                icon={Layers}
+                options={MAX_VOTES_ITEMS}
+                value={maxVotesPerCard()}
+                onChange={setMaxVotesPerCard}
+              />
+
+              <SegmentedControl
+                legend="Start in Private Mode"
+                icon={EyeOff}
+                options={PRIVATE_MODE_ITEMS}
+                value={isBlurred()}
+                onChange={setIsBlurred}
+                hint="Redacts other Participants' Cards until the Facilitator reveals them."
+              />
+
+              <SegmentedControl
+                legend="Auto-expiry on inactivity"
+                icon={Clock}
+                options={RETENTION_ITEMS}
+                value={retentionDays()}
+                onChange={setRetentionDays}
+              />
+            </div>
+          </Show>
+        </div>
       </div>
 
-      <div class="mt-1 space-y-1 border-t border-border pt-1">
-        <DisclosureButton
-          panelId="board-advanced"
-          label="Advanced options"
-          open={advancedOpen()}
-          onClick={() => setAdvancedOpen((open) => !open)}
+      {/* Right studio stage — Live Board Preview + Recent Boards */}
+      <div class="min-w-0 space-y-6 lg:sticky lg:top-20 lg:col-start-2 lg:row-start-1">
+        <BoardPreview
+          title={title().trim() || defaultTitlePlaceholder}
+          subtitle={subtitle().trim()}
+          columns={columns}
+          voteLimit={voteLimit()}
+          maxVotesPerCard={maxVotesPerCard()}
+          isBlurred={isBlurred()}
+          retentionDays={retentionDays()}
         />
-
-        <Show when={advancedOpen()}>
-          <div id="board-advanced" class="grid gap-4 px-2 py-3 sm:grid-cols-2">
-            <fieldset class="min-w-0">
-              <legend class="text-base font-medium text-text">Votes per Participant</legend>
-              <div class="mt-2 flex flex-wrap gap-1">
-                <For each={VOTE_LIMIT_OPTIONS}>
-                  {(opt) => (
-                    <button
-                      type="button"
-                      aria-pressed={voteLimit() === opt ? 'true' : 'false'}
-                      onClick={() => setVoteLimit(opt)}
-                      class={optionClass(voteLimit() === opt)}
-                    >
-                      {opt === null ? 'Unlimited' : String(opt)}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </fieldset>
-
-            <fieldset class="min-w-0">
-              <legend class="text-base font-medium text-text">Max Votes per Card or Card Group</legend>
-              <div class="mt-2 flex flex-wrap gap-1">
-                <button
-                  type="button"
-                  aria-pressed={maxVotesPerCard() === null ? 'true' : 'false'}
-                  onClick={() => setMaxVotesPerCard(null)}
-                  class={optionClass(maxVotesPerCard() === null)}
-                >
-                  Unlimited (stackable)
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={maxVotesPerCard() === 1 ? 'true' : 'false'}
-                  onClick={() => setMaxVotesPerCard(1)}
-                  class={optionClass(maxVotesPerCard() === 1)}
-                >
-                  1 per Card or Card Group
-                </button>
-              </div>
-            </fieldset>
-
-            <fieldset class="min-w-0">
-              <legend class="text-base font-medium text-text">Start in Private Mode</legend>
-              <div class="mt-2 flex flex-wrap gap-1">
-                <button
-                  type="button"
-                  aria-pressed={!isBlurred() ? 'true' : 'false'}
-                  onClick={() => setIsBlurred(false)}
-                  class={optionClass(!isBlurred())}
-                >
-                  Off
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={isBlurred() ? 'true' : 'false'}
-                  onClick={() => setIsBlurred(true)}
-                  class={optionClass(isBlurred())}
-                >
-                  On
-                </button>
-              </div>
-            </fieldset>
-
-            <fieldset class="min-w-0">
-              <legend class="text-base font-medium text-text">Auto-expiry on inactivity</legend>
-              <div class="mt-2 flex flex-wrap gap-1">
-                <For each={RETENTION_DAYS_OPTIONS}>
-                  {(days) => (
-                    <button
-                      type="button"
-                      aria-pressed={retentionDays() === days ? 'true' : 'false'}
-                      onClick={() => setRetentionDays(days)}
-                      class={optionClass(retentionDays() === days)}
-                    >
-                      {days} days
-                    </button>
-                  )}
-                </For>
-              </div>
-            </fieldset>
-          </div>
-        </Show>
+        {props.secondary}
       </div>
-
     </form>
   );
 }
