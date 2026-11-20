@@ -74,11 +74,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
 
   const otherColumns = createMemo(
     () => props.columns.filter((column) => column.id !== props.group.columnId),
-    {
-      equals: (prev, next) =>
-        prev.length === next.length &&
-        prev.every((col, index) => col === next[index]),
-    },
   );
 
   const draggingCard = createMemo(() => {

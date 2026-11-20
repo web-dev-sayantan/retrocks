@@ -40,6 +40,8 @@ const FILTERS: readonly { value: ActionItemFilter; label: string }[] = [
 
 export interface ActionItemsDrawerProps {
   board: BoardViewDTO;
+  /** The keyed projection's Card list — identity-stable across mutations. */
+  cards: readonly CardViewDTO[];
   open: boolean;
   side: 'bottom' | 'right';
   isLocked: boolean;
@@ -186,10 +188,6 @@ function ActionItemRow(props: {
   );
 }
 
-function sameCards(previous: readonly CardViewDTO[], next: readonly CardViewDTO[]): boolean {
-  return previous.length === next.length && previous.every((card, index) => card === next[index]);
-}
-
 export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   let previousFocus: HTMLElement | null = null;
   let contentEl: HTMLDivElement | undefined;
@@ -205,14 +203,11 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
     description: 'Toggle Action Items',
   });
 
-  const allItems = createMemo(
-    () => filterActionItems(props.board.cards, 'all'),
-    { equals: sameCards },
-  );
-  const visibleItems = createMemo(
-    () => filter() === 'all' ? allItems() : filterActionItems(allItems(), filter()),
-    { equals: sameCards },
-  );
+  // Plain accessors, not memos: each read re-derives from the projection's
+  // identity-stable Cards, so no memo re-announces an equivalent array.
+  const allItems = () => filterActionItems(props.cards, 'all');
+  const visibleItems = () =>
+    filter() === 'all' ? allItems() : filterActionItems(allItems(), filter());
   const openCount = createMemo(
     () => allItems().filter((card) => !card.actionDone).length,
   );

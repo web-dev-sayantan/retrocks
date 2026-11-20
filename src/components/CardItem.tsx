@@ -181,11 +181,6 @@ export default function CardItem(props: CardItemProps) {
 
   const otherColumns = createMemo(
     () => props.columns.filter((col) => col.id !== props.card.columnId),
-    {
-      equals: (prev, next) =>
-        prev.length === next.length &&
-        prev.every((col, index) => col === next[index]),
-    },
   );
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
@@ -202,13 +197,6 @@ export default function CardItem(props: CardItemProps) {
         (group) => group.id !== props.card.groupId,
       ),
     }),
-    {
-      equals: (prev, next) =>
-        prev.cards.length === next.cards.length &&
-        prev.groups.length === next.groups.length &&
-        prev.cards.every((card, index) => card === next.cards[index]) &&
-        prev.groups.every((group, index) => group === next.groups[index]),
-    },
   );
 
   const canGroup = createMemo(

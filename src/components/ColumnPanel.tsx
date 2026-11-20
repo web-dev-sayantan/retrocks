@@ -16,12 +16,11 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
   type CardGroupDTO,
-  type CardViewDTO,
   type ColumnAccent,
   type ColumnDTO,
 } from '../lib/board-types';
 import type { BoardMutations } from '../lib/board-session';
-import type { ColumnStreamItem } from '../lib/board-view';
+import type { ColumnViewProjection } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
 import {
   areAllGroupCardsMine,
@@ -38,14 +37,12 @@ import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from '../lib/board-session';
 
 export interface ColumnPanelProps {
-  column: ColumnDTO;
+  /** The keyed projection's Column bucket: the Column DTO plus its complete
+   *  Card and Card Group lists, the filtered stream, and the counts. */
+  view: ColumnViewProjection;
   columnIndex: number;
   totalColumns: number;
   columns: readonly ColumnDTO[];
-  cards: readonly CardViewDTO[];
-  groups: readonly CardGroupDTO[];
-  streamItems: readonly ColumnStreamItem[];
-  visibleCardCount: number;
   hasActiveFilter: boolean;
   voting: WorkspaceVoting;
   isFacilitator: boolean;
@@ -103,26 +100,10 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const canMoveRight = createMemo(
     () => props.columnIndex < props.totalColumns - 1,
   );
-  const hasHiddenCards = createMemo(() => props.cards.some((card) => card.redacted));
+  const hasHiddenCards = createMemo(() => props.view.cards.some((card) => card.redacted));
   const canDeleteColumn = createMemo(() =>
-    canDeleteColumnPermission(props, props.totalColumns, props.cards),
+    canDeleteColumnPermission(props, props.totalColumns, props.view.cards),
   );
-
-  const streamKeys = createMemo(
-    () => props.streamItems.map((item) => item.key),
-    {
-      equals: (prev, next) =>
-        prev.length === next.length &&
-        prev.every((key, index) => key === next[index]),
-    },
-  );
-  const streamItemByKey = createMemo(() => {
-    const map = new Map<string, ColumnStreamItem>();
-    for (const item of props.streamItems) {
-      map.set(item.key, item);
-    }
-    return map;
-  });
 
   let renameInputEl: HTMLInputElement | undefined;
   let composerEl: HTMLTextAreaElement | undefined;
@@ -134,7 +115,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   });
 
   createEffect(
-    () => (props.isLocked ? null : props.column.id),
+    () => (props.isLocked ? null : props.view.column.id),
     (columnId) => {
       if (!columnId || !composerEl) return;
       props.onRegisterComposer?.(columnId, composerEl);
@@ -163,14 +144,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   function canManageGroup(group: CardGroupDTO): boolean {
-    return props.canGroupCards && areAllGroupCardsMine(props, group, props.cards);
+    return props.canGroupCards && areAllGroupCardsMine(props, group, props.view.cards);
   }
 
   const isEligibleDropTarget = createMemo(
     () =>
       canContribute(props) &&
       (props.draggingCardId !== null || props.draggingGroupId !== null) &&
-      props.draggingSourceColumnId !== props.column.id,
+      props.draggingSourceColumnId !== props.view.column.id,
   );
 
   async function submitNewCard(): Promise<void> {
@@ -183,7 +164,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     setIsCreatingCard(true);
     setCardError(null);
     try {
-      const error = await props.actions.createCard(props.column.id, trimmed);
+      const error = await props.actions.createCard(props.view.column.id, trimmed);
       const currentDraft = composerEl ? composerEl.value : cardDraft();
       if (currentDraft === draft) {
         setCardError(error);
@@ -209,7 +190,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function startRename(): void {
     setMenuOpen(false);
-    setRenameDraft(props.column.title);
+    setRenameDraft(props.view.column.title);
     setIsRenaming(true);
   }
 
@@ -221,13 +202,13 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   async function saveRename(): Promise<void> {
     const trimmed = renameDraft().trim();
     if (trimmed.length === 0 || isSavingRename()) return;
-    if (trimmed === props.column.title) {
+    if (trimmed === props.view.column.title) {
       setIsRenaming(false);
       return;
     }
     setIsSavingRename(true);
     try {
-      const ok = await props.actions.updateColumn(props.column.id, {
+      const ok = await props.actions.updateColumn(props.view.column.id, {
         title: trimmed,
       });
       if (ok) {
@@ -251,17 +232,17 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
-    if (accent === props.column.accent) return;
-    await props.actions.updateColumn(props.column.id, { accent });
+    if (accent === props.view.column.accent) return;
+    await props.actions.updateColumn(props.view.column.id, { accent });
   }
 
   async function handleReorder(direction: -1 | 1): Promise<void> {
-    await props.actions.moveColumn(props.column.id, direction);
+    await props.actions.moveColumn(props.view.column.id, direction);
   }
 
   async function requestDeleteColumn(): Promise<void> {
     if (isDeletingColumn() || !canDeleteColumn()) return;
-    const count = props.column.cardCount;
+    const count = props.view.column.cardCount;
     const confirmed = await confirmBoardAction({
       title: count > 0
         ? `Delete this Column and its ${count} ${count === 1 ? 'card' : 'cards'}?`
@@ -272,7 +253,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (!confirmed) return;
     setIsDeletingColumn(true);
     try {
-      await props.actions.deleteColumn(props.column.id);
+      await props.actions.deleteColumn(props.view.column.id);
     } finally {
       setIsDeletingColumn(false);
     }
@@ -291,7 +272,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (!isGroupDrag && !cardId) return;
     if (
       props.draggingSourceColumnId &&
-      props.draggingSourceColumnId === props.column.id
+      props.draggingSourceColumnId === props.view.column.id
     ) {
       return;
     }
@@ -321,9 +302,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       props.draggingGroupId ||
       (!props.draggingCardId && groupData && !cardData ? groupData : '');
     if (groupId) {
-      if (props.draggingSourceColumnId === props.column.id) return;
+      if (props.draggingSourceColumnId === props.view.column.id) return;
       props.onDragEndCard();
-      void props.actions.moveCardGroup(groupId, props.column.id);
+      void props.actions.moveCardGroup(groupId, props.view.column.id);
       return;
     }
     const cardId =
@@ -332,21 +313,21 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       event.dataTransfer?.getData(DRAG_FALLBACK_MIME) ||
       '';
     if (!cardId) return;
-    if (props.draggingSourceColumnId === props.column.id) return;
+    if (props.draggingSourceColumnId === props.view.column.id) return;
     props.onDragEndCard();
-    void props.actions.moveCard(cardId, props.column.id);
+    void props.actions.moveCard(cardId, props.view.column.id);
   }
 
   return (
     <section
-      id={`column-${props.column.id}`}
+      id={`column-${props.view.column.id}`}
       role={props.isMobile ? 'tabpanel' : undefined}
       aria-hidden={props.isMobile && !props.isMobileActive ? 'true' : undefined}
-      aria-labelledby={props.isMobile ? `column-tab-${props.column.id}` : undefined}
-      aria-label={props.isMobile ? undefined : props.column.title}
+      aria-labelledby={props.isMobile ? `column-tab-${props.view.column.id}` : undefined}
+      aria-label={props.isMobile ? undefined : props.view.column.title}
       tabindex={props.isMobile && props.isMobileActive ? 0 : undefined}
-      data-column-id={props.column.id}
-      onFocusIn={() => props.onActivateColumn?.(props.column.id)}
+      data-column-id={props.view.column.id}
+      onFocusIn={() => props.onActivateColumn?.(props.view.column.id)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -372,13 +353,13 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             data-column-accent-bar="true"
             class={[
               'h-[3px] w-full transition-colors duration-200',
-              COLUMN_ACCENT_STYLES[props.column.accent].bar,
+              COLUMN_ACCENT_STYLES[props.view.column.accent].bar,
             ]}
           />
           <div
             class={[
               'h-full w-full transition-colors duration-200',
-              COLUMN_ACCENT_STYLES[props.column.accent].tint,
+              COLUMN_ACCENT_STYLES[props.view.column.accent].tint,
             ]}
           />
         </div>
@@ -425,7 +406,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
               <h2 class="min-w-0 flex-1 wrap-anywhere text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text">
                 <Show
                   when={canManageColumn()}
-                  fallback={props.column.title}
+                  fallback={props.view.column.title}
                 >
                   <button
                     type="button"
@@ -436,11 +417,11 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
                   >
-                    {props.column.title}
+                    {props.view.column.title}
                   </button>
                 </Show>
               </h2>
-              <Show when={props.column.isActionColumn}>
+              <Show when={props.view.column.isActionColumn}>
                 <span
                   title="Action Column"
                   role="img"
@@ -457,14 +438,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             <span
               aria-label={
                 props.hasActiveFilter
-                  ? `${props.visibleCardCount} of ${props.column.cardCount} cards`
-                  : `${props.column.cardCount} cards`
+                  ? `${props.view.visibleCardCount} of ${props.view.column.cardCount} cards`
+                  : `${props.view.column.cardCount} cards`
               }
               class="hidden min-w-6 items-center justify-center rounded-full bg-surface/85 sm:inline-flex px-2 py-0.5 text-xs font-medium text-text-muted tabular-nums dark:bg-surface-subtle/80"
             >
               {props.hasActiveFilter
-                ? `${props.visibleCardCount}/${props.column.cardCount}`
-                : props.column.cardCount}
+                ? `${props.view.visibleCardCount}/${props.view.column.cardCount}`
+                : props.view.column.cardCount}
             </span>
 
             <Show when={canManageColumn()}>
@@ -476,7 +457,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   }}
                 >
                   <MenuTrigger
-                    aria-label={`Column options for ${props.column.title}`}
+                    aria-label={`Column options for ${props.view.column.title}`}
                     class={[
                       'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-lg sm:border-transparent sm:bg-transparent',
                       'transition-colors hover:bg-surface/80 hover:text-text data-open:bg-surface data-open:text-text',
@@ -496,7 +477,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <div
                         {...contentProps}
                         aria-labelledby={undefined}
-                        aria-label={`Options for ${props.column.title}`}
+                        aria-label={`Options for ${props.view.column.title}`}
                         data-board-overlay="true"
                         data-print-hide="true"
                       />
@@ -540,7 +521,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       </p>
                       <MenuRadioGroup<ColumnAccent>
                         aria-label="Accent color"
-                        value={props.column.accent}
+                        value={props.view.column.accent}
                         onValueChange={(accent) => { if (accent) void handleSelectAccent(accent); }}
                         class="mt-1.5 grid grid-cols-4 gap-1 px-1"
                       >
@@ -554,9 +535,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                                 'spring-press flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-8',
                                 {
                                   'border-border bg-surface-subtle':
-                                    props.column.accent === accent,
+                                    props.view.column.accent === accent,
                                   'border-transparent hover:bg-surface-subtle data-highlighted:bg-surface-subtle':
-                                    props.column.accent !== accent,
+                                    props.view.column.accent !== accent,
                                 },
                               ]}
                             >
@@ -567,7 +548,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                                   COLUMN_ACCENT_STYLES[accent].swatch,
                                   {
                                     'ring-2 ring-text ring-offset-2 ring-offset-surface':
-                                      props.column.accent === accent,
+                                      props.view.column.accent === accent,
                                   },
                                 ]}
                               />
@@ -609,7 +590,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           >
             <textarea
               ref={composerEl}
-              aria-label={`Add card to ${props.column.title}`}
+              aria-label={`Add card to ${props.view.column.title}`}
               placeholder="+ Add Card"
               title="Enter to add · Shift+Enter for new line"
               value={cardDraft()}
@@ -667,10 +648,10 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       {/* Column Card stream body — must stay :scope > div:last-child */}
       <div class="flex flex-1 flex-col gap-3 pt-3 pb-3 sm:px-3">
         <Show
-          when={props.streamItems.length > 0}
+          when={props.view.items.length > 0}
           fallback={
             <Show
-              when={props.hasActiveFilter && props.cards.length > 0}
+              when={props.hasActiveFilter && props.view.cards.length > 0}
               fallback={
                 <p class="rounded-xl border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
                   No Cards yet
@@ -694,48 +675,27 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             </Show>
           }
         >
-          <For each={streamKeys()}>
-            {(key, streamIndex) => {
-              if (key.startsWith('group:')) {
-                const groupItem = createMemo(
-                  () => {
-                    const item = streamItemByKey().get(key);
-                    return item?.kind === 'group' ? item : undefined;
-                  },
-                  {
-                    equals: (prev, next) =>
-                      prev === next ||
-                      (prev !== undefined &&
-                        next !== undefined &&
-                        prev.group === next.group &&
-                        prev.cards.length === next.cards.length &&
-                        prev.cards.every((card, index) => card === next.cards[index])),
-                  },
-                );
-                const groupCards = createMemo(
-                  () => groupItem()?.cards ?? [],
-                  {
-                    equals: (prev, next) =>
-                      prev.length === next.length &&
-                      prev.every((card, index) => card === next[index]),
-                  },
-                );
-                return (
-                  <Show when={groupItem()}>
-                    {(entry) => (
-                      <CardGroupItem
-                        group={entry().group}
-                        cards={groupCards()}
-                        revealIndexOffset={props.columnIndex + streamIndex()}
-                        columnCards={props.cards}
-                        columnGroups={props.groups}
-                        columns={props.columns}
+          <For each={props.view.items}>
+            {(item, streamIndex) => (
+              <Show
+                when={item.kind === 'group' ? item : undefined}
+                fallback={
+                  <Show when={item.kind === 'card' ? item.card : undefined}>
+                    {(card) => (
+                      <CardItem
+                        card={card()}
+                        revealIndex={props.columnIndex + streamIndex()}
                         voting={props.voting}
+                        columns={props.columns}
+                        columnCards={props.view.cards}
+                        columnGroups={props.view.groups}
+                        canGroupCards={props.canGroupCards}
+                        canUngroup={
+                          props.canGroupCards && passesPrivateMode(props, card())
+                        }
                         isFacilitator={props.isFacilitator}
                         isLocked={props.isLocked}
                         isBlurred={props.isBlurred}
-                        canGroupCards={props.canGroupCards}
-                        canManage={canManageGroup(entry().group)}
                         nowMs={props.nowMs}
                         draggingCardId={props.draggingCardId}
                         draggingSourceColumnId={props.draggingSourceColumnId}
@@ -743,45 +703,37 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         onOpenCardDetail={props.onOpenCardDetail}
                         onDragStartCard={props.onDragStartCard}
                         onDragEndCard={props.onDragEndCard}
-                        onDragStartGroup={props.onDragStartGroup}
                       />
                     )}
                   </Show>
-                );
-              }
-              const cardItem = createMemo(() => {
-                const item = streamItemByKey().get(key);
-                return item?.kind === 'card' ? item.card : undefined;
-              });
-              return (
-                <Show when={cardItem()}>
-                  {(card) => (
-                    <CardItem
-                      card={card()}
-                      revealIndex={props.columnIndex + streamIndex()}
-                      voting={props.voting}
-                      columns={props.columns}
-                      columnCards={props.cards}
-                      columnGroups={props.groups}
-                      canGroupCards={props.canGroupCards}
-                      canUngroup={
-                        props.canGroupCards && passesPrivateMode(props, card())
-                      }
-                      isFacilitator={props.isFacilitator}
-                      isLocked={props.isLocked}
-                      isBlurred={props.isBlurred}
-                      nowMs={props.nowMs}
-                      draggingCardId={props.draggingCardId}
-                      draggingSourceColumnId={props.draggingSourceColumnId}
-                      actions={props.actions}
-                      onOpenCardDetail={props.onOpenCardDetail}
-                      onDragStartCard={props.onDragStartCard}
-                      onDragEndCard={props.onDragEndCard}
-                    />
-                  )}
-                </Show>
-              );
-            }}
+                }
+              >
+                {(group) => (
+                  <CardGroupItem
+                    group={group().group}
+                    cards={group().cards}
+                    revealIndexOffset={props.columnIndex + streamIndex()}
+                    columnCards={props.view.cards}
+                    columnGroups={props.view.groups}
+                    columns={props.columns}
+                    voting={props.voting}
+                    isFacilitator={props.isFacilitator}
+                    isLocked={props.isLocked}
+                    isBlurred={props.isBlurred}
+                    canGroupCards={props.canGroupCards}
+                    canManage={canManageGroup(group().group)}
+                    nowMs={props.nowMs}
+                    draggingCardId={props.draggingCardId}
+                    draggingSourceColumnId={props.draggingSourceColumnId}
+                    actions={props.actions}
+                    onOpenCardDetail={props.onOpenCardDetail}
+                    onDragStartCard={props.onDragStartCard}
+                    onDragEndCard={props.onDragEndCard}
+                    onDragStartGroup={props.onDragStartGroup}
+                  />
+                )}
+              </Show>
+            )}
           </For>
         </Show>
       </div>
