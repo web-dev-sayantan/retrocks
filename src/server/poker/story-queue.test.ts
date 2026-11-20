@@ -251,3 +251,92 @@ test('Editing the active Story invalidates old vote, reveal, and switch commands
     room: { activeStoryId: receipt.id, stories: [{ status: 'pending' }, { status: 'pending' }] },
   });
 });
+
+test('the Facilitator can change the Deck and Participants receive its ordered choices live', async () => {
+  const { id, participant, mutate, read } = await openRoom();
+  const response = await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+    headers: { cookie: participant },
+  }));
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+  async function readFrame() {
+    const { value } = await reader.read();
+    return parsePokerLiveMessage(new TextDecoder().decode(value).slice('data: '.length));
+  }
+
+  try {
+    expect(await readFrame()).toMatchObject({
+      type: 'room:snapshot', room: { deckType: 'fibonacci', deckLocked: false },
+    });
+    expect(await readFrame()).toMatchObject({ type: 'room:presence' });
+    expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } }, participant)).toMatchObject({
+      ok: false, code: 'FORBIDDEN',
+    });
+    expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } })).toMatchObject({
+      ok: true, room: { deckType: 't-shirt', deck: ['XS', 'S', 'M', 'L', 'XL'] },
+    });
+    expect(await readFrame()).toMatchObject({
+      type: 'room:snapshot', room: { deckType: 't-shirt', deck: ['XS', 'S', 'M', 'L', 'XL'] },
+    });
+
+    for (const choices of [['only one'], [' ', 'valid'], [1, ' 1 '], ['same', 'same']]) {
+      expect(await mutate({ type: 'set-deck', deck: { type: 'custom', choices } })).toMatchObject({
+        ok: false, code: 'INVALID_INPUT',
+      });
+    }
+    const deck = ['4', 'Unexpected work', '0'];
+    expect(await mutate({ type: 'set-deck', deck: { type: 'custom', choices: [4, ' Unexpected work ', 0] } })).toMatchObject({
+      ok: true, room: { deckType: 'custom', deck },
+    });
+    expect(await readFrame()).toMatchObject({ type: 'room:snapshot', room: { deckType: 'custom', deck } });
+    expect(await read(participant)).toMatchObject({ deckType: 'custom', deck, deckLocked: false });
+  } finally {
+    await reader.cancel();
+  }
+});
+
+test('opening the first Voting Round fixes the saved Deck before any votes are cast', async () => {
+  const { participant, mutate, read } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Checkout' });
+  if (!added.ok) throw new Error('Could not add Story.');
+  const deck = { type: 'set-deck', deck: { type: 'custom', choices: ['Review', 0] } };
+  const open = { type: 'select-story', storyId: added.room.stories[0].id };
+
+  expect(await mutate(deck)).toMatchObject({ ok: true, room: { deckLocked: false } });
+  const opened = await mutate(open);
+  expect(opened).toMatchObject({ ok: true, room: { deckLocked: true, deck: ['Review', '0'] } });
+  if (!opened.ok || !opened.room.round) throw new Error('Could not open Voting Round.');
+  expect(await mutate({ type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({
+    ok: false, code: 'DECK_LOCKED',
+  });
+  expect(await read(participant)).toMatchObject({ deckLocked: true, deck: ['Review', '0'] });
+
+  const roundId = opened.room.round.id;
+  expect(await mutate({ type: 'vote', roundId, choice: '  Review ' }, participant)).toMatchObject({
+    ok: true, room: { round: { ownChoice: 'Review' } },
+  });
+  expect(await mutate({ type: 'vote', roundId, choice: '5' }, participant)).toMatchObject({
+    ok: false, code: 'INVALID_INPUT',
+  });
+  expect(await mutate({ type: 'vote', roundId, choice: 0 })).toMatchObject({
+    ok: true, room: { round: { ownChoice: '0' } },
+  });
+  expect(await mutate({ type: 'reveal', roundId })).toMatchObject({
+    ok: true, room: { round: { ballots: [{ choice: '0' }, { choice: 'Review' }] } },
+  });
+});
+
+test('a Deck save racing the first Voting Round cannot change the Deck after the round opens', async () => {
+  const { participant, mutate, read } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Checkout' });
+  if (!added.ok) throw new Error('Could not add Story.');
+  const [opened, changed] = await Promise.all([
+    mutate({ type: 'select-story', storyId: added.room.stories[0].id }),
+    mutate({ type: 'set-deck', deck: { type: 't-shirt' } }),
+  ]);
+  if (!opened.ok) throw new Error('Could not open Voting Round.');
+  const deck = changed.ok ? ['XS', 'S', 'M', 'L', 'XL'] : ['0', '1', '2', '3', '5', '8', '13', '21'];
+  expect(opened.room).toMatchObject({ deck, deckLocked: true });
+  if (!changed.ok) expect(changed.code).toBe('DECK_LOCKED');
+  expect(await read(participant)).toMatchObject({ deck, deckLocked: true });
+});

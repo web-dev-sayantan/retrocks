@@ -4,7 +4,8 @@ import { safeParse } from 'valibot';
 
 import { PokerDisplayName } from '../../lib/poker-schemas';
 import {
-  FIBONACCI_DECK,
+  POKER_DECK_PRESETS,
+  type PokerDeckType,
   type PokerParticipant,
   type PokerResult,
   type PokerRoomCommand,
@@ -89,10 +90,16 @@ export interface StoredPokerRoom {
   participants: StoredParticipant[];
   facilitatorCapability?: PokerFacilitatorCapability;
   pendingFacilitatorClaims?: string[];
-  stories?: PokerStory[];
-  activeStoryId?: string | null;
-  deck?: readonly string[];
-  round?: StoredVotingRound | null;
+  stories: PokerStory[];
+  activeStoryId: string | null;
+  deck: readonly string[];
+  deckType: PokerDeckType;
+  deckLocked: boolean;
+  round: StoredVotingRound | null;
+}
+
+export function pokerDeckContains(room: StoredPokerRoom, choice: string): boolean {
+  return room.deck.includes(choice);
 }
 
 export function pokerDisplayName(input: unknown): string | undefined {
@@ -142,9 +149,11 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
       ? { facilitatorLinkRevision: room.facilitatorCapability.revision }
       : {}),
     participants: viewer ? room.participants.map(projectParticipant) : [],
-    stories: viewer ? room.stories ?? [] : [],
-    activeStoryId: viewer ? room.activeStoryId ?? null : null,
-    deck: viewer ? room.deck ?? FIBONACCI_DECK : [],
+    stories: viewer ? room.stories : [],
+    activeStoryId: viewer ? room.activeStoryId : null,
+    deck: viewer ? room.deck : [],
+    deckType: viewer ? room.deckType : 'fibonacci',
+    deckLocked: viewer ? room.deckLocked : false,
     round: viewer ? projectRound(room, viewer.id) : null,
   };
 }
@@ -183,7 +192,16 @@ export class PokerRoomStorage {
       id,
       now,
     );
-    return row ? JSON.parse(row.data) as StoredPokerRoom : null;
+    if (!row) return null;
+    const room = JSON.parse(row.data) as StoredPokerRoom;
+    room.stories ??= [];
+    room.activeStoryId ??= null;
+    room.deck ??= POKER_DECK_PRESETS.fibonacci;
+    room.deckType ??= 'fibonacci';
+    // Before the persisted lock, any Room that had started voting still had a round.
+    room.deckLocked ??= room.round != null;
+    room.round ??= null;
+    return room;
   }
 
   read(id: string, hash: string): PokerRoomView | null {
@@ -200,7 +218,9 @@ export class PokerRoomStorage {
       participants: [{ id: generateEntityId(), hash, displayName, isFacilitator: true }],
       stories: [],
       activeStoryId: null,
-      deck: FIBONACCI_DECK,
+      deck: POKER_DECK_PRESETS.fibonacci,
+      deckType: 'fibonacci',
+      deckLocked: false,
       round: null,
     };
     this.db.run(
@@ -235,15 +255,29 @@ export class PokerRoomStorage {
           }
           break;
         }
+        case 'set-deck': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          if (room.deckLocked) {
+            return { ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked once the first Voting Round opens.' };
+          }
+          const { deck } = command;
+          const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
+          if (room.deckType === deck.type && room.deck.length === choices.length
+            && room.deck.every((choice, index) => choice === choices[index])) return { ok: true, room };
+          room.deckType = deck.type;
+          room.deck = choices;
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          (room.stories ??= []).push({ id: generateEntityId(), title: command.title, status: 'pending' });
+          room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending' });
           room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'edit-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          const story = room.stories?.find((entry) => entry.id === command.storyId);
+          const story = room.stories.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
           if (story.status !== 'pending') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Only pending Stories can be edited.' };
@@ -258,7 +292,7 @@ export class PokerRoomStorage {
         }
         case 'move-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          const stories = room.stories ?? [];
+          const stories = room.stories;
           const from = stories.findIndex((entry) => entry.id === command.storyId);
           const target = stories.findIndex((entry) => entry.id === command.targetId);
           if (from < 0 || target < 0) return storyMissing;
@@ -272,7 +306,7 @@ export class PokerRoomStorage {
         }
         case 'select-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          const story = room.stories?.find((entry) => entry.id === command.storyId);
+          const story = room.stories.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
           if (story.status !== 'pending') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Choose a pending Story.' };
@@ -283,6 +317,7 @@ export class PokerRoomStorage {
           if (room.round && room.activeStoryId === story.id) return { ok: true, room };
           if (room.round && command.discardRoundId === undefined) return discardRequired;
           room.activeStoryId = story.id;
+          room.deckLocked = true;
           room.round = startVotingRound();
           room.expiresAt = now + ROOM_TTL_MS;
           break;
@@ -293,7 +328,7 @@ export class PokerRoomStorage {
           const round = room.round;
           if (round?.id !== command.roundId || round.phase !== 'open') return roundChanged;
           const { choice } = command;
-          if (choice !== null && !(room.deck ?? FIBONACCI_DECK).includes(choice)) {
+          if (choice !== null && !pokerDeckContains(room, choice)) {
             return { ok: false, code: 'INVALID_INPUT', message: 'Choose a value from the Deck.' };
           }
           if ((round.ballots[participant.id] ?? null) === choice) return { ok: true, room };
