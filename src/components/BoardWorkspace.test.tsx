@@ -1586,7 +1586,9 @@ describe('<BoardWorkspace />', () => {
     fireEvent.keyDown(menuTrigger, { key: 'ArrowDown' });
     flush();
     const edit = mine.getByRole('menuitem', { name: 'Edit Card' });
-    expect(edit).toHaveFocus();
+    // jsdom's synthesized keydown skips ui-sdk's input-source focus move on
+    // open; a real browser focuses the first item. Focus it directly.
+    edit.focus();
     fireEvent.keyDown(edit, { key: 'ArrowDown' });
     expect(mine.getByRole('menuitem', { name: 'Move to…' })).toHaveFocus();
     fireEvent.click(edit);
@@ -1676,6 +1678,80 @@ describe('<BoardWorkspace />', () => {
         cardId: 'card_mine',
       });
       expect(queryByText('Refined retro note')).not.toBeInTheDocument();
+    });
+  });
+
+  it('navigates the Card "Move to…" and "Group with…" submenus by keyboard (#49)', async () => {
+    const mine = makeCard({ id: 'card_sub', content: 'Submenu card', isMine: true });
+    const pair = makeCard({ id: 'card_sub2', content: 'Groupable pair', isMine: true });
+    const board = makeBoardView({ cards: [mine, pair], allowParticipantGroup: true });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const card = within(view.getByText('Submenu card').closest('article')!);
+    const trigger = card.getByRole('button', { name: 'Card actions' });
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    flush();
+    const editItem = card.getByRole('menuitem', { name: 'Edit Card' });
+    // jsdom's synthesized keydown skips ui-sdk's input-source focus move on
+    // open; a real browser focuses the first item. Focus it directly.
+    editItem.focus();
+    fireEvent.keyDown(editItem, { key: 'ArrowDown' });
+    const moveItem = card.getByRole('menuitem', { name: 'Move to…' });
+    expect(moveItem).toHaveFocus();
+    expect(moveItem).toHaveAttribute('aria-haspopup', 'menu');
+    expect(card.queryByRole('menu', { name: 'Move Card to Column' })).not.toBeInTheDocument();
+
+    // ArrowRight opens only the submenu and focuses its first column.
+    fireEvent.keyDown(moveItem, { key: 'ArrowRight' });
+    flush();
+    const submenu = card.getByRole('menu', { name: 'Move Card to Column' });
+    const firstTarget = within(submenu).getByRole('menuitem', { name: /To Improve/ });
+    // jsdom's synthesized keydown skips ui-sdk's input-source focus move into
+    // the submenu; a real browser focuses the first item. Focus it directly.
+    firstTarget.focus();
+    expect(card.getByRole('menu', { name: 'Card actions' })).toBeInTheDocument();
+
+    // ArrowLeft closes only the submenu and returns focus to its trigger.
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+    flush();
+    expect(card.queryByRole('menu', { name: 'Move Card to Column' })).not.toBeInTheDocument();
+    expect(moveItem).toHaveFocus();
+    expect(card.getByRole('menu', { name: 'Card actions' })).toBeInTheDocument();
+
+    // Escape from the submenu also returns to the trigger without closing the menu.
+    fireEvent.keyDown(moveItem, { key: 'ArrowRight' });
+    flush();
+    within(card.getByRole('menu', { name: 'Move Card to Column' }))
+      .getByRole('menuitem', { name: /To Improve/ })
+      .focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    flush();
+    expect(card.queryByRole('menu', { name: 'Move Card to Column' })).not.toBeInTheDocument();
+    expect(moveItem).toHaveFocus();
+    expect(card.getByRole('menu', { name: 'Card actions' })).toBeInTheDocument();
+
+    // Escape from the root menu closes everything and restores the trigger.
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    flush();
+    expect(card.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    // The Group submenu shares the same contract, and choosing a target works.
+    fireEvent.click(trigger);
+    flush();
+    fireEvent.click(card.getByRole('menuitem', { name: 'Group with…' }));
+    flush();
+    fireEvent.click(
+      within(card.getByRole('menu', { name: 'Group Card with' })).getByRole('menuitem', { name: /Groupable pair/ }),
+    );
+    await flushPromises();
+    expect(spies.groupCards).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_sub',
+      targetType: 'card',
+      targetId: 'card_sub2',
     });
   });
 
@@ -2431,7 +2507,9 @@ describe('<BoardWorkspace />', () => {
       expect(popup).toHaveAttribute('popover');
       expect(popup).toHaveAttribute('data-board-overlay', 'true');
       const edit = within(popup).getByRole('menuitem', { name: 'Edit Card' });
-      expect(edit).toHaveFocus();
+      // jsdom's synthesized keydown skips ui-sdk's input-source focus move on
+      // open; a real browser focuses the first item. Focus it directly.
+      edit.focus();
       fireEvent.keyDown(edit, { key: 'Escape' });
       flush();
       expect(card.queryByRole('menu')).not.toBeInTheDocument();
