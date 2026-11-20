@@ -35,7 +35,7 @@ import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
 
 export interface ColumnPanelProps {
   column: ColumnDTO;

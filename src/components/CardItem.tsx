@@ -35,7 +35,8 @@ import {
   PlusIcon,
   TrashIcon,
 } from './Icons';
-import VoteControls, { type WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
+import VoteControls from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;

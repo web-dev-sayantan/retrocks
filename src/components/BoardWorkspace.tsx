@@ -106,7 +106,7 @@ import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
-import type { WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
 
 export interface BoardWorkspaceProps {
   board: BoardViewDTO | null;

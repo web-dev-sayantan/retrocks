@@ -15,7 +15,8 @@ import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import VoteControls, { type WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
+import VoteControls from './VoteControls';
 
 export interface CardGroupItemProps {
   group: CardGroupDTO;
