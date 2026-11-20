@@ -1,13 +1,16 @@
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/solid/popover';
+import { SmilePlus } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import { REACTION_EMOJIS, type ReactionEmoji } from '../lib/board-types';
-import { SmilePlusIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 
 export interface CardReactionsProps {
   cardId: string;
   reactions: Record<string, number>;
   myReactions: readonly string[];
   disabled: boolean;
+  inCardFooter?: boolean;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
 }
 
@@ -55,6 +58,10 @@ export default function CardReactions(props: CardReactionsProps) {
     };
   });
 
+  createEffect(() => props.disabled, (disabled) => {
+    if (disabled) setPickerOpen(false);
+  });
+
   function handlePickerKeyDown(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || event.isComposing || !pickerOpen()) return;
     event.preventDefault();
@@ -77,6 +84,8 @@ export default function CardReactions(props: CardReactionsProps) {
     return items;
   });
 
+  const belongsOnOwnRow = () => activeReactions().length > 0 || !!reactionError();
+
   async function handleToggle(emoji: ReactionEmoji): Promise<void> {
     if (props.disabled || pendingEmoji() !== null) return;
     setPickerOpen(false);
@@ -94,14 +103,21 @@ export default function CardReactions(props: CardReactionsProps) {
       ref={controls}
       onKeyDown={handlePickerKeyDown}
       onFocusOut={(event) => {
-        // The picker is in flow. Wait for an outside click to reach its target.
+        // Keep an outside pointer press active until its click can reach the target.
         if (!pickerOpen() || pressingOutside) return;
         const nextFocus = event.relatedTarget;
         if (!(nextFocus instanceof Node) || !event.currentTarget.contains(nextFocus)) {
           setPickerOpen(false);
         }
       }}
-      class="relative flex flex-wrap items-center gap-1.5"
+      class={[
+        'flex flex-wrap items-center gap-1.5',
+        {
+          'order-first col-span-full': props.inCardFooter && belongsOnOwnRow(),
+          'col-start-1 justify-self-end sm:col-start-2': props.inCardFooter && !belongsOnOwnRow(),
+          hidden: props.disabled && activeReactions().length === 0 && !reactionError(),
+        },
+      ]}
     >
       <For each={activeReactions()}>
         {(item) => (
@@ -128,68 +144,72 @@ export default function CardReactions(props: CardReactionsProps) {
       </For>
 
       <Show when={!props.disabled}>
-        <>
-          <button
+        <Popover
+          open={pickerOpen()}
+          onOpenChange={(open, details) => {
+            if (details.reason === 'outside-press' || details.reason === 'focus-out') {
+              details.cancel();
+              return;
+            }
+            setPickerOpen(open);
+          }}
+        >
+          <PopoverTrigger
             ref={pickerTrigger}
-            type="button"
             data-print-hide="true"
             aria-label="Add reaction"
-            aria-expanded={pickerOpen() ? 'true' : 'false'}
             title="Add reaction"
             disabled={pendingEmoji() !== null}
-            onClick={(event) => {
-              const opening = !pickerOpen();
-              if (opening) event.currentTarget.focus({ preventScroll: true });
-              setPickerOpen(opening);
-            }}
+            focusableWhenDisabled
+            onClick={(event) => event.currentTarget.focus({ preventScroll: true })}
             class={[
-              'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-transparent text-text-muted sm:min-h-6 sm:min-w-6',
-              'transition-colors hover:border-border hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
+              'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
+              'transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text data-disabled:cursor-not-allowed data-disabled:opacity-60',
               'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
             ]}
           >
-            <SmilePlusIcon />
-          </button>
-
-          <Show when={pickerOpen()}>
-            <div class="basis-full" data-print-hide="true">
-              <div
-                role="group"
-                aria-label="Choose a reaction"
-                data-board-overlay="true"
-                class="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-surface p-1.5 shadow-md"
-              >
-                <For each={REACTION_EMOJIS}>
-                  {(emoji) => (
-                    <button
-                      type="button"
-                      aria-pressed={
-                        props.myReactions.includes(emoji) ? 'true' : 'false'
-                      }
-                      onClick={() => void handleToggle(emoji)}
-                      class={[
-                        'inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-base transition-colors sm:h-7 sm:w-7 sm:text-sm',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        {
-                          'bg-accent/15 ring-1 ring-accent':
-                            props.myReactions.includes(emoji),
-                          'hover:bg-surface-subtle':
-                            !props.myReactions.includes(emoji),
-                        },
-                      ]}
-                    >
-                      {emoji}
-                    </button>
-                  )}
-                </For>
-              </div>
+            <LucideIcon icon={SmilePlus} />
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="end"
+            sideOffset={6}
+            collisionPadding={10}
+            initialFocus="none"
+            finalFocus="trigger"
+            aria-label="Reactions"
+            data-board-overlay={pickerOpen() ? 'true' : undefined}
+            data-print-hide="true"
+            class="board-popover w-max max-w-[calc(100vw-1.25rem)] rounded-xl border border-border bg-surface p-1.5 text-text"
+          >
+            <div role="group" aria-label="Choose a reaction" class="flex flex-wrap items-center gap-1">
+              <For each={REACTION_EMOJIS}>
+                {(emoji) => (
+                  <button
+                    type="button"
+                    aria-pressed={props.myReactions.includes(emoji) ? 'true' : 'false'}
+                    onClick={() => {
+                      pickerTrigger?.focus({ preventScroll: true });
+                      void handleToggle(emoji);
+                    }}
+                    class={[
+                      'inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-base transition-colors sm:size-7 sm:text-sm',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      {
+                        'bg-accent/15 ring-1 ring-accent': props.myReactions.includes(emoji),
+                        'hover:bg-surface-subtle': !props.myReactions.includes(emoji),
+                      },
+                    ]}
+                  >
+                    {emoji}
+                  </button>
+                )}
+              </For>
             </div>
-          </Show>
-        </>
+          </PopoverContent>
+        </Popover>
       </Show>
-      <Show when={pendingEmoji() !== null}>
-        <p class="basis-full text-xs text-text-muted" role="status">Updating reaction…</p>
-      </Show>
+      <p class="sr-only" aria-live="polite" aria-atomic="true">{pendingEmoji() !== null ? 'Updating reaction…' : ''}</p>
       <Show when={reactionError()}>
         <p class="basis-full text-xs text-rose-700 dark:text-rose-300" role="alert">{reactionError()}</p>
       </Show>
