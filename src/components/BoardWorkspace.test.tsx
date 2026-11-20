@@ -1,6 +1,7 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
 import { createAgent } from '@ui-sdk/solid/agent';
+import { shortcuts } from '@ui-sdk/solid/shortcuts';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -3541,6 +3542,17 @@ describe('<BoardWorkspace />', () => {
         try {
           flush();
 
+          // The registered set is what a keyboard help surface would list
+          expect(
+            shortcuts.list().map((entry) => [entry.keys, entry.description]),
+          ).toEqual([
+            ['/', 'Search cards'],
+            ['n', 'Add a card'],
+            ['a', 'Toggle Action Items'],
+            ['b', 'Toggle Private Mode'],
+            ['t', 'Toggle countdown timer'],
+          ]);
+
           // "/" focuses search bar and prevents default
           const searchInput = view.getByRole('searchbox', {
             name: /Search Cards, Card Groups, and comments/i,
@@ -3622,6 +3634,17 @@ describe('<BoardWorkspace />', () => {
           fireEvent.keyDown(document.body, { key: 'a' });
           flush();
           expect(view.getByRole('dialog', { name: 'Action Items' })).toBeInTheDocument();
+
+          // While the modal drawer is open, only its layer-scoped "a" stays runnable.
+          // Escape belongs to the drawer itself: no board-level Escape registration fights it.
+          expect(shortcuts.list().map((entry) => entry.keys)).toEqual(['a']);
+          fireEvent.keyDown(document.body, { key: 'Escape' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
+
+          fireEvent.keyDown(document.body, { key: 'a' });
+          flush();
+          expect(view.getByRole('dialog', { name: 'Action Items' })).toBeInTheDocument();
           // While overlay is open, "/" and "N" and "B" and "T" are ignored
           fireEvent.keyDown(document.body, { key: '/' });
           fireEvent.keyDown(document.body, { key: 'n' });
@@ -3687,6 +3710,9 @@ describe('<BoardWorkspace />', () => {
     document.dispatchEvent(nEvent);
     flush();
     expect(nEvent.defaultPrevented).toBe(false);
+
+    // Locked Board: "n", "b", and "t" unregister; "/" and "a" stay listed.
+    expect(shortcuts.list().map((entry) => entry.keys)).toEqual(['/', 'a']);
 
     const searchInput = view.getByRole('searchbox', {
       name: /Search Cards, Card Groups, and comments/i,

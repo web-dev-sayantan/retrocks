@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { hasOpenBoardOverlay } from '../lib/board-view';
 import CardReactions from './CardReactions';
 
 afterEach(() => {
@@ -63,14 +62,13 @@ describe('<CardReactions /> picker dismissal', () => {
 
     view.getByRole('button', { name: '🎉' }).focus();
     flush();
-    expect(hasOpenBoardOverlay()).toBe(true);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
 
     const nextCard = view.getByRole('button', { name: 'Other Card' });
     nextCard.focus();
     flush();
     expect(nextCard).toHaveFocus();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(hasOpenBoardOverlay()).toBe(false);
   });
 
   it('lets an outside press dismiss the picker while the click still reaches its target', () => {
@@ -86,7 +84,7 @@ describe('<CardReactions /> picker dismissal', () => {
     // A real pointer press focuses the target; jsdom clicks do not.
     nextCard.focus();
     flush();
-    expect(hasOpenBoardOverlay()).toBe(false);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(nextCard);
     flush();
     expect(onOutsideClick).toHaveBeenCalledOnce();
@@ -98,12 +96,12 @@ describe('<CardReactions /> picker dismissal', () => {
     const trigger = view.getByRole('button', { name: 'Add reaction' });
     fireEvent.click(trigger);
     flush();
-    expect(hasOpenBoardOverlay()).toBe(true);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
 
     const nextCard = view.getByRole('button', { name: 'Other Card' });
     fireEvent.pointerDown(nextCard, { button: 0 });
     flush();
     expect(nextCard).toBeInTheDocument();
-    expect(hasOpenBoardOverlay()).toBe(false);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 });
