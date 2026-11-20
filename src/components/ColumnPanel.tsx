@@ -21,6 +21,7 @@ import {
   type ColumnDTO,
 } from '../lib/board-types';
 import type { BoardMutations } from '../lib/board-session';
+import type { BoardTransferHandle } from '../lib/board-transfer';
 import type { ColumnStreamItem } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
 import {
@@ -30,7 +31,6 @@ import {
   canDeleteColumn as canDeleteColumnPermission,
   passesPrivateMode,
 } from '../lib/board-permissions';
-import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
@@ -56,9 +56,8 @@ export interface ColumnPanelProps {
   isMobile: boolean;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
-  draggingCardId: string | null;
-  draggingGroupId: string | null;
-  draggingSourceColumnId: string | null;
+  /** The Board's createTransfer instance; Columns are its drop lists. */
+  transfer: BoardTransferHandle;
   /** Controller-shaped Board mutations (the workspace passes its session). */
   actions: BoardMutations;
   onResetFilters: () => void;
@@ -68,9 +67,6 @@ export interface ColumnPanelProps {
   ) => void;
   onActivateColumn?: (columnId: string) => void;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
-  onDragStartCard: (cardId: string, sourceColumnId: string) => void;
-  onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
-  onDragEndCard: () => void;
 }
 
 export default function ColumnPanel(props: ColumnPanelProps) {
@@ -83,7 +79,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [renameDraft, setRenameDraft] = createSignal('');
   const [isSavingRename, setIsSavingRename] = createSignal(false);
   const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
-  const [isDropActive, setIsDropActive] = createSignal(false);
 
   createEffect(
     () => props.isLocked,
@@ -165,13 +160,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   function canManageGroup(group: CardGroupDTO): boolean {
     return props.canGroupCards && areAllGroupCardsMine(props, group, props.cards);
   }
-
-  const isEligibleDropTarget = createMemo(
-    () =>
-      canContribute(props) &&
-      (props.draggingCardId !== null || props.draggingGroupId !== null) &&
-      props.draggingSourceColumnId !== props.column.id,
-  );
 
   async function submitNewCard(): Promise<void> {
     const draft = composerEl ? composerEl.value : cardDraft();
@@ -278,67 +266,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     }
   }
 
-  function handleDragOver(event: DragEvent): void {
-    if (props.isLocked) return;
-    const cardData = event.dataTransfer?.getData(CARD_DRAG_MIME) ?? '';
-    const groupData = event.dataTransfer?.getData(GROUP_DRAG_MIME) ?? '';
-    const isGroupDrag =
-      props.draggingGroupId !== null ||
-      (!props.draggingCardId && Boolean(groupData) && !cardData);
-    const cardId =
-      props.draggingCardId ??
-      (cardData || event.dataTransfer?.getData(DRAG_FALLBACK_MIME) || '');
-    if (!isGroupDrag && !cardId) return;
-    if (
-      props.draggingSourceColumnId &&
-      props.draggingSourceColumnId === props.column.id
-    ) {
-      return;
-    }
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-    setIsDropActive(true);
-  }
-
-  function handleDragLeave(event: DragEvent): void {
-    const currentTarget = event.currentTarget as HTMLElement | null;
-    const related = event.relatedTarget as Node | null;
-    if (currentTarget && related && currentTarget.contains(related)) {
-      return;
-    }
-    setIsDropActive(false);
-  }
-
-  function handleDrop(event: DragEvent): void {
-    event.preventDefault();
-    setIsDropActive(false);
-    if (props.isLocked) return;
-    const cardData = event.dataTransfer?.getData(CARD_DRAG_MIME) || '';
-    const groupData = event.dataTransfer?.getData(GROUP_DRAG_MIME) || '';
-    const groupId =
-      props.draggingGroupId ||
-      (!props.draggingCardId && groupData && !cardData ? groupData : '');
-    if (groupId) {
-      if (props.draggingSourceColumnId === props.column.id) return;
-      props.onDragEndCard();
-      void props.actions.moveCardGroup(groupId, props.column.id);
-      return;
-    }
-    const cardId =
-      props.draggingCardId ||
-      cardData ||
-      event.dataTransfer?.getData(DRAG_FALLBACK_MIME) ||
-      '';
-    if (!cardId) return;
-    if (props.draggingSourceColumnId === props.column.id) return;
-    props.onDragEndCard();
-    void props.actions.moveCard(cardId, props.column.id);
-  }
-
   return (
     <section
+      {...props.transfer.slot('column', () => ({ value: props.column.id }))}
       id={`column-${props.column.id}`}
       role={props.isMobile ? 'tabpanel' : undefined}
       aria-hidden={props.isMobile && !props.isMobileActive ? 'true' : undefined}
@@ -347,9 +277,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       tabindex={props.isMobile && props.isMobileActive ? 0 : undefined}
       data-column-id={props.column.id}
       onFocusIn={() => props.onActivateColumn?.(props.column.id)}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       class={[
         'board-column-rail flex-col rounded-2xl border transition-shadow',
         {
@@ -357,9 +284,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           'hidden sm:flex': !props.isMobileActive,
           'sm:w-[320px] sm:shrink-0 sm:snap-start': props.isHorizontalSnap,
           'min-w-0': !props.isHorizontalSnap,
-          'ring-2 ring-focus/70': isDropActive(),
-          'ring-1 ring-focus/30': isEligibleDropTarget() && !isDropActive(),
         },
+        'data-drop-armed:ring-1 data-drop-armed:ring-focus/30 data-drop-active:ring-2 data-drop-active:ring-focus/70',
       ]}
     >
       {/* Rounded-top accent & tint cap stays pointer-events-none so floating popovers inside the rail never clip. */}
@@ -737,13 +663,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         canGroupCards={props.canGroupCards}
                         canManage={canManageGroup(entry().group)}
                         nowMs={props.nowMs}
-                        draggingCardId={props.draggingCardId}
-                        draggingSourceColumnId={props.draggingSourceColumnId}
+                        transfer={props.transfer}
                         actions={props.actions}
                         onOpenCardDetail={props.onOpenCardDetail}
-                        onDragStartCard={props.onDragStartCard}
-                        onDragEndCard={props.onDragEndCard}
-                        onDragStartGroup={props.onDragStartGroup}
                       />
                     )}
                   </Show>
@@ -771,12 +693,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       isLocked={props.isLocked}
                       isBlurred={props.isBlurred}
                       nowMs={props.nowMs}
-                      draggingCardId={props.draggingCardId}
-                      draggingSourceColumnId={props.draggingSourceColumnId}
+                      transfer={props.transfer}
                       actions={props.actions}
                       onOpenCardDetail={props.onOpenCardDetail}
-                      onDragStartCard={props.onDragStartCard}
-                      onDragEndCard={props.onDragEndCard}
                     />
                   )}
                 </Show>

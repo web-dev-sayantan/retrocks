@@ -8,9 +8,9 @@ import type {
   ColumnDTO,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
-import { canContribute, isGroupRedacted } from '../lib/board-permissions';
-import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
+import { isGroupRedacted } from '../lib/board-permissions';
 import type { BoardMutations } from '../lib/board-session';
+import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
@@ -31,8 +31,8 @@ export interface CardGroupItemProps {
   canGroupCards: boolean;
   canManage: boolean;
   nowMs: number;
-  draggingCardId: string | null;
-  draggingSourceColumnId: string | null;
+  /** The Board's createTransfer instance: this Group's header is one of its items. */
+  transfer: BoardTransferHandle;
   /** Controller-shaped Card/Group mutations (the workspace passes its session). */
   actions: Pick<
     BoardMutations,
@@ -48,9 +48,6 @@ export interface CardGroupItemProps {
     | 'moveCardGroup'
   >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
-  onDragStartCard: (cardId: string, sourceColumnId: string) => void;
-  onDragEndCard: () => void;
-  onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
 }
 
 const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7';
@@ -65,7 +62,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const [isMoving, setIsMoving] = createSignal(false);
   const [moveFailed, setMoveFailed] = createSignal(false);
   const [isDissolving, setIsDissolving] = createSignal(false);
-  const [isDropActive, setIsDropActive] = createSignal(false);
   let moveTrigger: HTMLButtonElement | undefined;
 
   createEffect(isMoving, (moving, wasMoving) => {
@@ -81,34 +77,11 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     },
   );
 
-  const draggingCard = createMemo(() => {
-    if (
-      !props.draggingCardId ||
-      props.draggingSourceColumnId !== props.group.columnId
-    ) {
-      return undefined;
-    }
-    return props.columnCards.find(
-      (card) => card.id === props.draggingCardId && !card.redacted,
-    );
-  });
-
   const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
   const canManageGroup = createMemo(
     () => props.canManage && !isGroupRedacted(props.group),
   );
-
-  const canAcceptDrop = createMemo(() => {
-    const card = draggingCard();
-    return (
-      props.canGroupCards &&
-      canContribute(props) &&
-      !isGroupRedacted(props.group) &&
-      card !== undefined &&
-      !props.group.cardIds.includes(card.id)
-    );
-  });
 
   function startRename(): void {
     setRenameDraft(props.group.title);
@@ -173,70 +146,28 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     }
   }
 
-  function handleDragStart(event: DragEvent): void {
-    if (!canManageGroup() || !canContribute(props)) {
-      event.preventDefault();
-      return;
-    }
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData(DRAG_FALLBACK_MIME, props.group.id);
-      event.dataTransfer.setData(GROUP_DRAG_MIME, props.group.id);
-    }
-    props.onDragStartGroup(props.group.id, props.group.columnId);
-  }
-
-  function handleDragOver(event: DragEvent): void {
-    if (!canAcceptDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-    setIsDropActive(true);
-  }
-
-  function handleDragLeave(event: DragEvent): void {
-    const currentTarget = event.currentTarget as HTMLElement | null;
-    const related = event.relatedTarget as Node | null;
-    if (currentTarget && related && currentTarget.contains(related)) return;
-    setIsDropActive(false);
-  }
-
-  function handleDrop(event: DragEvent): void {
-    if (!canAcceptDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDropActive(false);
-    const card = draggingCard();
-    if (card) {
-      void props.actions.groupCard(card.id, 'group', props.group.id);
-    }
-  }
-
   return (
     <article
+      {...props.transfer.slot('group-target', () => ({ value: `group:${props.group.id}` }))}
       data-group-id={props.group.id}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       class={[
         'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
-        {
-          'ring-2 ring-focus/70': isDropActive(),
-        },
+        'data-drop-active:ring-2 data-drop-active:ring-focus/70',
       ]}
     >
       <div
-        draggable={canManageGroup() && !props.isLocked ? 'true' : 'false'}
-        onDragStart={handleDragStart}
-        onDragEnd={() => props.onDragEndCard()}
+        {...props.transfer.slot('group-item', () => ({ value: `group:${props.group.id}` }))}
+        /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
+           grab–move–drop (APG): transfer items are focusable. */
+        tabindex={canManageGroup() && !props.isLocked ? 0 : undefined}
+        aria-roledescription={canManageGroup() && !props.isLocked ? 'draggable' : undefined}
         class={[
           'grid min-w-0 gap-1 px-0.5',
           {
-            'cursor-grab active:cursor-grabbing':
+            'cursor-grab active:cursor-grabbing touch-none':
               canManageGroup() && !props.isLocked,
           },
+          'data-dragging:opacity-50',
         ]}
       >
         <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5">
@@ -439,12 +370,9 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 isLocked={props.isLocked}
                 isBlurred={props.isBlurred}
                 nowMs={props.nowMs}
-                draggingCardId={props.draggingCardId}
-                draggingSourceColumnId={props.draggingSourceColumnId}
+                transfer={props.transfer}
                 actions={props.actions}
                 onOpenCardDetail={props.onOpenCardDetail}
-                onDragStartCard={props.onDragStartCard}
-                onDragEndCard={props.onDragEndCard}
               />
             )}
           </For>

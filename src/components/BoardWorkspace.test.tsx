@@ -20,6 +20,35 @@ async function flushPromises(): Promise<void> {
   flush();
 }
 
+/** Fixed element rect for createTransfer's geometry (jsdom gives all zeros). */
+function stubRect(el: Element, box: [number, number, number, number]): void {
+  const [left, top, right, bottom] = box;
+  vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+    left, top, right, bottom, x: left, y: top,
+    width: right - left, height: bottom - top,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+/** Simulates a complete pointer drag gesture: press, moves, release. */
+function pointerDrag(from: Element, points: { x: number; y: number }[]): void {
+  const [start, ...rest] = points;
+  const end = rest.at(-1) ?? start;
+  const init = (x: number, y: number) => ({
+    button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true, pointerId: 7,
+    clientX: x, clientY: y,
+  });
+  fireEvent.pointerDown(from, init(start.x, start.y));
+  for (const point of rest) {
+    fireEvent.pointerMove(document.body, init(point.x, point.y));
+  }
+  fireEvent.pointerUp(document.body, init(end.x, end.y));
+  // A real drag swallows the click that follows it; consume that here so the
+  // listener never leaks into the next test's first click.
+  fireEvent.click(document.body);
+  flush();
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -1130,20 +1159,17 @@ describe('<BoardWorkspace />', () => {
       within(toImprove).getByText('Refined retro note'),
     ).toBeInTheDocument();
 
-    // Move back via native HTML5 Drag and Drop
+    // Move back via pointer drag through createTransfer
     const draggableCard = within(toImprove)
       .getByText('Refined retro note')
       .closest('[data-card-id="card_mine"]') as HTMLElement;
-    expect(draggableCard).toHaveAttribute('draggable', 'true');
-    const dataTransfer = {
-      setData: vi.fn(),
-      getData: vi.fn(() => 'card_mine'),
-      effectAllowed: 'move',
-      dropEffect: 'move',
-    };
-    fireEvent.dragStart(draggableCard, { dataTransfer });
-    fireEvent.dragOver(wentWell, { dataTransfer });
-    fireEvent.drop(wentWell, { dataTransfer });
+    stubRect(wentWell, [0, 0, 300, 600]);
+    stubRect(toImprove, [320, 0, 620, 600]);
+    stubRect(draggableCard, [330, 60, 510, 160]);
+    pointerDrag(draggableCard, [
+      { x: 420, y: 100 },
+      { x: 150, y: 100 },
+    ]);
     await flushPromises();
 
     expect(spies.moveCard).toHaveBeenLastCalledWith({
@@ -1171,6 +1197,51 @@ describe('<BoardWorkspace />', () => {
       });
       expect(queryByText('Refined retro note')).not.toBeInTheDocument();
     });
+  });
+
+  it('moves a Card to another Column by pointer drag through createTransfer', async () => {
+    const myCard = makeCard({
+      id: 'card_dragme',
+      columnId: 'col_1',
+      content: 'Drag me over',
+      isMine: true,
+    });
+    const board = makeBoardView({ isFacilitator: false, cards: [myCard] });
+    const { actions, spies } = createFakeActions(board);
+
+    const { getByRole } = render(() => (
+      <BoardWorkspace
+        board={board}
+        boardId={board.id}
+        homeHref="/"
+        actions={actions}
+      />
+    ));
+    flush();
+
+    const wentWell = getByRole('region', { name: 'Went Well' });
+    const toImprove = getByRole('region', { name: 'To Improve' });
+    const cardEl = within(wentWell)
+      .getByText('Drag me over')
+      .closest('article') as HTMLElement;
+    stubRect(wentWell, [0, 0, 300, 600]);
+    stubRect(toImprove, [320, 0, 620, 600]);
+    stubRect(cardEl, [10, 60, 290, 160]);
+
+    pointerDrag(cardEl, [
+      { x: 50, y: 100 },
+      { x: 420, y: 100 },
+    ]);
+    await flushPromises();
+
+    expect(spies.moveCard).toHaveBeenCalledWith({
+      boardId: board.id,
+      cardId: 'card_dragme',
+      targetColumnId: 'col_2',
+    });
+    expect(
+      within(toImprove).getByText('Drag me over'),
+    ).toBeInTheDocument();
   });
 
   it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with shared confirmation)', async () => {
