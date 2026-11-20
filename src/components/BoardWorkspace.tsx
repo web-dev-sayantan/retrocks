@@ -51,11 +51,14 @@ import {
   canAddColumn as canAddBoardColumn,
   canControlFacilitation,
   canFacilitate,
-  canManageCard,
-  canManageGroup,
   canManageGrouping,
 } from '../lib/board-permissions';
 import { createBoardSession } from '../lib/board-session';
+import {
+  buildBoardTransferLists,
+  boardTransfer,
+  type BoardTransferMove,
+} from '../lib/board-transfer';
 import {
   COLUMN_ACCENTS,
   MAX_BOARD_TITLE_LENGTH,
@@ -122,7 +125,8 @@ function BoardHomeLink(props: { href: string; class: string }) {
   );
 }
 
-function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): string {  if (columnCount <= 1) return showAddColumn
+function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): string {
+  if (columnCount <= 1) return showAddColumn
     ? 'sm:grid sm:grid-cols-[minmax(0,1fr)_auto] lg:max-w-3xl'
     : 'sm:grid sm:grid-cols-1 lg:max-w-2xl';
   if (columnCount === 2) return showAddColumn
@@ -283,13 +287,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   let columnTabListEl: HTMLDivElement | undefined;
   let columnTabViewportEl: HTMLDivElement | undefined;
   let mobileComposerBarEl: HTMLDivElement | undefined;
-
-  // Desktop drag-and-drop Card state
-  const [draggingCardId, setDraggingCardId] = createSignal<string | null>(null);
-  const [draggingGroupId, setDraggingGroupId] = createSignal<string | null>(null);
-  const [draggingSourceColumnId, setDraggingSourceColumnId] = createSignal<
-    string | null
-  >(null);
 
   // Card Detail Drawer state
   const [openCardDetailId, setOpenCardDetailId] = createSignal<string | null>(
@@ -487,6 +484,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     filter: quickFilter,
     sortMode,
   });
+
+  // One createTransfer instance owns every Card / Card Group move (#52):
+  // Columns are its lists, Cards and Card Groups its items, and drops resolve
+  // through resolveBoardTransferMove onto the session's existing mutations.
+  const commitTransferMove = (move: BoardTransferMove): void => {
+    if (move.kind === 'move-card') {
+      void session.moveCard(move.cardId, move.targetColumnId);
+    } else if (move.kind === 'move-group') {
+      void session.moveCardGroup(move.groupId, move.targetColumnId);
+    } else if (move.kind === 'group-with-card') {
+      void session.groupCard(move.cardId, 'card', move.targetCardId);
+    } else {
+      void session.groupCard(move.cardId, 'group', move.targetGroupId);
+    }
+  };
+  const transfer = usePrimitive(boardTransfer, () => ({
+    lists: buildBoardTransferLists(view),
+    board: () => session.board(),
+    commit: commitTransferMove,
+  }));
 
   const secretSearch = createMemo(() => {
     if (!view.hasSearchQuery || view.matchedCardCount !== 0) return;
@@ -735,30 +752,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const current = resolvedActiveColumnIndex();
     const next = cols[current + (dx < 0 ? 1 : -1)];
     if (next) setActiveColumnId(next.id);
-  }
-
-  function handleDragStartCard(cardId: string, sourceColumnId: string): void {
-    const board = session.board();
-    if (!board || !canManageCard(board, cardId)) return;
-    setDraggingCardId(cardId);
-    setDraggingGroupId(null);
-    setDraggingSourceColumnId(sourceColumnId);
-  }
-
-  function handleDragStartGroup(groupId: string, sourceColumnId: string): void {
-    const board = session.board();
-    if (!board) return;
-    const group = board.groups.find((item) => item.id === groupId);
-    if (!group || !canManageGroup(board, group, board.cards)) return;
-    setDraggingCardId(null);
-    setDraggingGroupId(groupId);
-    setDraggingSourceColumnId(sourceColumnId);
-  }
-
-  function handleDragEndCard(): void {
-    setDraggingCardId(null);
-    setDraggingGroupId(null);
-    setDraggingSourceColumnId(null);
   }
 
   return (
@@ -1311,17 +1304,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       isMobile={isMobileBoard()}
                       isMobileActive={resolvedActiveColumnIndex() === index()}
                       isHorizontalSnap={isHorizontalSnap()}
-                      draggingCardId={draggingCardId()}
-                      draggingGroupId={draggingGroupId()}
-                      draggingSourceColumnId={draggingSourceColumnId()}
+                      transfer={transfer}
                       actions={session}
                       onResetFilters={resetFilters}
                       onRegisterComposer={registerColumnComposer}
                       onActivateColumn={(colId) => setActiveColumnId(colId)}
                       onOpenCardDetail={handleOpenCardDetail}
-                      onDragStartCard={handleDragStartCard}
-                      onDragStartGroup={handleDragStartGroup}
-                      onDragEndCard={handleDragEndCard}
                     />
                   )}
                 </For>

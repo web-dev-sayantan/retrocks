@@ -22,10 +22,10 @@ import {
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
-import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
 import { isOptimisticId } from '../lib/optimistic-ids';
 import { formatRelativeTime } from '../lib/recent-boards';
 import type { BoardMutations } from '../lib/board-session';
+import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import CardReactions from './CardReactions';
@@ -54,8 +54,8 @@ export interface CardItemProps {
   isLocked: boolean;
   isBlurred: boolean;
   nowMs: number;
-  draggingCardId: string | null;
-  draggingSourceColumnId: string | null;
+  /** The Board's createTransfer instance: this Card is one of its items. */
+  transfer: BoardTransferHandle;
   /** Controller-shaped Card mutations (the workspace passes its session). */
   actions: Pick<
     BoardMutations,
@@ -68,8 +68,6 @@ export interface CardItemProps {
     | 'ungroupCard'
   >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
-  onDragStartCard: (cardId: string, sourceColumnId: string) => void;
-  onDragEndCard: () => void;
 }
 
 const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
@@ -82,7 +80,6 @@ export default function CardItem(props: CardItemProps) {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
   const [isUngrouping, setIsUngrouping] = createSignal(false);
-  const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
   const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
   const [actionDoneDraft, setActionDoneDraft] = createSignal<boolean | null>(null);
   const actionDone = () => actionDoneDraft() ?? props.card.actionDone;
@@ -215,29 +212,6 @@ export default function CardItem(props: CardItemProps) {
 
   const canDrag = createMemo(() => (canMove() || canGroup()) && !isEditing());
 
-  const draggingCard = createMemo(() => {
-    if (
-      !props.draggingCardId ||
-      props.draggingSourceColumnId !== props.card.columnId
-    ) {
-      return undefined;
-    }
-    return props.columnCards.find(
-      (card) => card.id === props.draggingCardId && !card.redacted,
-    );
-  });
-
-  const canAcceptGroupDrop = createMemo(() => {
-    const source = draggingCard();
-    return (
-      props.canGroupCards &&
-      canInteractWithCard(props, props.card) &&
-      source !== undefined &&
-      source.id !== props.card.id &&
-      (props.card.groupId === null || source.groupId !== props.card.groupId)
-    );
-  });
-
   const relativeTimestamp = createMemo(() =>
     formatRelativeTime(props.card.createdAt, props.nowMs),
   );
@@ -358,53 +332,9 @@ export default function CardItem(props: CardItemProps) {
     );
   }
 
-  function handleGroupDragOver(event: DragEvent): void {
-    if (!canAcceptGroupDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-    setIsGroupDropActive(true);
-  }
-
-  function handleGroupDragLeave(event: DragEvent): void {
-    const currentTarget = event.currentTarget as HTMLElement | null;
-    const related = event.relatedTarget as Node | null;
-    if (currentTarget && related && currentTarget.contains(related)) return;
-    setIsGroupDropActive(false);
-  }
-
-  function handleGroupDrop(event: DragEvent): void {
-    if (!canAcceptGroupDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setIsGroupDropActive(false);
-    const source = draggingCard();
-    if (source) {
-      void groupWith(source.id, 'card', props.card.id);
-    }
-  }
-
-  function handleDragStart(event: DragEvent): void {
-    if (!canDrag()) {
-      event.preventDefault();
-      return;
-    }
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData(DRAG_FALLBACK_MIME, props.card.id);
-      event.dataTransfer.setData(CARD_DRAG_MIME, props.card.id);
-    }
-    props.onDragStartCard(props.card.id, props.card.columnId);
-  }
-
-  function handleDragEnd(): void {
-    props.onDragEndCard();
-  }
-
   return (
     <article
+      {...props.transfer.slot('card', () => ({ value: `card:${props.card.id}` }))}
       data-card-id={props.card.id}
       data-private-mode={props.card.redacted ? 'server-redacted-nice-try' : undefined}
       style={
@@ -412,12 +342,10 @@ export default function CardItem(props: CardItemProps) {
           ? { '--card-reveal-delay': `${Math.min((props.revealIndex ?? 0) * 18, 250)}ms` }
           : undefined
       }
-      draggable={canDrag() ? 'true' : 'false'}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragOver={handleGroupDragOver}
-      onDragLeave={handleGroupDragLeave}
-      onDrop={handleGroupDrop}
+      /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
+         grab–move–drop (APG): transfer items are focusable. */
+      tabindex={canDrag() ? 0 : undefined}
+      aria-roledescription={canDrag() ? 'draggable' : undefined}
       class={[
         'relative min-w-0 rounded-xl border bg-surface p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70 sm:p-3.5',
         props.card.groupId === null ? 'border-border/80' : 'border-border/60',
@@ -426,8 +354,8 @@ export default function CardItem(props: CardItemProps) {
             canDrag(),
           'bg-surface-subtle': props.card.redacted,
           'card-revealed': wasRevealed(),
-          'ring-2 ring-focus/70': isGroupDropActive(),
         },
+        'data-drop-active:ring-2 data-drop-active:ring-focus/70 data-moving:opacity-50 data-dragging:opacity-50',
       ]}
     >
       <Show

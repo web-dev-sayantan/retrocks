@@ -155,8 +155,9 @@ export default {
     },
 
     /**
-     * The drag MIME types (#42) and the optimistic-id prefix live in exactly
-     * one module each; raw copies drift from the wire contract.
+     * The drag MIME contract is gone with #52's createTransfer; a raw MIME
+     * literal now flags re-introduced HTML5 drag. The optimistic-id prefix
+     * lives in exactly one module; raw copies drift from the wire contract.
      */
     'no-raw-wire-literals': {
       meta: { type: 'problem', docs: { description: 'Ban raw drag-MIME and optimistic-prefix literals outside their owning modules.' } },
@@ -164,7 +165,6 @@ export default {
         const file = context.filename.replace(/\\/g, '/');
         if (
           !isLintable(file) ||
-          isOwningModule(file, 'src/lib/drag-constants.ts') ||
           isOwningModule(file, 'src/lib/optimistic-ids.ts')
         ) {
           return {};
@@ -175,7 +175,7 @@ export default {
             report(
               context,
               node,
-              'Raw drag MIME literal; import it from src/lib/drag-constants.ts (#53).',
+              'Raw drag MIME literal; HTML5 drag was replaced by createTransfer (src/lib/board-transfer.ts) in #52.',
             );
             return;
           }
