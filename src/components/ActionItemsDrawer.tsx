@@ -67,7 +67,7 @@ function ActionItemRow(props: {
   let ownerInputEl: HTMLInputElement | undefined;
 
   // The owner input edits in place: createInlineEdit owns the draft-and-save
-  // contract, with the session starting on the first change so an untouched
+  // contract, with the edit starting on the first change so an untouched
   // Escape still reaches the drawer.
   const ownerField = usePrimitive(inlineEdit, () => ({
     value: () => props.card.actionOwner,
@@ -82,6 +82,17 @@ function ActionItemRow(props: {
   function bindOwnerInput(el: HTMLInputElement): void {
     ownerInputEl = el;
   }
+
+  // Live sync: another viewer's optimistic/live owner change shows while this
+  // editor is idle; an active edit keeps its draft.
+  createEffect(
+    () => ({ next: props.card.actionOwner, editing: ownerEditing() }),
+    ({ next, editing }) => {
+      if (!editing && ownerInputEl && ownerInputEl.value !== next) {
+        ownerInputEl.value = next;
+      }
+    },
+  );
 
   async function update(patch: ActionItemPatch): Promise<boolean> {
     if (!props.canEdit) return false;
@@ -147,7 +158,7 @@ function ActionItemRow(props: {
               type="text"
               aria-label={`Owner for ${props.card.content}`}
               placeholder="Owner (optional)"
-              // Uncontrolled: seeded once per mounted row; typing and saves live in the DOM.
+              // Uncontrolled: seeded on mount and re-synced while idle; typing and saves live in the DOM.
               defaultValue={props.card.actionOwner}
               maxlength={MAX_ACTION_OWNER_LENGTH}
               disabled={!props.canEdit}

@@ -21,7 +21,7 @@ import {
   type ColumnAccent,
   type ColumnDTO,
 } from '../lib/board-types';
-import type { BoardMutations } from '../lib/board-session';
+import type { BoardMutations } from '../lib/board-controller';
 import type { BoardTransferHandle } from '../lib/board-transfer';
 import type { ColumnViewProjection } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
@@ -38,7 +38,7 @@ import CardGroupItem from './CardGroupItem';
 import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from '../lib/board-session';
+import type { WorkspaceVoting } from '../lib/board-controller';
 
 export interface ColumnPanelProps {
   /** The keyed projection's Column bucket: the Column DTO plus its complete

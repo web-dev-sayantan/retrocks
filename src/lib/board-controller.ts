@@ -26,7 +26,10 @@ import {
   canFacilitate,
   canInteractWithCard,
   canManageCard,
+  canManageGroup,
   canManageGrouping,
+  isGroupRedacted,
+  passesPrivateMode,
 } from './board-permissions';
 import { applyBoardEvents } from './board-store';
 import type {
@@ -48,7 +51,7 @@ import type { ChangeVoteInput, UpdateVotingSettingsInput } from './voting-schema
 type VoteDelta = ChangeVoteInput['delta'];
 
 /**
- * Optimistic voting view state consumed by VoteControls; the session derives
+ * Optimistic voting view state consumed by VoteControls; the controller derives
  * it from the optimistic Board store and its in-flight vote flag.
  */
 export interface WorkspaceVoting {
@@ -86,7 +89,7 @@ export interface BoardMutations {
 /** Result of a Private Mode toggle; 'revealed' requests the reveal theater. */
 export type PrivateModeOutcome = 'revealed' | 'applied' | 'rejected' | 'ignored';
 
-export interface BoardSession extends BoardMutations {
+export interface BoardController extends BoardMutations {
   /** Current viewer-projected Board snapshot (reactive store read). */
   board(): BoardViewDTO | null;
   isLive(): boolean;
@@ -110,8 +113,8 @@ export interface BoardSession extends BoardMutations {
   deleteCurrentBoard(): Promise<string | null>;
 }
 
-export interface BoardSessionOptions {
-  /** Route-provided Board snapshot; the session reconciles it into the store on change. */
+export interface BoardControllerOptions {
+  /** Route-provided Board snapshot; the controller reconciles it into the store on change. */
   board: () => BoardViewDTO | null;
   /** Server-action surface; production passes the 'use server' callers, tests the fake. */
   actions: () => BoardWorkspaceActions;
@@ -147,7 +150,7 @@ type MutationGate =
   | { kind: 'toggle-reaction'; cardId: string }
   | { kind: 'create-comment'; cardId: string }
   | { kind: 'delete-comment'; cardId: string; commentId: string }
-  | { kind: 'grouping'; cardIds?: readonly string[] }
+  | { kind: 'grouping'; cardIds?: readonly string[]; groupId?: string }
   | { kind: 'vote'; targetType: 'card' | 'group'; targetId: string }
   | { kind: 'add-column' }
   | { kind: 'update-column' }
@@ -162,12 +165,14 @@ interface MutationDenial {
 }
 
 /**
- * The single permission/lock guard at the mutation seam. Every session
+ * The single permission/lock guard at the mutation seam. Every controller
  * mutation routes through here and board-permissions.ts predicates; no
  * handler re-derives the rules.
  */
 function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDenial | null {
   const deny = (message?: string): MutationDenial => ({ allowed: false, message });
+  const cardById = (id: string) => board.cards.find((item) => item.id === id);
+  const groupById = (id: string) => board.groups.find((item) => item.id === id);
   switch (gate.kind) {
     case 'create-card':
       return canContribute(board) ? null : deny('This Board is not accepting new Cards.');
@@ -177,23 +182,23 @@ function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDen
     case 'delete-card':
       return canManageCard(board, gate.cardId) ? null : deny();
     case 'update-action-item': {
-      const card = board.cards.find((item) => item.id === gate.cardId);
+      const card = cardById(gate.cardId);
       return card && canEditActionItem(board, card, gate.patch) ? null : deny();
     }
     case 'toggle-reaction': {
-      const card = board.cards.find((item) => item.id === gate.cardId);
+      const card = cardById(gate.cardId);
       return card && canInteractWithCard(board, card)
         ? null
         : deny('This Card can no longer receive reactions.');
     }
     case 'create-comment': {
-      const card = board.cards.find((item) => item.id === gate.cardId);
+      const card = cardById(gate.cardId);
       return card && canInteractWithCard(board, card)
         ? null
         : deny('This Card can no longer receive comments.');
     }
     case 'delete-comment': {
-      const card = board.cards.find((item) => item.id === gate.cardId);
+      const card = cardById(gate.cardId);
       const comment = card?.comments.find((item) => item.id === gate.commentId);
       return card && comment &&
         canInteractWithCard(board, card) &&
@@ -202,18 +207,28 @@ function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDen
         : deny('This comment can no longer be deleted.');
     }
     case 'grouping': {
+      if (gate.groupId !== undefined) {
+        const group = groupById(gate.groupId);
+        return group && canManageGroup(board, group, board.cards) ? null : deny();
+      }
       if (!canManageGrouping(board)) return deny();
-      const pending = gate.cardIds?.some(
-        (cardId) => board.cards.find((card) => card.id === cardId)?.pending,
-      );
-      return pending ? deny() : null;
+      const cards = gate.cardIds?.map(cardById);
+      return cards && cards.length > 0 &&
+        cards.every(
+          (card) =>
+            card && !card.pending && !card.redacted && passesPrivateMode(board, card),
+        )
+        ? null
+        : deny();
     }
     case 'vote': {
       if (!canContribute(board)) return deny();
-      const card = gate.targetType === 'card'
-        ? board.cards.find((item) => item.id === gate.targetId)
-        : undefined;
-      return gate.targetType === 'group' || (card && !card.pending) ? null : deny();
+      if (gate.targetType === 'group') {
+        const group = groupById(gate.targetId);
+        return group && !isGroupRedacted(group) ? null : deny();
+      }
+      const card = cardById(gate.targetId);
+      return card && !card.pending && canInteractWithCard(board, card) ? null : deny();
     }
     case 'add-column':
       return canAddColumn(board) ? null : deny();
@@ -273,7 +288,7 @@ const GENERIC_FAILURE = 'Could not update the Board. Try again.';
  * the guesses automatically. Permission/lock checks happen once, in
  * `authorizeMutation`, before an action opens.
  */
-export function createBoardSession(options: BoardSessionOptions): BoardSession {
+export function createBoardController(options: BoardControllerOptions): BoardController {
   const getActions = options.actions;
 
   // Authoritative server state: the route snapshot, live events, and mutation
@@ -402,8 +417,8 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
 
   createEffect(
     () => {
-      const session = liveSession();
-      return session && { boardId: session.boardId, message: session.live.lastEvent() };
+      const live = liveSession();
+      return live && { boardId: live.boardId, message: live.live.lastEvent() };
     },
     (event, previous) => {
       const message = event?.message;
@@ -700,6 +715,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
       gate: {
         kind: 'grouping',
         cardIds: targetType === 'card' ? [cardId, targetId] : [cardId],
+        groupId: targetType === 'group' ? targetId : undefined,
       },
       send: () => getActions().groupCards({ boardId: board.id, cardId, targetType, targetId }),
       failureMessage: 'Could not group the Card. Try again.',
@@ -712,7 +728,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping' },
+      gate: { kind: 'grouping', groupId },
       send: () => getActions().renameCardGroup({ boardId: board.id, groupId, title }),
       failureMessage: 'Could not rename the Card Group. Try again.',
       reportFailure: true,
@@ -736,7 +752,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping' },
+      gate: { kind: 'grouping', groupId },
       send: () => getActions().dissolveCardGroup({ boardId: board.id, groupId }),
       failureMessage: 'Could not dissolve the Card Group. Try again.',
       reportFailure: true,
@@ -748,7 +764,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping' },
+      gate: { kind: 'grouping', groupId },
       send: () => getActions().moveCardGroup({ boardId: board.id, groupId, targetColumnId }),
       failureMessage: 'Could not move the Card Group. Try again.',
       reportFailure: true,

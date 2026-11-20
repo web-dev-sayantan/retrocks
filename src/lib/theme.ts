@@ -22,7 +22,9 @@ const colorScheme = createColorScheme({
 });
 
 // The active secret-theme override. Never persisted — reloading drops it, so
-// the storage key only ever holds a standard scheme.
+// the storage key only ever holds a standard scheme. `attribute` is required
+// by createPreference; without a Preferences host it writes nothing, and
+// applyTheme stays the sole owner of <html data-theme>.
 const secretTheme = createPreference({
   values: ['none', ...SECRET_THEMES.map((secret) => secret.id)],
   defaultValue: 'none',

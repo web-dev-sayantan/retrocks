@@ -3,7 +3,7 @@ import { Show, createMemo, latest } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
 import { canCastVote, canContribute } from '../lib/board-permissions';
-import type { WorkspaceVoting } from '../lib/board-session';
+import type { WorkspaceVoting } from '../lib/board-controller';
 import LucideIcon from './LucideIcon';
 
 const buttonClass = [

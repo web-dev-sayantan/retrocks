@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BoardWorkspaceActions } from './board-actions';
 import type { BoardLiveMessage } from './board-live-protocol';
 import type { BoardLiveTransport } from './board-live';
-import { createBoardSession, type BoardSession } from './board-session';
+import { createBoardController, type BoardController } from './board-controller';
 import {
   createFakeActions,
   makeBoardView,
@@ -13,7 +13,7 @@ import {
 } from './board-fixtures';
 import type { BoardMutationResponse, BoardViewDTO } from './board-types';
 
-// The controller seam under test: one reactive session owning the Board store,
+// The controller seam under test: one reactive controller owning the Board store,
 // live stream application, server clock, and mutation handlers. No workspace
 // DOM is rendered — the createFakeActions double is the server.
 
@@ -54,7 +54,7 @@ function createFakeLiveTransport(): {
 }
 
 interface SessionHarness {
-  session: BoardSession;
+  controller: BoardController;
   setBoardProp: (board: BoardViewDTO | null) => void;
   connections: FakeConnection[];
   actions: BoardWorkspaceActions;
@@ -70,12 +70,12 @@ function mountSession(initialBoard: BoardViewDTO | null): SessionHarness {
   let harness!: SessionHarness;
   const dispose = createRoot((disposeRoot) => {
     const [boardProp, setBoardProp] = createSignal<BoardViewDTO | null>(initialBoard);
-    const session = createBoardSession({
+    const controller = createBoardController({
       board: boardProp,
       actions: () => actions,
       liveTransport: transport,
     });
-    harness = { session, setBoardProp, connections, actions, spies, dispose: disposeRoot };
+    harness = { controller, setBoardProp, connections, actions, spies, dispose: disposeRoot };
     return disposeRoot;
   });
   flush();
@@ -89,35 +89,35 @@ afterEach(() => {
   }
 });
 
-describe('createBoardSession', () => {
+describe('createBoardController', () => {
   it('seeds the store from the route snapshot and reconciles newer snapshots through the prop feed', () => {
     const board = makeBoardView({ title: 'Seed title' });
-    const { session, setBoardProp } = mountSession(board);
+    const { controller, setBoardProp } = mountSession(board);
 
-    expect(session.board()?.title).toBe('Seed title');
+    expect(controller.board()?.title).toBe('Seed title');
 
     setBoardProp({ ...board, version: 2, title: 'Fresh title' });
     flush();
-    expect(session.board()?.title).toBe('Fresh title');
-    expect(session.board()?.version).toBe(2);
+    expect(controller.board()?.title).toBe('Fresh title');
+    expect(controller.board()?.version).toBe(2);
 
     // Stale route snapshots never regress the store.
     setBoardProp({ ...board, version: 1, title: 'Stale title' });
     flush();
-    expect(session.board()?.title).toBe('Fresh title');
+    expect(controller.board()?.title).toBe('Fresh title');
 
     // Same version with the same facilitator is a re-render, not an update.
     setBoardProp({ ...board, version: 2, title: 'Re-render title' });
     flush();
-    expect(session.board()?.title).toBe('Fresh title');
+    expect(controller.board()?.title).toBe('Fresh title');
   });
 
   it('applies live server snapshots, syncs the server clock, and skips stale ones', () => {
     const board = makeBoardView();
-    const { session, connections } = mountSession(board);
+    const { controller, connections } = mountSession(board);
 
     expect(connections).toHaveLength(1);
-    expect(session.isLive()).toBe(false);
+    expect(controller.isLive()).toBe(false);
 
     connections[0].emit({
       type: 'board:snapshot',
@@ -127,15 +127,15 @@ describe('createBoardSession', () => {
     });
     flush();
 
-    expect(session.board()?.title).toBe('Live title');
-    expect(session.board()?.version).toBe(3);
-    expect(session.isLive()).toBe(true);
-    expect(session.timerClock()?.serverNow).toBe(4242);
-    expect(session.nowMs()).toBe(4242);
+    expect(controller.board()?.title).toBe('Live title');
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.isLive()).toBe(true);
+    expect(controller.timerClock()?.serverNow).toBe(4242);
+    expect(controller.nowMs()).toBe(4242);
 
     connections[0].emit({ type: 'presence:count', count: 7 });
     flush();
-    expect(session.onlineCount()).toBe(7);
+    expect(controller.onlineCount()).toBe(7);
 
     // A stale snapshot must not regress the store or the clock.
     connections[0].emit({
@@ -145,15 +145,15 @@ describe('createBoardSession', () => {
       board: { ...board, version: 2, title: 'Stale title' },
     });
     flush();
-    expect(session.board()?.title).toBe('Live title');
-    expect(session.board()?.version).toBe(3);
-    expect(session.timerClock()?.serverNow).toBe(4242);
+    expect(controller.board()?.title).toBe('Live title');
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.timerClock()?.serverNow).toBe(4242);
   });
 
   it('applies live mutation events at the next version, ignores stale ones, and resyncs on a version gap', () => {
     const card = makeCard({ id: 'card_gap', content: 'Live card' });
     const board = makeBoardView({ cards: [card] });
-    const { session, connections } = mountSession(board);
+    const { controller, connections } = mountSession(board);
 
     connections[0].emit({
       type: 'board:mutation',
@@ -163,8 +163,8 @@ describe('createBoardSession', () => {
       ],
     });
     flush();
-    expect(session.board()?.version).toBe(2);
-    expect(session.board()?.cards[0]?.content).toBe('Edited live');
+    expect(controller.board()?.version).toBe(2);
+    expect(controller.board()?.cards[0]?.content).toBe('Edited live');
 
     // Duplicate (stale) delivery: ignored, no reconnect.
     connections[0].emit({
@@ -175,7 +175,7 @@ describe('createBoardSession', () => {
       ],
     });
     flush();
-    expect(session.board()?.cards[0]?.content).toBe('Edited live');
+    expect(controller.board()?.cards[0]?.content).toBe('Edited live');
     expect(connections).toHaveLength(1);
 
     // A gap (version > current + 1) drops the delta and reopens the stream.
@@ -187,27 +187,27 @@ describe('createBoardSession', () => {
       ],
     });
     flush();
-    expect(session.board()?.version).toBe(2);
-    expect(session.board()?.cards[0]?.content).toBe('Edited live');
+    expect(controller.board()?.version).toBe(2);
+    expect(controller.board()?.cards[0]?.content).toBe('Edited live');
     expect(connections[0].closed).toBe(true);
     expect(connections).toHaveLength(2);
   });
 
-  it('clears the session board and closes the stream on a live board:deleted', () => {
+  it('clears the controller board and closes the stream on a live board:deleted', () => {
     const board = makeBoardView();
-    const { session, connections } = mountSession(board);
+    const { controller, connections } = mountSession(board);
 
     connections[0].emit({ type: 'board:deleted', version: 2 });
     flush();
 
-    expect(session.board()).toBeNull();
+    expect(controller.board()).toBeNull();
     expect(connections[0].closed).toBe(true);
     expect(connections).toHaveLength(1);
   });
 
   it('creates Cards optimistically, reconciles on success, and rolls back on failure', async () => {
     const board = makeBoardView({ cards: [], columns: [{ id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 0 }] });
-    const { session, spies } = mountSession(board);
+    const { controller, spies } = mountSession(board);
 
     const serverCard = makeCard({ id: 'card_server', columnId: 'col_1', content: 'Hello' });
     spies.createCard.mockResolvedValueOnce({
@@ -216,13 +216,13 @@ describe('createBoardSession', () => {
       events: [{ type: 'card:upserted', version: 2, card: serverCard }],
     });
 
-    const created = session.createCard('col_1', 'Hello');
+    const created = controller.createCard('col_1', 'Hello');
     flush();
-    const optimistic = session.board()?.cards ?? [];
+    const optimistic = controller.board()?.cards ?? [];
     expect(optimistic).toHaveLength(1);
     expect(optimistic[0].pending).toBe(true);
     expect(optimistic[0].isMine).toBe(true);
-    expect(session.board()?.columns[0]?.cardCount).toBe(1);
+    expect(controller.board()?.columns[0]?.cardCount).toBe(1);
     expect(spies.createCard).toHaveBeenCalledWith({
       boardId: board.id,
       columnId: 'col_1',
@@ -231,76 +231,76 @@ describe('createBoardSession', () => {
 
     await created;
     flush();
-    expect(session.board()?.cards.map((card) => card.id)).toEqual(['card_server']);
-    expect(session.board()?.version).toBe(2);
-    expect(session.board()?.columns[0]?.cardCount).toBe(1);
+    expect(controller.board()?.cards.map((card) => card.id)).toEqual(['card_server']);
+    expect(controller.board()?.version).toBe(2);
+    expect(controller.board()?.columns[0]?.cardCount).toBe(1);
 
     spies.createCard.mockResolvedValueOnce({
       ok: false,
       code: 'LIMIT_EXCEEDED',
       message: 'Board card limit reached.',
     });
-    const failure = session.createCard('col_1', 'Second');
+    const failure = controller.createCard('col_1', 'Second');
     flush();
-    expect(session.board()?.cards).toHaveLength(2);
+    expect(controller.board()?.cards).toHaveLength(2);
     const message = await failure;
     flush();
     expect(message).toBe('Board card limit reached.');
-    expect(session.board()?.cards.map((card) => card.id)).toEqual(['card_server']);
-    expect(session.board()?.columns[0]?.cardCount).toBe(1);
+    expect(controller.board()?.cards.map((card) => card.id)).toEqual(['card_server']);
+    expect(controller.board()?.columns[0]?.cardCount).toBe(1);
   });
 
   it('toggles Reactions optimistically and inverts the delta on failure', async () => {
     const card = makeCard({ id: 'card_react', reactions: { '👍': 1 }, myReactions: [] });
     const board = makeBoardView({ cards: [card] });
-    const { session, spies } = mountSession(board);
+    const { controller, spies } = mountSession(board);
 
     spies.toggleReaction.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{ type: 'reaction:updated', version: 2, cardId: card.id, counts: { '👍': 2 }, myReactions: ['👍'] }],
     });
-    const added = session.toggleReaction(card.id, '👍');
+    const added = controller.toggleReaction(card.id, '👍');
     flush();
-    expect(session.board()?.cards[0]?.reactions['👍']).toBe(2);
-    expect(session.board()?.cards[0]?.myReactions).toEqual(['👍']);
+    expect(controller.board()?.cards[0]?.reactions['👍']).toBe(2);
+    expect(controller.board()?.cards[0]?.myReactions).toEqual(['👍']);
     await added;
     flush();
-    expect(session.board()?.cards[0]?.reactions['👍']).toBe(2);
+    expect(controller.board()?.cards[0]?.reactions['👍']).toBe(2);
 
     spies.toggleReaction.mockResolvedValueOnce({
       ok: false,
       code: 'RATE_LIMITED',
       message: 'Slow down reactions.',
     });
-    const removed = session.toggleReaction(card.id, '👍');
+    const removed = controller.toggleReaction(card.id, '👍');
     flush();
-    expect(session.board()?.cards[0]?.reactions['👍']).toBe(1);
-    expect(session.board()?.cards[0]?.myReactions).toEqual([]);
+    expect(controller.board()?.cards[0]?.reactions['👍']).toBe(1);
+    expect(controller.board()?.cards[0]?.myReactions).toEqual([]);
     const message = await removed;
     flush();
     expect(message).toBe('Slow down reactions.');
-    expect(session.board()?.cards[0]?.reactions['👍']).toBe(2);
-    expect(session.board()?.cards[0]?.myReactions).toEqual(['👍']);
+    expect(controller.board()?.cards[0]?.reactions['👍']).toBe(2);
+    expect(controller.board()?.cards[0]?.myReactions).toEqual(['👍']);
   });
 
   it('derives Vote pending state with isPending and surfaces optimistic balances', async () => {
     const card = makeCard({ id: 'card_v', votes: 0, myVotes: 0 });
     const board = makeBoardView({ cards: [card], isFacilitator: false, voteLimit: 5, remainingVotes: 5 });
-    const { session, spies } = mountSession(board);
+    const { controller, spies } = mountSession(board);
 
     const pending = Promise.withResolvers<BoardMutationResponse>();
     spies.changeVote.mockReturnValueOnce(pending.promise);
 
-    const votePromise = session.changeVote('card', card.id, 1);
+    const votePromise = controller.changeVote('card', card.id, 1);
     flush();
-    const voting = session.voting();
+    const voting = controller.voting();
     expect(voting.pending).toBe(true);
     expect(voting.remainingVotes).toBe(4);
-    expect(session.board()?.cards[0]?.myVotes).toBe(1);
+    expect(controller.board()?.cards[0]?.myVotes).toBe(1);
 
     // A second cast while one is in flight is dropped, not queued.
-    void session.changeVote('card', card.id, 1);
+    void controller.changeVote('card', card.id, 1);
     flush();
     expect(spies.changeVote.mock.calls).toHaveLength(1);
 
@@ -311,17 +311,17 @@ describe('createBoardSession', () => {
     });
     await votePromise;
     flush();
-    expect(session.voting().pending).toBe(false);
-    expect(session.board()?.cards[0]?.myVotes).toBe(1);
-    expect(session.voting().remainingVotes).toBe(4);
+    expect(controller.voting().pending).toBe(false);
+    expect(controller.board()?.cards[0]?.myVotes).toBe(1);
+    expect(controller.voting().remainingVotes).toBe(4);
 
     spies.changeVote.mockRejectedValueOnce(new Error('offline'));
-    await session.changeVote('card', card.id, -1);
+    await controller.changeVote('card', card.id, -1);
     flush();
-    expect(session.errorMessage()).toBe('Could not update your Vote. Try again.');
-    session.clearError();
+    expect(controller.errorMessage()).toBe('Could not update your Vote. Try again.');
+    controller.clearError();
     flush();
-    expect(session.errorMessage()).toBeNull();
+    expect(controller.errorMessage()).toBeNull();
   });
 
   it('applies Action Item patches optimistically, exposes isPending, and reverts on rejection', async () => {
@@ -332,18 +332,18 @@ describe('createBoardSession', () => {
       actionOwner: '',
     });
     const board = makeBoardView({ cards: [card] });
-    const { session, spies } = mountSession(board);
+    const { controller, spies } = mountSession(board);
 
     const pending = Promise.withResolvers<BoardMutationResponse>();
     spies.updateActionItem.mockReturnValueOnce(pending.promise);
-    const update = session.updateActionItem(card.id, {
+    const update = controller.updateActionItem(card.id, {
       actionDone: true,
       actionOwner: 'Platform',
     });
     flush();
-    expect(session.board()?.cards[0]?.actionDone).toBe(true);
-    expect(session.board()?.cards[0]?.actionOwner).toBe('Platform');
-    expect(session.isActionItemPending(card.id)).toBe(true);
+    expect(controller.board()?.cards[0]?.actionDone).toBe(true);
+    expect(controller.board()?.cards[0]?.actionOwner).toBe('Platform');
+    expect(controller.isActionItemPending(card.id)).toBe(true);
 
     pending.resolve({
       ok: true,
@@ -356,47 +356,47 @@ describe('createBoardSession', () => {
     });
     expect(await update).toBe(true);
     flush();
-    expect(session.isActionItemPending(card.id)).toBe(false);
-    expect(session.board()?.cards[0]?.actionDone).toBe(true);
-    expect(session.board()?.cards[0]?.actionOwner).toBe('Platform');
+    expect(controller.isActionItemPending(card.id)).toBe(false);
+    expect(controller.board()?.cards[0]?.actionDone).toBe(true);
+    expect(controller.board()?.cards[0]?.actionOwner).toBe('Platform');
 
     spies.updateActionItem.mockResolvedValueOnce({
       ok: false,
       code: 'RATE_LIMITED',
       message: 'Slow down.',
     });
-    expect(await session.updateActionItem(card.id, { actionDone: false })).toBe(false);
+    expect(await controller.updateActionItem(card.id, { actionDone: false })).toBe(false);
     flush();
     // The optimistic guess reverted to the last committed server value.
-    expect(session.board()?.cards[0]?.actionDone).toBe(true);
-    expect(session.isActionItemPending(card.id)).toBe(false);
+    expect(controller.board()?.cards[0]?.actionDone).toBe(true);
+    expect(controller.isActionItemPending(card.id)).toBe(false);
   });
 
   it('checks permissions once at the mutation seam before dispatching', async () => {
     const card = makeCard({ id: 'card_guard' });
     const participant = makeBoardView({ cards: [card], isFacilitator: false });
     const harness = mountSession(participant);
-    const { session, spies } = harness;
+    const { controller, spies } = harness;
 
-    expect(await session.renameBoard('Nope')).toBe(false);
+    expect(await controller.renameBoard('Nope')).toBe(false);
     expect(spies.renameBoard).not.toHaveBeenCalled();
-    expect(await session.saveVotingSettings({ voteLimit: 3 })).toBe(
+    expect(await controller.saveVotingSettings({ voteLimit: 3 })).toBe(
       'Voting settings are unavailable.',
     );
     expect(spies.updateVotingSettings).not.toHaveBeenCalled();
-    expect(await session.toggleBoardLock(true)).toBe(
+    expect(await controller.toggleBoardLock(true)).toBe(
       'Only a Facilitator can Lock or Unlock the Board.',
     );
     expect(spies.setBoardLock).not.toHaveBeenCalled();
-    expect(await session.deleteColumn('col_1')).toBe(false);
+    expect(await controller.deleteColumn('col_1')).toBe(false);
     expect(spies.deleteColumn).not.toHaveBeenCalled();
 
     const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
     const lockedHarness = mountSession(locked);
-    expect(await lockedHarness.session.updateCard(card.id, 'Nope')).toBe(
+    expect(await lockedHarness.controller.updateCard(card.id, 'Nope')).toBe(
       'This Card can no longer be edited.',
     );
-    expect(await lockedHarness.session.createCard('col_1', 'Nope')).toBe(
+    expect(await lockedHarness.controller.createCard('col_1', 'Nope')).toBe(
       'This Board is not accepting new Cards.',
     );
     expect(lockedHarness.spies.updateCard).not.toHaveBeenCalled();
@@ -406,7 +406,7 @@ describe('createBoardSession', () => {
   it('drops stale mutation responses and resyncs on a version gap', async () => {
     const card = makeCard({ id: 'card_version', columnId: 'col_1' });
     const board = makeBoardView({ cards: [card], version: 3 });
-    const { session, spies, connections } = mountSession(board);
+    const { controller, spies, connections } = mountSession(board);
 
     spies.moveCard.mockResolvedValueOnce({
       ok: true,
@@ -417,10 +417,10 @@ describe('createBoardSession', () => {
         card: { ...card, columnId: 'col_2' },
       }],
     });
-    expect(await session.moveCard(card.id, 'col_2')).toBe(true);
+    expect(await controller.moveCard(card.id, 'col_2')).toBe(true);
     flush();
-    expect(session.board()?.version).toBe(3);
-    expect(session.board()?.cards[0]?.columnId).toBe('col_1');
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.board()?.cards[0]?.columnId).toBe('col_1');
 
     spies.moveCard.mockResolvedValueOnce({
       ok: true,
@@ -431,10 +431,10 @@ describe('createBoardSession', () => {
         card: { ...card, columnId: 'col_2' },
       }],
     });
-    expect(await session.moveCard(card.id, 'col_2')).toBe(true);
+    expect(await controller.moveCard(card.id, 'col_2')).toBe(true);
     flush();
-    expect(session.board()?.version).toBe(3);
-    expect(session.board()?.cards[0]?.columnId).toBe('col_1');
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.board()?.cards[0]?.columnId).toBe('col_1');
     expect(connections[0].closed).toBe(true);
     expect(connections).toHaveLength(2);
   });
@@ -442,9 +442,9 @@ describe('createBoardSession', () => {
   it('funnels mutation responses through the versioned-events seam', async () => {
     const card = makeCard({ id: 'card_m', columnId: 'col_1' });
     const board = makeBoardView({ cards: [card] });
-    const { session, spies } = mountSession(board);
+    const { controller, spies } = mountSession(board);
 
-    const moved = await session.moveCard(card.id, 'col_2');
+    const moved = await controller.moveCard(card.id, 'col_2');
     flush();
     expect(moved).toBe(true);
     expect(spies.moveCard).toHaveBeenCalledWith({
@@ -452,28 +452,28 @@ describe('createBoardSession', () => {
       cardId: card.id,
       targetColumnId: 'col_2',
     });
-    expect(session.board()?.cards[0]?.columnId).toBe('col_2');
-    expect(session.board()?.version).toBe(2);
+    expect(controller.board()?.cards[0]?.columnId).toBe('col_2');
+    expect(controller.board()?.version).toBe(2);
 
     const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
-    const lockedSession = mountSession(locked).session;
+    const lockedSession = mountSession(locked).controller;
     const rejected = await lockedSession.updateCard(card.id, 'Nope');
     expect(rejected).toBe('This Card can no longer be edited.');
   });
 
   it('clears the board when the current Board is deleted', async () => {
     const board = makeBoardView();
-    const { session } = mountSession(board);
+    const { controller } = mountSession(board);
 
-    const message = await session.deleteCurrentBoard();
+    const message = await controller.deleteCurrentBoard();
     flush();
     expect(message).toBeNull();
-    expect(session.board()).toBeNull();
+    expect(controller.board()).toBeNull();
   });
 
   it('applies countdown changes and syncs the server clock from timer events', async () => {
     const board = makeBoardView();
-    const { session, spies } = mountSession(board);
+    const { controller, spies } = mountSession(board);
 
     spies.updateTimer.mockResolvedValueOnce({
       ok: true,
@@ -485,11 +485,11 @@ describe('createBoardSession', () => {
         timer: { endsAt: 20000, remainingMs: 60000, durationMs: 60000 },
       }],
     });
-    const response = await session.changeCountdown(board.id, { action: 'start', minutes: 1 });
+    const response = await controller.changeCountdown(board.id, { action: 'start', minutes: 1 });
     flush();
     expect(response.ok).toBe(true);
-    expect(session.board()?.timer.remainingMs).toBe(60000);
-    expect(session.timerClock()?.serverNow).toBe(9090);
+    expect(controller.board()?.timer.remainingMs).toBe(60000);
+    expect(controller.timerClock()?.serverNow).toBe(9090);
   });
 
   it('keeps live updates, snapshot reconciliation, and mutations free of Solid 2.0 diagnostics', async () => {
@@ -497,7 +497,7 @@ describe('createBoardSession', () => {
       async () => {
         const card = makeCard({ id: 'card_diag' });
         const board = makeBoardView({ cards: [card] });
-        const { session, setBoardProp, connections, spies } = mountSession(board);
+        const { controller, setBoardProp, connections, spies } = mountSession(board);
 
         connections[0].emit({
           type: 'board:mutation',
@@ -505,22 +505,22 @@ describe('createBoardSession', () => {
           events: [{ type: 'vote:updated', version: 2, targetType: 'card', targetId: card.id, totalVotes: 3, myVotes: 1, remainingVotes: 4 }],
         });
         flush();
-        expect(session.board()?.cards[0]?.myVotes).toBe(1);
+        expect(controller.board()?.cards[0]?.myVotes).toBe(1);
 
         setBoardProp({ ...board, version: 3, title: 'Reconciled' });
         flush();
-        expect(session.board()?.title).toBe('Reconciled');
+        expect(controller.board()?.title).toBe('Reconciled');
 
         spies.toggleReaction.mockResolvedValueOnce({
           ok: true,
           version: 4,
           events: [{ type: 'reaction:updated', version: 4, cardId: card.id, counts: { '🎉': 1 }, myReactions: ['🎉'] }],
         });
-        await session.toggleReaction(card.id, '🎉');
+        await controller.toggleReaction(card.id, '🎉');
         flush();
-        expect(session.board()?.cards[0]?.myReactions).toEqual(['🎉']);
+        expect(controller.board()?.cards[0]?.myReactions).toEqual(['🎉']);
       },
-      { scenario: 'board-session-live-and-mutations' },
+      { scenario: 'board-controller-live-and-mutations' },
     );
     expectNoDiagnostics(artifact);
   });

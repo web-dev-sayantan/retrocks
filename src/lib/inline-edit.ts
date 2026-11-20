@@ -15,12 +15,13 @@ interface InlineEditFieldOptions {
 
 /**
  * The one inline-editing session every rename surface shares: createInlineEdit
- * owns the editing id, the keyboard contract (Enter saves, Escape cancels,
- * blur saves) and the focus bookkeeping. `present('input')` is the tracked
- * "is editing" read; each surface renders its own input element and calls
- * `edit.bindInput`, `edit.inputKeydown`, and `edit.end('focus-out')` — the
- * Solid adapter can recreate part-bound elements mid-session, which would
- * wipe a draft in progress, so the input slot carries presence only.
+ * owns the editing id and the keyboard contract (Enter saves, Escape cancels,
+ * blur saves). `present('input')` is the tracked "is editing" read; each
+ * surface renders its own input element and calls `edit.bindInput`,
+ * `edit.inputKeydown`, and `edit.end('focus-out')` — the Solid adapter can
+ * recreate part-bound elements mid-session, which would wipe a draft in
+ * progress, so the input slot carries presence only. Surfaces keep a thin
+ * focus-fallback effect for when the originating control disappears.
  */
 export const inlineEdit = definePrimitive({
   name: 'inline-edit',

@@ -7,10 +7,8 @@
 import {
   createTransfer,
   definePrimitive,
-  transferMessage,
   type TransferDraft,
   type TransferLists,
-  type TransferMessage,
 } from '@ui-sdk/core';
 import type { PrimitiveHandle } from '@ui-sdk/solid/primitive';
 
@@ -27,7 +25,7 @@ import type { BoardViewProjection } from './board-view';
 /** Prefix marking a Card / Card Group article as a drop target list. */
 const BOARD_TARGET_PREFIX = 'on:';
 
-export type BoardItem =
+export type TransferTarget =
   | { kind: 'card'; card: CardViewDTO }
   | { kind: 'group'; group: CardGroupDTO };
 
@@ -37,7 +35,7 @@ export type BoardTransferMove =
   | { kind: 'group-with-card'; cardId: string; targetCardId: string }
   | { kind: 'group-with-group'; cardId: string; targetGroupId: string };
 
-export function parseBoardItemKey(key: string): { kind: 'card' | 'group'; id: string } | undefined {
+export function parseTransferKey(key: string): { kind: 'card' | 'group'; id: string } | undefined {
   if (key.startsWith('card:')) {
     return { kind: 'card', id: key.slice(5) };
   }
@@ -49,12 +47,12 @@ export function parseBoardItemKey(key: string): { kind: 'card' | 'group'; id: st
 
 function parseBoardTargetKey(listKey: string): { kind: 'card' | 'group'; id: string } | undefined {
   return listKey.startsWith(BOARD_TARGET_PREFIX)
-    ? parseBoardItemKey(listKey.slice(BOARD_TARGET_PREFIX.length))
+    ? parseTransferKey(listKey.slice(BOARD_TARGET_PREFIX.length))
     : undefined;
 }
 
-function findBoardItem(board: BoardViewDTO | null, key: string): BoardItem | undefined {
-  const parsed = parseBoardItemKey(key);
+function findTransferTarget(board: BoardViewDTO | null, key: string): TransferTarget | undefined {
+  const parsed = parseTransferKey(key);
   if (!board || !parsed) return undefined;
   if (parsed.kind === 'card') {
     const card = board.cards.find((item) => item.id === parsed.id);
@@ -66,12 +64,12 @@ function findBoardItem(board: BoardViewDTO | null, key: string): BoardItem | und
 }
 
 /** Whether a Card or Card Group can be picked up at all: move or grouping rights. */
-export function canGrabBoardItem(
+export function canGrabTransferItem(
   board: BoardViewDTO | null,
   itemKey: string,
 ): boolean {
   if (!board) return false;
-  const item = findBoardItem(board, itemKey);
+  const item = findTransferTarget(board, itemKey);
   if (!item) return false;
   if (item.kind === 'card') {
     return (
@@ -89,7 +87,7 @@ export function acceptsBoardDrop(
   targetKey: string,
 ): boolean {
   if (!board || board.isLocked) return false;
-  const item = findBoardItem(board, itemKey);
+  const item = findTransferTarget(board, itemKey);
   if (!item) return false;
 
   const target = parseBoardTargetKey(targetKey);
@@ -102,7 +100,7 @@ export function acceptsBoardDrop(
   }
   if (item.kind !== 'card') return false; // Card Groups only land on Columns.
 
-  const landing = findBoardItem(board, `${target.kind}:${target.id}`);
+  const landing = findTransferTarget(board, `${target.kind}:${target.id}`);
   if (!landing) return false;
   const landingColumnId =
     landing.kind === 'card' ? landing.card.columnId : landing.group.columnId;
@@ -134,7 +132,7 @@ export function resolveBoardTransferMove(
   move: { key: string; to: string },
 ): BoardTransferMove | null {
   if (!board) return null;
-  const item = findBoardItem(board, move.key);
+  const item = findTransferTarget(board, move.key);
   if (!item) return null;
 
   const target = parseBoardTargetKey(move.to);
@@ -147,7 +145,7 @@ export function resolveBoardTransferMove(
       : { kind: 'move-group', groupId: item.group.id, targetColumnId: move.to };
   }
   if (item.kind !== 'card') return null;
-  const landing = findBoardItem(board, `${target.kind}:${target.id}`);
+  const landing = findTransferTarget(board, `${target.kind}:${target.id}`);
   if (!landing) return null;
   if (landing.kind === 'card') {
     return landing.card.columnId === item.card.columnId
@@ -202,11 +200,11 @@ interface BoardTransferState {
   moving: TransferDraft | null;
 }
 
-function boardItemLabel(
+function transferTargetLabel(
   board: BoardViewDTO | null,
   itemKey: string,
 ): string | undefined {
-  const item = findBoardItem(board, itemKey);
+  const item = findTransferTarget(board, itemKey);
   if (!item) return undefined;
   return item.kind === 'card'
     ? item.card.content
@@ -222,20 +220,8 @@ function boardListLabel(
     const column = board?.columns.find((item) => item.id === listKey);
     return column && `Column ${column.title}`;
   }
-  const label = boardItemLabel(board, `${target.kind}:${target.id}`);
+  const label = transferTargetLabel(board, `${target.kind}:${target.id}`);
   return label && `${label} (${target.kind === 'card' ? 'Card' : 'Card Group'})`;
-}
-
-function boardTransferMessage(message: TransferMessage): string {
-  // Column labels are prefixed “Column ” by boardListLabel; target labels
-  // are the landing Card / Card Group’s own name.
-  if (message.type === 'move' && !message.list.startsWith('Column ')) {
-    return `${message.label} onto ${message.list}.`;
-  }
-  if (message.type === 'drop' && !message.list.startsWith('Column ')) {
-    return `Dropped ${message.label} onto ${message.list}.`;
-  }
-  return transferMessage(message);
 }
 
 /** Drag sources inside cards must stay plain presses: buttons, editors, overlays. */
@@ -278,11 +264,10 @@ export const boardTransfer = definePrimitive({
         return true;
       },
       accepts: (key, target) => acceptsBoardDrop(read().board(), key, target),
-      disabled: (key) => !canGrabBoardItem(read().board(), key),
-      label: (key) => boardItemLabel(read().board(), key),
+      disabled: (key) => !canGrabTransferItem(read().board(), key),
+      label: (key) => transferTargetLabel(read().board(), key),
       listLabel: (list) => boardListLabel(read().board(), list),
       order: () => (read().board()?.columns ?? []).map((column) => column.id),
-      message: boardTransferMessage,
     });
 
     // Drop-zone registry. createTransfer's listAt resolves distance ties by
@@ -312,7 +297,7 @@ export const boardTransfer = definePrimitive({
 
     // The dragged item's home Column, so its own Column never poses as a target.
     function homeColumnOf(itemKey: string): string | undefined {
-      const item = findBoardItem(read().board(), itemKey);
+      const item = findTransferTarget(read().board(), itemKey);
       if (!item) return undefined;
       return item.kind === 'card' ? item.card.columnId : item.group.columnId;
     }
@@ -377,7 +362,7 @@ export const boardTransfer = definePrimitive({
           : undefined,
       }),
     }),
-    'group-item': slot<{ value: string }>({
+    'group-members': slot<{ value: string }>({
       props: { value: 'string' },
       bind: (el, part) => part.api.transfer.bindItem(el, part.key),
       on: {

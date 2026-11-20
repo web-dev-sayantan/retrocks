@@ -53,7 +53,7 @@ import {
   canFacilitate,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { createBoardSession } from '../lib/board-session';
+import { createBoardController } from '../lib/board-controller';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -151,9 +151,9 @@ function getAddColumnSlotClass(columnCount: number): string {
 }
 
 export default function BoardWorkspace(props: BoardWorkspaceProps) {
-  // The Board session controller owns the store, live stream, server clock,
+  // The Board controller owns the store, live stream, server clock,
   // mutation handlers, and pending state; this component keeps layout and UI state.
-  const session = createBoardSession({
+  const controller = createBoardController({
     board: () => props.board,
     actions: () => props.actions ?? defaultBoardWorkspaceActions,
     onDramaticReveal: runDramaticReveal,
@@ -217,12 +217,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  // Board title inline editing: createInlineEdit owns the session, input, and keyboard contract.
+  // Board title inline editing: createInlineEdit owns the edit, input, and keyboard contract.
   const boardTitleField = usePrimitive(inlineEdit, () => ({
-    value: () => session.board()?.title ?? '',
+    value: () => controller.board()?.title ?? '',
     commit: (text: string) => boardTitleSave.commit(text),
     disabled: () => {
-      const board = session.board();
+      const board = controller.board();
       return !board || !canControlFacilitation(board);
     },
   }));
@@ -254,7 +254,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     createSignal<ColumnAccent>('slate');
   const [newColumnIsAction, setNewColumnIsAction] = createSignal(false);
   const canAddColumn = createMemo(() => {
-    const board = session.board();
+    const board = controller.board();
     return !!board && canAddBoardColumn(board);
   });
   let newColumnTitleEl: HTMLInputElement | undefined;
@@ -310,7 +310,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   const openActionItemCount = createMemo(
     () =>
-      session.board()?.cards.filter(
+      controller.board()?.cards.filter(
         (card) => card.isActionItem && !card.actionDone,
       ).length ?? 0,
   );
@@ -340,10 +340,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   // Mirror the controller's Board lifecycle into workspace UI state: when the
-  // session board is removed, close every overlay and hand focus to the
+  // controller board is removed, close every overlay and hand focus to the
   // not-found heading.
   createEffect(
-    () => session.board()?.id ?? null,
+    () => controller.board()?.id ?? null,
     (boardId, previousBoardId) => {
       if (boardId) return;
       if (previousBoardId) unavailableHeading?.focus();
@@ -359,7 +359,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   createEffect(
-    () => session.board()?.isLocked ?? false,
+    () => controller.board()?.isLocked ?? false,
     (locked) => {
       if (locked) {
         boardTitleEdit.cancel();
@@ -385,7 +385,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   createEffect(
     () => {
-      const board = session.board();
+      const board = controller.board();
       return board && {
         id: board.id,
         isBlurred: board.isBlurred,
@@ -415,7 +415,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   let unavailableHeading: HTMLHeadingElement | undefined;
 
   createEffect(
-    () => session.board() !== null,
+    () => controller.board() !== null,
     (hasBoard) => {
       if (hasBoard) logPrivacyColophon();
     },
@@ -439,7 +439,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   // Record / scrub localStorage Recent Boards cleanly (including after Board rename)
   createEffect(
     () => {
-      const board = session.board();
+      const board = controller.board();
       return {
         boardId: props.boardId,
         board: board
@@ -461,7 +461,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   const resolvedActiveColumnIndex = createMemo(() => {
-    const cols = session.board()?.columns ?? [];
+    const cols = controller.board()?.columns ?? [];
     if (cols.length === 0) return 0;
     const currentId = activeColumnId();
     if (currentId) {
@@ -472,13 +472,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const activeMobileColumn = createMemo(() => {
-    const cols = session.board()?.columns ?? [];
+    const cols = controller.board()?.columns ?? [];
     return cols[resolvedActiveColumnIndex()] ?? null;
   });
 
   // The one keyed projection (#51): identity, ordering, totals, and the
   // per-Column Card/Group lists all come from here — no regrouping memos.
-  const view = createBoardProjection(() => session.board(), {
+  const view = createBoardProjection(() => controller.board(), {
     query: searchQuery,
     filter: quickFilter,
     sortMode,
@@ -486,21 +486,21 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // One createTransfer instance owns every Card / Card Group move (#52):
   // Columns are its lists, Cards and Card Groups its items, and drops resolve
-  // through resolveBoardTransferMove onto the session's existing mutations.
+  // through resolveBoardTransferMove onto the controller's existing mutations.
   const commitTransferMove = (move: BoardTransferMove): void => {
     if (move.kind === 'move-card') {
-      void session.moveCard(move.cardId, move.targetColumnId);
+      void controller.moveCard(move.cardId, move.targetColumnId);
     } else if (move.kind === 'move-group') {
-      void session.moveCardGroup(move.groupId, move.targetColumnId);
+      void controller.moveCardGroup(move.groupId, move.targetColumnId);
     } else if (move.kind === 'group-with-card') {
-      void session.groupCard(move.cardId, 'card', move.targetCardId);
+      void controller.groupCard(move.cardId, 'card', move.targetCardId);
     } else {
-      void session.groupCard(move.cardId, 'group', move.targetGroupId);
+      void controller.groupCard(move.cardId, 'group', move.targetGroupId);
     }
   };
   const transfer = usePrimitive(boardTransfer, () => ({
     lists: buildBoardTransferLists(view),
-    board: () => session.board(),
+    board: () => controller.board(),
     commit: commitTransferMove,
   }));
 
@@ -511,7 +511,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const isHorizontalSnap = createMemo(
-    () => (session.board()?.columns.length ?? 0) >= 5,
+    () => (controller.board()?.columns.length ?? 0) >= 5,
   );
 
   const openDetailCard = createMemo(() => {
@@ -526,7 +526,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const card = openDetailCard();
     if (!card) return null;
     return (
-      session.board()?.columns.find((col) => col.id === card.columnId) ?? null
+      controller.board()?.columns.find((col) => col.id === card.columnId) ?? null
     );
   });
 
@@ -543,7 +543,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   // Global Board shortcuts. useShortcut pauses them while someone types and
   // while a modal layer is open; shortcuts.list() feeds the help surface.
   useShortcut(
-    () => (session.board() ? '/' : null),
+    () => (controller.board() ? '/' : null),
     () => {
       if (searchInputEl?.isConnected) {
         searchInputEl.focus();
@@ -555,7 +555,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   useShortcut(
     () => {
-      const board = session.board();
+      const board = controller.board();
       return board && !board.isLocked ? 'n' : null;
     },
     () => {
@@ -576,7 +576,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   useShortcut(
-    () => (session.board() ? 'a' : null),
+    () => (controller.board() ? 'a' : null),
     () => {
       setIsActionItemsOpen(true);
     },
@@ -585,7 +585,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   useShortcut(
     () => {
-      const board = session.board();
+      const board = controller.board();
       return board && canControlFacilitation(board) ? 'b' : null;
     },
     () => {
@@ -595,8 +595,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   async function togglePrivateMode(options?: { dramatic?: boolean }): Promise<void> {
-    const board = session.board();
-    if (!board || !canControlFacilitation(board) || session.isChangingPrivateMode()) return;
+    const board = controller.board();
+    if (!board || !canControlFacilitation(board) || controller.isChangingPrivateMode()) return;
     const { isBlurred } = board;
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
@@ -608,12 +608,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     } else if (!isBlurred) {
       clearDramaticReveal();
     }
-    // The session runs the mutation and invokes onDramaticReveal before applying.
-    await session.togglePrivateMode(dramatic);
+    // The controller runs the mutation and invokes onDramaticReveal before applying.
+    await controller.togglePrivateMode(dramatic);
   }
 
   function isBoardTitleEditTarget(target: EventTarget | null): boolean {
-    const board = session.board();
+    const board = controller.board();
     if (!board || !canControlFacilitation(board)) return false;
     return !(target instanceof Element && target.closest('button'));
   }
@@ -626,7 +626,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   function startBoardRename(): void {
     boardTitleTap.reset();
-    const board = session.board();
+    const board = controller.board();
     if (!board) return;
     setHasBoardTitleText(board.title.trim().length > 0);
     boardTitleEdit.start(board.id);
@@ -639,14 +639,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   async function saveBoardTitleText(text: string): Promise<InlineEditOutcome> {
-    const board = session.board();
+    const board = controller.board();
     const trimmed = text.trim();
     if (!board || trimmed.length === 0) return false;
-    return (await session.renameBoard(trimmed)) ? true : false;
+    return (await controller.renameBoard(trimmed)) ? true : false;
   }
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
-    const board = session.board();
+    const board = controller.board();
     if (!board) return;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted || card.pending) return;
@@ -665,10 +665,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
     event.preventDefault();
-    const board = session.board();
+    const board = controller.board();
     const trimmed = newColumnTitle().trim();
-    if (!board || trimmed.length === 0 || session.isSavingColumn()) return;
-    const column = await session.addColumn({
+    if (!board || trimmed.length === 0 || controller.isSavingColumn()) return;
+    const column = await controller.addColumn({
       title: trimmed,
       accent: newColumnAccent(),
       isActionColumn: newColumnIsAction(),
@@ -697,7 +697,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setIsSubmittingMobileCard(true);
     updateMobileDraft(id, draft);
     try {
-      const error = await session.createCard(id, draft.trim());
+      const error = await controller.createCard(id, draft.trim());
       setMobileDrafts((drafts) => {
         const current = drafts[id];
         if (current?.content === draft) {
@@ -747,7 +747,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const dy = touch.clientY - start.y;
     if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
 
-    const cols = session.board()?.columns ?? [];
+    const cols = controller.board()?.columns ?? [];
     const current = resolvedActiveColumnIndex();
     const next = cols[current + (dx < 0 ? 1 : -1)];
     if (next) setActiveColumnId(next.id);
@@ -755,7 +755,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   return (
     <Show
-      when={session.board()}
+      when={controller.board()}
       fallback={
         <div class="flex min-h-dvh flex-col">
           <header class="pointer-events-none sticky top-0 z-30 px-4 pt-3 pb-1 sm:px-6 sm:pt-4">
@@ -907,9 +907,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       {(boardId) => (
                         <CountdownTimer
                           timer={board().timer}
-                          clock={session.timerClock()}
+                          clock={controller.timerClock()}
                           canControl={canControlFacilitation(board())}
-                          onChange={(change) => session.changeCountdown(boardId, change)}
+                          onChange={(change) => controller.changeCountdown(boardId, change)}
                         />
                       )}
                     </Show>
@@ -922,7 +922,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       data-cta-emphasis={board().isBlurred ? 'primary' : 'secondary'}
                       aria-keyshortcuts="B"
                       title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
-                      disabled={session.isChangingPrivateMode()}
+                      disabled={controller.isChangingPrivateMode()}
                       onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
                       class={[
                         'spring-press hidden board-touch-target min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9',
@@ -1075,12 +1075,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span role="status" class="inline-flex items-center gap-1.5 font-medium text-text">
                     <span
                       aria-hidden="true"
-                      class={['size-1.5 shrink-0 rounded-full', session.isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
+                      class={['size-1.5 shrink-0 rounded-full', controller.isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
                     />
-                    {session.isLive() ? 'Live' : 'Reconnecting…'}
+                    {controller.isLive() ? 'Live' : 'Reconnecting…'}
                   </span>
-                  <Show when={session.isLive() && session.onlineCount() !== null}>
-                    <span class="border-l border-border/80 pl-2 tabular-nums">{session.onlineCount()} online</span>
+                  <Show when={controller.isLive() && controller.onlineCount() !== null}>
+                    <span class="border-l border-border/80 pl-2 tabular-nums">{controller.onlineCount()} online</span>
                   </Show>
                 </div>
                 <span aria-hidden="true" data-print-hide="true" class="hidden h-4 w-px bg-border/75 sm:block" />
@@ -1104,7 +1104,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     class="inline-flex max-sm:border-l max-sm:border-border/80 max-sm:pl-2 items-center gap-1 text-text-muted tabular-nums sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/75 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text"
                   >
                     <LucideIcon icon={Vote} class="hidden size-3.5 shrink-0 text-text-muted sm:block" strokeWidth={1.85} />
-                    <span class="tabular-nums">{session.voting().remainingVotes} / {board().voteLimit} votes left</span>
+                    <span class="tabular-nums">{controller.voting().remainingVotes} / {board().voteLimit} votes left</span>
                   </span>
                 </Show>
                 <Show when={board().isBlurred}>
@@ -1126,10 +1126,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 setIsBoardSettingsOpen(false);
                 boardMenuTriggerEl?.focus();
               }}
-              onUpdate={session.saveVotingSettings}
-              onReset={session.resetAllVotes}
-              onToggleLock={session.toggleBoardLock}
-              onDeleteBoard={session.deleteCurrentBoard}
+              onUpdate={controller.saveVotingSettings}
+              onReset={controller.resetAllVotes}
+              onToggleLock={controller.toggleBoardLock}
+              onDeleteBoard={controller.deleteCurrentBoard}
             />
           </Show>
 
@@ -1155,7 +1155,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           />
 
           {/* Inline dismissible error feedback */}
-          <Show when={session.errorMessage()}>
+          <Show when={controller.errorMessage()}>
             {(message) => (
               <div
                 role="alert"
@@ -1166,7 +1166,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <button
                     type="button"
                     aria-label="Dismiss error"
-                    onClick={() => session.clearError()}
+                    onClick={() => controller.clearError()}
                     class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-md text-text-muted hover:text-text"
                   >
                     <CloseIcon />
@@ -1294,17 +1294,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       totalColumns={view.columns.length}
                       columns={view.columns}
                       hasActiveFilter={view.hasActiveFilter}
-                      voting={session.voting()}
+                      voting={controller.voting()}
                       isFacilitator={board().isFacilitator}
                       isLocked={board().isLocked}
                       isBlurred={board().isBlurred}
                       canGroupCards={canManageGrouping(board())}
-                      nowMs={session.nowMs()}
+                      nowMs={controller.nowMs()}
                       isMobile={isMobileBoard()}
                       isMobileActive={resolvedActiveColumnIndex() === index()}
                       isHorizontalSnap={isHorizontalSnap()}
                       transfer={transfer}
-                      actions={session}
+                      actions={controller}
                       onResetFilters={resetFilters}
                       onRegisterComposer={registerColumnComposer}
                       onActivateColumn={(colId) => setActiveColumnId(colId)}
@@ -1450,11 +1450,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <button
                     type="submit"
                     disabled={
-                      session.isSavingColumn() || newColumnTitle().trim().length === 0
+                      controller.isSavingColumn() || newColumnTitle().trim().length === 0
                     }
                     class="spring-press board-touch-target cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {session.isSavingColumn() ? 'Adding…' : 'Add column'}
+                    {controller.isSavingColumn() ? 'Adding…' : 'Add column'}
                   </button>
                 </div>
               </form>
@@ -1470,17 +1470,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 isFacilitator={board().isFacilitator}
                 isLocked={board().isLocked}
                 isBlurred={board().isBlurred}
-                nowMs={session.nowMs()}
+                nowMs={controller.nowMs()}
                 isOpen={isCardDetailOpen()}
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocus={restoreCardDetailFocus}
-                onUpdateActionItem={session.updateActionItem}
-                onToggleReaction={session.toggleReaction}
-                onCreateComment={session.createComment}
-                onDeleteComment={session.deleteComment}
-                isActionItemPending={session.isActionItemPending}
+                onUpdateActionItem={controller.updateActionItem}
+                onToggleReaction={controller.toggleReaction}
+                onCreateComment={controller.createComment}
+                onDeleteComment={controller.deleteComment}
+                isActionItemPending={controller.isActionItemPending}
               />
             )}
           </Show>
@@ -1494,8 +1494,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             isLocked={board().isLocked}
             onClose={() => setIsActionItemsOpen(false)}
             onRestoreFocus={restoreActionItemsFocus}
-            onUpdateActionItem={session.updateActionItem}
-            isActionItemPending={session.isActionItemPending}
+            onUpdateActionItem={controller.updateActionItem}
+            isActionItemPending={controller.isActionItemPending}
           />
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}

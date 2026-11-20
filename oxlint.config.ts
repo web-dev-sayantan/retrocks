@@ -93,21 +93,22 @@ export default defineConfig({
     },
     {
       // Non-test UI components: ratchet against another monolithic workspace
-      // component. Caps pass today (largest: BoardWorkspace 1717 lines /
-      // 1565-line component / complexity 35) and tighten as #51/#52 land.
+      // component. Caps sit just above today's measured maxima (largest:
+      // BoardWorkspace 1562 lines / 1562-line component / complexity 33) so
+      // any growth fails the gate; split the file before raising them.
       files: ['src/components/**/*.tsx'],
       excludeFiles: ['**/*.test.*'],
       rules: {
-        'max-lines': ['error', { max: 1800 }],
-        'max-lines-per-function': ['error', { max: 1600 }],
-        'complexity': ['error', { max: 40 }],
+        'max-lines': ['error', { max: 1600 }],
+        'max-lines-per-function': ['error', { max: 1580 }],
+        'complexity': ['error', { max: 35 }],
       },
     },
     {
-      // UI consumes the Board controller (board-session) and the permission
+      // UI consumes the Board controller (board-controller) and the permission
       // module, never the transport/store internals behind them. board-actions
       // stays allowed: it is the server-action facade the composition root
-      // (BoardWorkspace/BoardCreator) wires into createBoardSession.
+      // (BoardWorkspace/BoardCreator) wires into createBoardController.
       files: ['src/components/**/*.{ts,tsx}', 'src/routes/**/*.tsx'],
       excludeFiles: ['**/*.test.*'],
       rules: {
@@ -118,7 +119,7 @@ export default defineConfig({
               {
                 group: ['*board-live', '*board-live-protocol', '*board-store', '*board-fixtures'],
                 message:
-                  'UI components consume the Board controller (src/lib/board-session.ts), not low-level transport/store internals (#53).',
+                  'UI components consume the Board controller (src/lib/board-controller.ts), not low-level transport/store internals (#53).',
               },
             ],
           },

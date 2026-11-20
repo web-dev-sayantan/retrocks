@@ -23,7 +23,7 @@ import {
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import { formatRelativeTime } from '../lib/recent-boards';
-import type { BoardMutations } from '../lib/board-session';
+import type { BoardMutations } from '../lib/board-controller';
 import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
@@ -37,7 +37,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from './Icons';
-import type { WorkspaceVoting } from '../lib/board-session';
+import type { WorkspaceVoting } from '../lib/board-controller';
 import VoteControls from './VoteControls';
 
 export interface CardItemProps {

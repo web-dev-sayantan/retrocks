@@ -5,8 +5,8 @@ import { makeBoardView, makeCard } from './board-fixtures';
 import {
   acceptsBoardDrop,
   buildBoardTransferLists,
-  canGrabBoardItem,
-  parseBoardItemKey,
+  canGrabTransferItem,
+  parseTransferKey,
   resolveBoardTransferMove,
 } from './board-transfer';
 import { projectBoardView } from './board-view';
@@ -26,13 +26,13 @@ function makeGroup(overrides?: Partial<import('./board-types').CardGroupDTO>) {
 
 const unlocked = { isLocked: false, isFacilitator: false, isBlurred: false };
 
-describe('canGrabBoardItem', () => {
+describe('canGrabTransferItem', () => {
   it('allows grabbing your own revealed Card on an unlocked Board', () => {
     const board = makeBoardView({
       ...unlocked,
       cards: [makeCard({ id: 'card_a', isMine: true })],
     });
-    expect(canGrabBoardItem(board, 'card:card_a')).toBe(true);
+    expect(canGrabTransferItem(board, 'card:card_a')).toBe(true);
   });
 
   it('rejects locked Boards, redacted Cards, and unknown items', () => {
@@ -40,27 +40,27 @@ describe('canGrabBoardItem', () => {
       isLocked: true,
       cards: [makeCard({ id: 'card_a', isMine: true })],
     });
-    expect(canGrabBoardItem(board, 'card:card_a')).toBe(false);
+    expect(canGrabTransferItem(board, 'card:card_a')).toBe(false);
     const blurred = makeBoardView({
       isBlurred: true,
       cards: [makeCard({ id: 'card_redacted', isMine: true, redacted: true })],
     });
-    expect(canGrabBoardItem(blurred, 'card:card_redacted')).toBe(false);
-    expect(canGrabBoardItem(unlockedBoard(), 'card:missing')).toBe(false);
-    expect(canGrabBoardItem(null, 'card:card_a')).toBe(false);
+    expect(canGrabTransferItem(blurred, 'card:card_redacted')).toBe(false);
+    expect(canGrabTransferItem(unlockedBoard(), 'card:missing')).toBe(false);
+    expect(canGrabTransferItem(null, 'card:card_a')).toBe(false);
   });
 
   it('lets a Participant drag someone else’s Card only for grouping, never to move', () => {
     const stranger = makeCard({ id: 'card_b', isMine: false });
     const noGrouping = makeBoardView({ ...unlocked, cards: [stranger] });
-    expect(canGrabBoardItem(noGrouping, 'card:card_b')).toBe(false);
+    expect(canGrabTransferItem(noGrouping, 'card:card_b')).toBe(false);
 
     const groupingAllowed = makeBoardView({
       ...unlocked,
       allowParticipantGroup: true,
       cards: [stranger],
     });
-    expect(canGrabBoardItem(groupingAllowed, 'card:card_b')).toBe(true);
+    expect(canGrabTransferItem(groupingAllowed, 'card:card_b')).toBe(true);
   });
 
   it('grabs Card Groups only when every member is yours and grouping is allowed', () => {
@@ -71,7 +71,7 @@ describe('canGrabBoardItem', () => {
       groups: [mine],
       cards: [makeCard({ id: 'card_a', isMine: true })],
     });
-    expect(canGrabBoardItem(board, 'group:group_1')).toBe(true);
+    expect(canGrabTransferItem(board, 'group:group_1')).toBe(true);
 
     const others = makeBoardView({
       ...unlocked,
@@ -80,7 +80,7 @@ describe('canGrabBoardItem', () => {
       groups: [mine],
       cards: [makeCard({ id: 'card_a', isMine: false })],
     });
-    expect(canGrabBoardItem(others, 'group:group_1')).toBe(false);
+    expect(canGrabTransferItem(others, 'group:group_1')).toBe(false);
 
     const lockedBoard = makeBoardView({
       ...unlocked,
@@ -89,7 +89,7 @@ describe('canGrabBoardItem', () => {
       groups: [mine],
       cards: [makeCard({ id: 'card_a', isMine: true })],
     });
-    expect(canGrabBoardItem(lockedBoard, 'group:group_1')).toBe(false);
+    expect(canGrabTransferItem(lockedBoard, 'group:group_1')).toBe(false);
   });
 });
 
@@ -359,18 +359,18 @@ describe('buildBoardTransferLists', () => {
   });
 });
 
-describe('parseBoardItemKey', () => {
+describe('parseTransferKey', () => {
   it('splits card and group keys and rejects everything else', () => {
-    expect(parseBoardItemKey('card:card_9')).toEqual({
+    expect(parseTransferKey('card:card_9')).toEqual({
       kind: 'card',
       id: 'card_9',
     });
-    expect(parseBoardItemKey('group:group_9')).toEqual({
+    expect(parseTransferKey('group:group_9')).toEqual({
       kind: 'group',
       id: 'group_9',
     });
-    expect(parseBoardItemKey('col_1')).toBeUndefined();
-    expect(parseBoardItemKey('on:card:card_9')).toBeUndefined();
+    expect(parseTransferKey('col_1')).toBeUndefined();
+    expect(parseTransferKey('on:card:card_9')).toBeUndefined();
   });
 });
 

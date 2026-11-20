@@ -156,17 +156,14 @@ export default {
 
     /**
      * The drag MIME contract is gone with #52's createTransfer; a raw MIME
-     * literal now flags re-introduced HTML5 drag. The optimistic-id prefix
-     * lives in exactly one module; raw copies drift from the wire contract.
+     * literal now flags re-introduced HTML5 drag. Temporary optimistic ids
+     * were replaced by the optimistic store (#54); the prefix must not return.
      */
     'no-raw-wire-literals': {
-      meta: { type: 'problem', docs: { description: 'Ban raw drag-MIME and optimistic-prefix literals outside their owning modules.' } },
+      meta: { type: 'problem', docs: { description: 'Ban raw drag-MIME and optimistic-prefix literals.' } },
       create(context) {
         const file = context.filename.replace(/\\/g, '/');
-        if (
-          !isLintable(file) ||
-          isOwningModule(file, 'src/lib/optimistic-ids.ts')
-        ) {
+        if (!isLintable(file)) {
           return {};
         }
         const check = (node, value) => {
@@ -183,7 +180,7 @@ export default {
             report(
               context,
               node,
-              "Raw 'optimistic:' literal; use src/lib/optimistic-ids.ts helpers (#53).",
+              "Raw 'optimistic:' literal; temporary ids were replaced by the optimistic store (#54).",
             );
           }
         };

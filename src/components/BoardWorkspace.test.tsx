@@ -1455,7 +1455,7 @@ describe('<BoardWorkspace />', () => {
     const wentWell = getByRole('region', { name: 'Went Well' });
     const toImprove = getByRole('region', { name: 'To Improve' });
     const groupEl = within(wentWell).getByText('CI stability').closest('article') as HTMLElement;
-    const headerEl = groupEl.querySelector('[data-slot="board-transfer-group-item"]') as HTMLElement;
+    const headerEl = groupEl.querySelector('[data-slot="board-transfer-group-members"]') as HTMLElement;
     stubRect(wentWell, [0, 0, 300, 600]);
     stubRect(toImprove, [320, 0, 620, 600]);
     stubRect(groupEl, [10, 60, 290, 400]);

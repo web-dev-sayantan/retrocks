@@ -89,21 +89,13 @@ const BoardSettingsDTOSchema = v.object({
 });
 
 export const BoardViewDTOSchema = v.object({
+  ...BoardSettingsDTOSchema.entries,
   id: v.string(),
-  title: v.string(),
-  subtitle: v.string(),
   templateId: v.picklist(BOARD_TEMPLATE_IDS),
-  isBlurred: v.boolean(),
-  blindVoting: v.boolean(),
-  isLocked: v.boolean(),
-  allowParticipantGroup: v.boolean(),
-  voteLimit: v.nullable(v.number()),
-  maxVotesPerCard: v.nullable(v.number()),
   remainingVotes: v.nullable(v.number()),
   isFacilitator: v.boolean(),
   timer: TimerStateDTOSchema,
   version: v.number(),
-  retentionDays: v.number(),
   createdAt: v.number(),
   lastActiveAt: v.number(),
   columns: v.array(ColumnDTOSchema),

@@ -81,6 +81,8 @@ export function projectBoardForViewer(
   const reactionsByCard = new Map<string, Partial<Record<ReactionEmoji, number>>>();
   const myReactionsByCard = new Map<string, ReactionEmoji[]>();
   for (const reaction of raw.reactions) {
+    // Rows outside the curated set (pre-#42 data) are not part of the DTO
+    // contract; they are dropped from the view rather than widened into it.
     if (!isReactionEmoji(reaction.emoji)) continue;
     let counts = reactionsByCard.get(reaction.cardId);
     if (!counts) {

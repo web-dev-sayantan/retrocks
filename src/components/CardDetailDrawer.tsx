@@ -76,7 +76,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   let ownerInputEl: HTMLInputElement | undefined;
 
   // The owner input edits in place: createInlineEdit owns the draft-and-save
-  // contract, with the session starting on the first change so an untouched
+  // contract, with the edit starting on the first change so an untouched
   // Escape still reaches the drawer.
   const ownerField = usePrimitive(inlineEdit, () => ({
     value: () => props.card.actionOwner,
@@ -90,6 +90,17 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   function bindOwnerInput(el: HTMLInputElement): void {
     ownerInputEl = el;
   }
+
+  // Live sync: another viewer's optimistic/live owner change shows while this
+  // editor is idle; an active edit keeps its draft.
+  createEffect(
+    () => ({ next: props.card.actionOwner, editing: ownerEditing() }),
+    ({ next, editing }) => {
+      if (!editing && ownerInputEl && ownerInputEl.value !== next) {
+        ownerInputEl.value = next;
+      }
+    },
+  );
 
   onSettled(() => () => {
     // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
@@ -319,7 +330,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     type="text"
                     aria-label="Action owner"
                     placeholder={'e.g. "Platform"'}
-                    // Uncontrolled: seeded once per mounted drawer; typing and saves live in the DOM.
+                    // Uncontrolled: seeded on mount and re-synced while idle; typing and saves live in the DOM.
                     defaultValue={props.card.actionOwner}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
                     disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}

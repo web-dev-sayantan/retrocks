@@ -12,13 +12,13 @@ import type {
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
 import { isGroupRedacted } from '../lib/board-permissions';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
-import type { BoardMutations } from '../lib/board-session';
+import type { BoardMutations } from '../lib/board-controller';
 import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from '../lib/board-session';
+import type { WorkspaceVoting } from '../lib/board-controller';
 import VoteControls from './VoteControls';
 
 export interface CardGroupItemProps {
@@ -37,7 +37,7 @@ export interface CardGroupItemProps {
   nowMs: number;
   /** The Board's createTransfer instance: this Group's header is one of its items. */
   transfer: BoardTransferHandle;
-  /** Controller-shaped Card/Group mutations (the workspace passes its session). */
+  /** Controller-shaped Card/Group mutations (the workspace passes its controller). */
   actions: Pick<
     BoardMutations,
     | 'updateCard'
@@ -81,7 +81,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     () => props.canManage && !isGroupRedacted(props.group),
   );
 
-  // Inline title editing: createInlineEdit owns the session, input, and keyboard contract.
+  // Inline title editing: createInlineEdit owns the edit, input, and keyboard contract.
   const titleField = usePrimitive(inlineEdit, () => ({
     value: () => props.group.title,
     commit: (text) => titleSave.commit(text),
@@ -170,7 +170,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       )}
     >
       <div
-        {...props.transfer.slot('group-item', () => ({ value: `group:${props.group.id}` }))}
+        {...props.transfer.slot('group-members', () => ({ value: `group:${props.group.id}` }))}
         /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
            grab–move–drop (APG): transfer items are focusable. */
         tabindex={canManageGroup() && !props.isLocked ? 0 : undefined}
