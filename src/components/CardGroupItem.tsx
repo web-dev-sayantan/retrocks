@@ -10,6 +10,7 @@ import type {
   ReactionEmoji,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
+import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
@@ -179,8 +180,8 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     }
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', props.group.id);
-      event.dataTransfer.setData('application/x-retrocks-group', props.group.id);
+      event.dataTransfer.setData(DRAG_FALLBACK_MIME, props.group.id);
+      event.dataTransfer.setData(GROUP_DRAG_MIME, props.group.id);
     }
     props.onDragStartGroup(props.group.id, props.group.columnId);
   }

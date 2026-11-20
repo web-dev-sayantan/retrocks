@@ -75,6 +75,7 @@ import {
   matchSecretSearch,
 } from '../lib/easter-eggs';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
+import { isOptimisticId, makeOptimisticCardId } from '../lib/optimistic-ids';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { toggleTheme } from '../lib/theme';
@@ -849,7 +850,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function canManageCard(board: BoardViewDTO, cardId: string): boolean {
-    if (cardId.startsWith('optimistic:')) return false;
+    if (isOptimisticId(cardId)) return false;
     const card = board.cards.find((item) => item.id === cardId);
     return !board.isLocked && !!card && !card.redacted &&
       (card.isMine || (board.isFacilitator && !board.isBlurred));
@@ -939,7 +940,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
     const boardId = board.id;
     optimisticCardSeq += 1;
-    const tempId = `optimistic:card:${optimisticCardSeq}`;
+    const tempId = makeOptimisticCardId(optimisticCardSeq);
     const createdAt = Date.now() + serverTimeOffsetMs;
     const optimisticCard: CardViewDTO = {
       id: tempId,
@@ -1192,7 +1193,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     emoji: ReactionEmoji,
   ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || board.isLocked || cardId.startsWith('optimistic:')) {
+    if (!board || board.isLocked || isOptimisticId(cardId)) {
       return 'This Card can no longer receive reactions.';
     }
     const card = board.cards.find((item) => item.id === cardId);
@@ -1262,7 +1263,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
     const board = workspace.board;
-    if (!board || cardId.startsWith('optimistic:')) return;
+    if (!board || isOptimisticId(cardId)) return;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return;
     cardDetailTrigger = trigger;
@@ -1360,7 +1361,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     delta: ChangeVoteInput['delta'],
   ): Promise<void> {
     const board = workspace.board;
-    if (!board || board.isLocked || voteInFlight || targetId.startsWith('optimistic:')) return;
+    if (!board || board.isLocked || voteInFlight || isOptimisticId(targetId)) return;
 
     const boardId = board.id;
     const input = { boardId, targetType, targetId, delta } as const;
