@@ -455,7 +455,7 @@ export default function CardItem(props: CardItemProps) {
       onDragLeave={handleGroupDragLeave}
       onDrop={handleGroupDrop}
       class={[
-        'relative min-w-0 rounded-xl border bg-surface p-3.5 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70',
+        'relative min-w-0 rounded-xl border bg-surface p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70 sm:p-3.5',
         props.card.groupId === null ? 'border-border/80' : 'border-border/60',
         {
           'cursor-grab active:cursor-grabbing':
@@ -602,7 +602,7 @@ export default function CardItem(props: CardItemProps) {
             </div>
           </Show>
 
-          <footer class="mt-2.5 grid grid-flow-row-dense grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-1.5 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+          <footer class="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1 sm:mt-2.5 sm:grid sm:grid-flow-row-dense sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:gap-x-1.5">
             <CardReactions
               inCardFooter
               cardId={props.card.id}
@@ -612,7 +612,7 @@ export default function CardItem(props: CardItemProps) {
               onToggleReaction={props.onToggleReaction}
             />
 
-            <div class="order-first col-span-full flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-none sm:col-span-1 sm:col-start-1">
+            <div class="order-first flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-none sm:col-start-1">
               <Show when={props.card.isMine}>
                 <span class="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] font-medium">
                   You
@@ -622,12 +622,12 @@ export default function CardItem(props: CardItemProps) {
             </div>
 
             <Show when={props.card.groupId === null}>
-              <div class="col-start-2 flex sm:col-start-3">
+              <div class="flex sm:col-start-3">
                 <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
               </div>
             </Show>
 
-            <div data-print-hide="true" class="col-start-3 flex items-center gap-1 sm:col-start-4">
+            <div data-print-hide="true" class="ms-auto flex max-w-full flex-wrap items-center justify-end gap-1 sm:col-start-4 sm:ms-0 sm:max-w-none sm:flex-nowrap">
               <Show when={props.card.commentCount > 0}>
                 <button
                   type="button"

@@ -79,7 +79,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
       data-print-hide="true"
       class="border-b border-border/65"
     >
-      <div class="mx-auto max-w-[1600px] px-3 py-0.5 sm:px-6 sm:py-2.5">
+      <div class="mx-auto max-w-[1600px] px-3 py-2 sm:px-6 sm:py-2.5">
         <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 sm:max-lg:grid sm:max-lg:grid-cols-[minmax(10rem,1fr)_minmax(0,auto)] lg:flex-nowrap lg:gap-3">
           <div
             class={[
@@ -110,7 +110,8 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                 onInput={(event) => props.onQueryChange(event.currentTarget.value)}
                 onKeyDown={handleSearchKeyDown}
                 class={[
-                  'h-11 w-full rounded-xl border border-border/85 bg-surface py-1.5 pr-11 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 focus-visible:border-accent sm:h-9 sm:pr-9 sm:text-[13px]',
+                  'h-11 w-full rounded-xl border border-border/85 bg-surface py-1.5 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 focus-visible:border-accent sm:h-9 sm:pr-9 sm:text-[13px]',
+                  props.query.length > 0 ? 'pr-11' : 'pr-2',
                   focusRingClass,
                   '[&::-webkit-search-cancel-button]:appearance-none',
                 ]}
@@ -150,7 +151,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
             aria-controls={`${filterControlsId} ${filterStatusId}`}
             onClick={() => setShowFilters((open) => !open)}
             class={[
-              'spring-press inline-flex h-11 w-36 max-w-full shrink-0 cursor-pointer items-center justify-between gap-1.5 rounded-xl border border-border/85 bg-surface px-3 text-left text-sm font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle sm:hidden',
+              'spring-press relative inline-flex h-11 w-36 max-w-full shrink-0 cursor-pointer items-center justify-between gap-1.5 rounded-xl border border-border/85 bg-surface px-3 text-left text-sm font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle max-[25rem]:w-11 max-[25rem]:justify-center max-[25rem]:px-0 sm:hidden',
               focusRingClass,
             ]}
           >
@@ -159,7 +160,11 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
               class="size-3.5 shrink-0 text-text-muted"
               strokeWidth={1.85}
             />
-            <span class="grid min-w-0 gap-0.5 whitespace-nowrap leading-none">
+            {/* Compact icon mode hides the match summary, so keep active-filter state visible. */}
+            <Show when={hasStatusContent()}>
+              <span aria-hidden="true" class="absolute top-1.5 right-1.5 hidden size-1.5 rounded-full bg-accent max-[25rem]:block" />
+            </Show>
+            <span class="grid min-w-0 gap-0.5 whitespace-nowrap leading-none max-[25rem]:sr-only">
               <span>Filter &amp; sort</span>
               <Show when={props.hasActiveFilter || isMostVotedPausedByBlindVoting()}>
                 <span aria-hidden="true" class="truncate text-[11px] font-normal text-text-muted tabular-nums">
@@ -172,7 +177,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
             <LucideIcon
               icon={ChevronDown}
               class={[
-                'spring-chevron size-3.5 shrink-0 text-text-muted',
+                'spring-chevron size-3.5 shrink-0 text-text-muted max-[25rem]:hidden',
                 { 'rotate-180': showFilters() },
               ]}
               strokeWidth={2}
@@ -210,7 +215,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                     value={option.value}
                     data-label={option.label}
                     class={[
-                      'spring-press relative z-10 inline-flex min-h-11 cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-lg px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-pressed:font-semibold data-pressed:text-text sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
+                      'spring-press relative z-10 inline-flex min-h-11 cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-lg px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-pressed:font-semibold data-pressed:text-text max-[25rem]:px-0.5 sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
                       focusRingClass,
                     ]}
                   >

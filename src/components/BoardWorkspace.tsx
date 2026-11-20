@@ -1693,7 +1693,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <div class="board-masthead-toolbar">
               <div role="group" aria-label="Board controls" class="board-masthead-controls">
                 <BoardHomeLink href={props.homeHref ?? '/'} class="inline-flex sm:hidden" />
-                <div class="flex items-center justify-end gap-1.5 sm:flex-wrap sm:gap-2">
+                <div class="min-w-0 flex-1 truncate text-base leading-snug font-semibold tracking-[-0.02em] text-text sm:hidden" title={board().title}>
+                  {board().title}
+                </div>
+                <div class="flex min-w-0 flex-wrap items-center justify-end gap-1 sm:gap-2">
                   <div data-print-hide="true">
                     <Show when={board().id} keyed>
                       {(boardId) => (
@@ -1717,7 +1720,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       disabled={isChangingPrivateMode()}
                       onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
                       class={[
-                        'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:h-9 sm:min-h-9',
+                        'spring-press hidden min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9 sm:min-h-9',
                         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
                         board().isBlurred
                           ? 'border-transparent bg-accent sm:px-3.5 text-accent-contrast shadow-xs hover:opacity-92'
@@ -1734,7 +1737,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     </button>
                   </Show>
 
-                  <div data-print-hide="true" class="flex shrink-0 items-center gap-1.5 sm:gap-2">
+                  <div data-print-hide="true" class="flex shrink-0 items-center gap-1 sm:gap-2">
                     <button
                       ref={actionItemsHeaderEntry}
                       type="button"
@@ -1813,6 +1816,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         <Show when={isMobileBoard()}>
                           <Show when={board().isFacilitator && !board().isLocked}>
                             <MenuItem
+                              value="toggle-private-mode"
+                              aria-keyshortcuts="B"
+                              class="board-menu-item"
+                              onSelect={() => {
+                                closeBoardMenu(true);
+                                void togglePrivateMode();
+                              }}
+                            >
+                              {board().isBlurred ? 'Reveal All' : 'Private Mode'}
+                            </MenuItem>
+                            <MenuItem
                               value="rename-board"
                               class="board-menu-item"
                               closeOnSelect={false}
@@ -1888,7 +1902,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span
                     aria-live="polite"
                     aria-atomic="true"
-                    class="inline-flex items-center gap-1 text-text-muted tabular-nums sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/75 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text"
+                    class="inline-flex max-sm:border-l max-sm:border-border/80 max-sm:pl-2 items-center gap-1 text-text-muted tabular-nums sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/75 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text"
                   >
                     <LucideIcon icon={Vote} class="hidden size-3.5 shrink-0 text-text-muted sm:block" strokeWidth={1.85} />
                     <span class="tabular-nums">{voting().remainingVotes} / {board().voteLimit} votes left</span>
@@ -1985,7 +1999,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={() => { swipeStart = undefined; }}
-            class="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-28 sm:px-6 sm:py-6"
+            class="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-5 sm:px-6 sm:py-6"
           >
             <Show when={secretSearch()}>
               <div class="relative mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
@@ -2037,15 +2051,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               <nav
                 aria-label="Board Columns"
                 data-print-hide="true"
-                class="board-column-tabs min-w-0 rounded-full bg-surface-subtle sm:hidden"
+                class="board-column-tabs min-w-0 sm:hidden"
               >
                 <TabsList
                   ref={columnTabListEl}
                   onScroll={(event) => updateColumnTabEdges(event.currentTarget)}
                   aria-label="Select Column"
-                  class="scroll-edge-fade overflow-x-auto"
+                  class="scroll-edge-fade overflow-x-auto rounded-full bg-surface-subtle"
                 >
-                  <div class="flex w-max min-w-full items-center gap-0.5 px-0.5 py-0.5">
+                  <div class="flex w-max min-w-full items-center gap-0.5 py-0.5 pl-0.5 pr-2">
                     <For each={board().columns}>
                       {(column) => (
                         <TabsTab
@@ -2058,7 +2072,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                               aria-controls={`column-${column.id}`}
                             />
                           )}
-                          class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:border-border data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
+                          class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
                         >
                           <span
                             aria-hidden="true"
@@ -2067,9 +2081,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                               COLUMN_ACCENT_STYLES[column.accent].swatch,
                             ]}
                           />
-                          <Show when={column.isActionColumn}>
-                            <LucideIcon icon={Flag} class="size-3 shrink-0 text-col-sky" />
-                          </Show>
                           <span class="min-w-0 truncate text-left">{column.title}</span>
                           <span class="text-xs text-text-muted tabular-nums">
                             {boardView()?.hasActiveFilter
@@ -2391,9 +2402,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 ref={mobileComposerBarEl}
                 class="board-mobile-composer sticky bottom-[var(--keyboard-inset,0px)] z-20 border-t border-border px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden"
               >
-                <p class="mb-1 wrap-anywhere text-sm text-text-muted">
-                  Write in <span class="font-semibold text-text">{targetCol().title}</span>
-                </p>
                 <Show when={mobileDrafts[targetCol().id]?.error}>
                   {(error) => <p role="alert" class="mb-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
                 </Show>
@@ -2403,14 +2411,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       mobileComposerEl = el;
                     }}
                     aria-label={`Quick add card to ${targetCol().title}`}
-                    placeholder="Add a Card…"
+                    placeholder={`Add to ${targetCol().title}…`}
                     value={mobileDrafts[targetCol().id]?.content ?? ''}
                     maxlength={MAX_CARD_CONTENT_LENGTH}
                     rows={1}
                     onInput={(e) => updateMobileDraft(targetCol().id, e.currentTarget.value)}
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
-                      'min-h-11 min-w-0 flex-1 resize-none rounded-lg border border-control bg-canvas px-3 py-2.5 text-base text-text',
+                      'min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
                       'placeholder:text-text-muted focus:border-focus focus:outline-none',
                     ]}
                   />
@@ -2422,7 +2430,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     }
                     onClick={() => void handleMobileQuickAdd()}
                     class={[
-                      'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-accent-contrast',
+                      'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent px-4 text-xs font-medium text-accent-contrast',
                       'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}

@@ -113,8 +113,8 @@ export default function CardReactions(props: CardReactionsProps) {
       class={[
         'flex flex-wrap items-center gap-1.5',
         {
-          'order-first col-span-full': props.inCardFooter && belongsOnOwnRow(),
-          'col-start-1 justify-self-end sm:col-start-2': props.inCardFooter && !belongsOnOwnRow(),
+          'order-first basis-full sm:col-span-full': props.inCardFooter && belongsOnOwnRow(),
+          'sm:col-start-2 sm:justify-self-end': props.inCardFooter && !belongsOnOwnRow(),
           hidden: props.disabled && activeReactions().length === 0 && !reactionError(),
         },
       ]}

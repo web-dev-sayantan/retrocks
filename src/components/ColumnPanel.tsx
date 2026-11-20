@@ -748,7 +748,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       </Show>
 
       {/* Column Card stream body — must stay :scope > div:last-child */}
-      <div class="flex flex-1 flex-col gap-3 px-1 pt-0.5 pb-3 sm:px-3 sm:pt-3">
+      <div class="flex flex-1 flex-col gap-3 pt-3 pb-3 sm:px-3">
         <Show
           when={props.streamItems.length > 0}
           fallback={

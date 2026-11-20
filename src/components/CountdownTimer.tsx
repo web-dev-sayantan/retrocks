@@ -244,7 +244,11 @@ export default function CountdownTimer(props: {
                 : 'Countdown Timer'
           }
           class={[
-            'spring-press relative inline-flex min-h-11 min-w-[5.75rem] max-sm:w-20 max-sm:min-w-20 cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-2 text-[13px] max-sm:gap-1 sm:px-3 leading-none font-medium text-text tabular-nums transition-colors sm:h-9 sm:min-h-9',
+            'spring-press relative inline-flex min-h-11 min-w-[5.75rem] cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium text-text tabular-nums transition-colors sm:h-9 sm:min-h-9',
+            // Idle on phones: a 44px icon button, not an empty oval; running/paused keeps room for the countdown.
+            timerState() === 'idle'
+              ? 'max-sm:min-w-11 max-sm:w-11 max-sm:gap-0 max-sm:px-0'
+              : 'max-sm:min-w-20 max-sm:w-20 max-sm:gap-1',
             'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
             timerState() === 'paused'
               ? 'border-col-amber/55 bg-col-amber-tint hover:bg-col-amber-tint'

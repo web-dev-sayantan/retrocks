@@ -1465,6 +1465,7 @@ describe('<BoardWorkspace />', () => {
     const mobileComposer = getByLabelText(
       'Quick add card to To Improve',
     ) as HTMLTextAreaElement;
+    expect(mobileComposer).toHaveAttribute('placeholder', 'Add to To Improve…');
     fireEvent.input(mobileComposer, {
       target: { value: 'Reduce flaky CI retries' },
     });

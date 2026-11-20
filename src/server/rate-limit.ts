@@ -22,7 +22,12 @@ const MAX_TRACKED_KEYS = 5_000;
 
 // Ephemeral per-process salt ensures transient hashed client keys are never
 // reversible and never persisted anywhere on disk or in the database.
-const ephemeralSalt = generateTokenSalt();
+// Workers forbids random values in global scope, so it is created on first use.
+let ephemeralSalt: string | undefined;
+
+function getEphemeralSalt(): string {
+  return (ephemeralSalt ??= generateTokenSalt());
+}
 
 function extractTransientClientAddress(request: Request): string {
   const cfIp = request.headers.get('cf-connecting-ip')?.trim();
@@ -39,7 +44,7 @@ function extractTransientClientAddress(request: Request): string {
 
 async function deriveTransientRateLimitKey(request: Request): Promise<string> {
   const address = extractTransientClientAddress(request);
-  return sha256Hex(`${ephemeralSalt}:${address}`);
+  return sha256Hex(`${getEphemeralSalt()}:${address}`);
 }
 
 function createSlidingWindowLimiter(limit: number, windowMs: number) {

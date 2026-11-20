@@ -231,7 +231,7 @@ export default function ShareBoard(props: {
         type="button"
         data-cta-emphasis={emphasis()}
         class={[
-          'spring-press inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium sm:h-9 sm:min-h-9',
+          'spring-press inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium max-[30rem]:px-2 sm:h-9 sm:min-h-9',
           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
           emphasis() === 'primary'
             ? 'border-transparent bg-accent text-accent-contrast shadow-xs hover:opacity-92 active:opacity-85'
@@ -241,7 +241,7 @@ export default function ShareBoard(props: {
         aria-haspopup="dialog"
       >
         <LucideIcon icon={Share2} class="size-3.5 shrink-0" strokeWidth={1.9} />
-        <span>Share</span>
+        <span class="max-[30rem]:sr-only">Share</span>
       </button>
       <dialog
         ref={dialog}

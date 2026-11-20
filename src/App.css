@@ -224,18 +224,30 @@
   }
 
   .board-masthead-controls {
-    position: sticky;
-    inset-block-start: 4px;
     order: -1;
-    z-index: 30;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
-    min-height: 52px;
-    margin: 4px 12px 0;
-    padding: 3px 5px;
+    gap: 0.25rem;
+    min-height: 48px;
+    margin: max(0.5rem, env(safe-area-inset-top, 0px)) 0.75rem 0.25rem;
+    padding-inline: 0.25rem;
     border-radius: 999px;
+  }
+
+  /* The pill carries the Board's identity; the bare title row only reappears as the rename form. */
+  .board-masthead-title:not([data-renaming]) {
+    display: none;
+  }
+
+  .board-masthead-status {
+    padding-block: 0.5rem 0;
+  }
+
+  /* The column options disc sits beside the tab track, so give it the track's surface. */
+  .board-column-options button {
+    border-color: transparent;
+    background: var(--retrocks-surface-subtle);
   }
 }
 
@@ -244,6 +256,12 @@
   background: color-mix(in srgb, var(--retrocks-surface) 86%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(165%);
   backdrop-filter: blur(18px) saturate(165%);
+}
+
+/* Quick-add grows with its draft like the desktop composer, so wrapped lines stay inside the field. */
+.board-mobile-composer textarea {
+  field-sizing: content;
+  max-height: 8rem;
 }
 
 .board-timer-progress {
@@ -276,15 +294,17 @@
   --fade-end: 0px;
   --fade-direction: to right;
   scrollbar-width: none;
+  /* Keep focused tabs clear of the fade band at either end. */
+  scroll-padding-inline: 12px;
   mask-image: linear-gradient(var(--fade-direction), transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
 }
 
 .scroll-edge-fade[data-fade-start] {
-  --fade-start: 10px;
+  --fade-start: 12px;
 }
 
 .scroll-edge-fade[data-fade-end] {
-  --fade-end: 10px;
+  --fade-end: 12px;
 }
 
 .scroll-edge-fade:dir(rtl) {
@@ -292,14 +312,26 @@
 }
 
 @media (width < 40rem) {
+  html:has(.board-workspace) {
+    scroll-padding-block: 3.5rem calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .board-column-deck {
+    margin-block-start: 0.5rem;
+  }
+
   .board-column-tabs {
     position: sticky;
-    inset-block-start: 60px;
+    inset-block-start: 0;
     z-index: 20;
+    padding-block: 0.125rem;
+    background: var(--retrocks-canvas);
+    box-shadow: 0.75rem 0 var(--retrocks-canvas), -0.75rem 0 var(--retrocks-canvas);
   }
 
   .board-column-deck[data-can-manage] .board-column-tabs {
-    margin-inline-end: 48px;
+    /* Reserve the options disc plus a gap so tab labels fade out instead of running under it. */
+    padding-inline-end: 3.25rem;
   }
 
   .board-column-cap,
@@ -316,13 +348,19 @@
   }
 
   .board-column-options {
-    position: absolute;
-    inset-block-start: 2px;
-    inset-inline-end: 0;
+    /* Keep menu ownership in the Column panel while sharing the sticky tab row. */
+    position: sticky;
+    inset-block-start: 0.25rem;
+    z-index: 21;
+    order: -1;
+    align-self: flex-end;
+    margin-block-start: -3rem;
+    margin-block-end: 0.25rem;
   }
 
   .board-masthead-title[data-renaming] {
     height: 44px;
+    margin: 0.25rem 0.75rem;
   }
 
   .board-masthead:has(.board-masthead-title[data-renaming]) .board-masthead-status {
@@ -607,6 +645,14 @@
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.03),
     0 1px 3px rgb(0 0 0 / 0.22);
+}
+
+@media (width < 40rem) {
+  .board-workspace .board-column-rail {
+    border-width: 0;
+    background: none;
+    box-shadow: none;
+  }
 }
 
 /* Single-row zero-shift desktop Card composer that grows only on multi-line input */
