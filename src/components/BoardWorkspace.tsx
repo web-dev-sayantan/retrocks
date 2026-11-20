@@ -1719,7 +1719,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         setIsActionItemsOpen(true);
                       }}
                       class={[
-                        'spring-press hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text lg:inline-flex sm:h-9 sm:min-h-9',
+                        'spring-press hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9 sm:min-h-9',
                         'hover:bg-surface-subtle active:bg-surface-subtle',
                         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                       ]}
@@ -1807,7 +1807,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         <MenuItem
                           value="action-items"
                           aria-haspopup="dialog"
-                          class="board-menu-item lg:hidden"
+                          class="board-menu-item sm:hidden"
                           onSelect={() => {
                             closeBoardMenu(true);
                             setIsActionItemsOpen(true);
