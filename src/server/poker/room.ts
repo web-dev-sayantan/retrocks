@@ -8,6 +8,7 @@ import type {
   PokerResult,
   PokerRoomCommand,
   PokerRoomView,
+  PokerStory,
 } from '../../lib/poker-types';
 import { generateEntityId } from '../crypto';
 import type { SqlRunner } from '../db/sql-runner';
@@ -20,6 +21,18 @@ const notFound = {
   message: 'This Room is no longer available.',
 } as const;
 
+const facilitatorRequired = {
+  ok: false,
+  code: 'FORBIDDEN',
+  message: 'Only a Facilitator can manage Stories.',
+} as const;
+
+const storyMissing = {
+  ok: false,
+  code: 'INVALID_INPUT',
+  message: 'That Story is no longer in the queue.',
+} as const;
+
 interface StoredParticipant extends PokerParticipant {
   hash: string;
 }
@@ -29,6 +42,8 @@ export interface StoredPokerRoom {
   version: number;
   expiresAt: number;
   participants: StoredParticipant[];
+  stories?: PokerStory[];
+  activeStoryId?: string | null;
 }
 
 export function pokerDisplayName(input: unknown): string | undefined {
@@ -52,6 +67,8 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     version: room.version,
     viewer,
     participants: viewer ? room.participants.map(projectParticipant) : [],
+    stories: viewer ? room.stories ?? [] : [],
+    activeStoryId: viewer ? room.activeStoryId ?? null : null,
   };
 }
 
@@ -104,6 +121,8 @@ export class PokerRoomStorage {
       version: 1,
       expiresAt: Date.now() + ROOM_TTL_MS,
       participants: [{ id: generateEntityId(), hash, displayName, isFacilitator: true }],
+      stories: [],
+      activeStoryId: null,
     };
     this.db.run(
       'INSERT INTO poker_rooms (id, expires_at, data) VALUES (?, ?, ?)',
@@ -136,6 +155,50 @@ export class PokerRoomStorage {
             displayName,
             isFacilitator: false,
           });
+          break;
+        }
+        case 'add-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          (room.stories ??= []).push({ id: generateEntityId(), title: command.title, status: 'pending' });
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'edit-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          const story = room.stories?.find((entry) => entry.id === command.storyId);
+          if (!story) return storyMissing;
+          if (story.status !== 'pending') {
+            return { ok: false, code: 'INVALID_INPUT', message: 'Only pending Stories can be edited.' };
+          }
+          if (story.title === command.title) return { ok: true, room };
+          story.title = command.title;
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'move-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          const stories = room.stories ?? [];
+          const from = stories.findIndex((entry) => entry.id === command.storyId);
+          const target = stories.findIndex((entry) => entry.id === command.targetId);
+          if (from < 0 || target < 0) return storyMissing;
+          if (from === target) return { ok: true, room };
+          const insertAt = target + Number(command.placement === 'after') - Number(from < target);
+          if (from === insertAt) return { ok: true, room };
+          const [story] = stories.splice(from, 1);
+          stories.splice(insertAt, 0, story);
+          room.expiresAt = now + ROOM_TTL_MS;
+          break;
+        }
+        case 'select-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          const story = room.stories?.find((entry) => entry.id === command.storyId);
+          if (!story) return storyMissing;
+          if (story.status !== 'pending') {
+            return { ok: false, code: 'INVALID_INPUT', message: 'Choose a pending Story.' };
+          }
+          if (room.activeStoryId === story.id) return { ok: true, room };
+          room.activeStoryId = story.id;
+          room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
       }
