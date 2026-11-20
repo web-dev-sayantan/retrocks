@@ -13,6 +13,7 @@ import {
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
+import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
   Check,
   Columns3,
@@ -72,8 +73,6 @@ import {
   type ReactionEmoji,
 } from '../lib/board-types';
 import {
-  hasOpenBoardOverlay,
-  isTypingInEditableElement,
   projectBoardView,
   type BoardQuickFilter,
   type BoardSortMode,
@@ -590,13 +589,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   onSettled(() => {
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  });
-
-  onSettled(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
     const updateComposerInset = () => {
@@ -746,57 +738,25 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     return response;
   }
 
-  function handleGlobalKeyDown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || event.isComposing) return;
-
-    if (event.key === 'Escape') {
-      if (isCardDetailOpen()) {
-        // Events inside the drawer are handled there after its nested controls.
-        if (event.target instanceof Element && event.target.closest('[data-board-overlay]')) return;
-        event.preventDefault();
-        setIsCardDetailOpen(false);
-        return;
-      }
-      if (isActionItemsOpen()) {
-        event.preventDefault();
-        setIsActionItemsOpen(false);
-        return;
-      }
-      if (boardMenuOpen()) {
-        event.preventDefault();
-        closeBoardMenu(true);
-        return;
-      }
-      if (isAddingColumn()) {
-        event.preventDefault();
-        setIsAddingColumn(false);
-      }
-      return;
-    }
-
-    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (isTypingInEditableElement(event)) return;
-
-    const board = workspace.board;
-    if (!board) return;
-
-    if (event.key === '/') {
-      if (hasOpenBoardOverlay()) return;
+  // Global Board shortcuts. useShortcut pauses them while someone types and
+  // while a modal layer is open; shortcuts.list() feeds the help surface.
+  useShortcut(
+    () => (workspace.board ? '/' : null),
+    () => {
       if (searchInputEl?.isConnected) {
-        event.preventDefault();
         searchInputEl.focus();
         searchInputEl.select();
       }
-      return;
-    }
+    },
+    { description: 'Search cards' },
+  );
 
-    const key = event.key.toLowerCase();
-    if (key === 'n') {
-      if (board.isLocked || hasOpenBoardOverlay()) return;
+  useShortcut(
+    () => (workspace.board && !workspace.board.isLocked ? 'n' : null),
+    () => {
       const targetCol = activeMobileColumn();
       const composer = targetCol ? columnComposers.get(targetCol.id) : undefined;
       if (composer?.isConnected) {
-        event.preventDefault();
         composer.focus();
         if (document.activeElement === composer) {
           composer.scrollIntoView?.({ block: 'nearest' });
@@ -804,30 +764,28 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         }
       }
       if (mobileComposerEl?.isConnected) {
-        event.preventDefault();
         mobileComposerEl.focus();
       }
-      return;
-    }
+    },
+    { description: 'Add a card' },
+  );
 
-    if (key === 'a') {
-      if (isActionItemsOpen()) {
-        event.preventDefault();
-        setIsActionItemsOpen(false);
-        return;
-      }
-      if (hasOpenBoardOverlay()) return;
-      event.preventDefault();
+  useShortcut(
+    () => (workspace.board ? 'a' : null),
+    () => {
       setIsActionItemsOpen(true);
-      return;
-    }
+    },
+    { description: 'Toggle Action Items' },
+  );
 
-    if (key === 'b') {
-      if (hasOpenBoardOverlay() || !canControlFacilitation(board)) return;
-      event.preventDefault();
+  useShortcut(
+    () =>
+      workspace.board && canControlFacilitation(workspace.board) ? 'b' : null,
+    () => {
       void togglePrivateMode();
-    }
-  }
+    },
+    { description: 'Toggle Private Mode' },
+  );
 
   async function togglePrivateMode(options?: { dramatic?: boolean }): Promise<void> {
     const board = workspace.board;
