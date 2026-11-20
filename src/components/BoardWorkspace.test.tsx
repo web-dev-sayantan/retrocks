@@ -2654,6 +2654,9 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(within(wentWell).getByRole('menuitem', { name: /To Improve/i }));
     flush();
     expect(moveGroup).toBeDisabled();
+    const pendingMove = within(wentWell).getByRole('status');
+    expect(pendingMove).toHaveTextContent('Moving Card Group…');
+    expect(pendingMove).toHaveClass('sr-only');
     rejectMove({ ok: false, code: 'VALIDATION_ERROR', message: 'Move was rejected.' });
     await flushPromises();
     expect(within(wentWell).getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
@@ -2685,6 +2688,59 @@ describe('<BoardWorkspace />', () => {
       groupId: 'group_1',
     });
     expect(queryByText('CI reliability')).not.toBeInTheDocument();
+  });
+
+  it('navigates the floating Card Group move menu with the keyboard and restores focus on Escape', async () => {
+    const board = makeBoardView({
+      cards: [
+        makeCard({ id: 'card_1', groupId: 'group_1' }),
+        makeCard({ id: 'card_2', groupId: 'group_1' }),
+      ],
+      groups: [{
+        id: 'group_1',
+        columnId: 'col_1',
+        title: 'CI stability',
+        cardIds: ['card_1', 'card_2'],
+        votes: 0,
+        myVotes: 0,
+        createdAt: Date.now(),
+      }],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(async () => {
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      try {
+        flush();
+        const trigger = view.getByRole('button', { name: 'Move Card Group to...' });
+        trigger.focus();
+        fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+        flush();
+
+        const menu = view.getByRole('menu', { name: 'Move Card Group to Column' });
+        expect(menu).toHaveAttribute('popover');
+        expect(menu).toHaveAttribute('data-board-overlay', 'true');
+        const first = within(menu).getByRole('menuitem', { name: 'To Improve' });
+        const last = within(menu).getByRole('menuitem', { name: 'Action Items' });
+        await waitFor(() => expect(first).toHaveFocus());
+
+        fireEvent.keyDown(first, { key: 'ArrowDown' });
+        expect(last).toHaveFocus();
+        fireEvent.keyDown(last, { key: 'ArrowUp' });
+        expect(first).toHaveFocus();
+        fireEvent.keyDown(first, { key: 'Escape' });
+        flush();
+
+        expect(trigger).toHaveFocus();
+        expect(trigger).toHaveAttribute('aria-expanded', 'false');
+        expect(view.queryByRole('menu', { name: 'Move Card Group to Column' })).not.toBeInTheDocument();
+        expect(spies.moveCardGroup).not.toHaveBeenCalled();
+      } finally {
+        view.unmount();
+      }
+    }, { scenario: 'card-group-move-menu-keyboard' });
+
+    expectNoDiagnostics(artifact);
   });
 
   it('opens the Export menu, copies Markdown, exposes download links, prints, and closes on Escape/outside click', async () => {
