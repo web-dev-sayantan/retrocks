@@ -387,7 +387,7 @@ export default function CardItem(props: CardItemProps) {
           'bg-surface-subtle': props.card.redacted,
           'card-revealed': wasRevealed(),
         },
-        'data-drop-active:ring-2 data-drop-active:ring-focus/70 data-dragging:opacity-50',
+        'data-drop-active:ring-2 data-drop-active:ring-focus/70 data-moving:opacity-50 data-dragging:opacity-50',
       ]}
     >
       <Show

@@ -167,7 +167,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             'cursor-grab active:cursor-grabbing touch-none':
               canManageGroup() && !props.isLocked,
           },
-          'data-dragging:opacity-50',
+          'data-moving:opacity-50 data-dragging:opacity-50',
         ]}
       >
         <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5">
