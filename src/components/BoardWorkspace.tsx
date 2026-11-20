@@ -11,6 +11,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
+import { Radio, RadioGroup } from '@ui-sdk/solid/radio';
 import { ScrollArea, ScrollAreaContent, ScrollAreaViewport } from '@ui-sdk/solid/scroll-area';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
 import { Textarea } from '@ui-sdk/solid/textarea';
@@ -2228,41 +2229,32 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span class="block text-xs font-medium text-text-muted">
                     Accent color
                   </span>
-                  <div class="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-8">
+                  <RadioGroup<ColumnAccent>
+                    class="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-8"
+                    value={newColumnAccent()}
+                    onValueChange={(accent) => {
+                      if (accent) setNewColumnAccent(accent);
+                    }}
+                  >
                     <For each={COLUMN_ACCENTS}>
                       {(accent) => (
-                        <button
-                          type="button"
+                        <Radio
+                          value={accent}
                           aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                          aria-pressed={
-                            newColumnAccent() === accent ? 'true' : 'false'
-                          }
-                          onClick={() => setNewColumnAccent(accent)}
-                          class={[
-                            'spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-9',
-                            {
-                              'border-border bg-surface-subtle':
-                                newColumnAccent() === accent,
-                              'border-transparent hover:bg-surface-subtle':
-                                newColumnAccent() !== accent,
-                            },
-                          ]}
+                          class="spring-press inline-flex board-touch-target cursor-pointer items-center justify-center rounded-lg border border-transparent transition-colors hover:bg-surface-subtle data-checked:border-border data-checked:bg-surface-subtle board-focus-ring"
                         >
                           <span
                             aria-hidden="true"
                             class={[
                               'size-4 rounded-full',
                               COLUMN_ACCENT_STYLES[accent].swatch,
-                              {
-                                'ring-2 ring-text ring-offset-2 ring-offset-surface':
-                                  newColumnAccent() === accent,
-                              },
+                              'data-checked:ring-2 data-checked:ring-text data-checked:ring-offset-2 data-checked:ring-offset-surface',
                             ]}
                           />
-                        </button>
+                        </Radio>
                       )}
                     </For>
-                  </div>
+                  </RadioGroup>
                 </div>
 
                 <label class="inline-flex min-h-11 cursor-pointer items-center gap-2.5 text-sm text-text-muted sm:min-h-9">

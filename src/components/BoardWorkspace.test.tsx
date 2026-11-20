@@ -4933,7 +4933,7 @@ describe('<BoardWorkspace />', () => {
           const dialog2 = view.getByRole('dialog', { name: 'Add a Column' });
           const titleInput2 = within(dialog2).getByLabelText('New column title') as HTMLInputElement;
           fireEvent.input(titleInput2, { target: { value: 'Risks' } });
-          fireEvent.click(within(dialog2).getByRole('button', { name: 'New column accent Coral' }));
+          fireEvent.click(within(dialog2).getByRole('radio', { name: 'New column accent Coral' }));
           fireEvent.click(within(dialog2).getByLabelText('Action Items column'));
           flush();
           fireEvent.click(within(dialog2).getByRole('button', { name: 'Add column' }));
