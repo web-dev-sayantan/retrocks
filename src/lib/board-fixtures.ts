@@ -17,6 +17,12 @@ import type {
  * group vote rollup via `groupView`).
  */
 
+/** Fixture lookups receive ids the fixture itself created; fail loudly otherwise. */
+function must<T>(value: T | undefined, id: string): T {
+  if (value === undefined) throw new Error(`Fixture entity not found: ${id}`);
+  return value;
+}
+
 function makeCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
   const now = Date.now() - 120_000; // 2m ago
   return {
@@ -165,7 +171,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const updateCard = vi.fn(async (input) => {
     version += 1;
-    const existing = cards.get(input.cardId)!;
+    const existing = must(cards.get(input.cardId), input.cardId);
     const updated: CardViewDTO = {
       ...existing,
       content: input.content.trim(),
@@ -181,7 +187,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const updateActionItem = vi.fn(async (input) => {
     version += 1;
-    const existing = cards.get(input.cardId)!;
+    const existing = must(cards.get(input.cardId), input.cardId);
     const updated: CardViewDTO = {
       ...existing,
       ...(input.isActionItem !== undefined
@@ -210,7 +216,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const moveCard = vi.fn(async (input) => {
     version += 1;
-    const existing = cards.get(input.cardId)!;
+    const existing = must(cards.get(input.cardId), input.cardId);
     const moved: CardViewDTO = {
       ...existing,
       columnId: input.targetColumnId,
@@ -244,7 +250,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
         : [...groups.values()].find((item) =>
             item.cardIds.includes(input.cardId),
           );
-    const moved = cards.get(input.cardId)!;
+    const moved = must(cards.get(input.cardId), input.cardId);
     if (!group) {
       if (!targetCard) throw new Error('Missing target Card');
       seq += 1;
@@ -301,7 +307,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const renameCardGroup = vi.fn(async (input) => {
     version += 1;
-    const group = groups.get(input.groupId)!;
+    const group = must(groups.get(input.groupId), input.groupId);
     group.title = input.title.trim();
     return {
       ok: true as const,
@@ -314,7 +320,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const ungroupCard = vi.fn(async (input) => {
     version += 1;
-    const card = cards.get(input.cardId)!;
+    const card = must(cards.get(input.cardId), input.cardId);
     const group = card.groupId ? groups.get(card.groupId) : undefined;
     const events: BoardEvent[] = [];
     card.groupId = null;
@@ -335,7 +341,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const dissolveCardGroup = vi.fn(async (input) => {
     version += 1;
-    const group = groups.get(input.groupId)!;
+    const group = must(groups.get(input.groupId), input.groupId);
     for (const id of group.cardIds) {
       const member = cards.get(id);
       if (member) member.groupId = null;
@@ -352,13 +358,13 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const moveCardGroup = vi.fn(async (input) => {
     version += 1;
-    const group = groups.get(input.groupId)!;
+    const group = must(groups.get(input.groupId), input.groupId);
     group.columnId = input.targetColumnId;
     const events: BoardEvent[] = [
       { type: 'group:upserted' as const, version, group: groupView(group) },
     ];
     for (const id of group.cardIds) {
-      const card = cards.get(id)!;
+      const card = must(cards.get(id), id);
       card.columnId = input.targetColumnId;
       events.push({ type: 'card:upserted' as const, version, card: { ...card } });
     }
@@ -386,7 +392,7 @@ function createFakeActions(initialBoard: BoardViewDTO): {
 
   const updateColumn = vi.fn(async (input) => {
     version += 1;
-    const existing = columns.get(input.columnId)!;
+    const existing = must(columns.get(input.columnId), input.columnId);
     const updated: ColumnDTO = {
       ...existing,
       ...(input.title !== undefined ? { title: input.title.trim() } : {}),

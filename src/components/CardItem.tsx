@@ -465,10 +465,11 @@ export default function CardItem(props: CardItemProps) {
       <Show
         when={!props.card.redacted}
         fallback={
-          <div
+          <button
+            type="button"
             aria-label="Hidden Card in Private Mode"
             onClick={handleRedactedClick}
-            class="cursor-pointer select-none space-y-2 py-0.5"
+            class="block w-full cursor-pointer select-none space-y-2 py-0.5 text-left"
           >
             <div class="space-y-1.5" aria-hidden="true">
               <For each={placeholderLineWidths()}>
@@ -488,7 +489,7 @@ export default function CardItem(props: CardItemProps) {
               </span>
               <time class="shrink-0 tabular-nums">{relativeTimestamp()}</time>
             </div>
-          </div>
+          </button>
         }
       >
         <Show

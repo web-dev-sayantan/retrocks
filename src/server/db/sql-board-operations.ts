@@ -1121,7 +1121,13 @@ export class SqlBoardOperations {
             }
           }
 
-          const targetColumnId = group ? group.column_id : targetCard!.column_id;
+          // Only one of `group`/`targetCard` is set per target type; a guard
+          // keeps the impossible both-null case a clean NOT_FOUND instead of a
+          // thrown TypeError mid-transaction.
+          const targetColumnId = group?.column_id ?? targetCard?.column_id;
+          if (targetColumnId === undefined) {
+            return { ok: false, code: 'NOT_FOUND', message: 'Target Card not found.' };
+          }
           if (source.column_id !== targetColumnId) {
             return {
               ok: false,
@@ -1143,8 +1149,8 @@ export class SqlBoardOperations {
             };
           }
 
-          if (!group) {
-            const title = targetCard!.content.trim().slice(0, MAX_GROUP_TITLE_LENGTH);
+          if (!group && targetCard) {
+            const title = targetCard.content.trim().slice(0, MAX_GROUP_TITLE_LENGTH);
             this.sql.run(
               `INSERT INTO card_groups (id, board_id, column_id, title, created_at)
                VALUES (?, ?, ?, ?, ?)`,

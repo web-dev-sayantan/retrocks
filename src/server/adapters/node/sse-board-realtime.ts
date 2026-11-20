@@ -108,7 +108,9 @@ export function createNodeBoardRealtime(getStore: () => Promise<BoardStore>): Bo
           try {
             const snapshot = await store.getBoardSnapshot(boardId);
             if (!subscribers.has(connectionId)) return;
-            const pending = subscriber.pending!;
+            // The subscription guarantees a non-null queue; `?? []` keeps a
+            // theoretical miss a silent no-op replay instead of a throw.
+            const pending = subscriber.pending ?? [];
             subscriber.pending = null;
             if (!snapshot) {
               send(subscriber, { type: 'board:deleted', version: 0 });

@@ -25,13 +25,15 @@ export default function BoardRoute() {
     const fetched = fetchedBoard();
     return fetched === null ? null : parseBoardView(fetched);
   });
+  const title = createMemo(() => {
+    const loaded = board();
+    return loaded ? `${loaded.title} — Retrocks` : 'Board Not Found — Retrocks';
+  });
 
   return (
     <>
       <Meta name="robots" content="noindex, nofollow" />
-      <Title>
-        {board() ? `${board()!.title} — Retrocks` : 'Board Not Found — Retrocks'}
-      </Title>
+      <Title>{title()}</Title>
       <FacilitatorLinkClaim boardId={params.id ?? ''} />
       <Show
         when={board()}
