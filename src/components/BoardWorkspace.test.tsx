@@ -30,12 +30,6 @@ function stubRect(el: Element, box: [number, number, number, number]): void {
   } as DOMRect);
 }
 
-/** Reads createTransfer's assertive live region once its 100ms settle elapses. */
-async function readAnnouncement(): Promise<string> {
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  return document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '';
-}
-
 /** Simulates a complete pointer drag gesture: press, moves, release. */
 function pointerDrag(from: Element, points: { x: number; y: number }[]): void {  const [start, ...rest] = points;
   const end = rest.at(-1) ?? start;
@@ -1486,43 +1480,50 @@ describe('<BoardWorkspace />', () => {
     }
   });
 
-  it('moves a focused Card across Columns with the keyboard alone', async () => {
-    const mine = makeCard({
-      id: 'card_keys',
-      columnId: 'col_1',
-      content: 'Keyboard courier',
-      isMine: true,
-    });
-    const board = makeBoardView({ isFacilitator: false, cards: [mine] });
-    const { actions, spies } = createFakeActions(board);
+  it('moves a focused Card across Columns with the keyboard alone', () => {
+    vi.useFakeTimers();
+    try {
+      const mine = makeCard({
+        id: 'card_keys',
+        columnId: 'col_1',
+        content: 'Keyboard courier',
+        isMine: true,
+      });
+      const board = makeBoardView({ isFacilitator: false, cards: [mine] });
+      const { actions, spies } = createFakeActions(board);
 
-    const { getByRole } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
-    ));
-    flush();
+      const { getByRole } = render(() => (
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+      ));
+      flush();
 
-    const cardEl = within(getByRole('region', { name: 'Went Well' }))
-      .getByText('Keyboard courier')
-      .closest('article') as HTMLElement;
-    cardEl.focus();
-    expect(cardEl).toHaveFocus();
+      const cardEl = within(getByRole('region', { name: 'Went Well' }))
+        .getByText('Keyboard courier')
+        .closest('article') as HTMLElement;
+      cardEl.focus();
+      expect(cardEl).toHaveFocus();
 
-    fireEvent.keyDown(cardEl, { key: ' ' });
-    fireEvent.keyDown(cardEl, { key: 'ArrowRight' });
-    fireEvent.keyDown(cardEl, { key: ' ' });
-    await flushPromises();
+      fireEvent.keyDown(cardEl, { key: ' ' });
+      fireEvent.keyDown(cardEl, { key: 'ArrowRight' });
+      fireEvent.keyDown(cardEl, { key: ' ' });
+      vi.advanceTimersByTime(150);
 
-    expect(spies.moveCard).toHaveBeenCalledWith({
-      boardId: board.id,
-      cardId: 'card_keys',
-      targetColumnId: 'col_2',
-    });
-    expect(await readAnnouncement()).toContain('Dropped Keyboard courier in Column To Improve');
+      expect(spies.moveCard).toHaveBeenCalledWith({
+        boardId: board.id,
+        cardId: 'card_keys',
+        targetColumnId: 'col_2',
+      });
+      expect(
+        document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '',
+      ).toContain('Dropped Keyboard courier in Column To Improve');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with shared confirmation)', async () => {
