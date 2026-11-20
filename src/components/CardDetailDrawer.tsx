@@ -1,3 +1,4 @@
+import { Trash2 } from 'lucide';
 import {
   For,
   Show,
@@ -20,9 +21,11 @@ import {
 } from '../lib/board-types';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import { closeBoardDrawer, showBoardDrawer } from './board-drawer';
+import BoardOverlayHeader from './BoardOverlayHeader';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
-import { CloseIcon, TrashIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 
 export interface CardDetailDrawerProps {
   card: CardViewDTO;
@@ -64,7 +67,8 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
 
   let dialog: HTMLDialogElement | undefined;
   let closeButton: HTMLButtonElement | undefined;
-  let closeInProgress = false;
+  let focusRestored = false;
+  let backdropPressed = false;
 
   createEffect(
     () => props.isOpen,
@@ -72,28 +76,20 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
       const element = dialog;
       if (!element) return;
       if (open) {
-        closeInProgress = false;
-        if (typeof element.showModal === 'function') element.showModal();
-        else element.open = true;
+        focusRestored = false;
+        backdropPressed = false;
+        showBoardDrawer(element);
         closeButton?.focus({ preventScroll: true });
         return;
       }
-      closeInProgress = true;
-      if (typeof element.close === 'function') element.close();
-      else element.open = false;
-      props.restoreFocus();
-
-      // CSS owns the timing and reverses the transition if this Card is reopened.
-      const transitions = element.getAnimations?.({ subtree: true }) ?? [];
-      if (transitions.length === 0) {
-        props.onExit();
-        return;
-      }
-      let interrupted = false;
-      void Promise.allSettled(transitions.map((transition) => transition.finished)).then(() => {
-        if (!interrupted) props.onExit();
-      });
-      return () => { interrupted = true; };
+      return closeBoardDrawer(
+        element,
+        () => {
+          focusRestored = true;
+          props.restoreFocus();
+        },
+        () => props.onExit(),
+      );
     },
   );
 
@@ -115,7 +111,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     document.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => {
       document.removeEventListener('keydown', handleKeyDown, { capture: true });
-      if (!closeInProgress) {
+      if (!focusRestored) {
         if (dialog?.open) dialog.close?.();
         // Wait until the same snapshot has updated the trigger in the Board.
         const restoreFocus = untrack(() => props.restoreFocus);
@@ -232,7 +228,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   return (
     <dialog
       ref={dialog}
-      aria-modal="true"
       aria-label="Card details"
       data-board-overlay={props.isOpen ? 'true' : undefined}
       data-print-hide="true"
@@ -246,21 +241,21 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         event.preventDefault();
         props.onClose();
       }}
-      class="card-detail-dialog fixed inset-0 z-50 m-0 h-full max-h-none w-full max-w-none overflow-clip bg-transparent text-text"
+      class="board-drawer-dialog"
+      onPointerDown={(event) => {
+        backdropPressed = event.target === dialog && event.button === 0;
+      }}
+      onClick={(event) => {
+        if (backdropPressed && event.target === dialog) props.onClose();
+        backdropPressed = false;
+      }}
     >
-      <div
-        aria-hidden="true"
-        onClick={() => props.onClose()}
-        class="card-detail-scrim absolute inset-0 bg-black/40"
-      />
-      <div
-        class={[
-          'card-detail-panel absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-2xl border-t border-border bg-surface shadow-xl',
-          'sm:inset-y-0 sm:right-0 sm:left-auto sm:max-h-none sm:w-full sm:max-w-md sm:rounded-none sm:border-t-0 sm:border-l',
-        ]}
-      >
-        {/* Drawer header */}
-        <div class="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
+      <div class="board-drawer-panel">
+        <BoardOverlayHeader
+          closeRef={(button) => { closeButton = button; }}
+          closeLabel="Close Card details"
+          onClose={() => props.onClose()}
+        >
           <div class="flex min-w-0 items-center gap-2">
             <Show when={props.column}>
               {(col) => (
@@ -272,27 +267,14 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                       COLUMN_ACCENT_STYLES[col().accent].swatch,
                     ]}
                   />
-                  <h2 class="min-w-0 wrap-anywhere text-sm font-semibold text-text">
+                  <h2 class="min-w-0 wrap-anywhere">
                     {col().title}
                   </h2>
                 </>
               )}
             </Show>
           </div>
-          <button
-            ref={closeButton}
-            type="button"
-            aria-label="Close Card details"
-            onClick={() => props.onClose()}
-            class={[
-              'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8',
-              'transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-            ]}
-          >
-            <CloseIcon />
-          </button>
-        </div>
+        </BoardOverlayHeader>
 
         {/* Scrollable body */}
         <div class="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
@@ -328,7 +310,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
 
             <div class="space-y-2 rounded-lg border border-border bg-canvas p-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <h3 class="text-xs font-semibold tracking-wide text-text-muted uppercase">
+                <h3 class="text-xs font-semibold text-text-muted">
                   Action Item
                 </h3>
                 <label class="inline-flex min-h-11 min-w-11 cursor-pointer items-center gap-2 text-xs font-medium text-text">
@@ -418,7 +400,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
           {/* Chronological anonymous comments */}
           <section class="space-y-3 border-t border-border pt-4">
             <div class="flex items-center justify-between gap-2">
-              <h3 class="text-xs font-semibold tracking-wide text-text-muted uppercase">
+              <h3 class="text-xs font-semibold text-text-muted">
                 Comments
               </h3>
               <span class="text-xs text-text-muted tabular-nums">
@@ -503,7 +485,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                               ]}
                             >
-                              <TrashIcon />
+                              <LucideIcon icon={Trash2} class="size-3.5" />
                             </button>
                           </Show>
                         </Show>
