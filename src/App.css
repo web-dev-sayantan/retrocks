@@ -296,26 +296,22 @@
   background: var(--timer-fill);
 }
 
+/* Mobile Column tab rail: the Scroll Area root carries how much content waits
+   past each edge; the mask fades only where that is non-zero. */
 .scroll-edge-fade {
-  --fade-start: 0px;
-  --fade-end: 0px;
+  --fade-start: min(12px, var(--scroll-area-overflow-x-start, 0px));
+  --fade-end: min(12px, var(--scroll-area-overflow-x-end, 0px));
   --fade-direction: to right;
-  scrollbar-width: none;
-  /* Keep focused tabs clear of the fade band at either end. */
-  scroll-padding-inline: 12px;
   mask-image: linear-gradient(var(--fade-direction), transparent, black var(--fade-start), black calc(100% - var(--fade-end)), transparent);
-}
-
-.scroll-edge-fade[data-fade-start] {
-  --fade-start: 12px;
-}
-
-.scroll-edge-fade[data-fade-end] {
-  --fade-end: 12px;
 }
 
 .scroll-edge-fade:dir(rtl) {
   --fade-direction: to left;
+}
+
+/* Keep focused tabs clear of the fade band at either end. */
+.scroll-edge-fade [data-slot='scroll-area-viewport'] {
+  scroll-padding-inline: 12px;
 }
 
 @media (width < 40rem) {

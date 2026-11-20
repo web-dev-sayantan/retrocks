@@ -3985,31 +3985,46 @@ describe('<BoardWorkspace />', () => {
     expect(controlledPanel).toHaveAttribute('data-column-id', 'col_2');
   });
 
-  it('fades the Column rail only on edges with more tabs to scroll to', () => {
+  it('fades the Column rail only on edges with more tabs to scroll to', async () => {
     const board = makeBoardView();
     const view = render(() => (
       <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
     ));
     flush();
-    const tabs = view.getByRole('tablist', { name: 'Select Column' });
-    Object.defineProperties(tabs, {
+    const tablist = view.getByRole('tablist', { name: 'Select Column' });
+    const rail = tablist.closest('.scroll-edge-fade') as HTMLElement;
+    const viewport = tablist.closest('[data-slot="scroll-area-viewport"]') as HTMLElement;
+    Object.defineProperties(viewport, {
       clientWidth: { value: 300 },
       scrollWidth: { value: 500 },
     });
 
-    fireEvent.scroll(tabs);
-    expect(tabs).not.toHaveAttribute('data-fade-start');
-    expect(tabs).toHaveAttribute('data-fade-end');
+    // The Scroll Area settles its edge state on a rAF after each scroll.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 24));
 
-    tabs.scrollLeft = 100;
-    fireEvent.scroll(tabs);
-    expect(tabs).toHaveAttribute('data-fade-start');
-    expect(tabs).toHaveAttribute('data-fade-end');
+    fireEvent.scroll(viewport);
+    await settle();
+    expect(rail).toHaveAttribute('data-at-x-start');
+    expect(rail).not.toHaveAttribute('data-at-x-end');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-end')).toBe('200px');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-start')).toBe('0px');
 
-    tabs.scrollLeft = 200;
-    fireEvent.scroll(tabs);
-    expect(tabs).toHaveAttribute('data-fade-start');
-    expect(tabs).not.toHaveAttribute('data-fade-end');
+    viewport.scrollLeft = 100;
+    fireEvent.scroll(viewport);
+    await settle();
+    expect(rail).not.toHaveAttribute('data-at-x-start');
+    expect(rail).not.toHaveAttribute('data-at-x-end');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-start')).toBe('100px');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-end')).toBe('100px');
+
+    viewport.scrollLeft = 200;
+    fireEvent.scroll(viewport);
+    await settle();
+    expect(rail).not.toHaveAttribute('data-at-x-start');
+    expect(rail).toHaveAttribute('data-at-x-end');
+    expect(rail.style.getPropertyValue('--scroll-area-overflow-x-end')).toBe('0px');
+
+    view.unmount();
   });
 
   it('offers the mobile-only Board actions in More and labels the active Column panel', () => {

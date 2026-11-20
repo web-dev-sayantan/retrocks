@@ -11,6 +11,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
+import { ScrollArea, ScrollAreaContent, ScrollAreaViewport } from '@ui-sdk/solid/scroll-area';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
 import { Textarea } from '@ui-sdk/solid/textarea';
 import {
@@ -335,6 +336,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     createSignal(false);
   let swipeStart: { x: number; y: number; touchId: number } | undefined;
   let columnTabListEl: HTMLDivElement | undefined;
+  let columnTabViewportEl: HTMLDivElement | undefined;
   let mobileComposerBarEl: HTMLDivElement | undefined;
 
   // Desktop drag-and-drop Card state
@@ -1445,33 +1447,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  function updateColumnTabEdges(list: HTMLDivElement): void {
-    const offset = Math.abs(list.scrollLeft);
-    list.toggleAttribute('data-fade-start', offset > 1);
-    list.toggleAttribute('data-fade-end', offset < list.scrollWidth - list.clientWidth - 1);
-  }
-
-  createEffect(() => workspace.board?.id, () => {
-    const list = columnTabListEl;
-    const track = list?.firstElementChild;
-    if (!list || !track) return;
-    updateColumnTabEdges(list);
-    const observer = new ResizeObserver(() => updateColumnTabEdges(list));
-    observer.observe(list);
-    observer.observe(track);
-    return () => observer.disconnect();
-  });
-
   createEffect(resolvedActiveColumnIndex, (index) => {
-    const list = columnTabListEl;
-    const tab = list?.querySelectorAll<HTMLElement>('[role=tab]')[index];
-    if (!list || !tab) return;
-    const rail = list.getBoundingClientRect();
+    const viewport = columnTabViewportEl;
+    const tab = columnTabListEl?.querySelectorAll<HTMLElement>('[role=tab]')[index];
+    if (!viewport || !tab) return;
+    const rail = viewport.getBoundingClientRect();
     const item = tab.getBoundingClientRect();
     const offset = item.left < rail.left ? item.left - rail.left - 12
       : item.right > rail.right ? item.right - rail.right + 12 : 0;
-    if (offset !== 0) list.scrollLeft += offset;
-    updateColumnTabEdges(list);
+    if (offset !== 0) viewport.scrollLeft += offset;
   });
 
   function handleTouchStart(event: TouchEvent): void {
@@ -2027,45 +2011,46 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 data-print-hide="true"
                 class="board-column-tabs min-w-0 sm:hidden"
               >
-                <TabsList
-                  ref={columnTabListEl}
-                  onScroll={(event) => updateColumnTabEdges(event.currentTarget)}
-                  aria-label="Select Column"
-                  class="scroll-edge-fade overflow-x-auto rounded-full bg-surface-subtle"
-                >
-                  <div class="flex w-max min-w-full items-center gap-0.5 py-0.5 pl-0.5 pr-2">
-                    <For each={board().columns}>
-                      {(column) => (
-                        <TabsTab
-                          value={column.id}
-                          title={column.title}
-                          render={(tabProps) => (
-                            <button
-                              {...tabProps}
-                              id={`column-tab-${column.id}`}
-                              aria-controls={`column-${column.id}`}
-                            />
-                          )}
-                          class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
-                        >
-                          <span
-                            aria-hidden="true"
-                            class={[
-                              'h-2 w-2 shrink-0 rounded-full',
-                              COLUMN_ACCENT_STYLES[column.accent].swatch,
-                            ]}
-                          />
-                          <span class="min-w-0 truncate text-left">{column.title}</span>
-                          <span class="text-xs text-text-muted tabular-nums">
-                            {boardView()?.hasActiveFilter
-                              ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
-                              : column.cardCount}
-                          </span>
-                        </TabsTab>
-                      )}
-                    </For>
-                  </div>
-                </TabsList>
+                <ScrollArea class="scroll-edge-fade w-full rounded-full bg-surface-subtle">
+                  <ScrollAreaViewport ref={columnTabViewportEl}>
+                    <ScrollAreaContent>
+                      <TabsList ref={columnTabListEl} aria-label="Select Column">
+                        <div class="flex w-max min-w-full items-center gap-0.5 py-0.5 pl-0.5 pr-2">
+                          <For each={board().columns}>
+                            {(column) => (
+                              <TabsTab
+                                value={column.id}
+                                title={column.title}
+                                render={(tabProps) => (
+                                  <button
+                                    {...tabProps}
+                                    id={`column-tab-${column.id}`}
+                                    aria-controls={`column-${column.id}`}
+                                  />
+                                )}
+                                class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  class={[
+                                    'h-2 w-2 shrink-0 rounded-full',
+                                    COLUMN_ACCENT_STYLES[column.accent].swatch,
+                                  ]}
+                                />
+                                <span class="min-w-0 truncate text-left">{column.title}</span>
+                                <span class="text-xs text-text-muted tabular-nums">
+                                  {boardView()?.hasActiveFilter
+                                    ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
+                                    : column.cardCount}
+                                </span>
+                              </TabsTab>
+                            )}
+                          </For>
+                        </div>
+                      </TabsList>
+                    </ScrollAreaContent>
+                  </ScrollAreaViewport>
+                </ScrollArea>
               </nav>
               <div
                 data-board-columns="true"
