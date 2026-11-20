@@ -10,7 +10,7 @@ import { ensureParticipantSession, getSessionFromRequest, type RetrocksSession }
 import { pokerDisplayName } from './room';
 import { getPokerRoomAccess } from './runtime';
 
-function hashParticipant(roomId: string, session: RetrocksSession) {
+export function hashPokerParticipant(roomId: string, session: RetrocksSession) {
   return hashTokenWithSalt(session.participantId, `poker:${roomId}`);
 }
 
@@ -26,14 +26,14 @@ export async function createPokerRoomForRequest(input: unknown): Promise<PokerRe
   const session = await ensureParticipantSession({ renew: true });
   const id = generateEntityId();
   const room = await getPokerRoomAccess(id);
-  return { ok: true, room: await room.create(await hashParticipant(id, session), displayName) };
+  return { ok: true, room: await room.create(await hashPokerParticipant(id, session), displayName) };
 }
 
 export async function readPokerRoomForRequest(id: string): Promise<PokerRoomView | null> {
   if (!safeParse(PokerRoomId, id).success) return null;
   const session = await ensureParticipantSession();
   const room = await getPokerRoomAccess(id);
-  return room.read(await hashParticipant(id, session));
+  return room.read(await hashPokerParticipant(id, session));
 }
 
 export async function mutatePokerRoomForRequest(id: string, input: unknown): Promise<PokerResult> {
@@ -45,7 +45,7 @@ export async function mutatePokerRoomForRequest(id: string, input: unknown): Pro
 
   const session = await ensureParticipantSession({ renew: true });
   const room = await getPokerRoomAccess(id);
-  return room.mutate(await hashParticipant(id, session), command.output);
+  return room.mutate(await hashPokerParticipant(id, session), command.output);
 }
 
 export async function handlePokerLiveRequest(id: string, request: Request): Promise<Response> {
@@ -57,7 +57,7 @@ export async function handlePokerLiveRequest(id: string, request: Request): Prom
 
   const session = await getSessionFromRequest(request);
   if (!session) return new Response(null, { status: 401 });
-  const hash = await hashParticipant(id, session);
+  const hash = await hashPokerParticipant(id, session);
   const room = await getPokerRoomAccess(id);
   return request.method === 'POST'
     ? room.heartbeat(hash, request)

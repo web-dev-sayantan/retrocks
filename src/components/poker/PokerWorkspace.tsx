@@ -1,8 +1,7 @@
 import { For, Show, onSettled } from 'solid-js';
 
-import { pokerRoomPath } from '../../lib/poker-routes';
 import type { PokerRoomView } from '../../lib/poker-types';
-import CopyRoomLink from './CopyRoomLink';
+import PokerRoomSharing from './PokerRoomSharing';
 import './poker.css';
 
 export default function PokerWorkspace(props: {
@@ -10,6 +9,7 @@ export default function PokerWorkspace(props: {
   online: string[];
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
+  claimError?: string;
 }) {
   let heading!: HTMLHeadingElement;
 
@@ -26,13 +26,18 @@ export default function PokerWorkspace(props: {
         </p>
       </header>
 
+      <p role="alert" class={props.claimError ? 'mb-4 text-sm font-medium text-[var(--poker-error)]' : 'sr-only'}>
+        {props.claimError}
+      </p>
       <div class="poker-layout">
         <section class="min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-7" aria-labelledby="poker-stories">
           <h2 id="poker-stories" class="text-xl font-semibold tracking-tight">Stories</h2>
           <p class="mt-2 text-sm leading-relaxed text-text-muted">There are no Stories in this Room yet.</p>
-          <div class="mt-7 border-t border-border pt-5">
-            <CopyRoomLink label="Participant link" href={pokerRoomPath(props.room.id)} />
-          </div>
+          <PokerRoomSharing
+            roomId={props.room.id}
+            isFacilitator={props.room.viewer?.isFacilitator ?? false}
+            revision={props.room.facilitatorLinkRevision}
+          />
         </section>
 
         <section class="min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-6" aria-labelledby="poker-participants">

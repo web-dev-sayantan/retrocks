@@ -9,6 +9,7 @@ import {
   encryptFacilitatorToken,
   generateFacilitatorToken,
   hashTokenWithSalt,
+  tokenHashesMatch,
 } from '../crypto';
 import {
   getSession,
@@ -81,16 +82,6 @@ function invalidLink(): BoardDomainError {
     'FORBIDDEN',
     'This Co-Facilitator Link is invalid or has expired.',
   );
-}
-
-function tokenHashesMatch(candidateHash: string, storedHash: string): boolean {
-  if (candidateHash.length !== storedHash.length) return false;
-
-  let difference = 0;
-  for (let index = 0; index < candidateHash.length; index += 1) {
-    difference |= candidateHash.charCodeAt(index) ^ storedHash.charCodeAt(index);
-  }
-  return difference === 0;
 }
 
 export async function claimFacilitatorRoleForRequest(

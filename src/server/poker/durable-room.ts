@@ -3,7 +3,10 @@ import { DurableObject } from 'cloudflare:workers';
 import { LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/board-live-protocol';
 import { POKER_LIVE_VIEWER_HEADER, type PokerLiveMessage, type PokerRoomCommand, type PokerRoomView } from '../../lib/poker-types';
 import { wrapDurableObjectSql } from '../adapters/cloudflare/sqlite';
-import { PokerRoomStorage, pokerParticipant, projectPokerRoom } from './room';
+import {
+  PokerRoomStorage, pokerParticipant, projectPokerRoom,
+  type PokerFacilitatorCapability, type StoredPokerRoom,
+} from './room';
 
 
 interface Attachment {
@@ -33,10 +36,26 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async mutate(id: string, hash: string, command: PokerRoomCommand) {
     const result = this.storage.mutate(id, hash, command);
     if (!result.ok) return result;
-    for (const { socket, attachment } of this.connections()) {
-      this.send(socket, { type: 'room:snapshot', room: projectPokerRoom(result.room, attachment.hash) });
-    }
+    this.broadcastRoom(result.room);
     return { ok: true as const, room: projectPokerRoom(result.room, hash) };
+  }
+
+  async getFacilitatorCapability(id: string, hash: string) {
+    return this.storage.getFacilitatorCapability(id, hash);
+  }
+
+  async replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
+    const result = this.storage.replaceFacilitatorCapability(id, hash, revision, capability);
+    if (!result.ok) return result;
+    this.broadcastRoom(result.value);
+    return { ok: true as const, value: null };
+  }
+
+  async claimFacilitator(id: string, hash: string, candidate: string) {
+    const result = this.storage.claimFacilitator(id, hash, candidate);
+    if (!result.ok) return result;
+    this.broadcastRoom(result.value);
+    return { ok: true as const, value: projectPokerRoom(result.value, hash) };
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -111,6 +130,12 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
       active.push({ socket, attachment });
     }
     return active;
+  }
+
+  private broadcastRoom(room: StoredPokerRoom): void {
+    for (const { socket, attachment } of this.connections()) {
+      this.send(socket, { type: 'room:snapshot', room: projectPokerRoom(room, attachment.hash) });
+    }
   }
 
   private broadcastPresence(excluded?: WebSocket): void {
