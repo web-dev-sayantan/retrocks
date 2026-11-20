@@ -99,9 +99,6 @@ export const CreateBoardInputSchema = v.object({
 });
 
 export type CreateBoardInput = v.InferInput<typeof CreateBoardInputSchema>;
-export type ValidatedCreateBoardInput = v.InferOutput<
-  typeof CreateBoardInputSchema
->;
 
 export const RenameBoardInputSchema = v.object({
   boardId: BoardIdSchema,
