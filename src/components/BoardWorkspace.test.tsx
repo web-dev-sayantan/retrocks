@@ -1540,7 +1540,12 @@ describe('<BoardWorkspace />', () => {
       ok: false, code: 'VALIDATION_ERROR', message: 'Grouping failed.',
     });
     spies.deleteCard.mockRejectedValueOnce(new Error('Disconnected'));
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const view = render(() => (
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardConfirmDialog />
+      </>
+    ));
     flush();
     const mine = within(view.getByText(card.content).closest('article')!);
     const trigger = mine.getByRole('button', { name: 'Card actions' });
@@ -1564,20 +1569,31 @@ describe('<BoardWorkspace />', () => {
     await flushPromises();
     expect(mine.getByRole('alert')).toHaveTextContent('Could not group the Card.');
 
+    // A failed delete stays confirmable for a retry through the shared dialog.
     fireEvent.click(trigger);
     flush();
     select('Delete Card');
-    const confirm = mine.getByRole('button', { name: 'Confirm?' });
-    fireEvent.click(confirm);
     await flushPromises();
-    expect(confirm).toBeEnabled();
-    expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.');
-    fireEvent.click(confirm);
+    expect(spies.deleteCard).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(view.getByRole('alertdialog', { name: 'Delete this Card?' }))
+        .getByRole('button', { name: 'Delete Card' }),
+    );
+    await waitFor(() =>
+      expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.'),
+    );
+    fireEvent.click(trigger);
+    flush();
+    select('Delete Card');
     await flushPromises();
-    expect(view.queryByText(card.content)).toBeNull();
+    fireEvent.click(
+      within(view.getByRole('alertdialog', { name: 'Delete this Card?' }))
+        .getByRole('button', { name: 'Delete Card' }),
+    );
+    await waitFor(() => expect(view.queryByText(card.content)).toBeNull());
   });
 
-  it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and inline Delete -> Confirm? confirmation', async () => {
+  it('supports inline Card edit, cross-Column move via "Move to..." and drag-and-drop, and Card delete through the shared confirm', async () => {
     const myCard = makeCard({
       id: 'card_mine',
       columnId: 'col_1',
@@ -1615,12 +1631,15 @@ describe('<BoardWorkspace />', () => {
     const { actions, spies } = createFakeActions(board);
 
     const { getByRole, queryByText } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
+      <>
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
 
@@ -1715,28 +1734,28 @@ describe('<BoardWorkspace />', () => {
       targetColumnId: 'col_1',
     });
 
-    // Inline delete confirmation: Delete -> Confirm?
+    // Delete Card asks through the shared confirm
     const movedBack = within(within(wentWell).getByText('Refined retro note').closest('article')!);
     fireEvent.click(movedBack.getByRole('button', { name: 'Card actions' }));
     flush();
     fireEvent.click(movedBack.getByRole('menuitem', { name: 'Delete Card' }));
-    flush();
+    await flushPromises();
     expect(spies.deleteCard).not.toHaveBeenCalled();
 
-    const confirmBtn = within(wentWell).getByRole('button', {
-      name: 'Confirm?',
+    fireEvent.click(
+      within(getByRole('alertdialog', { name: 'Delete this Card?' }))
+        .getByRole('button', { name: 'Delete Card' }),
+    );
+    await waitFor(() => {
+      expect(spies.deleteCard).toHaveBeenCalledWith({
+        boardId: board.id,
+        cardId: 'card_mine',
+      });
+      expect(queryByText('Refined retro note')).not.toBeInTheDocument();
     });
-    fireEvent.click(confirmBtn);
-    await flushPromises();
-
-    expect(spies.deleteCard).toHaveBeenCalledWith({
-      boardId: board.id,
-      cardId: 'card_mine',
-    });
-    expect(queryByText('Refined retro note')).not.toBeInTheDocument();
   });
 
-  it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with non-empty confirmation)', async () => {
+  it('allows Facilitators to inline-rename Board and add, rename, reorder, change accent, and delete Columns (with shared confirmation)', async () => {
     const existingCard = makeCard({
       id: 'card_in_col2',
       columnId: 'col_2',
@@ -1768,12 +1787,15 @@ describe('<BoardWorkspace />', () => {
     const { actions, spies } = createFakeActions(board);
 
     const { getByLabelText, getByRole, queryByRole } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
+      <>
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
 
@@ -1849,7 +1871,7 @@ describe('<BoardWorkspace />', () => {
       columnIds: ['col_2', 'col_1', 'col_new_2'],
     });
 
-    // Delete non-empty Column -> requires confirmation showing Card count
+    // Delete non-empty Column -> shared confirm shows the Card count
     fireEvent.click(
       within(col2Region).getByRole('button', {
         name: 'Column options for To Improve',
@@ -1859,22 +1881,22 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(
       within(col2Region).getByRole('menuitem', { name: 'Delete column' }),
     );
-    flush();
+    await flushPromises();
     expect(spies.deleteColumn).not.toHaveBeenCalled();
-    expect(within(col2Region).getByText(/1 card/i)).toBeInTheDocument();
 
     fireEvent.click(
-      within(col2Region).getByRole('menuitem', { name: 'Confirm delete' }),
+      within(getByRole('alertdialog', { name: 'Delete this Column and its 1 card?' }))
+        .getByRole('button', { name: 'Delete column' }),
     );
-    await flushPromises();
-
-    expect(spies.deleteColumn).toHaveBeenCalledWith({
-      boardId: board.id,
-      columnId: 'col_2',
+    await waitFor(() => {
+      expect(spies.deleteColumn).toHaveBeenCalledWith({
+        boardId: board.id,
+        columnId: 'col_2',
+      });
+      expect(
+        queryByRole('heading', { level: 2, name: 'To Improve' }),
+      ).not.toBeInTheDocument();
     });
-    expect(
-      queryByRole('heading', { level: 2, name: 'To Improve' }),
-    ).not.toBeInTheDocument();
   });
 
   it('toggles Private Mode and reveals all Cards through one HTTP snapshot while preserving local drafts', async () => {
