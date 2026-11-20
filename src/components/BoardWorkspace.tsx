@@ -44,7 +44,7 @@ import {
   defaultBoardWorkspaceActions,
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
-import { connectBoardLive } from '../lib/board-live';
+import { createBoardLive, type BoardLive } from '../lib/board-live';
 import {
   canAddColumn as canAddBoardColumn,
   canContribute,
@@ -189,8 +189,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [nowMs, setNowMs] = createSignal(Date.now());
-  const [isLive, setIsLive] = createSignal(false);
-  const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
+  const [liveSession, setLiveSession] = createSignal<{ boardId: string; live: BoardLive } | null>(null);
+  const isLive = createMemo(() => liveSession()?.live.status() === 'live');
+  const onlineCount = createMemo(() => liveSession()?.live.onlineCount() ?? null);
   const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
   const timerClock = createMemo(() => {
     const clock = serverClock();
@@ -432,15 +433,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
-    const current = workspace.board;
-    if (current?.id !== nextBoard.id || nextBoard.version < current.version) return;
+    // Point-in-time guard: judge the snapshot against the board as of this event, not a tracked dependency.
+    const stale = untrack(() => {
+      const current = workspace.board;
+      return !current || current.id !== nextBoard.id || nextBoard.version < current.version;
+    });
+    if (stale) return;
     syncServerClock(nextBoard.id, serverNow);
     applySnapshot(nextBoard, true);
   }
 
   function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
     if (events.some((event) => event.type === 'board:deleted')) {
-      if (workspace.board?.id === boardId) {
+      if (untrack(() => workspace.board?.id) === boardId) {
         applySnapshot(null);
       }
       return;
@@ -452,18 +457,20 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
     let needsResync = false;
     let serverNow: number | undefined;
-    setWorkspace((draft) => {
-      const board = draft.board;
-      if (!board || board.id !== boardId || version <= board.version) return;
-      if (version > board.version + 1) {
-        needsResync = true;
-        return;
-      }
-      applyBoardEvents(board, events);
-      board.version = version;
-      for (const event of events) {
-        if (event.type === 'timer:updated') serverNow = event.serverNow;
-      }
+    untrack(() => {
+      setWorkspace((draft) => {
+        const board = draft.board;
+        if (!board || board.id !== boardId || version <= board.version) return;
+        if (version > board.version + 1) {
+          needsResync = true;
+          return;
+        }
+        applyBoardEvents(board, events);
+        board.version = version;
+        for (const event of events) {
+          if (event.type === 'timer:updated') serverNow = event.serverNow;
+        }
+      });
     });
     if (serverNow !== undefined) syncServerClock(boardId, serverNow);
     if (needsResync) reconnectLive?.();
@@ -533,36 +540,39 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       return;
     }
     if (typeof window === 'undefined') return;
-    const live = connectBoardLive(boardId, {
-      onReconnect() {
-        setIsLive(false);
-        setOnlineCount(null);
-      },
-      onMessage(message) {
-        switch (message.type) {
-          case 'board:snapshot':
-            if (message.board.id !== boardId) break;
-            applyServerSnapshot(message.board, message.serverNow);
-            setIsLive(true);
-            break;
-          case 'board:mutation':
-            applyVersionedEvents(boardId, message.version, message.events);
-            break;
-          case 'presence:count':
-            setOnlineCount(message.count);
-            break;
-          case 'board:deleted':
-            applySnapshot(null);
-            break;
-        }
-      },
-    });
+    const live = createBoardLive(boardId);
+    setLiveSession({ boardId, live });
     reconnectLive = live.reconnect;
     return () => {
       reconnectLive = undefined;
+      setLiveSession(null);
       live.dispose();
     };
   });
+
+  createEffect(
+    () => {
+      const session = liveSession();
+      return session && { boardId: session.boardId, message: session.live.lastEvent() };
+    },
+    (event, previous) => {
+      const message = event?.message;
+      if (!event || !message || message === previous?.message) return;
+      const { boardId } = event;
+      switch (message.type) {
+        case 'board:snapshot':
+          if (message.board.id !== boardId) break;
+          applyServerSnapshot(message.board, message.serverNow);
+          break;
+        case 'board:mutation':
+          applyVersionedEvents(boardId, message.version, message.events);
+          break;
+        case 'board:deleted':
+          applySnapshot(null);
+          break;
+      }
+    },
+  );
 
   // Keep relative timestamps fresh on the client
   onSettled(() => {
