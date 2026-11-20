@@ -56,7 +56,7 @@ export default function PokerWorkspace(props: {
   });
 
   return (
-    <main class="poker-workspace">
+    <main class="poker-workspace" data-deck-type={props.room.deckType}>
       <header class="mb-7 flex flex-wrap items-end justify-between gap-3 border-b border-border pb-5">
         <h1 ref={heading} tabindex={-1} class="poker-title">Pointing Poker</h1>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
