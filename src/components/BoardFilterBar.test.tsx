@@ -187,7 +187,7 @@ describe('BoardFilterBar', () => {
             name: 'Search Cards, Card Groups, and comments',
           });
           const disclosure = view.getByRole('button', { name: 'Filter & sort' });
-          const filterControlsId = disclosure.getAttribute('aria-controls')!;
+          const [filterControlsId] = disclosure.getAttribute('aria-controls')!.split(' ');
           const filterControls = document.getElementById(filterControlsId)!;
 
           // Polite live region stays mounted while idle, with no Clear filters button
@@ -213,7 +213,7 @@ describe('BoardFilterBar', () => {
           expect(toolbarRow.contains(matchCount)).toBe(true);
           expect(toolbarRow.contains(clearBtn)).toBe(true);
 
-          // Stays outside mobile disclosure so active state remains visible when collapsed
+          // The desktop status stays in the toolbar regardless of the mobile disclosure state.
           expect(disclosure).toHaveAttribute('aria-expanded', 'false');
           expect(filterControls.contains(filterChip)).toBe(false);
           expect(filterControls.contains(clearBtn)).toBe(false);
@@ -240,6 +240,38 @@ describe('BoardFilterBar', () => {
     );
 
     expectNoDiagnostics(artifact);
+  });
+
+  it('shows a concise match count in the collapsed Filter & sort control and exposes the full status when expanded', () => {
+    const { view, setMatchedCardCount } = renderFilterBar();
+    const search = view.getByRole('searchbox');
+    const disclosure = view.getByRole('button', { name: 'Filter & sort' });
+    expect(within(disclosure).queryByText(/matches?/)).toBeNull();
+
+    setMatchedCardCount(0);
+    fireEvent.input(search, { target: { value: 'unmatched' } });
+    flush();
+
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(within(disclosure).getByText('0 matches')).toBeInTheDocument();
+    const controlsIds = disclosure.getAttribute('aria-controls')?.split(' ') ?? [];
+    const status = view.getByText('0 matches (0 of 5 cards)').closest('[data-filter-status-slot]');
+    expect(controlsIds).toContain(status?.id);
+    expect(status).toHaveClass('max-sm:sr-only');
+
+    fireEvent.click(disclosure);
+    flush();
+
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+    expect(status).not.toHaveClass('max-sm:sr-only');
+    const reset = view.getByRole('button', { name: 'Clear filters' });
+    expect(reset).not.toHaveClass('max-sm:hidden');
+    fireEvent.click(reset);
+    flush();
+
+    expect(search).toHaveValue('');
+    expect(search).toHaveFocus();
+    expect(within(disclosure).queryByText(/matches?/)).toBeNull();
   });
 
   it('renders a calm Search field with placeholder, secret-search hook, and a custom-chevron native Sort select with Blind Voting pause state', async () => {
