@@ -3,8 +3,4 @@
   "entry": ["src/router.ts", "src/server-config.ts"],
   "ignoreDependencies": ["server-only"],
   "ignoreExportsUsedInFile": true,
-  // handleMenuNavigation is dead but ticket #47 owns its deletion.
-  "ignoreIssues": {
-    "src/lib/menu-keyboard.ts": ["exports"]
-  }
 }
