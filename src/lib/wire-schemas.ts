@@ -44,6 +44,7 @@ export const CardViewDTOSchema = v.object({
   content: v.string(),
   redacted: v.boolean(),
   placeholderLines: v.optional(v.picklist([1, 2, 3])),
+  pending: v.optional(v.boolean()),
   isMine: v.boolean(),
   isActionItem: v.boolean(),
   actionDone: v.boolean(),

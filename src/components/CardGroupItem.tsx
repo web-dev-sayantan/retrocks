@@ -50,6 +50,7 @@ export interface CardGroupItemProps {
     | 'renameCardGroup'
     | 'dissolveCardGroup'
     | 'moveCardGroup'
+    | 'isActionItemPending'
   >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }

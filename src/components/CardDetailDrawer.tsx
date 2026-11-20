@@ -59,11 +59,12 @@ export interface CardDetailDrawerProps {
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
   onCreateComment: (cardId: string, content: string) => Promise<string | null>;
   onDeleteComment: (cardId: string, commentId: string) => Promise<string | null>;
+  /** Controller-owned in-flight Action Item patch for a Card (isPending). */
+  isActionItemPending?: (cardId: string) => boolean;
 }
 
 export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const actionOwnerId = createUniqueId();
-  const [isSavingAction, setIsSavingAction] = createSignal(false);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [commentDraft, setCommentDraft] = createSignal('');
   const [commentError, setCommentError] = createSignal<string | null>(null);
@@ -106,10 +107,11 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     if (!open && wasOpen) untrack(() => props.restoreFocus());
   });
 
+  const isSavingAction = () => props.isActionItemPending?.(props.card.id) ?? false;
+
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
     if (!canEditActionItem(props, props.card, patch)) return false;
-    setIsSavingAction(true);
     setActionError(null);
     try {
       const ok = await props.onUpdateActionItem(props.card.id, patch);
@@ -118,8 +120,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     } catch {
       setActionError('Could not update the Action Item. Try again.');
       return false;
-    } finally {
-      setIsSavingAction(false);
     }
   }
 

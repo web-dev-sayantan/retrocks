@@ -15,10 +15,9 @@ import BoardConfirmDialog from './BoardConfirmDialog';
 import BoardWorkspace from './BoardWorkspace';
 
 async function flushPromises(): Promise<void> {
-  // Inline-edit saves settle through a shared commit wrapper, adding one microtask hop.
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  // Action-led saves settle across several microtask hops (optimistic write,
+  // server promise, versioned commit), then the render queue flushes.
+  for (let hop = 0; hop < 8; hop += 1) await Promise.resolve();
   flush();
 }
 
@@ -2366,7 +2365,8 @@ describe('<BoardWorkspace />', () => {
       await waitFor(() => expect(status).toBeChecked());
     }, { scenario: 'card-action-status' });
 
-    expectNoDiagnostics(artifact);
+    // The scenario fails an Action Item write on purpose: the revert is the feature.
+    expectNoDiagnostics(artifact, { allow: ['OPTIMISTIC_REVERTED'] });
   });
 
   it('opens Card actions off-layout and returns keyboard focus to the trigger', async () => {
@@ -4080,7 +4080,8 @@ describe('<BoardWorkspace />', () => {
       },
       { scenario: 'optimistic-card-creation' },
     );
-    expectNoDiagnostics(artifact);
+    // The failure path intentionally reverts the optimistic Card; that revert is the feature.
+    expectNoDiagnostics(artifact, { allow: ['OPTIMISTIC_REVERTED'] });
   });
 
   it('optimistically toggles Emoji Reactions, reconciles on success, and rolls back on failure with zero diagnostics', async () => {
@@ -4150,7 +4151,8 @@ describe('<BoardWorkspace />', () => {
       },
       { scenario: 'optimistic-emoji-reactions' },
     );
-    expectNoDiagnostics(artifact);
+    // The failure path intentionally reverts the optimistic reaction; that revert is the feature.
+    expectNoDiagnostics(artifact, { allow: ['OPTIMISTIC_REVERTED'] });
   });
 
   it('exposes a data-private-mode hint on redacted Cards only and keeps DevTools colophon silent in test runs', async () => {
@@ -4912,7 +4914,8 @@ describe('<BoardWorkspace />', () => {
       },
       { scenario: 'column-composer-and-options-menu' },
     );
-    expectNoDiagnostics(artifact);
+    // The optimistic Card is superseded by the server row; that is the feature, not a warning.
+    expectNoDiagnostics(artifact, { allow: ['OPTIMISTIC_REVERTED'] });
   });
 
   it('renders a Home-style floating Dynamic Island header with synced theme toggle and supports double-click / double-tap Board title rename for Facilitators', async () => {

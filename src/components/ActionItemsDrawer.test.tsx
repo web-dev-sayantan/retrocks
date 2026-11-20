@@ -254,8 +254,11 @@ describe('<ActionItemsDrawer />', () => {
     const view = render(() => {
       const [board, setBoard] = createStore(makeBoard([{ ...openItem }]));
       const applyUpdate: ActionItemsDrawerProps['onUpdateActionItem'] = async (id, patch) => {
+        const previous = { ...board.cards[0] };
+        // The session owns the optimistic write; the harness mirrors it here.
+        setBoard((draft) => { Object.assign(draft.cards[0], patch); });
         const ok = await update(id, patch);
-        if (ok) setBoard((draft) => { Object.assign(draft.cards[0], patch); });
+        if (!ok) setBoard((draft) => { Object.assign(draft.cards[0], previous); });
         return ok;
       };
       return (

@@ -52,17 +52,18 @@ export interface ActionItemsDrawerProps {
     cardId: string,
     patch: ActionItemPatch,
   ) => Promise<boolean>;
+  /** Controller-owned in-flight Action Item patch for a Card (isPending). */
+  isActionItemPending?: (cardId: string) => boolean;
 }
 
 function ActionItemRow(props: {
   card: CardViewDTO;
   columnTitle: string;
   canEdit: boolean;
+  isPending: boolean;
   onUpdate: ActionItemsDrawerProps['onUpdateActionItem'];
 }) {
-  const [pendingDone, setPendingDone] = createSignal<boolean | null>(null);
   const [doneFailed, setDoneFailed] = createSignal(false);
-  let savingDone = false;
   let ownerInputEl: HTMLInputElement | undefined;
 
   // The owner input edits in place: createInlineEdit owns the draft-and-save
@@ -76,7 +77,7 @@ function ActionItemRow(props: {
   const ownerEdit = ownerField.api.edit;
   const ownerSave = createInlineEditSave(saveOwnerText, () => ownerEdit.cancel());
   const ownerEditing = () => ownerField.present('input');
-  const isSaving = () => ownerSave.isSaving() || pendingDone() !== null;
+  const isSaving = () => ownerSave.isSaving() || props.isPending;
 
   function bindOwnerInput(el: HTMLInputElement): void {
     ownerInputEl = el;
@@ -92,24 +93,22 @@ function ActionItemRow(props: {
   }
 
   async function saveOwnerText(text: string): Promise<InlineEditOutcome> {
-    if (!props.canEdit || savingDone) return false;
+    if (!props.canEdit || props.isPending) return false;
     const trimmed = text.trim();
     const ok = await update({ actionOwner: trimmed });
     if (ok && ownerInputEl) ownerInputEl.value = trimmed;
     return ok ? true : 'Could not save the owner. Try again.';
   }
 
-  async function changeDone(checked: boolean): Promise<void> {
-    if (savingDone) return;
-    savingDone = true;
-    setPendingDone(checked);
+  async function changeDone(checked: boolean): Promise<boolean> {
+    if (props.isPending) return false;
     setDoneFailed(false);
     // A click on Done can start the owner save as the input loses focus.
     const ownerInFlight = ownerSave.saving();
     if (ownerInFlight) await ownerInFlight;
-    if (!await update({ actionDone: checked })) setDoneFailed(true);
-    savingDone = false;
-    setPendingDone(null);
+    const ok = await update({ actionDone: checked });
+    if (!ok) setDoneFailed(true);
+    return ok;
   }
 
   return (
@@ -118,10 +117,15 @@ function ActionItemRow(props: {
         <label class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg has-disabled:cursor-not-allowed sm:size-6">
           <input
             type="checkbox"
-            checked={pendingDone() ?? props.card.actionDone}
-            disabled={!props.canEdit || pendingDone() !== null}
+            checked={props.card.actionDone}
+            disabled={!props.canEdit || props.isPending}
             aria-label={`Mark ${props.card.content} as Done`}
-            onChange={(event) => void changeDone(event.currentTarget.checked)}
+            onChange={async (event) => {
+              const checkbox = event.currentTarget;
+              if (!await changeDone(checkbox.checked) && checkbox.isConnected) {
+                checkbox.checked = props.card.actionDone;
+              }
+            }}
             class="size-5 cursor-inherit rounded border-border accent-accent board-focus-ring disabled:opacity-50"
           />
         </label>
@@ -331,6 +335,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
                     card={card}
                     columnTitle={columnTitles().get(card.columnId) ?? ''}
                     canEdit={canEditActionItems(props.board)}
+                    isPending={props.isActionItemPending?.(card.id) ?? false}
                     onUpdate={props.onUpdateActionItem}
                   />
                 )}

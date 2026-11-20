@@ -22,7 +22,6 @@ import {
   isGroupRedacted,
 } from './board-permissions';
 import type { BoardViewDTO, CardGroupDTO, CardViewDTO } from './board-types';
-import { isOptimisticId } from './optimistic-ids';
 import type { BoardViewProjection } from './board-view';
 
 /** Prefix marking a Card / Card Group article as a drop target list. */
@@ -39,7 +38,7 @@ export type BoardTransferMove =
   | { kind: 'group-with-group'; cardId: string; targetGroupId: string };
 
 export function parseBoardItemKey(key: string): { kind: 'card' | 'group'; id: string } | undefined {
-  if (key.startsWith('card:') && !isOptimisticId(key.slice(5))) {
+  if (key.startsWith('card:')) {
     return { kind: 'card', id: key.slice(5) };
   }
   if (key.startsWith('group:')) {
@@ -59,7 +58,8 @@ function findBoardItem(board: BoardViewDTO | null, key: string): BoardItem | und
   if (!board || !parsed) return undefined;
   if (parsed.kind === 'card') {
     const card = board.cards.find((item) => item.id === parsed.id);
-    return card ? { kind: 'card', card } : undefined;
+    // Client-only optimistic rows have no server id yet: not grabbable, not a drop target.
+    return card && !card.pending ? { kind: 'card', card } : undefined;
   }
   const group = board.groups.find((item) => item.id === parsed.id);
   return group ? { kind: 'group', group } : undefined;
