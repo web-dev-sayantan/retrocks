@@ -382,10 +382,10 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       ]}
     >
       {/* Rounded-top accent & tint cap stays pointer-events-none so floating popovers inside the rail never clip. */}
-      <div class="relative rounded-t-[calc(1rem-1px)] border-b border-border/60">
+      <div class="board-column-cap relative rounded-t-[calc(1rem-1px)] border-b border-border/60">
         <div
           aria-hidden="true"
-          class="pointer-events-none absolute inset-0 overflow-hidden rounded-t-[calc(1rem-1px)]"
+          class="pointer-events-none absolute inset-0 hidden overflow-hidden rounded-t-[calc(1rem-1px)] sm:block"
         >
           <div
             data-column-accent-bar="true"
@@ -402,8 +402,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           />
         </div>
 
-        <div class="relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-[calc(0.625rem+3px)] pb-2.5">
-          <div class="flex min-w-0 flex-1 items-center gap-1.5">
+        <div class="board-column-cap-row relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-[calc(0.625rem+3px)] pb-2.5">
+          <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={isRenaming() ? "" : undefined}>
             <Show
               when={!isRenaming()}
               fallback={
@@ -462,6 +462,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
               <Show when={props.column.isActionColumn}>
                 <span
                   title="Action Column"
+                  role="img"
                   aria-label="Action Column"
                   class="inline-flex shrink-0 items-center text-col-sky"
                 >
@@ -471,14 +472,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             </Show>
           </div>
 
-          <div class="flex shrink-0 items-center gap-1.5">
+          <div class="contents shrink-0 items-center gap-1.5 sm:flex">
             <span
               aria-label={
                 props.hasActiveFilter
                   ? `${props.visibleCardCount} of ${props.column.cardCount} cards`
                   : `${props.column.cardCount} cards`
               }
-              class="inline-flex min-w-6 items-center justify-center rounded-full bg-surface/85 px-2 py-0.5 text-xs font-medium text-text-muted tabular-nums dark:bg-surface-subtle/80"
+              class="hidden min-w-6 items-center justify-center rounded-full bg-surface/85 sm:inline-flex px-2 py-0.5 text-xs font-medium text-text-muted tabular-nums dark:bg-surface-subtle/80"
             >
               {props.hasActiveFilter
                 ? `${props.visibleCardCount}/${props.column.cardCount}`
@@ -486,7 +487,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             </span>
 
             <Show when={canManageColumn()}>
-              <div data-print-hide="true">
+              <div data-print-hide="true" class="board-column-options">
                 <Menu
                   open={menuOpen()}
                   onOpenChange={(next) => {
@@ -497,7 +498,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   <MenuTrigger
                     aria-label={`Column options for ${props.column.title}`}
                     class={[
-                      'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-8 sm:min-w-8',
+                      'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-lg sm:border-transparent sm:bg-transparent',
                       'transition-colors hover:bg-surface/80 hover:text-text data-open:bg-surface data-open:text-text',
                       'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                     ]}
@@ -725,7 +726,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       </Show>
 
       {/* Column Card stream body — must stay :scope > div:last-child */}
-      <div class="flex flex-1 flex-col gap-3 px-3 pt-3 pb-3">
+      <div class="flex flex-1 flex-col gap-3 px-1 pt-0.5 pb-3 sm:px-3 sm:pt-3">
         <Show
           when={props.streamItems.length > 0}
           fallback={

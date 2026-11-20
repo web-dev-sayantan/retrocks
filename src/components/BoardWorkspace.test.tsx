@@ -3793,6 +3793,57 @@ describe('<BoardWorkspace />', () => {
     }
   });
 
+  it('keeps the primary Board controls together while the Board title and status can scroll away', async () => {
+    const board = makeBoardView({ isFacilitator: true, voteLimit: 5, remainingVotes: 2 });
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      ));
+      try {
+        flush();
+        const controls = within(view.getByRole('group', { name: 'Board controls' }));
+        expect(controls.getByRole('link', { name: 'Retrocks home' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Countdown Timer' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Private Mode' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'More board actions' })).toBeInTheDocument();
+        expect(controls.queryByRole('heading', { level: 1 })).toBeNull();
+        expect(controls.queryByRole('group', { name: 'Board status' })).toBeNull();
+        expect(within(view.getByRole('group', { name: 'Board status' })).getByText('2 / 5 votes left')).toBeInTheDocument();
+      } finally {
+        view.unmount();
+      }
+    }, { scenario: 'compact-mobile-board-controls' });
+    expectNoDiagnostics(artifact);
+  });
+
+  it('fades the Column rail only on edges with more tabs to scroll to', () => {
+    const board = makeBoardView();
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+    ));
+    flush();
+    const tabs = view.getByRole('tablist', { name: 'Select Column' });
+    Object.defineProperties(tabs, {
+      clientWidth: { value: 300 },
+      scrollWidth: { value: 500 },
+    });
+
+    fireEvent.scroll(tabs);
+    expect(tabs).not.toHaveAttribute('data-fade-start');
+    expect(tabs).toHaveAttribute('data-fade-end');
+
+    tabs.scrollLeft = 100;
+    fireEvent.scroll(tabs);
+    expect(tabs).toHaveAttribute('data-fade-start');
+    expect(tabs).toHaveAttribute('data-fade-end');
+
+    tabs.scrollLeft = 200;
+    fireEvent.scroll(tabs);
+    expect(tabs).toHaveAttribute('data-fade-start');
+    expect(tabs).not.toHaveAttribute('data-fade-end');
+  });
+
   it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {
     const board = makeBoardView({
       isFacilitator: true,
