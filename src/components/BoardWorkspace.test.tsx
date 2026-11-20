@@ -1,5 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
+import { createAgent } from '@ui-sdk/solid/agent';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1265,7 +1266,8 @@ describe('<BoardWorkspace />', () => {
     ));
     flush();
 
-    expect(getByRole('link', { name: /Retrocks/i })).toHaveAttribute('href', '/');
+    expect(within(getByRole('banner').querySelector('.board-masthead-island')!)
+      .getByRole('link', { name: 'Retrocks home' })).toHaveAttribute('href', '/');
     expect(
       getByRole('heading', { level: 1, name: 'Sprint 42 Retro' }),
     ).toBeInTheDocument();
@@ -1789,7 +1791,7 @@ describe('<BoardWorkspace />', () => {
     );
     flush();
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Accent Amber' }),
+      within(col2Region).getByRole('menuitemradio', { name: 'Accent Amber' }),
     );
     await flushPromises();
     expect(spies.updateColumn).toHaveBeenCalledWith({
@@ -1806,7 +1808,7 @@ describe('<BoardWorkspace />', () => {
     );
     flush();
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Move left' }),
+      within(col2Region).getByRole('menuitem', { name: 'Move left' }),
     );
     await flushPromises();
     expect(spies.reorderColumns).toHaveBeenCalledWith({
@@ -1822,14 +1824,14 @@ describe('<BoardWorkspace />', () => {
     );
     flush();
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Delete column' }),
+      within(col2Region).getByRole('menuitem', { name: 'Delete column' }),
     );
     flush();
     expect(spies.deleteColumn).not.toHaveBeenCalled();
     expect(within(col2Region).getByText(/1 card/i)).toBeInTheDocument();
 
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Confirm delete' }),
+      within(col2Region).getByRole('menuitem', { name: 'Confirm delete' }),
     );
     await flushPromises();
 
@@ -3134,7 +3136,8 @@ describe('<BoardWorkspace />', () => {
       fireEvent.click(view.getByRole('button', { name: 'Mine' }));
       flush();
       expect(view.queryByText('Kudos for the fast deployment')).not.toBeInTheDocument();
-      expect(view.getByText('No Cards match your current search or filter.')).toBeInTheDocument();
+      expect(within(view.getByRole('region', { name: 'Search, filter, and sort Board' }))
+        .getByText('No Cards match your current search or filter.')).toBeInTheDocument();
       expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
     }, { scenario: 'board-workspace-secret-search-card-match' });
     expectNoDiagnostics(artifact);
@@ -3873,6 +3876,30 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
+  it('lets an agent find the Column choices and select a mounted Column', async () => {
+    const board = makeBoardView();
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+    ));
+    flush();
+
+    const agent = createAgent();
+    const tabs = agent.snapshot().find((entry) => entry.component === 'tabs');
+    expect(tabs?.label).toBe('Select Column');
+    const choice = tabs?.items?.find((item) => item.label.startsWith('To Improve'));
+    expect(choice?.label).toBeTruthy();
+
+    const result = await agent.act({
+      steps: [{ ref: 'Select Column', action: 'select', args: [choice?.label] }],
+    });
+    flush();
+
+    expect(result.ok, result.error?.message).toBe(true);
+    const selected = view.getByRole('tab', { name: /To Improve/, selected: true });
+    const controlledPanel = document.getElementById(selected.getAttribute('aria-controls') ?? '');
+    expect(controlledPanel).toHaveAttribute('data-column-id', 'col_2');
+  });
+
   it('fades the Column rail only on edges with more tabs to scroll to', () => {
     const board = makeBoardView();
     const view = render(() => (
@@ -3898,6 +3925,40 @@ describe('<BoardWorkspace />', () => {
     fireEvent.scroll(tabs);
     expect(tabs).toHaveAttribute('data-fade-start');
     expect(tabs).not.toHaveAttribute('data-fade-end');
+  });
+
+  it('offers the mobile-only Board actions in More and labels the active Column panel', () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query === '(width < 40rem)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    try {
+      const board = makeBoardView();
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      ));
+      flush();
+      const firstTab = view.getByRole('tab', { name: /Went Well/ });
+      const secondTab = view.getByRole('tab', { name: /To Improve/ });
+      firstTab.focus();
+      fireEvent.keyDown(firstTab, { key: 'ArrowRight' });
+      flush();
+      expect(secondTab).toHaveFocus();
+      expect(secondTab).toHaveAttribute('aria-selected', 'true');
+      expect(view.getByRole('tabpanel', { name: /To Improve/ })).toHaveAttribute(
+        'id', secondTab.getAttribute('aria-controls'),
+      );
+
+      fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
+      flush();
+      const menu = within(view.getByRole('menu', { name: 'More board actions' }));
+      expect(menu.getByRole('menuitem', { name: 'Rename Board' })).toBeInTheDocument();
+      expect(menu.getByRole('menuitem', { name: 'Add column' })).toBeInTheDocument();
+      expect(menu.getByRole('menuitem', { name: /Action Items/ })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {
@@ -3926,8 +3987,13 @@ describe('<BoardWorkspace />', () => {
           const withinMenu = within(menu);
           expect(withinMenu.getByRole('menuitem', { name: 'Board Settings' })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Switch to (light|dark) theme/ })).toBeInTheDocument();
-          expect(withinMenu.getByRole('menuitem', { name: /Add column/i })).toBeInTheDocument();
-          expect(withinMenu.getByRole('menuitem', { name: /Action Items/i })).toBeInTheDocument();
+          expect(withinMenu.queryByRole('menuitem', { name: /Add column/i })).toBeNull();
+          expect(withinMenu.queryByRole('menuitem', { name: /Action Items/i })).toBeNull();
+          const settings = withinMenu.getByRole('menuitem', { name: 'Board Settings' });
+          settings.focus();
+          fireEvent.keyDown(settings, { key: 'ArrowDown' });
+          flush();
+          expect(withinMenu.getByRole('menuitem', { name: 'Copy Markdown' })).toHaveFocus();
           expect(withinMenu.getByRole('menuitem', { name: /Download Markdown/i })).toBeInTheDocument();
 
           fireEvent.keyDown(document, { key: 'Escape' });
@@ -4811,7 +4877,19 @@ describe('<BoardWorkspace />', () => {
           expect(menu).toHaveAttribute('data-board-overlay', 'true');
           expect(menu.className).toContain('board-popover');
           const renameItem = within(menu).getByRole('menuitem', { name: 'Rename column' });
-          expect(renameItem).toBeInTheDocument();
+          renameItem.focus();
+          fireEvent.keyDown(renameItem, { key: 'ArrowDown' });
+          flush();
+          const moveLeft = within(menu).getByRole('menuitem', { name: 'Move left' });
+          expect(moveLeft).toHaveFocus();
+          expect(moveLeft).toHaveAttribute('aria-disabled', 'true');
+          fireEvent.keyDown(moveLeft, { key: 'ArrowDown' });
+          flush();
+          const moveRight = within(menu).getByRole('menuitem', { name: 'Move right' });
+          expect(moveRight).toHaveFocus();
+          fireEvent.keyDown(moveRight, { key: 'ArrowDown' });
+          flush();
+          expect(within(menu).getByRole('menuitemradio', { name: 'Accent Slate' })).toHaveFocus();
 
           fireEvent.keyDown(document, { key: 'Escape' });
           flush();
@@ -4866,7 +4944,7 @@ describe('<BoardWorkspace />', () => {
         try {
           flush();
 
-          // Floating Dynamic Island header holds brand link, centered title, and island ThemeToggle
+          // The island holds the brand link, centered title, and theme toggle.
           const banner = view.getByRole('banner');
           const island = banner.querySelector('.board-island');
           expect(island).not.toBeNull();

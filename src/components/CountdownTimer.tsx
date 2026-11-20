@@ -273,18 +273,13 @@ export default function CountdownTimer(props: {
           </Show>
           <Show when={isConfigured()} fallback={<span class="hidden sm:inline">Timer</span>}>
             <span>{timeLabel()}</span>
-            <span
+            <progress
               aria-hidden="true"
-              class={[
-                'absolute inset-x-0 bottom-0 h-0.5',
-                isPaused() ? 'bg-col-amber/20' : 'bg-accent/15',
-              ]}
-            >
-              <span
-                class={['block h-full', isPaused() ? 'bg-col-amber/80' : 'bg-accent/80']}
-                style={{ width: `${progress()}%` }}
-              />
-            </span>
+              data-paused={isPaused() ? '' : undefined}
+              class="board-timer-progress pointer-events-none absolute inset-x-0 bottom-0 h-0.5 w-full"
+              max={100}
+              value={progress()}
+            />
           </Show>
         </PopoverTrigger>
 
@@ -325,7 +320,7 @@ export default function CountdownTimer(props: {
                       type="button"
                       aria-pressed={Number(minutesDraft()) === minutes ? 'true' : 'false'}
                       class={[
-                        'spring-press min-h-10 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-h-8',
+                        'spring-press min-h-11 min-w-11 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-h-8 sm:min-w-0',
                         'hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                         'aria-pressed:bg-surface aria-pressed:font-semibold aria-pressed:text-text aria-pressed:shadow-xs',
                       ]}

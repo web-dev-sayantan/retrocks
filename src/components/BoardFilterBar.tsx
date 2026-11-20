@@ -276,6 +276,9 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                   </span>
                 </span>
               </Show>
+              <Show when={props.hasActiveFilter && props.totalCardCount > 0 && props.matchedCardCount === 0}>
+                <span class="sr-only">No Cards match your current search or filter.</span>
+              </Show>
               <Show when={isMostVotedPausedByBlindVoting()}>
                 <span class="inline-flex items-center rounded-full bg-surface-subtle/80 px-2.5 py-1 text-xs leading-none text-text-muted ring-1 ring-inset ring-border/70 sm:h-7 sm:whitespace-nowrap">
                   Most Voted paused during Blind Voting

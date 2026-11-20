@@ -12,6 +12,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
+import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
 import {
   Check,
   Columns3,
@@ -79,6 +80,7 @@ import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { toggleTheme } from '../lib/theme';
 import type { ServerClockSample } from '../lib/timer';
 import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
+import { createDoubleTap } from '../lib/double-tap';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
@@ -102,6 +104,26 @@ export interface BoardWorkspaceProps {
   actions?: BoardWorkspaceActions;
 }
 
+function BoardHomeLink(props: { href: string; class: string }) {
+  return (
+    <a
+      href={props.href}
+      aria-label="Retrocks home"
+      class={[
+        'spring-press min-h-11 min-w-11 w-fit items-center justify-center gap-2 rounded-full px-2 text-sm font-semibold tracking-tight text-text sm:min-h-10 sm:min-w-10 sm:pr-3',
+        'hover:bg-surface-subtle/80 active:bg-surface-subtle',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+        props.class,
+      ]}
+    >
+      <span aria-hidden="true" class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-accent text-accent-contrast">
+        <LucideIcon icon={Columns3} class="size-3.5" strokeWidth={2.1} />
+      </span>
+      <span class="hidden sm:inline">Retrocks</span>
+    </a>
+  );
+}
+
 function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
   if (!board) return null;
   return {
@@ -121,10 +143,6 @@ function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
 const EMPTY_CARDS: readonly CardViewDTO[] = [];
 const EMPTY_GROUPS: readonly CardGroupDTO[] = [];
 const EMPTY_STREAM_ITEMS: readonly ColumnStreamItem[] = [];
-const TITLE_TAP_MAX_MOVE_PX = 16;
-const TITLE_TAP_MAX_DURATION_MS = 300;
-const TITLE_DOUBLE_TAP_MAX_DELAY_MS = 350;
-const TITLE_DOUBLE_TAP_MAX_DISTANCE_PX = 32;
 
 function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): string {
   if (columnCount <= 1) return showAddColumn
@@ -262,8 +280,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
   let boardTitleInputEl: HTMLInputElement | undefined;
   let renameBoardButtonEl: HTMLButtonElement | undefined;
-  let titleActiveTouch: { pointerId: number; x: number; y: number; time: number } | undefined;
-  let titleLastTap: { x: number; y: number; time: number } | undefined;
+  const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
 
   createEffect(isRenamingBoard, (renaming, wasRenaming) => {
     if (renaming) {
@@ -297,6 +314,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   // Mobile active Column + swipe + bottom quick-add state
+  const [isMobileBoard, setIsMobileBoard] = createSignal(false);
+  onSettled(() => {
+    const media = window.matchMedia?.('(width < 40rem)');
+    if (!media) return;
+    const update = () => setIsMobileBoard(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  });
   const [activeColumnId, setActiveColumnId] = createSignal<string | null>(null);
   const [mobileDrafts, setMobileDrafts] = createStore<Record<string, { content: string; error: string | null }>>({});
   const [isSubmittingMobileCard, setIsSubmittingMobileCard] =
@@ -829,11 +855,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       (card.isMine || (board.isFacilitator && !board.isBlurred));
   }
 
-  function clearBoardTitleTapState(): void {
-    titleActiveTouch = undefined;
-    titleLastTap = undefined;
-  }
-
   function isBoardTitleEditTarget(target: EventTarget | null): boolean {
     const board = workspace.board;
     if (!board || !board.isFacilitator || board.isLocked) return false;
@@ -842,61 +863,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   function handleBoardTitleDoubleClick(event: MouseEvent): void {
     if (!isBoardTitleEditTarget(event.target)) return;
-    clearBoardTitleTapState();
+    boardTitleTap.reset();
     startBoardRename();
   }
 
-  function handleBoardTitlePointerDown(event: PointerEvent): void {
-    if (event.pointerType !== 'touch') return;
-    if (!event.isPrimary || !isBoardTitleEditTarget(event.target)) {
-      clearBoardTitleTapState();
-      return;
-    }
-    titleActiveTouch = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      time: Date.now(),
-    };
-  }
-
-  function handleBoardTitlePointerCancel(event: PointerEvent): void {
-    if (titleActiveTouch?.pointerId === event.pointerId) {
-      titleActiveTouch = undefined;
-    }
-  }
-
-  function handleBoardTitlePointerUp(event: PointerEvent): void {
-    if (event.pointerType !== 'touch' || !event.isPrimary) return;
-    const start = titleActiveTouch;
-    titleActiveTouch = undefined;
-    if (!start || start.pointerId !== event.pointerId) return;
-    if (!isBoardTitleEditTarget(event.target)) {
-      titleLastTap = undefined;
-      return;
-    }
-    const now = Date.now();
-    const moveDistance = Math.hypot(event.clientX - start.x, event.clientY - start.y);
-    if (now - start.time > TITLE_TAP_MAX_DURATION_MS || moveDistance > TITLE_TAP_MAX_MOVE_PX) {
-      titleLastTap = undefined;
-      return;
-    }
-    const previous = titleLastTap;
-    if (
-      previous &&
-      now - previous.time <= TITLE_DOUBLE_TAP_MAX_DELAY_MS &&
-      Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= TITLE_DOUBLE_TAP_MAX_DISTANCE_PX
-    ) {
-      titleLastTap = undefined;
-      event.preventDefault();
-      startBoardRename();
-      return;
-    }
-    titleLastTap = { x: event.clientX, y: event.clientY, time: now };
-  }
-
   function startBoardRename(): void {
-    clearBoardTitleTapState();
+    boardTitleTap.reset();
     const board = workspace.board;
     if (!board || !board.isFacilitator || board.isLocked) return;
     setBoardTitleDraft(board.title);
@@ -904,7 +876,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function cancelBoardRename(): void {
-    clearBoardTitleTapState();
+    boardTitleTap.reset();
     setIsRenamingBoard(false);
     setBoardTitleDraft('');
   }
@@ -1523,23 +1495,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     updateColumnTabEdges(list);
   });
 
-  function handleColumnTabsKeyDown(event: KeyboardEvent): void {
-    const cols = workspace.board?.columns ?? [];
-    const index = resolvedActiveColumnIndex();
-    let next: number;
-    switch (event.key) {
-      case 'Home': next = 0; break;
-      case 'End': next = cols.length - 1; break;
-      case 'ArrowLeft': next = (index - 1 + cols.length) % cols.length; break;
-      case 'ArrowRight': next = (index + 1) % cols.length; break;
-      default: return;
-    }
-    if (!cols[next]) return;
-    event.preventDefault();
-    setActiveColumnId(cols[next].id);
-    columnTabListEl?.querySelectorAll<HTMLElement>('[role=tab]')[next]?.focus({ preventScroll: true });
-  }
-
   function handleTouchStart(event: TouchEvent): void {
     const touch = event.changedTouches[0];
     if (!touch || (event.touches && event.touches.length > 1) ||
@@ -1643,29 +1598,102 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           <div aria-live="polite" aria-atomic="true" class="sr-only">
             {modeAnnouncement()}
           </div>
-          <header class="board-masthead">
-            <div class="board-island board-masthead-layout">
-              <div aria-hidden="true" class="board-masthead-desktop-surface" />
-              <div role="group" aria-label="Board controls" class="board-masthead-controls">
-                <a
-                  href={props.homeHref ?? '/'}
-                  aria-label="Retrocks home"
-                  class={[
-                    'spring-press inline-flex min-h-11 min-w-11 sm:min-h-10 sm:min-w-10 w-fit items-center justify-center gap-2 justify-self-start rounded-full sm:[grid-area:brand] px-2 text-sm font-semibold tracking-tight text-text sm:pl-2 sm:pr-3',
-                    'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
+          <header role="banner" class="board-masthead">
+            <div class="board-island board-masthead-island">
+              <BoardHomeLink href={props.homeHref ?? '/'} class="hidden justify-self-start sm:inline-flex" />
+              <div data-renaming={isRenamingBoard() ? "" : undefined}
+                class="board-masthead-title flex h-7 min-w-0 max-w-full items-center px-3 sm:h-10 sm:justify-center sm:px-0">
+                <Show
+                  when={!isRenamingBoard()}
+                  fallback={
+                    <div class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
+                      <input
+                        ref={boardTitleInputEl}
+                        type="text"
+                        aria-label="Board title"
+                        value={boardTitleDraft()}
+                        maxlength={MAX_BOARD_TITLE_LENGTH}
+                        onInput={(e) =>
+                          setBoardTitleDraft(e.currentTarget.value)
+                        }
+                        onKeyDown={handleBoardTitleKeyDown}
+                        class={[
+                          'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
+                          'focus:border-focus focus:outline-none',
+                        ]}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Save Board title"
+                        disabled={
+                          isSavingBoardTitle() ||
+                          boardTitleDraft().trim().length === 0
+                        }
+                        onClick={() => void saveBoardRename()}
+                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
+                      >
+                        <LucideIcon icon={Check} class="size-4" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel Board rename"
+                        onClick={cancelBoardRename}
+                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/80 bg-surface text-text-muted hover:bg-surface-subtle hover:text-text sm:size-9"
+                      >
+                        <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
+                      </button>
+                    </div>
+                  }
                 >
-                  <span
-                    aria-hidden="true"
-                    class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-accent text-accent-contrast"
+                  <div
+                    onDblClick={handleBoardTitleDoubleClick}
+                    onPointerDown={boardTitleTap.onPointerDown}
+                    onPointerUp={boardTitleTap.onPointerUp}
+                    onPointerCancel={boardTitleTap.onPointerCancel}
+                    class="flex h-full max-w-full min-w-0 items-center gap-1 sm:justify-center"
                   >
-                    <LucideIcon icon={Columns3} class="size-3.5" strokeWidth={2.1} />
-                  </span>
-                  <span class="hidden sm:inline">Retrocks</span>
-                </a>
+                    <h1
+                      title={
+                        board().isFacilitator && !board().isLocked
+                          ? `${board().title} — Double-click to rename`
+                          : board().title
+                      }
+                      class={[
+                        'min-w-0 truncate text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:text-lg',
+                        board().isFacilitator && !board().isLocked && 'cursor-text touch-manipulation',
+                      ]}
+                    >
+                      {board().title}
+                    </h1>
+                    <Show when={board().isFacilitator && !board().isLocked}>
+                      <button
+                        ref={renameBoardButtonEl}
+                        type="button"
+                        aria-label="Rename Board"
+                        title="Rename Board"
+                        data-print-hide="true"
+                        onClick={startBoardRename}
+                        class={[
+                          'spring-press hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-muted sm:inline-flex',
+                          'transition-colors hover:bg-surface-subtle/90 hover:text-text',
+                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                        ]}
+                      >
+                        <LucideIcon icon={Pencil} class="size-3.5" strokeWidth={1.85} />
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
 
-                <div class="board-masthead-actions flex items-center justify-end gap-1.5 sm:flex-wrap sm:gap-2">
+              <div data-print-hide="true" class="hidden justify-self-end sm:block">
+                <ThemeToggle variant="island" />
+              </div>
+            </div>
+            <div class="board-masthead-toolbar">
+              <div role="group" aria-label="Board controls" class="board-masthead-controls">
+                <BoardHomeLink href={props.homeHref ?? '/'} class="inline-flex sm:hidden" />
+                <div class="flex items-center justify-end gap-1.5 sm:flex-wrap sm:gap-2">
                   <div data-print-hide="true">
                     <Show when={board().id} keyed>
                       {(boardId) => (
@@ -1782,40 +1810,42 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                             Board Settings
                           </MenuItem>
                         </Show>
-                        <Show when={board().isFacilitator && !board().isLocked}>
+                        <Show when={isMobileBoard()}>
+                          <Show when={board().isFacilitator && !board().isLocked}>
+                            <MenuItem
+                              value="rename-board"
+                              class="board-menu-item"
+                              closeOnSelect={false}
+                              onSelect={() => {
+                                closeBoardMenu(false);
+                                startBoardRename();
+                              }}
+                            >
+                              Rename Board
+                            </MenuItem>
+                          </Show>
+                          <Show when={canAddColumn()}>
+                            <MenuItem
+                              value="add-column"
+                              class="board-menu-item"
+                              onSelect={openAddColumn}
+                            >
+                              <span class="inline-flex items-center gap-2"><LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} /> Add column</span>
+                            </MenuItem>
+                          </Show>
                           <MenuItem
-                            value="rename-board"
-                            class="board-menu-item sm:hidden"
-                            closeOnSelect={false}
+                            value="action-items"
+                            aria-haspopup="dialog"
+                            class="board-menu-item"
                             onSelect={() => {
-                              closeBoardMenu(false);
-                              startBoardRename();
+                              closeBoardMenu(true);
+                              setIsActionItemsOpen(true);
                             }}
                           >
-                            Rename Board
+                            <span class="inline-flex items-center gap-2"><LucideIcon icon={Flag} class="size-3.5" strokeWidth={1.9} /> Action Items</span>{' '}
+                            <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
                           </MenuItem>
                         </Show>
-                        <Show when={canAddColumn()}>
-                          <MenuItem
-                            value="add-column"
-                            class="board-menu-item sm:hidden"
-                            onSelect={openAddColumn}
-                          >
-                            <span class="inline-flex items-center gap-2"><LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} /> Add column</span>
-                          </MenuItem>
-                        </Show>
-                        <MenuItem
-                          value="action-items"
-                          aria-haspopup="dialog"
-                          class="board-menu-item sm:hidden"
-                          onSelect={() => {
-                            closeBoardMenu(true);
-                            setIsActionItemsOpen(true);
-                          }}
-                        >
-                          <span class="inline-flex items-center gap-2"><LucideIcon icon={Flag} class="size-3.5" strokeWidth={1.9} /> Action Items</span>{' '}
-                          <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
-                        </MenuItem>
                         <MenuSeparator class="my-1 border-t border-border/75" />
                         <ExportBoardMenu
                           board={board()}
@@ -1826,94 +1856,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     </Menu>
                   </div>
                 </div>
-              </div>
-              <div data-renaming={isRenamingBoard() ? "" : undefined}
-                class="board-masthead-title flex h-7 min-w-0 max-w-full items-center px-3 sm:h-10 sm:justify-center sm:px-0">
-                <Show
-                  when={!isRenamingBoard()}
-                  fallback={
-                    <div class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
-                      <input
-                        ref={boardTitleInputEl}
-                        type="text"
-                        aria-label="Board title"
-                        value={boardTitleDraft()}
-                        maxlength={MAX_BOARD_TITLE_LENGTH}
-                        onInput={(e) =>
-                          setBoardTitleDraft(e.currentTarget.value)
-                        }
-                        onKeyDown={handleBoardTitleKeyDown}
-                        class={[
-                          'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
-                          'focus:border-focus focus:outline-none',
-                        ]}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Save Board title"
-                        disabled={
-                          isSavingBoardTitle() ||
-                          boardTitleDraft().trim().length === 0
-                        }
-                        onClick={() => void saveBoardRename()}
-                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
-                      >
-                        <LucideIcon icon={Check} class="size-4" strokeWidth={2} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Cancel Board rename"
-                        onClick={cancelBoardRename}
-                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/80 bg-surface text-text-muted hover:bg-surface-subtle hover:text-text sm:size-9"
-                      >
-                        <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
-                      </button>
-                    </div>
-                  }
-                >
-                  <div
-                    onDblClick={handleBoardTitleDoubleClick}
-                    onPointerDown={handleBoardTitlePointerDown}
-                    onPointerUp={handleBoardTitlePointerUp}
-                    onPointerCancel={handleBoardTitlePointerCancel}
-                    class="flex h-full max-w-full min-w-0 items-center gap-1 sm:justify-center"
-                  >
-                    <h1
-                      title={
-                        board().isFacilitator && !board().isLocked
-                          ? `${board().title} — Double-click to rename`
-                          : board().title
-                      }
-                      class={[
-                        'min-w-0 truncate text-xl leading-snug sm:px-1 font-semibold tracking-[-0.02em] text-text sm:text-lg',
-                        board().isFacilitator && !board().isLocked && 'cursor-text touch-manipulation',
-                      ]}
-                    >
-                      {board().title}
-                    </h1>
-                    <Show when={board().isFacilitator && !board().isLocked}>
-                      <button
-                        ref={renameBoardButtonEl}
-                        type="button"
-                        aria-label="Rename Board"
-                        title="Rename Board"
-                        data-print-hide="true"
-                        onClick={startBoardRename}
-                        class={[
-                          'spring-press hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-muted sm:inline-flex',
-                          'transition-colors hover:bg-surface-subtle/90 hover:text-text',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                        ]}
-                      >
-                        <LucideIcon icon={Pencil} class="size-3.5" strokeWidth={1.85} />
-                      </button>
-                    </Show>
-                  </div>
-                </Show>
-              </div>
-
-              <div data-print-hide="true" class="board-masthead-theme hidden justify-self-end sm:block">
-                <ThemeToggle variant="island" />
               </div>
               <div role="group" aria-label="Board status" class="board-masthead-status flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 text-xs leading-4 sm:gap-x-2.5 sm:px-0">
                 <div data-print-hide="true" class="inline-flex items-center gap-2 text-text-muted sm:min-h-9 sm:text-[13px]">
@@ -1957,21 +1899,21 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span class="sr-only">Only you can read your Cards until they’re revealed.</span>
                 </Show>
               </div>
-              <Show when={board().subtitle.length > 0}>
-                <p class="board-masthead-subtitle mx-3 max-w-[65ch] sm:mx-0 wrap-anywhere text-sm leading-snug text-text-muted">{board().subtitle}</p>
-              </Show>
-              <p
-                data-print-hide="true"
-                aria-live="polite"
-                aria-atomic="true"
-                class={[
-                  'board-masthead-feedback mx-3 text-xs empty:sr-only sm:mx-0',
-                  exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
-                ]}
-              >
-                {exportFeedback()?.message}
-              </p>
             </div>
+            <Show when={board().subtitle.length > 0}>
+              <p class="board-masthead-subtitle mx-3 max-w-[65ch] sm:mx-0 wrap-anywhere text-sm leading-snug text-text-muted">{board().subtitle}</p>
+            </Show>
+            <p
+              data-print-hide="true"
+              aria-live="polite"
+              aria-atomic="true"
+              class={[
+                'board-masthead-feedback mx-3 text-xs empty:sr-only sm:mx-0',
+                exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
+              ]}
+            >
+              {exportFeedback()?.message}
+            </p>
           </header>
 
           <Show when={board().isFacilitator}>
@@ -2045,17 +1987,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             onTouchCancel={() => { swipeStart = undefined; }}
             class="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-28 sm:px-6 sm:py-6"
           >
-            <Show
-              when={
-                secretSearch() ||
-                (boardView()?.hasActiveFilter &&
-                  (boardView()?.totalCardCount ?? 0) > 0 &&
-                  (boardView()?.matchedCardCount ?? 0) === 0)
-              }
-            >
+            <Show when={secretSearch()}>
               <div class="relative mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
                 <p class="flex items-center gap-2">
-                  {secretSearch()?.message ?? 'No Cards match your current search or filter.'}
+                  {secretSearch()?.message}
                   <Show when={secretSearch()?.id === 'rock'}>
                     <svg
                       aria-hidden="true"
@@ -2093,7 +2028,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </div>
             </Show>
 
-            <div
+            <Tabs
+              value={activeMobileColumn()?.id ?? null}
+              onValueChange={setActiveColumnId}
               class="board-column-deck relative"
               data-can-manage={board().isFacilitator && !board().isLocked ? "" : undefined}
             >
@@ -2102,39 +2039,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 data-print-hide="true"
                 class="board-column-tabs min-w-0 rounded-full bg-surface-subtle sm:hidden"
               >
-                <div
+                <TabsList
                   ref={columnTabListEl}
-                  onKeyDown={handleColumnTabsKeyDown}
                   onScroll={(event) => updateColumnTabEdges(event.currentTarget)}
-                  role="tablist"
                   aria-label="Select Column"
                   class="scroll-edge-fade overflow-x-auto"
                 >
                   <div class="flex w-max min-w-full items-center gap-0.5 px-0.5 py-0.5">
                     <For each={board().columns}>
-                      {(column, index) => (
-                        <button
-                          type="button"
+                      {(column) => (
+                        <TabsTab
+                          value={column.id}
                           title={column.title}
-                          role="tab"
-                          aria-controls={`column-${column.id}`}
-                          tabindex={resolvedActiveColumnIndex() === index() ? 0 : -1}
-                          aria-selected={
-                            resolvedActiveColumnIndex() === index()
-                              ? 'true'
-                              : 'false'
-                          }
-                          onClick={() => setActiveColumnId(column.id)}
-                          class={[
-                            'inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors active:bg-surface-subtle',
-                            'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus',
-                            {
-                              'border-border bg-surface text-text shadow-xs':
-                                resolvedActiveColumnIndex() === index(),
-                              'border-transparent text-text-muted hover:text-text':
-                                resolvedActiveColumnIndex() !== index(),
-                            },
-                          ]}
+                          render={(tabProps) => (
+                            <button
+                              {...tabProps}
+                              id={`column-tab-${column.id}`}
+                              aria-controls={`column-${column.id}`}
+                            />
+                          )}
+                          class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:border-border data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
                         >
                           <span
                             aria-hidden="true"
@@ -2152,11 +2076,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                               ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
                               : column.cardCount}
                           </span>
-                        </button>
+                        </TabsTab>
                       )}
                     </For>
                   </div>
-                </div>
+                </TabsList>
               </nav>
               <div
                 data-board-columns="true"
@@ -2229,6 +2153,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         isBlurred={board().isBlurred}
                         canGroupCards={canManageGrouping(board())}
                         nowMs={nowMs()}
+                        isMobile={isMobileBoard()}
                         isMobileActive={resolvedActiveColumnIndex() === index()}
                         isHorizontalSnap={isHorizontalSnap()}
                         draggingCardId={draggingCardId()}
@@ -2276,7 +2201,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   </button>
                 </Show>
               </div>
-            </div>
+            </Tabs>
           </main>
 
           <Dialog
@@ -2346,7 +2271,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span class="block text-xs font-medium text-text-muted">
                     Accent color
                   </span>
-                  <div class="mt-1.5 grid grid-cols-8 gap-1">
+                  <div class="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-8">
                     <For each={COLUMN_ACCENTS}>
                       {(accent) => (
                         <button
