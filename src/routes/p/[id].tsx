@@ -10,7 +10,7 @@ import { changePokerRoom, getPokerRoom, joinPokerRoom } from '../../lib/poker-ac
 import { createPokerLive } from '../../lib/poker-live';
 import { pokerRoomPath, pokerSetupPath } from '../../lib/poker-routes';
 import { claimPokerFacilitatorLink } from '../../lib/poker-sharing-actions';
-import type { PokerRoomView, PokerStoryCommand, PokerVotingCommand } from '../../lib/poker-types';
+import type { PokerRoomView, PokerRoomChange } from '../../lib/poker-types';
 
 export const route = {
   preload: ({ params }) => {
@@ -52,7 +52,7 @@ function JoinedRoom(props: { room: PokerRoomView; focusHeading: boolean; claimEr
     }
   }
 
-  async function onChange(command: PokerStoryCommand | PokerVotingCommand) {
+  async function onChange(command: PokerRoomChange) {
     const result = await changePokerRoom(props.room.id, command);
     if (result.ok) acceptRoom(result.room);
     return result;

@@ -238,3 +238,28 @@
   background: var(--color-surface);
   border-color: var(--color-control);
 }
+
+.poker-deck-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.poker-deck-types [data-checked] {
+  border-color: var(--poker-accent);
+  background: var(--poker-accent);
+  color: var(--poker-accent-contrast);
+}
+
+.poker-deck-types [data-checked]:hover {
+  background: color-mix(in srgb, var(--poker-accent), var(--poker-accent-contrast) 8%);
+}
+
+.poker-deck-input {
+  padding-block: 0.625rem;
+  resize: block;
+}
+
+.poker-deck-input[data-invalid] {
+  border-color: var(--poker-error);
+}

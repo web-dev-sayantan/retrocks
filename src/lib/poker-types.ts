@@ -3,6 +3,18 @@ export const POKER_DISPLAY_NAME_LIMIT = 60;
 export const POKER_STORY_TITLE_LIMIT = 200;
 export const FIBONACCI_DECK = ['0', '1', '2', '3', '5', '8', '13', '21'] as const;
 
+export const POKER_DECK_PRESETS = {
+  fibonacci: FIBONACCI_DECK,
+  't-shirt': ['XS', 'S', 'M', 'L', 'XL'],
+} as const;
+
+export type PokerDeckPreset = keyof typeof POKER_DECK_PRESETS;
+export type PokerDeckType = PokerDeckPreset | 'custom';
+export type PokerDeckCommand = {
+  type: 'set-deck';
+  deck: { type: PokerDeckPreset } | { type: 'custom'; choices: string[] };
+};
+
 export interface PokerParticipant {
   id: string;
   displayName: string;
@@ -29,6 +41,8 @@ export interface PokerRoomView {
   stories: PokerStory[];
   activeStoryId: string | null;
   deck: readonly string[];
+  deckType: PokerDeckType;
+  deckLocked: boolean;
   round: PokerRoundView | null;
 }
 
@@ -42,14 +56,13 @@ export type PokerVotingCommand =
   | { type: 'vote'; roundId: string; choice: string | null }
   | { type: 'reveal'; roundId: string };
 
-export type PokerRoomCommand =
-  | { type: 'join'; displayName: string }
-  | PokerStoryCommand
-  | PokerVotingCommand;
+export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand;
+
+export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
 export type PokerResult<T = PokerRoomView> =
   | { ok: true; room: T }
-  | { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED'; message: string };
+  | { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED'; message: string };
 
 export type PokerLiveMessage =
   | { type: 'room:snapshot'; room: PokerRoomView; connectionId?: string }

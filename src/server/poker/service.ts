@@ -42,11 +42,13 @@ export async function mutatePokerRoomForRequest(id: string, input: unknown): Pro
   }
   const command = safeParse(PokerCommand, input);
   if (!command.success) {
-    const isJoin = input && typeof input === 'object' && 'type' in input && input.type === 'join';
+    const type = input && typeof input === 'object' && 'type' in input ? input.type : undefined;
+    const message = type === 'set-deck' ? 'Enter at least two different, nonblank Deck choices.'
+      : type === 'join' ? 'Enter a valid Display Name.' : 'Check the Room details and try again.';
     return {
       ok: false,
       code: 'INVALID_INPUT',
-      message: isJoin ? 'Enter a valid Display Name.' : 'Check the Room details and try again.',
+      message,
     };
   }
 
