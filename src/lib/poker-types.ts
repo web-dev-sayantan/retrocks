@@ -19,6 +19,7 @@ export interface PokerRoomView {
   id: string;
   version: number;
   viewer: PokerParticipant | null;
+  facilitatorLinkRevision?: number;
   participants: PokerParticipant[];
   stories: PokerStory[];
   activeStoryId: string | null;

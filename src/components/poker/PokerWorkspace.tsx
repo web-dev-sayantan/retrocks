@@ -1,8 +1,7 @@
 import { For, Show, createMemo, onSettled } from 'solid-js';
 
-import { pokerRoomPath } from '../../lib/poker-routes';
 import type { PokerResult, PokerRoomView, PokerStoryCommand } from '../../lib/poker-types';
-import CopyRoomLink from './CopyRoomLink';
+import PokerRoomSharing from './PokerRoomSharing';
 import PokerStoryQueue from './PokerStoryQueue';
 import './poker.css';
 
@@ -11,6 +10,7 @@ export default function PokerWorkspace(props: {
   online: string[];
   status: 'connecting' | 'live' | 'reconnecting';
   focusHeading?: boolean;
+  claimError?: string;
   onChangeStory: (command: PokerStoryCommand) => Promise<PokerResult>;
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
@@ -29,6 +29,9 @@ export default function PokerWorkspace(props: {
         </p>
       </header>
 
+      <p role="alert" class={props.claimError ? 'mb-4 text-sm font-medium text-[var(--poker-error)]' : 'sr-only'}>
+        {props.claimError}
+      </p>
       <div class="poker-layout">
         <section class="poker-active min-w-0 rounded-xl p-5 sm:p-7" aria-labelledby="poker-active-story">
           <h2 id="poker-active-story" class="text-sm font-semibold">Active Story</h2>
@@ -75,9 +78,11 @@ export default function PokerWorkspace(props: {
               )}
             </For>
           </ul>
-          <div class="mt-7 border-t border-border pt-5">
-            <CopyRoomLink label="Participant link" href={pokerRoomPath(props.room.id)} />
-          </div>
+          <PokerRoomSharing
+            roomId={props.room.id}
+            isFacilitator={props.room.viewer?.isFacilitator ?? false}
+            revision={props.room.facilitatorLinkRevision}
+          />
         </section>
       </div>
     </main>

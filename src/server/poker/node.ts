@@ -3,7 +3,10 @@ import 'server-only';
 import { LIVE_CONNECTION_HEADER, LIVE_HEARTBEAT_MS, LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/board-live-protocol';
 import type { PokerLiveMessage, PokerRoomCommand } from '../../lib/poker-types';
 import { openNodeDatabase, wrapDatabaseSync } from '../adapters/node/sqlite';
-import { PokerRoomStorage, pokerParticipant, projectPokerRoom } from './room';
+import {
+  PokerRoomStorage, pokerParticipant, projectPokerRoom,
+  type PokerFacilitatorCapability, type StoredPokerRoom,
+} from './room';
 
 interface Connection {
   id: string;
@@ -24,6 +27,12 @@ export async function openNodePokerRooms(dbPath: string) {
   function sendPresence(connections: Set<Connection>) {
     const online = [...new Set(Array.from(connections, (connection) => connection.participantId))];
     for (const connection of connections) connection.send({ type: 'room:presence', online });
+  }
+
+  function broadcastRoom(room: StoredPokerRoom) {
+    for (const connection of streams.get(room.id) ?? []) {
+      connection.send({ type: 'room:snapshot', room: projectPokerRoom(room, connection.hash) });
+    }
   }
 
   const heartbeat = setInterval(() => {
@@ -49,10 +58,21 @@ export async function openNodePokerRooms(dbPath: string) {
     mutate(id: string, hash: string, command: PokerRoomCommand) {
       const result = storage.mutate(id, hash, command);
       if (!result.ok) return result;
-      for (const connection of streams.get(id) ?? []) {
-        connection.send({ type: 'room:snapshot', room: projectPokerRoom(result.room, connection.hash) });
-      }
+      broadcastRoom(result.room);
       return { ok: true as const, room: projectPokerRoom(result.room, hash) };
+    },
+    getFacilitatorCapability: (id: string, hash: string) => storage.getFacilitatorCapability(id, hash),
+    replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
+      const result = storage.replaceFacilitatorCapability(id, hash, revision, capability);
+      if (!result.ok) return result;
+      broadcastRoom(result.value);
+      return { ok: true as const, value: null };
+    },
+    claimFacilitator(id: string, hash: string, candidate: string) {
+      const result = storage.claimFacilitator(id, hash, candidate);
+      if (!result.ok) return result;
+      broadcastRoom(result.value);
+      return { ok: true as const, value: projectPokerRoom(result.value, hash) };
     },
     connect(id: string, hash: string, request: Request): Response {
       const room = storage.snapshot(id);

@@ -38,6 +38,7 @@ const Room = v.object({
   id: PokerRoomId,
   version: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
   viewer: v.nullable(Participant),
+  facilitatorLinkRevision: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
   participants: v.array(Participant),
   stories: v.array(Story),
   activeStoryId: v.nullable(PokerEntityId),

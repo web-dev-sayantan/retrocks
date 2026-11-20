@@ -10,7 +10,8 @@ import type {
   PokerRoomView,
   PokerStory,
 } from '../../lib/poker-types';
-import { generateEntityId } from '../crypto';
+import type { PokerSharingResult } from '../../lib/poker-sharing-types';
+import { generateEntityId, tokenHashesMatch } from '../crypto';
 import type { SqlRunner } from '../db/sql-runner';
 import { createBoardWriteRateLimiter } from '../rate-limit';
 
@@ -21,11 +22,32 @@ const notFound = {
   message: 'This Room is no longer available.',
 } as const;
 
-const facilitatorRequired = {
+const forbidden = {
   ok: false,
   code: 'FORBIDDEN',
-  message: 'Only a Facilitator can manage Stories.',
+  message: 'Facilitator access is required.',
 } as const;
+export const invalidPokerFacilitatorLink = {
+  ok: false,
+  code: 'INVALID_LINK',
+  message: 'This Co-Facilitator Link is invalid or has expired.',
+} as const;
+const linkReplaced = {
+  ok: false,
+  code: 'LINK_REPLACED',
+  message: 'The Co-Facilitator Link was already replaced. Show the current link to try again.',
+} as const;
+const rateLimited = {
+  ok: false,
+  code: 'RATE_LIMITED',
+  message: 'Too many changes. Try again shortly.',
+} as const;
+
+export interface PokerFacilitatorCapability {
+  hash: string;
+  encrypted: string;
+  revision: number;
+}
 
 const storyMissing = {
   ok: false,
@@ -42,6 +64,8 @@ export interface StoredPokerRoom {
   version: number;
   expiresAt: number;
   participants: StoredParticipant[];
+  facilitatorCapability?: PokerFacilitatorCapability;
+  pendingFacilitatorClaims?: string[];
   stories?: PokerStory[];
   activeStoryId?: string | null;
 }
@@ -66,6 +90,9 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     id: room.id,
     version: room.version,
     viewer,
+    ...(viewer?.isFacilitator && room.facilitatorCapability
+      ? { facilitatorLinkRevision: room.facilitatorCapability.revision }
+      : {}),
     participants: viewer ? room.participants.map(projectParticipant) : [],
     stories: viewer ? room.stories ?? [] : [],
     activeStoryId: viewer ? room.activeStoryId ?? null : null,
@@ -136,7 +163,7 @@ export class PokerRoomStorage {
   mutate(id: string, hash: string, command: PokerRoomCommand): PokerResult<StoredPokerRoom> {
     const now = Date.now();
     if (!this.writeLimiter.check(id, hash, now).allowed) {
-      return { ok: false, code: 'RATE_LIMITED', message: 'Too many changes. Try again shortly.' };
+      return rateLimited;
     }
     return this.db.transaction(() => {
       const room = this.snapshot(id, now);
@@ -149,22 +176,21 @@ export class PokerRoomStorage {
           if (!displayName) {
             return { ok: false, code: 'INVALID_INPUT', message: 'Enter a valid Display Name.' };
           }
-          room.participants.push({
-            id: generateEntityId(),
-            hash,
-            displayName,
-            isFacilitator: false,
-          });
+          const claimed = room.pendingFacilitatorClaims?.includes(hash) ?? false;
+          room.participants.push({ id: generateEntityId(), hash, displayName, isFacilitator: claimed });
+          if (claimed) {
+            room.pendingFacilitatorClaims = room.pendingFacilitatorClaims?.filter((claim) => claim !== hash);
+          }
           break;
         }
         case 'add-story': {
-          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           (room.stories ??= []).push({ id: generateEntityId(), title: command.title, status: 'pending' });
           room.expiresAt = now + ROOM_TTL_MS;
           break;
         }
         case 'edit-story': {
-          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
           if (story.status !== 'pending') {
@@ -176,7 +202,7 @@ export class PokerRoomStorage {
           break;
         }
         case 'move-story': {
-          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const stories = room.stories ?? [];
           const from = stories.findIndex((entry) => entry.id === command.storyId);
           const target = stories.findIndex((entry) => entry.id === command.targetId);
@@ -190,7 +216,7 @@ export class PokerRoomStorage {
           break;
         }
         case 'select-story': {
-          if (!pokerParticipant(room, hash)?.isFacilitator) return facilitatorRequired;
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
           if (story.status !== 'pending') {
@@ -203,15 +229,65 @@ export class PokerRoomStorage {
         }
       }
 
-      room.version += 1;
-      this.db.run(
-        'UPDATE poker_rooms SET expires_at = ?, data = ? WHERE id = ?',
-        room.expiresAt,
-        JSON.stringify(room),
-        id,
-      );
+      this.save(room);
       return { ok: true, room };
     });
+  }
+
+  getFacilitatorCapability(id: string, hash: string): PokerSharingResult<PokerFacilitatorCapability | null> {
+    const room = this.snapshot(id);
+    if (!room) return notFound;
+    if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+    return { ok: true, value: room.facilitatorCapability ?? null };
+  }
+
+  replaceFacilitatorCapability(
+    id: string,
+    hash: string,
+    expectedRevision: number,
+    capability: PokerFacilitatorCapability,
+  ): PokerSharingResult<StoredPokerRoom> {
+    return this.db.transaction(() => {
+      const room = this.snapshot(id);
+      if (!room) return notFound;
+      if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+      if ((room.facilitatorCapability?.revision ?? 0) !== expectedRevision) return linkReplaced;
+      if (!this.writeLimiter.check(id, hash, Date.now()).allowed) return rateLimited;
+
+      room.facilitatorCapability = capability;
+      this.save(room);
+      return { ok: true, value: room };
+    });
+  }
+
+  claimFacilitator(id: string, hash: string, candidate: string): PokerSharingResult<StoredPokerRoom> {
+    const now = Date.now();
+    if (!this.writeLimiter.check(id, hash, now).allowed) return rateLimited;
+    return this.db.transaction(() => {
+      const room = this.snapshot(id, now);
+      if (!room?.facilitatorCapability || !tokenHashesMatch(candidate, room.facilitatorCapability.hash)) {
+        return invalidPokerFacilitatorLink;
+      }
+
+      const participant = room.participants.find((entry) => entry.hash === hash);
+      if (participant?.isFacilitator || room.pendingFacilitatorClaims?.includes(hash)) {
+        return { ok: true, value: room };
+      }
+      if (participant) participant.isFacilitator = true;
+      else (room.pendingFacilitatorClaims ??= []).push(hash);
+      this.save(room);
+      return { ok: true, value: room };
+    });
+  }
+
+  private save(room: StoredPokerRoom): void {
+    room.version += 1;
+    this.db.run(
+      'UPDATE poker_rooms SET expires_at = ?, data = ? WHERE id = ?',
+      room.expiresAt,
+      JSON.stringify(room),
+      room.id,
+    );
   }
 
   purgeExpired(now = Date.now()): void {

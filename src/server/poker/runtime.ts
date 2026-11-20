@@ -4,6 +4,7 @@ import { env } from 'virtual:solid-env/server';
 import { POKER_LIVE_VIEWER_HEADER, type PokerRoomCommand } from '../../lib/poker-types';
 import { getCloudflareEnv } from '../adapters/cloudflare-context';
 import { openNodePokerRooms, type NodePokerRooms } from './node';
+import type { PokerFacilitatorCapability } from './room';
 
 let nodeRooms: Promise<NodePokerRooms> | undefined;
 
@@ -15,6 +16,10 @@ export async function getPokerRoomAccess(id: string) {
       read: (hash: string) => room.read(id, hash),
       create: (hash: string, displayName: string) => room.create(id, hash, displayName),
       mutate: (hash: string, command: PokerRoomCommand) => room.mutate(id, hash, command),
+      getFacilitatorCapability: (hash: string) => room.getFacilitatorCapability(id, hash),
+      replaceFacilitatorCapability: (hash: string, revision: number, capability: PokerFacilitatorCapability) =>
+        room.replaceFacilitatorCapability(id, hash, revision, capability),
+      claimFacilitator: (hash: string, candidate: string) => room.claimFacilitator(id, hash, candidate),
       connect(hash: string, request: Request) {
         const headers = new Headers(request.headers);
         headers.set(POKER_LIVE_VIEWER_HEADER, hash);
@@ -30,6 +35,10 @@ export async function getPokerRoomAccess(id: string) {
     read: (hash: string) => rooms.read(id, hash),
     create: (hash: string, displayName: string) => rooms.create(id, hash, displayName),
     mutate: (hash: string, command: PokerRoomCommand) => rooms.mutate(id, hash, command),
+    getFacilitatorCapability: (hash: string) => rooms.getFacilitatorCapability(id, hash),
+    replaceFacilitatorCapability: (hash: string, revision: number, capability: PokerFacilitatorCapability) =>
+      rooms.replaceFacilitatorCapability(id, hash, revision, capability),
+    claimFacilitator: (hash: string, candidate: string) => rooms.claimFacilitator(id, hash, candidate),
     connect: (hash: string, request: Request) => rooms.connect(id, hash, request),
     heartbeat: (hash: string, request: Request) => rooms.heartbeat(id, hash, request),
   };
