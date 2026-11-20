@@ -5,6 +5,7 @@ import {
   LIVE_HEARTBEAT_TIMEOUT_MS,
   type BoardLiveMessage,
 } from './board-live-protocol';
+import { parseBoardLiveMessage } from './wire-schemas';
 
 const RETRY_DELAYS_MS = [500, 1_000, 2_000, 5_000, 10_000];
 
@@ -58,8 +59,8 @@ export function connectBoardLive(boardId: string, callbacks: LiveCallbacks) {
       if (activeGeneration !== generation) return;
       let message: BoardLiveMessage;
       try {
-        message = JSON.parse(event.data) as BoardLiveMessage;
-        if (!message || typeof message.type !== 'string') throw new Error('Invalid live message');
+        // Malformed or drifted frames reconnect instead of applying partial state.
+        message = parseBoardLiveMessage(event.data);
       } catch {
         retryConnection();
         return;

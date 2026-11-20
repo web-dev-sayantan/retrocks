@@ -7,8 +7,8 @@ import LucideIcon from './LucideIcon';
 
 export interface CardReactionsProps {
   cardId: string;
-  reactions: Record<string, number>;
-  myReactions: readonly string[];
+  reactions: Partial<Record<ReactionEmoji, number>>;
+  myReactions: readonly ReactionEmoji[];
   disabled: boolean;
   inCardFooter?: boolean;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;

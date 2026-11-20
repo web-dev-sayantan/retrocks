@@ -26,6 +26,7 @@ import {
   DrawerContent,
   DrawerTitle,
 } from '@ui-sdk/solid/drawer';
+import { canEditActionItems } from '../lib/board-permissions';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
@@ -214,9 +215,6 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   const columnTitles = createMemo(
     () => new Map(props.board.columns.map((column) => [column.id, column.title])),
   );
-  const canEditActionItems = createMemo(
-    () => !props.isLocked || props.board.isFacilitator,
-  );
   const emptyMessage = createMemo(() => {
     const current = filter();
     if (current === 'open') return 'No open Action Items.';
@@ -325,7 +323,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
                   <ActionItemRow
                     card={card}
                     columnTitle={columnTitles().get(card.columnId) ?? ''}
-                    canEdit={canEditActionItems()}
+                    canEdit={canEditActionItems(props.board)}
                     onUpdate={props.onUpdateActionItem}
                   />
                 )}

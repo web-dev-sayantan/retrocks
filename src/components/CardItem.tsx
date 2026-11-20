@@ -15,8 +15,15 @@ import {
   REDACTED_WHISPER_DURATION_MS,
 } from '../lib/easter-eggs';
 import { createDoubleTap } from '../lib/double-tap';
+import {
+  canEditActionItemFollowUp,
+  canInteractWithCard,
+  canManageCard,
+} from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
+import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME } from '../lib/drag-constants';
 import { getEnabledMenuItems } from '../lib/menu-keyboard';
+import { isOptimisticId } from '../lib/optimistic-ids';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardReactions from './CardReactions';
@@ -172,11 +179,7 @@ export default function CardItem(props: CardItemProps) {
     menuTrigger?.focus();
   }
 
-  const canManage = createMemo(() => {
-    if (props.isLocked || props.card.redacted) return false;
-    if (props.card.isMine) return true;
-    return props.isFacilitator && !props.isBlurred;
-  });
+  const canManage = createMemo(() => canManageCard(props, props.card));
 
   const otherColumns = createMemo(
     () => props.columns.filter((col) => col.id !== props.card.columnId),
@@ -213,8 +216,7 @@ export default function CardItem(props: CardItemProps) {
   const canGroup = createMemo(
     () =>
       props.canGroupCards &&
-      !props.isLocked &&
-      !props.card.redacted &&
+      canInteractWithCard(props, props.card) &&
       (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
   );
 
@@ -236,8 +238,7 @@ export default function CardItem(props: CardItemProps) {
     const source = draggingCard();
     return (
       props.canGroupCards &&
-      !props.isLocked &&
-      !props.card.redacted &&
+      canInteractWithCard(props, props.card) &&
       source !== undefined &&
       source.id !== props.card.id &&
       (props.card.groupId === null || source.groupId !== props.card.groupId)
@@ -258,7 +259,7 @@ export default function CardItem(props: CardItemProps) {
   const textTap = createDoubleTap(isTextEditTarget, startEdit);
 
   function isTextEditTarget(target: EventTarget | null): boolean {
-    if (!canManage() || props.card.id.startsWith('optimistic:')) return false;
+    if (!canManage() || isOptimisticId(props.card.id)) return false;
     return !(target instanceof Element && target.closest('a'));
   }
 
@@ -426,8 +427,8 @@ export default function CardItem(props: CardItemProps) {
     }
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', props.card.id);
-      event.dataTransfer.setData('application/x-retrocks-card', props.card.id);
+      event.dataTransfer.setData(DRAG_FALLBACK_MIME, props.card.id);
+      event.dataTransfer.setData(CARD_DRAG_MIME, props.card.id);
     }
     props.onDragStartCard(props.card.id, props.card.columnId);
   }
@@ -570,7 +571,7 @@ export default function CardItem(props: CardItemProps) {
                   type="checkbox"
                   checked={actionDone()}
                   disabled={
-                    (props.isLocked && !props.isFacilitator) || isUpdatingAction()
+                    (!canEditActionItemFollowUp(props, props.card)) || isUpdatingAction()
                   }
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {

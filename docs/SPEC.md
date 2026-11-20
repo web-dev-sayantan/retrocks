@@ -476,7 +476,7 @@ export type BoardEvent =
   | { type: 'group:upserted'; version: number; group: CardGroupDTO }
   | { type: 'group:dissolved'; version: number; groupId: string }
   | { type: 'vote:updated'; version: number; targetType: 'card' | 'group'; targetId: string; totalVotes: number | null }
-  | { type: 'reaction:updated'; version: number; cardId: string; counts: Record<string, number> }
+  | { type: 'reaction:updated'; version: number; cardId: string; counts: Partial<Record<ReactionEmoji, number>> }
   | { type: 'comment:created'; version: number; cardId: string; comment: CommentViewDTO }
   | { type: 'comment:deleted'; version: number; cardId: string; commentId: string };
 ```

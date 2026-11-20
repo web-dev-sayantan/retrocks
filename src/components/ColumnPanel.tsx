@@ -24,6 +24,14 @@ import {
 } from '../lib/board-types';
 import type { ColumnStreamItem } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
+import {
+  areAllGroupCardsMine,
+  canContribute,
+  canControlFacilitation,
+  canDeleteColumn as canDeleteColumnPermission,
+  passesPrivateMode,
+} from '../lib/board-permissions';
+import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
@@ -115,7 +123,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   const canManageColumn = createMemo(
-    () => props.isFacilitator && !props.isLocked,
+    () => canControlFacilitation(props),
   );
   const canMoveLeft = createMemo(() => props.columnIndex > 0);
   const canMoveRight = createMemo(
@@ -123,7 +131,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
   const hasHiddenCards = createMemo(() => props.cards.some((card) => card.redacted));
   const canDeleteColumn = createMemo(() =>
-    canManageColumn() && props.totalColumns > 1 && !hasHiddenCards(),
+    canDeleteColumnPermission(props, props.totalColumns, props.cards),
   );
 
   const streamKeys = createMemo(
@@ -181,16 +189,12 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   function canManageGroup(group: CardGroupDTO): boolean {
-    if (!props.canGroupCards) return false;
-    if (!props.isBlurred) return true;
-    return group.cardIds.every(
-      (id) => props.cards.find((card) => card.id === id)?.isMine === true,
-    );
+    return props.canGroupCards && areAllGroupCardsMine(props, group, props.cards);
   }
 
   const isEligibleDropTarget = createMemo(
     () =>
-      !props.isLocked &&
+      canContribute(props) &&
       (props.draggingCardId !== null || props.draggingGroupId !== null) &&
       props.draggingSourceColumnId !== props.column.id,
   );
@@ -302,16 +306,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function handleDragOver(event: DragEvent): void {
     if (props.isLocked) return;
-    const cardData =
-      event.dataTransfer?.getData('application/x-retrocks-card') ?? '';
-    const groupData =
-      event.dataTransfer?.getData('application/x-retrocks-group') ?? '';
+    const cardData = event.dataTransfer?.getData(CARD_DRAG_MIME) ?? '';
+    const groupData = event.dataTransfer?.getData(GROUP_DRAG_MIME) ?? '';
     const isGroupDrag =
       props.draggingGroupId !== null ||
       (!props.draggingCardId && Boolean(groupData) && !cardData);
     const cardId =
       props.draggingCardId ??
-      (cardData || event.dataTransfer?.getData('text/plain') || '');
+      (cardData || event.dataTransfer?.getData(DRAG_FALLBACK_MIME) || '');
     if (!isGroupDrag && !cardId) return;
     if (
       props.draggingSourceColumnId &&
@@ -339,10 +341,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     event.preventDefault();
     setIsDropActive(false);
     if (props.isLocked) return;
-    const cardData =
-      event.dataTransfer?.getData('application/x-retrocks-card') || '';
-    const groupData =
-      event.dataTransfer?.getData('application/x-retrocks-group') || '';
+    const cardData = event.dataTransfer?.getData(CARD_DRAG_MIME) || '';
+    const groupData = event.dataTransfer?.getData(GROUP_DRAG_MIME) || '';
     const groupId =
       props.draggingGroupId ||
       (!props.draggingCardId && groupData && !cardData ? groupData : '');
@@ -355,7 +355,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     const cardId =
       props.draggingCardId ||
       cardData ||
-      event.dataTransfer?.getData('text/plain') ||
+      event.dataTransfer?.getData(DRAG_FALLBACK_MIME) ||
       '';
     if (!cardId) return;
     if (props.draggingSourceColumnId === props.column.id) return;
@@ -622,7 +622,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </div>
 
-      <Show when={!props.isLocked}>
+      <Show when={canContribute(props)}>
         <div data-print-hide="true" class="hidden px-3 pt-3 sm:block">
           <div
             class={[
@@ -800,7 +800,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       columnGroups={props.groups}
                       canGroupCards={props.canGroupCards}
                       canUngroup={
-                        props.canGroupCards && (!props.isBlurred || card().isMine)
+                        props.canGroupCards && passesPrivateMode(props, card())
                       }
                       isFacilitator={props.isFacilitator}
                       isLocked={props.isLocked}

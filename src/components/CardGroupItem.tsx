@@ -10,6 +10,8 @@ import type {
   ReactionEmoji,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
+import { canContribute, isGroupRedacted } from '../lib/board-permissions';
+import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
@@ -96,14 +98,16 @@ export default function CardGroupItem(props: CardGroupItemProps) {
 
   const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
-  const canManageGroup = createMemo(() => props.canManage && !isRedacted());
+  const canManageGroup = createMemo(
+    () => props.canManage && !isGroupRedacted(props.group),
+  );
 
   const canAcceptDrop = createMemo(() => {
     const card = draggingCard();
     return (
       props.canGroupCards &&
-      !props.isLocked &&
-      !isRedacted() &&
+      canContribute(props) &&
+      !isGroupRedacted(props.group) &&
       card !== undefined &&
       !props.group.cardIds.includes(card.id)
     );
@@ -173,14 +177,14 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   }
 
   function handleDragStart(event: DragEvent): void {
-    if (!canManageGroup() || props.isLocked) {
+    if (!canManageGroup() || !canContribute(props)) {
       event.preventDefault();
       return;
     }
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', props.group.id);
-      event.dataTransfer.setData('application/x-retrocks-group', props.group.id);
+      event.dataTransfer.setData(DRAG_FALLBACK_MIME, props.group.id);
+      event.dataTransfer.setData(GROUP_DRAG_MIME, props.group.id);
     }
     props.onDragStartGroup(props.group.id, props.group.columnId);
   }

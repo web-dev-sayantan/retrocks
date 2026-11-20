@@ -779,6 +779,61 @@ describe('<BoardWorkspace />', () => {
     expect(streams[1].closed).toBe(true);
   });
 
+  it('reconnects the live stream when a frame fails wire validation', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const streams: FakeEventSource[] = [];
+    class FakeEventSource extends EventTarget {
+      closed = false;
+      constructor(readonly url: string) {
+        super();
+        streams.push(this);
+      }
+      close() {
+        this.closed = true;
+      }
+      receive(raw: string) {
+        this.dispatchEvent(new MessageEvent('message', { data: raw }));
+        flush();
+      }
+    }
+
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const board = makeBoardView();
+    const { getByRole, getByText, unmount } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} />
+    ));
+    try {
+      flush();
+      expect(streams).toHaveLength(1);
+
+      // A drifted card payload must be rejected, not applied with blank fields.
+      streams[0].receive(
+        JSON.stringify({
+          type: 'board:mutation',
+          version: 2,
+          events: [{ type: 'card:upserted', version: 2, card: { id: 'card_bad' } }],
+        }),
+      );
+      expect(getByRole('status')).toHaveTextContent('Reconnecting');
+      expect(streams[0].closed).toBe(true);
+      vi.advanceTimersByTime(600);
+      flush();
+      expect(streams).toHaveLength(2);
+
+      streams[1].receive(
+        JSON.stringify({ type: 'board:snapshot', version: 2, serverNow: 100, board }),
+      );
+      streams[1].receive(JSON.stringify({ type: 'presence:count', count: 2 }));
+      expect(getByRole('status')).toHaveTextContent(/^Live$/);
+      expect(getByText('2 online')).toBeVisible();
+    } finally {
+      unmount();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+    expect(streams[1].closed).toBe(true);
+  });
+
   it('shows anonymous discussion in a Card detail, and applies reactions and comments from the live stream', async () => {
     const streams: EventTarget[] = [];
     vi.stubGlobal('EventSource', class extends EventTarget {

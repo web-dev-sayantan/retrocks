@@ -9,6 +9,7 @@ import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untr
 
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
+import { canControlFacilitation } from '../lib/board-permissions';
 import type { UpdateVotingSettingsInput } from '../lib/voting-schemas';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import LucideIcon from './LucideIcon';
@@ -27,7 +28,7 @@ const destructiveButtonClass = [buttonClass, 'bg-rose-700 text-white hover:bg-ro
 export default function BoardVotingSettings(props: {
   board: Pick<
     BoardViewDTO,
-    'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup' | 'isLocked'
+    'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup' | 'isLocked' | 'isFacilitator'
   >;
   open: boolean;
   onClose: () => void;
@@ -80,7 +81,7 @@ export default function BoardVotingSettings(props: {
 
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
-    if (pending() || !validLimit() || props.board.isLocked) return;
+    if (pending() || !validLimit() || !canControlFacilitation(props.board)) return;
 
     const patch: VotingSettingsPatch = {};
     const limit = voteLimit();
@@ -110,7 +111,7 @@ export default function BoardVotingSettings(props: {
   }
 
   async function resetVotes() {
-    if (pending() || props.board.isLocked) return;
+    if (pending() || !canControlFacilitation(props.board)) return;
     const confirmed = await confirmBoardAction({
       title: 'Remove every Vote from this Board?',
       description: 'Every Participant’s Votes go back to zero. This cannot be undone.',
@@ -182,7 +183,7 @@ export default function BoardVotingSettings(props: {
           </Show>
 
           <form onSubmit={(event) => void saveSettings(event)}>
-            <fieldset disabled={pending() !== null || props.board.isLocked} class="space-y-4">
+            <fieldset disabled={pending() !== null || !canControlFacilitation(props.board)} class="space-y-4">
               <label class="grid gap-1.5 text-sm font-medium">
                 Vote limit
                 <span class="relative grid">
@@ -257,7 +258,7 @@ export default function BoardVotingSettings(props: {
               <button
                 type="submit"
                 class={[buttonClass, 'bg-accent text-accent-contrast hover:opacity-90']}
-                disabled={!validLimit() || props.board.isLocked}
+                disabled={!validLimit() || !canControlFacilitation(props.board)}
               >
                 {pending() === 'save' ? 'Saving…' : 'Save Settings'}
               </button>
@@ -301,7 +302,7 @@ export default function BoardVotingSettings(props: {
             <button
               type="button"
               class={mutedButtonClass}
-              disabled={pending() !== null || props.board.isLocked}
+              disabled={pending() !== null || !canControlFacilitation(props.board)}
               onClick={() => void resetVotes()}
             >
               {pending() === 'reset' ? 'Resetting…' : 'Reset All Votes'}
