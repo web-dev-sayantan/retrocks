@@ -513,7 +513,8 @@ export default function CardItem(props: CardItemProps) {
       onDragLeave={handleGroupDragLeave}
       onDrop={handleGroupDrop}
       class={[
-        'relative min-w-0 rounded-xl border border-border/80 bg-surface p-3.5 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70',
+        'relative min-w-0 rounded-xl border bg-surface p-3.5 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70',
+        props.card.groupId === null ? 'border-border/80' : 'border-border/60',
         {
           'cursor-grab active:cursor-grabbing':
             canDrag(),

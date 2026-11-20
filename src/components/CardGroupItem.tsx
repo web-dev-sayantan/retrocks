@@ -1,3 +1,5 @@
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import type {
@@ -10,14 +12,7 @@ import type {
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
-import {
-  ArrowRightLeftIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  PencilIcon,
-  TrashIcon,
-} from './Icons';
+import LucideIcon from './LucideIcon';
 import VoteControls, { type WorkspaceVoting } from './VoteControls';
 
 export interface CardGroupItemProps {
@@ -59,6 +54,9 @@ export interface CardGroupItemProps {
   onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
 }
 
+const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7';
+const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibold text-ellipsis text-text';
+
 export default function CardGroupItem(props: CardGroupItemProps) {
   const [expanded, setExpanded] = createSignal(true);
   const [isRenaming, setIsRenaming] = createSignal(false);
@@ -70,19 +68,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const [isDissolving, setIsDissolving] = createSignal(false);
   const [isDropActive, setIsDropActive] = createSignal(false);
   let moveTrigger: HTMLButtonElement | undefined;
-
-  createEffect(moveMenuOpen, (isOpen) => {
-    if (!isOpen) return;
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setMoveMenuOpen(false);
-        moveTrigger?.focus();
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  });
 
   createEffect(isMoving, (moving, wasMoving) => {
     if (!moving && wasMoving && moveFailed()) moveTrigger?.focus({ preventScroll: true });
@@ -109,6 +94,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     );
   });
 
+  const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
   const canManageGroup = createMemo(() => props.canManage && !isRedacted());
 
@@ -166,7 +152,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     if (isMoving()) return;
     setIsMoving(true);
     setMoveFailed(false);
-    setMoveMenuOpen(false);
     try {
       const ok = await props.onMoveGroup(props.group.id, targetColumnId);
       setMoveFailed(!ok);
@@ -235,7 +220,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       class={[
-        'rounded-xl border border-border bg-canvas transition-shadow',
+        'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
         {
           'ring-2 ring-focus/70': isDropActive(),
         },
@@ -246,51 +231,34 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         onDragStart={handleDragStart}
         onDragEnd={() => props.onDragEndCard()}
         class={[
-          'flex flex-wrap items-center gap-2 rounded-t-xl border-b border-border/70 bg-surface-subtle px-2.5 py-2',
+          'grid min-w-0 gap-1 px-0.5',
           {
             'cursor-grab active:cursor-grabbing':
               canManageGroup() && !props.isLocked,
           },
         ]}
       >
-        <button
-          type="button"
-          data-print-hide="true"
-          aria-label={expanded() ? 'Collapse Card Group' : 'Expand Card Group'}
-          aria-expanded={expanded() ? 'true' : 'false'}
-          onClick={() => setExpanded((prev) => !prev)}
-          class="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-        >
-          <span
-            class={[
-              'inline-flex transition-transform',
-              { 'rotate-90': expanded() },
-            ]}
+        <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5">
+          <button
+            type="button"
+            data-print-hide="true"
+            aria-label={expanded() ? 'Collapse Card Group' : 'Expand Card Group'}
+            aria-expanded={expanded() ? 'true' : 'false'}
+            onClick={() => setExpanded((prev) => !prev)}
+            class={actionButtonClass}
           >
-            <ChevronRightIcon />
-          </span>
-        </button>
+            <LucideIcon
+              icon={ChevronRight}
+              class={expanded()
+                ? 'spring-chevron size-4 rotate-90 motion-reduce:transition-none'
+                : 'spring-chevron size-4 motion-reduce:transition-none'}
+            />
+          </button>
 
-        <Show
-          when={!isRedacted()}
-          fallback={
-            <div class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-center gap-2">
-              <span class="truncate text-xs font-medium text-text-muted italic">
-                Hidden until Reveal All
-              </span>
-              <span
-                aria-label={`${props.cards.length} cards`}
-                class="inline-flex shrink-0 items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-muted tabular-nums"
-              >
-                {props.cards.length} {props.cards.length === 1 ? 'card' : 'cards'}
-              </span>
-            </div>
-          }
-        >
           <Show
             when={!isRenaming() || !canManageGroup()}
             fallback={
-              <div class="flex min-w-full flex-1 flex-wrap items-center gap-1 sm:min-w-0">
+              <div class="col-span-2 flex min-w-0 items-center gap-1">
                 <input
                   type="text"
                   aria-label="Card Group title"
@@ -299,150 +267,162 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   maxlength={MAX_GROUP_TITLE_LENGTH}
                   onInput={(event) => setRenameDraft(event.currentTarget.value)}
                   onKeyDown={handleRenameKeyDown}
-                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text focus:border-focus focus:outline-none sm:min-h-8"
+                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text focus:border-focus focus:outline-none sm:min-h-7"
                 />
                 <button
                   type="button"
                   aria-label="Save Card Group title"
                   disabled={isSaving() || renameDraft().trim().length === 0}
                   onClick={() => void saveRename()}
-                  class="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7"
                 >
-                  <CheckIcon />
+                  <LucideIcon icon={Check} />
                 </button>
                 <button
                   type="button"
                   aria-label="Cancel Card Group rename"
                   onClick={cancelRename}
-                  class="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
+                  class={actionButtonClass}
                 >
-                  <CloseIcon />
+                  <LucideIcon icon={X} />
                 </button>
               </div>
             }
           >
-            <div class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-center gap-2">
+            <Show
+              when={!isRedacted()}
+              fallback={
+                <span class="truncate py-3 text-xs leading-5 font-medium text-text-muted italic sm:py-1">
+                  Hidden until Reveal All
+                </span>
+              }
+            >
               <Show
                 when={canManageGroup()}
                 fallback={
-                  <span class="min-w-0 wrap-anywhere text-sm font-semibold text-text">
-                    {props.group.title || 'Card Group'}
-                  </span>
+                  <div class="min-w-0 py-3 sm:py-1" title={groupTitle()}>
+                    <span class={titleTextClass}>{groupTitle()}</span>
+                  </div>
                 }
               >
                 <button
                   type="button"
-                  aria-label={`${props.group.title || 'Card Group'} — Edit Card Group title`}
-                  title="Edit Card Group title"
+                  aria-label={`${groupTitle()} — Edit Card Group title`}
+                  title={groupTitle()}
                   onClick={startRename}
-                  class="min-h-11 min-w-11 cursor-pointer wrap-anywhere px-1 rounded-sm text-left text-sm font-semibold text-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-0"
+                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:py-1"
                 >
-                  {props.group.title || 'Card Group'}
+                  <span class={titleTextClass}>{groupTitle()}</span>
                 </button>
               </Show>
-              <span
-                aria-label={`${props.cards.length} cards`}
-                class="inline-flex shrink-0 items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-muted tabular-nums"
-              >
-                {props.cards.length} {props.cards.length === 1 ? 'card' : 'cards'}
-              </span>
-            </div>
+            </Show>
+            <span
+              aria-label={`${props.cards.length} cards`}
+              class="mt-3.5 rounded-full border border-border/75 bg-surface px-2 py-px text-[11px] leading-4 font-medium whitespace-nowrap text-text-muted tabular-nums sm:mt-1.5"
+            >
+              {props.cards.length} {props.cards.length === 1 ? 'card' : 'cards'}
+            </span>
           </Show>
+        </div>
 
-          <VoteControls
-            target={props.group}
-            targetType="group"
-            voting={props.voting}
-            isLocked={props.isLocked}
-          />
+        <Show when={!isRedacted()}>
+          <div class="flex flex-wrap items-center justify-between gap-1">
+            <VoteControls
+              target={props.group}
+              targetType="group"
+              voting={props.voting}
+              isLocked={props.isLocked}
+            />
 
-          <Show when={canManageGroup()}>
-            <div data-print-hide="true" class="flex max-w-full flex-wrap items-center gap-0.5">
-              <Show when={otherColumns().length > 0}>
-                <button
-                  ref={moveTrigger}
-                  type="button"
-                  aria-label="Move Card Group to..."
-                  aria-haspopup="menu"
-                  aria-expanded={moveMenuOpen() ? 'true' : 'false'}
-                  title="Move Card Group to..."
-                  disabled={isMoving()}
-                  onClick={() => setMoveMenuOpen((prev) => !prev)}
-                  class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
-                >
-                  <ArrowRightLeftIcon />
-                </button>
-              </Show>
-
-              <button
-                type="button"
-                aria-label="Rename Card Group"
-                title="Rename Card Group"
-                onClick={startRename}
-                class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
-              >
-                <PencilIcon />
-              </button>
-
-              <button
-                type="button"
-                aria-label="Dissolve Card Group"
-                title="Dissolve Card Group"
-                disabled={isDissolving()}
-                onClick={() => void handleDissolve()}
-                class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-rose-700 active:bg-surface disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8 dark:hover:text-rose-300"
-              >
-                <TrashIcon />
-              </button>
-            </div>
-
-            <Show when={moveMenuOpen()}>
-              <div class="basis-full" data-print-hide="true">
-                <div
-                  role="menu"
-                  aria-label="Move Card Group to Column"
-                  data-board-overlay="true"
-                  class="ml-auto max-h-[50dvh] w-56 max-w-full overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-md"
-                >
-                  <For each={otherColumns()}>
-                    {(targetColumn) => (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => void handleSelectMoveTarget(targetColumn.id)}
-                        class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus sm:min-h-8"
-                      >
-                        <span
-                          aria-hidden="true"
-                          class={[
-                            'h-2 w-2 shrink-0 rounded-full',
-                            COLUMN_ACCENT_STYLES[targetColumn.accent].swatch,
-                          ]}
+            <Show when={canManageGroup()}>
+              <div data-print-hide="true" class="ml-auto flex items-center gap-0.5">
+                <Show when={otherColumns().length > 0}>
+                  <Menu open={moveMenuOpen()} onOpenChange={setMoveMenuOpen} modal={false}>
+                    <MenuTrigger
+                      ref={moveTrigger}
+                      aria-label="Move Card Group to..."
+                      title="Move Card Group to..."
+                      disabled={isMoving()}
+                      class={[actionButtonClass, 'data-open:bg-surface data-open:text-text']}
+                    >
+                      <LucideIcon icon={ArrowRightLeft} />
+                    </MenuTrigger>
+                    <MenuContent
+                      side="bottom"
+                      align="end"
+                      sideOffset={6}
+                      collisionPadding={12}
+                      render={(contentProps) => (
+                        <div
+                          {...contentProps}
+                          aria-labelledby={undefined}
+                          aria-label="Move Card Group to Column"
+                          data-board-overlay={moveMenuOpen() ? 'true' : undefined}
                         />
-                        <span class="min-w-0 wrap-anywhere">{targetColumn.title}</span>
-                      </button>
-                    )}
-                  </For>
-                </div>
+                      )}
+                      class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                    >
+                      <For each={otherColumns()}>
+                        {(targetColumn) => (
+                          <MenuItem
+                            value={targetColumn.id}
+                            onSelect={() => { void handleSelectMoveTarget(targetColumn.id); }}
+                            class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus sm:min-h-8"
+                          >
+                            <span
+                              aria-hidden="true"
+                              class={[
+                                'h-2 w-2 shrink-0 rounded-full',
+                                COLUMN_ACCENT_STYLES[targetColumn.accent].swatch,
+                              ]}
+                            />
+                            <span class="min-w-0 wrap-anywhere">{targetColumn.title}</span>
+                          </MenuItem>
+                        )}
+                      </For>
+                    </MenuContent>
+                  </Menu>
+                </Show>
+
+                <button
+                  type="button"
+                  aria-label="Rename Card Group"
+                  title="Rename Card Group"
+                  onClick={startRename}
+                  class={actionButtonClass}
+                >
+                  <LucideIcon icon={Pencil} />
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="Dissolve Card Group"
+                  title="Dissolve Card Group"
+                  disabled={isDissolving()}
+                  onClick={() => void handleDissolve()}
+                  class={[actionButtonClass, 'hover:text-rose-700 dark:hover:text-rose-300']}
+                >
+                  <LucideIcon icon={Ungroup} />
+                </button>
               </div>
             </Show>
+          </div>
+        </Show>
 
-            <Show when={moveFailed()}>
-              <p role="alert" data-print-hide="true" class="basis-full text-xs text-rose-700 dark:text-rose-300">
-                Could not move the Card Group. Try again.
-              </p>
-            </Show>
-            <Show when={isSaving() || isMoving() || isDissolving()}>
-              <p role="status" class="basis-full text-xs text-text-muted">
-                {isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : 'Dissolving Card Group…'}
-              </p>
-            </Show>
+        <Show when={canManageGroup()}>
+          <Show when={moveFailed()}>
+            <p role="alert" data-print-hide="true" class="text-xs text-rose-700 dark:text-rose-300">
+              Could not move the Card Group. Try again.
+            </p>
           </Show>
+          <p role="status" class="sr-only">
+            {isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
+          </p>
         </Show>
       </div>
 
       <Show when={expanded()}>
-        <div class="flex flex-col gap-2 p-2">
+        <div class="mt-1.5 flex flex-col gap-1.5">
           <For each={props.cards}>
             {(card, cardIndex) => (
               <CardItem
