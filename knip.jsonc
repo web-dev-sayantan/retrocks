@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/router.ts", "src/server-config.ts"],
+  "ignoreDependencies": ["server-only"],
+  "ignoreExportsUsedInFile": true,
+}

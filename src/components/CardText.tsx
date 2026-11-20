@@ -38,7 +38,7 @@ export default function CardText(props: CardTextProps) {
                 class={[
                   'break-all text-text underline decoration-text-muted/60 underline-offset-2',
                   'transition-colors hover:decoration-text',
-                  'focus-visible:rounded-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'focus-visible:rounded-xs board-focus-ring',
                 ]}
               >
                 {token.type === 'link' ? token.label : ''}

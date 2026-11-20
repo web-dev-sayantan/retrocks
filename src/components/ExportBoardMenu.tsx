@@ -1,4 +1,5 @@
 import { MenuItem, MenuSeparator } from '@ui-sdk/solid/menu';
+import { toast } from '@ui-sdk/solid/toast';
 import { For, Show, createMemo } from 'solid-js';
 
 import {
@@ -8,15 +9,9 @@ import {
 } from '../lib/board-export';
 import type { BoardViewDTO } from '../lib/board-types';
 
-export interface ExportFeedback {
-  message: string;
-  error?: boolean;
-}
-
 export interface ExportBoardMenuProps {
   board: BoardViewDTO;
   onClose: () => void;
-  onFeedback: (feedback: ExportFeedback | null) => void;
 }
 
 const downloads = [
@@ -43,20 +38,24 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
     return '';
   });
 
-  function beginExport(feedback: ExportFeedback | null) {
+  function beginExport(toastId: string, working: string): (result: { message: string; error?: boolean }) => void {
     const attempt = ++latestAttempt;
     const boardId = props.board.id;
     props.onClose();
-    props.onFeedback(feedback);
-    return (result: ExportFeedback) => {
-      if (attempt === latestAttempt && props.board.id === boardId) {
-        props.onFeedback(result);
+    toast.loading(working, { id: toastId });
+    return (result) => {
+      // Only the newest attempt reports; a stale response stays silent.
+      if (attempt !== latestAttempt || props.board.id !== boardId) return;
+      if (result.error) {
+        toast.update(toastId, { type: 'error', title: result.message });
+      } else {
+        toast.update(toastId, { type: 'success', title: result.message });
       }
     };
   }
 
   async function handleCopyMarkdown(): Promise<void> {
-    const report = beginExport({ message: 'Copying Markdown…' });
+    const report = beginExport(`export-md-${props.board.id}`, 'Copying Markdown…');
     try {
       await navigator.clipboard.writeText(formatBoardMarkdown(props.board));
       report({ message: 'Markdown copied.' });
@@ -69,7 +68,7 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     const { href, download } = event.currentTarget;
-    const report = beginExport({ message: `Preparing ${label} download…` });
+    const report = beginExport(`export-${label.toLowerCase()}-${props.board.id}`, `Preparing ${label} download…`);
 
     try {
       const response = await fetch(href);
@@ -93,11 +92,11 @@ export default function ExportBoardMenu(props: ExportBoardMenuProps) {
   }
 
   function handlePrint(): void {
-    const report = beginExport(null);
+    props.onClose();
     try {
       window.print();
     } catch {
-      report({ message: 'Could not open print. Try again.', error: true });
+      toast.error('Could not open print. Try again.');
     }
   }
 

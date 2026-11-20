@@ -1,3 +1,5 @@
+import { createColorScheme, createLocalStorage, createPreference } from '@ui-sdk/core';
+
 import { SECRET_THEMES } from './easter-eggs';
 
 export type Theme = 'light' | 'dark';
@@ -9,15 +11,29 @@ export const THEME_STORAGE_KEY = 'retrocks-theme';
 const BURST_LENGTH = 7;
 const BURST_WINDOW_MS = 3_000;
 const UNLOCK_NOTICE_MS = 2_800;
-const DARK_SCHEME_QUERY = '(prefers-color-scheme: dark)';
 
 type ThemeSubscriber = (theme: ActiveTheme, announcement: string | null) => void;
+
+// The standard light/dark choice: storage-backed through the ui-sdk color
+// scheme preference, whose 'system' default follows the browser until the
+// first explicit toggle persists a choice.
+const colorScheme = createColorScheme({
+  storage: createLocalStorage(THEME_STORAGE_KEY),
+});
+
+// The active secret-theme override. Never persisted — reloading drops it, so
+// the storage key only ever holds a standard scheme. `attribute` is required
+// by createPreference; without a Preferences host it writes nothing, and
+// applyTheme stays the sole owner of <html data-theme>.
+const secretTheme = createPreference({
+  values: ['none', ...SECRET_THEMES.map((secret) => secret.id)],
+  defaultValue: 'none',
+  attribute: 'data-theme',
+});
 
 const subscribers = new Set<ThemeSubscriber>();
 let recentClicks: number[] = [];
 let nextSecretThemeIndex = 0;
-let standardTheme: Theme = 'light';
-let mediaQuery: MediaQueryList | undefined;
 let announcement = '';
 let announcementTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -32,23 +48,12 @@ export function getSecretTheme(theme: string | undefined): SecretTheme | undefin
  */
 export const THEME_INIT_SCRIPT = `(function(){var s=null;try{s=localStorage.getItem('${THEME_STORAGE_KEY}');}catch(e){}var t=(s==='dark'||s==='light')?s:(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var r=document.documentElement;r.dataset.theme=t;r.style.colorScheme=t;})();`;
 
-export function resolveTheme(
-  stored: string | null | undefined,
-  prefersDark: boolean,
-): Theme {
-  if (stored === 'dark' || stored === 'light') {
-    return stored;
-  }
-  return prefersDark ? 'dark' : 'light';
+function resolvedStandardTheme(): Theme {
+  return colorScheme.get().resolved === 'dark' ? 'dark' : 'light';
 }
 
-export function readStoredTheme(): Theme | null {
-  try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === 'dark' || stored === 'light' ? stored : null;
-  } catch {
-    return null;
-  }
+function activeSecretTheme(): SecretTheme | undefined {
+  return getSecretTheme(secretTheme.get().value);
 }
 
 function readDocumentTheme(): ActiveTheme {
@@ -56,34 +61,26 @@ function readDocumentTheme(): ActiveTheme {
   if (current === 'dark' || current === 'light') {
     return current;
   }
-  return getSecretTheme(current)?.id ??
-    resolveTheme(readStoredTheme(), mediaQuery?.matches ?? false);
+  return getSecretTheme(current)?.id ?? resolvedStandardTheme();
 }
 
-function applyStandardTheme(theme: Theme, persist: boolean): void {
-  standardTheme = theme;
-  if (persist) {
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, theme);
-    } catch {
-      // Storage unavailable (e.g., restricted private browsing)
-    }
-  }
-  applyTheme(theme, theme);
-}
-
-function applyTheme(theme: ActiveTheme, colorScheme: Theme): void {
+function applyTheme(): void {
+  const secret = activeSecretTheme();
+  const theme: ActiveTheme = secret ? secret.id : resolvedStandardTheme();
+  const scheme: Theme = secret ? secret.colorScheme : resolvedStandardTheme();
   const root = document.documentElement;
+  // Preference subscriptions also call this; apply once per state.
+  if (root.dataset.theme === theme && root.style.colorScheme === scheme) return;
   root.dataset.theme = theme;
-  root.style.colorScheme = colorScheme;
-  notifySubscribers(theme);
+  root.style.colorScheme = scheme;
+  notifySubscribers();
 }
 
-function notifySubscribers(theme: ActiveTheme): void {
+function notifySubscribers(): void {
   // The first mounted control hosts the single live region for all controls.
   const announcer = subscribers.values().next().value;
   for (const subscriber of subscribers) {
-    subscriber(theme, subscriber === announcer ? announcement : null);
+    subscriber(readDocumentTheme(), subscriber === announcer ? announcement : null);
   }
 }
 
@@ -93,16 +90,19 @@ function clearAnnouncement(): void {
   announcement = '';
 }
 
-function handleSystemChange(event: MediaQueryListEvent): void {
-  if (readStoredTheme() === null && !getSecretTheme(readDocumentTheme())) {
-    applyStandardTheme(event.matches ? 'dark' : 'light', false);
-  }
+function syncTheme(): void {
+  applyTheme();
 }
+
+let unsubscribeScheme: (() => void) | undefined;
+let unsubscribeSecret: (() => void) | undefined;
 
 export function subscribeTheme(subscriber: ThemeSubscriber): () => void {
   if (subscribers.size === 0) {
-    mediaQuery = window.matchMedia?.(DARK_SCHEME_QUERY);
-    mediaQuery?.addEventListener('change', handleSystemChange);
+    // The first subscription starts watching the stored choice, the browser's
+    // scheme, and the secret-theme override.
+    unsubscribeScheme = colorScheme.subscribe(syncTheme);
+    unsubscribeSecret = secretTheme.subscribe(syncTheme);
   }
   subscribers.add(subscriber);
   subscriber(readDocumentTheme(), subscribers.size === 1 ? announcement : null);
@@ -111,12 +111,14 @@ export function subscribeTheme(subscriber: ThemeSubscriber): () => void {
     const wasAnnouncer = subscribers.values().next().value === subscriber;
     subscribers.delete(subscriber);
     if (subscribers.size === 0) {
-      mediaQuery?.removeEventListener('change', handleSystemChange);
-      mediaQuery = undefined;
+      unsubscribeScheme?.();
+      unsubscribeSecret?.();
+      unsubscribeScheme = undefined;
+      unsubscribeSecret = undefined;
       recentClicks = [];
       clearAnnouncement();
     } else if (wasAnnouncer) {
-      notifySubscribers(readDocumentTheme());
+      notifySubscribers();
     }
   };
 }
@@ -128,19 +130,27 @@ export function toggleTheme(): void {
 
   if (recentClicks.length === BURST_LENGTH) {
     recentClicks.length = 0;
-    const secret = SECRET_THEMES[nextSecretThemeIndex]!;
+    // The index is kept in range by the modulo below; no assertion needed.
+    const secret = SECRET_THEMES[nextSecretThemeIndex];
     nextSecretThemeIndex = (nextSecretThemeIndex + 1) % SECRET_THEMES.length;
     announcement = `${secret.name} unlocked. Select the theme toggle again to exit.`;
     announcementTimer = setTimeout(() => {
       clearAnnouncement();
-      notifySubscribers(readDocumentTheme());
+      notifySubscribers();
     }, UNLOCK_NOTICE_MS);
-    applyTheme(secret.id, secret.colorScheme);
+    secretTheme.set(secret.id);
+    applyTheme();
     return;
   }
 
   clearAnnouncement();
+  // Leaving a secret theme flips the standard scheme that was active before
+  // it; the painted document is the source of truth for that direction.
   const active = readDocumentTheme();
-  const current = active === 'light' || active === 'dark' ? active : standardTheme;
-  applyStandardTheme(current === 'dark' ? 'light' : 'dark', true);
+  const current: Theme = active === 'light' || active === 'dark'
+    ? active
+    : resolvedStandardTheme();
+  secretTheme.set('none');
+  colorScheme.set(current === 'dark' ? 'light' : 'dark');
+  applyTheme();
 }

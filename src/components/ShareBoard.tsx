@@ -1,33 +1,40 @@
+import {
+  Dialog,
+  DialogBackdrop,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from '@ui-sdk/solid/dialog';
+import { toast } from '@ui-sdk/solid/toast';
 import { Share2 } from 'lucide';
 import { Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 import { encode } from 'uqr';
 
+import { confirmBoardAction } from '../lib/board-confirm';
 import { getFacilitatorLink, rotateFacilitatorLink } from '../lib/sharing-actions';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import LucideIcon from './LucideIcon';
 
 const buttonClass = [
   'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium',
-  'transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-disabled:cursor-wait aria-disabled:opacity-60',
+  'transition-colors board-focus-ring aria-disabled:cursor-wait aria-disabled:opacity-60',
 ];
 const secondaryButtonClass = [buttonClass, 'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle'];
 
 function CopyLink(props: { label: string; labelId: string; link: string; primary?: boolean }) {
-  const [status, setStatus] = createSignal('');
   let input!: HTMLInputElement;
 
   async function copyLink(button: HTMLButtonElement) {
     button.focus();
-    setStatus('');
     try {
       await navigator.clipboard.writeText(props.link);
-      setStatus(`${props.label} copied.`);
+      toast.success(`${props.label} copied.`);
     } catch {
-      if (document.activeElement === button && input.closest('dialog')?.open) {
+      if (document.activeElement === button && input.isConnected) {
         input.focus();
-        setStatus('Copy the selected link manually.');
+        toast.info('Copy the selected link manually.');
       } else {
-        setStatus('Select the link to copy it manually.');
+        toast.info('Select the link to copy it manually.');
       }
     }
   }
@@ -58,9 +65,6 @@ function CopyLink(props: { label: string; labelId: string; link: string; primary
           Copy
         </button>
       </div>
-      <p role="status" class={status() ? 'mt-2 text-sm text-text-muted' : 'sr-only'}>
-        {status()}
-      </p>
     </div>
   );
 }
@@ -101,26 +105,28 @@ function FacilitatorSharing(props: { boardId: string }) {
   const titleId = createUniqueId();
   const [link, setLink] = createSignal('');
   const [pending, setPending] = createSignal<'show' | 'rotate' | null>(null);
-  const [status, setStatus] = createSignal('');
   const [error, setError] = createSignal('');
   let heading!: HTMLHeadingElement;
 
   async function requestLink(rotate: boolean, button: HTMLButtonElement) {
     if (pending()) return;
-    if (
-      rotate &&
-      !window.confirm('Rotate the Co-Facilitator Link? Previously shared links will stop working.')
-    ) {
-      return;
+    if (rotate) {
+      const confirmed = await confirmBoardAction({
+        title: 'Rotate the Co-Facilitator Link?',
+        description: 'Previously shared links will stop working.',
+        confirmLabel: 'Rotate Link',
+      });
+      if (!confirmed) return;
     }
 
     const failure = rotate
       ? 'Could not rotate the link. Try again.'
       : 'Could not retrieve the link. Try again.';
+    const toastId = `facilitator-link-${props.boardId}`;
     setPending(rotate ? 'rotate' : 'show');
-    setStatus('');
     setError('');
     if (rotate) setLink('');
+    toast.loading(rotate ? 'Rotating link…' : 'Retrieving link…', { id: toastId });
 
     try {
       const fetchLink = rotate ? rotateFacilitatorLink : getFacilitatorLink;
@@ -129,12 +135,17 @@ function FacilitatorSharing(props: { boardId: string }) {
         const nextLink = new URL(result.link, window.location.origin).href;
         if (!rotate && document.activeElement === button) heading.focus();
         setLink(nextLink);
-        setStatus(rotate ? 'Co-Facilitator Link rotated.' : 'Co-Facilitator Link ready to copy.');
+        toast.update(toastId, {
+          type: 'success',
+          title: rotate ? 'Co-Facilitator Link rotated.' : 'Co-Facilitator Link ready to copy.',
+        });
       } else {
         setError(result.message);
+        toast.dismiss(toastId);
       }
     } catch {
       setError(failure);
+      toast.update(toastId, { type: 'error', title: failure });
     } finally {
       setPending(null);
     }
@@ -143,7 +154,7 @@ function FacilitatorSharing(props: { boardId: string }) {
   return (
     <section class="space-y-3 border-t border-border pt-4" aria-labelledby={titleId}>
       <div class="space-y-1">
-        <h3 ref={heading} id={titleId} tabindex={-1} class="text-base font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">
+        <h3 ref={heading} id={titleId} tabindex={-1} class="text-base font-semibold board-focus-ring">
           Co-Facilitator Link
         </h3>
         <p class="text-sm text-text-muted">
@@ -173,9 +184,6 @@ function FacilitatorSharing(props: { boardId: string }) {
           Rotate Link
         </button>
       </div>
-      <p role="status" class={pending() || status() ? 'text-sm text-text-muted' : 'sr-only'}>
-        {pending() === 'rotate' ? 'Rotating link…' : pending() ? 'Retrieving link…' : status()}
-      </p>
       <p role="alert" class={error() ? 'rounded-lg border border-col-rose bg-col-rose-tint p-3 text-sm text-text' : 'sr-only'}>
         {error()}
       </p>
@@ -188,93 +196,52 @@ export default function ShareBoard(props: {
   isFacilitator: boolean;
   emphasis?: 'primary' | 'secondary';
 }) {
-  let dialog!: HTMLDialogElement;
-  let trigger!: HTMLButtonElement;
-  let closeButton!: HTMLButtonElement;
-  const titleId = createUniqueId();
+  const [open, setOpen] = createSignal(false);
   const participantTitleId = createUniqueId();
-  const [participantLink, setParticipantLink] = createSignal('');
+  const participantLink = () => new URL(`/b/${props.boardId}`, window.location.origin).href;
   const emphasis = () => props.emphasis ?? 'primary';
 
-  function openDialog() {
-    const link = new URL(`/b/${props.boardId}`, window.location.origin).href;
-    setParticipantLink(link);
-    trigger.focus();
-    dialog.showModal();
-    closeButton.focus();
-  }
-
-  function clearDialog() {
-    if (dialog.open) return;
-    setParticipantLink('');
-    if (trigger.isConnected && (document.activeElement === document.body || dialog.contains(document.activeElement))) {
-      trigger.focus();
-    }
-  }
-
-  function wrapTabFocus(event: KeyboardEvent) {
-    if (event.key !== 'Tab' || event.defaultPrevented) return;
-    const controls = dialog.querySelectorAll<HTMLElement>('button, input');
-    const first = controls[0];
-    const last = controls[controls.length - 1];
-    const active = document.activeElement;
-    if (event.shiftKey ? active === first : active === last) {
-      event.preventDefault();
-      (event.shiftKey ? last : first).focus();
-    }
-  }
-
   return (
-    <>
-      <button
-        ref={trigger}
-        type="button"
+    <Dialog open={open()} onOpenChange={setOpen}>
+      <DialogTrigger
         data-cta-emphasis={emphasis()}
         class={[
-          'spring-press inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium max-[30rem]:px-2 sm:h-9 sm:min-h-9',
-          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+          'spring-press inline-flex board-touch-target min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium max-[30rem]:px-2 sm:h-9',
+          'board-focus-ring',
           emphasis() === 'primary'
             ? 'border-transparent bg-accent text-accent-contrast shadow-xs hover:opacity-92 active:opacity-85'
             : 'border-border/80 bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle',
         ]}
-        onClick={openDialog}
-        aria-haspopup="dialog"
       >
         <LucideIcon icon={Share2} class="size-3.5 shrink-0" strokeWidth={1.9} />
         <span class="max-[30rem]:sr-only">Share</span>
-      </button>
-      <dialog
-        ref={dialog}
-        aria-labelledby={titleId}
-        onClose={clearDialog}
-        onKeyDown={wrapTabFocus}
-        class="board-dialog-surface rounded-2xl border border-border bg-surface text-text shadow-2xl"
+      </DialogTrigger>
+      <DialogBackdrop data-print-hide="true" class="board-dialog-backdrop z-40" />
+      <DialogContent
+        data-board-overlay="true"
+        data-print-hide="true"
+        class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
       >
         <BoardOverlayHeader
-          closeRef={(button) => { closeButton = button; }}
           closeLabel="Close Share"
-          onClose={() => dialog.close()}
+          onClose={() => setOpen(false)}
         >
-          <h2 id={titleId}>Share Board</h2>
+          <DialogTitle class="truncate">Share Board</DialogTitle>
         </BoardOverlayHeader>
-        <Show when={participantLink()}>
-          {(link) => (
-            <div class="space-y-4 p-5">
-              <section aria-labelledby={participantTitleId} class="space-y-3">
-                <div class="space-y-1">
-                  <h3 id={participantTitleId} class="text-base font-semibold">Participant Link</h3>
-                  <p class="text-sm text-text-muted">Anyone with this link can join the Board as a Participant.</p>
-                </div>
-                <CopyLink label="Participant Link" labelId={participantTitleId} link={link()} primary />
-                <ParticipantQrCode link={link()} />
-              </section>
-              <Show when={props.isFacilitator}>
-                <FacilitatorSharing boardId={props.boardId} />
-              </Show>
+        <div class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-5">
+          <section aria-labelledby={participantTitleId} class="space-y-3">
+            <div class="space-y-1">
+              <h3 id={participantTitleId} class="text-base font-semibold">Participant Link</h3>
+              <p class="text-sm text-text-muted">Anyone with this link can join the Board as a Participant.</p>
             </div>
-          )}
-        </Show>
-      </dialog>
-    </>
+            <CopyLink label="Participant Link" labelId={participantTitleId} link={participantLink()} primary />
+            <ParticipantQrCode link={participantLink()} />
+          </section>
+          <Show when={props.isFacilitator}>
+            <FacilitatorSharing boardId={props.boardId} />
+          </Show>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

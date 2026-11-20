@@ -5,6 +5,7 @@ import { Show, createMemo } from 'solid-js';
 import BoardWorkspace from '../../components/BoardWorkspace';
 import FacilitatorLinkClaim from '../../components/FacilitatorLinkClaim';
 import { getBoard } from '../../lib/board-actions';
+import { parseBoardView } from '../../lib/wire-schemas';
 import { paths } from '../../router';
 
 export const route = {
@@ -17,14 +18,22 @@ export const route = {
 
 export default function BoardRoute() {
   const params = useParams();
-  const board = createMemo(() => getBoard(params.id ?? ''));
+  const fetchedBoard = createMemo(() => getBoard(params.id ?? ''));
+  // Wire validation: a malformed payload throws into the app's <Errored> path
+  // instead of rendering a Board with blank fields.
+  const board = createMemo(() => {
+    const fetched = fetchedBoard();
+    return fetched === null ? null : parseBoardView(fetched);
+  });
+  const title = createMemo(() => {
+    const loaded = board();
+    return loaded ? `${loaded.title} — Retrocks` : 'Board Not Found — Retrocks';
+  });
 
   return (
     <>
       <Meta name="robots" content="noindex, nofollow" />
-      <Title>
-        {board() ? `${board()!.title} — Retrocks` : 'Board Not Found — Retrocks'}
-      </Title>
+      <Title>{title()}</Title>
       <FacilitatorLinkClaim boardId={params.id ?? ''} />
       <Show
         when={board()}

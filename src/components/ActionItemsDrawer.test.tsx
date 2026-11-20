@@ -90,6 +90,8 @@ const regularCard = makeCard({
 });
 
 async function flushPromises(): Promise<void> {
+  // Inline-edit saves settle through a shared commit wrapper, adding one microtask hop.
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
   flush();
@@ -100,10 +102,13 @@ afterEach(cleanup);
 describe('<ActionItemsDrawer />', () => {
   it('moves focus between Action Items filters with the arrow keys', async () => {
     const { artifact } = await captureArtifact(() => {
+      const board = makeBoard([openItem, doneItem]);
       const view = render(() => (
         <ActionItemsDrawer
+          side="right"
           open={true}
-          board={makeBoard([openItem, doneItem])}
+          board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={() => {}}
           onUpdateActionItem={() => Promise.resolve(true)}
@@ -111,34 +116,38 @@ describe('<ActionItemsDrawer />', () => {
       ));
       flush();
 
-      const filters = within(view.getByRole('group', { name: 'Filter Action Items' }));
-      const all = filters.getByRole('button', { name: 'All (2)' });
-      const open = filters.getByRole('button', { name: 'Open (1)' });
-      const done = filters.getByRole('button', { name: 'Done (1)' });
+      const filters = within(view.getByRole('radiogroup', { name: 'Filter Action Items' }));
+      const all = filters.getByRole('radio', { name: 'All (2)' });
+      const open = filters.getByRole('radio', { name: 'Open (1)' });
+      const done = filters.getByRole('radio', { name: 'Done (1)' });
       all.focus();
+      // Arrows move and check, as in any radio group.
       fireEvent.keyDown(all, { key: 'ArrowRight' });
       flush();
       expect(open).toHaveFocus();
+      expect(open).toHaveAttribute('aria-checked', 'true');
+      expect(view.queryByText('Write runbook')).not.toBeInTheDocument();
       fireEvent.keyDown(open, { key: 'ArrowRight' });
       flush();
       expect(done).toHaveFocus();
       fireEvent.keyDown(done, { key: 'ArrowLeft' });
       flush();
       expect(open).toHaveFocus();
-      fireEvent.click(open);
-      flush();
-      expect(open).toHaveAttribute('aria-pressed', 'true');
-      expect(view.queryByText('Write runbook')).not.toBeInTheDocument();
+      expect(view.getByText('Ship the API')).toBeInTheDocument();
+      expect(open).toHaveAttribute('aria-checked', 'true');
     });
     expectNoDiagnostics(artifact);
   });
 
   it('lists only Action Items with All/Open/Done filters and inline completion and owner edits', async () => {
     const onUpdateActionItem = vi.fn(async () => true);
+    const board = makeBoard([openItem, doneItem, regularCard]);
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
-        board={makeBoard([openItem, doneItem, regularCard])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={onUpdateActionItem}
@@ -152,8 +161,8 @@ describe('<ActionItemsDrawer />', () => {
     expect(drawer.getByText('Ship the API')).toBeInTheDocument();
     expect(drawer.getByText('Write runbook')).toBeInTheDocument();
     expect(drawer.queryByText('Regular card')).not.toBeInTheDocument();
-    expect(drawer.getByRole('button', { name: 'All (2)' })).toHaveAttribute(
-      'aria-pressed',
+    expect(drawer.getByRole('radio', { name: 'All (2)' })).toHaveAttribute(
+      'aria-checked',
       'true',
     );
 
@@ -173,12 +182,12 @@ describe('<ActionItemsDrawer />', () => {
       actionDone: true,
     });
 
-    fireEvent.click(drawer.getByRole('button', { name: 'Open (1)' }));
+    fireEvent.click(drawer.getByRole('radio', { name: 'Open (1)' }));
     flush();
     expect(drawer.getByText('Ship the API')).toBeInTheDocument();
     expect(drawer.queryByText('Write runbook')).not.toBeInTheDocument();
 
-    fireEvent.click(drawer.getByRole('button', { name: 'Done (1)' }));
+    fireEvent.click(drawer.getByRole('radio', { name: 'Done (1)' }));
     flush();
     expect(drawer.queryByText('Ship the API')).not.toBeInTheDocument();
     expect(drawer.getByText('Write runbook')).toBeInTheDocument();
@@ -192,10 +201,13 @@ describe('<ActionItemsDrawer />', () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('Disconnected'))
       .mockResolvedValueOnce(true);
+    const board = makeBoard([openItem]);
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
-        board={makeBoard([openItem])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={onUpdate}
@@ -242,14 +254,19 @@ describe('<ActionItemsDrawer />', () => {
     const view = render(() => {
       const [board, setBoard] = createStore(makeBoard([{ ...openItem }]));
       const applyUpdate: ActionItemsDrawerProps['onUpdateActionItem'] = async (id, patch) => {
+        const previous = { ...board.cards[0] };
+        // The session owns the optimistic write; the harness mirrors it here.
+        setBoard((draft) => { Object.assign(draft.cards[0], patch); });
         const ok = await update(id, patch);
-        if (ok) setBoard((draft) => { Object.assign(draft.cards[0], patch); });
+        if (!ok) setBoard((draft) => { Object.assign(draft.cards[0], previous); });
         return ok;
       };
       return (
         <ActionItemsDrawer
+          side="right"
           open={true}
           board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={() => {}}
           onUpdateActionItem={applyUpdate}
@@ -291,16 +308,19 @@ describe('<ActionItemsDrawer />', () => {
     });
     const onClose = vi.fn();
     try {
+      const board = makeBoard([openItem, doneItem]);
       const { getByRole, getByText } = render(() => (
         <ActionItemsDrawer
+          side="right"
           open={true}
-          board={makeBoard([openItem, doneItem])}
+          board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={onClose}
           onUpdateActionItem={vi.fn(async () => true)}
         />
       ));
-      flush();
+      await flushPromises();
 
       expect(document.activeElement).toBe(
         getByRole('button', { name: 'Close Action Items' }),
@@ -314,7 +334,7 @@ describe('<ActionItemsDrawer />', () => {
       );
       expect(getByText('Copied 2 Action Items')).toBeInTheDocument();
 
-      fireEvent.click(getByRole('button', { name: 'Open (1)' }));
+      fireEvent.click(getByRole('radio', { name: 'Open (1)' }));
       flush();
       fireEvent.click(
         getByRole('button', { name: 'Copy as Markdown Checklist' }),
@@ -322,10 +342,8 @@ describe('<ActionItemsDrawer />', () => {
       await flushPromises();
       expect(writeText).toHaveBeenLastCalledWith('- [ ] Ship the API');
 
-      fireEvent(
-        getByRole('dialog', { name: 'Action Items' }),
-        new Event('cancel', { cancelable: true }),
-      );
+      fireEvent.keyDown(getByRole('button', { name: 'Close Action Items' }), { key: 'Escape' });
+      flush();
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
@@ -333,10 +351,13 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('shows an empty state and disables copying when no Action Items exist', () => {
+    const board = makeBoard([regularCard]);
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
-        board={makeBoard([regularCard])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={vi.fn(async () => true)}
@@ -352,10 +373,13 @@ describe('<ActionItemsDrawer />', () => {
 
   it('disables Action Item edits for Participants when Locked, but allows Facilitators to update done and owner', async () => {
     const participantUpdate = vi.fn(async () => true);
+    const participantBoard = { ...makeBoard([openItem]), isLocked: true, isFacilitator: false };
     const participantView = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
-        board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: false }}
+        board={participantBoard}
+        cards={participantBoard.cards}
         isLocked={true}
         onClose={() => {}}
         onUpdateActionItem={participantUpdate}
@@ -372,10 +396,13 @@ describe('<ActionItemsDrawer />', () => {
     cleanup();
 
     const facilitatorUpdate = vi.fn(async () => true);
+    const facilitatorBoard = { ...makeBoard([openItem]), isLocked: true, isFacilitator: true };
     const facilitatorView = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
-        board={{ ...makeBoard([openItem]), isLocked: true, isFacilitator: true }}
+        board={facilitatorBoard}
+        cards={facilitatorBoard.cards}
         isLocked={true}
         onClose={() => {}}
         onUpdateActionItem={facilitatorUpdate}
@@ -401,32 +428,76 @@ describe('<ActionItemsDrawer />', () => {
     });
   });
 
-  it('wraps Tab and Shift+Tab within Action Items', () => {
+  it('wraps Tab and Shift+Tab within Action Items', async () => {
+    const board = makeBoard([openItem]);
     const view = render(() => (
       <ActionItemsDrawer
+        side="right"
         open={true}
-        board={makeBoard([openItem])}
+        board={board}
+        cards={board.cards}
         isLocked={false}
         onClose={() => {}}
         onUpdateActionItem={vi.fn(async () => true)}
       />
     ));
-    flush();
+    await flushPromises();
 
     const close = view.getByRole('button', { name: 'Close Action Items' });
     const copy = view.getByRole('button', { name: 'Copy as Markdown Checklist' });
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+    await flushPromises();
     expect(copy).toHaveFocus();
     fireEvent.keyDown(copy, { key: 'Tab' });
+    await flushPromises();
     expect(close).toHaveFocus();
+  });
+
+  it('lets Escape close the drawer while the owner text is unchanged, and cancels only the edit once it changed', async () => {
+    const board = makeBoard([openItem, doneItem]);
+    const onClose = vi.fn();
+    const onUpdateActionItem = vi.fn(async () => true);
+    const view = render(() => (
+      <ActionItemsDrawer
+        side="right"
+        open={true}
+        board={board}
+        cards={board.cards}
+        isLocked={false}
+        onClose={onClose}
+        onUpdateActionItem={onUpdateActionItem}
+      />
+    ));
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: 'Action Items' }));
+
+    // Unchanged: Escape belongs to the drawer and closes it.
+    const owner = drawer.getByLabelText('Owner for Ship the API');
+    owner.focus();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onUpdateActionItem).not.toHaveBeenCalled();
+
+    // Changed: Escape cancels the edit only, restoring the committed owner.
+    fireEvent.input(owner, { target: { value: 'Platform' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(owner).toHaveValue('');
+    expect(onUpdateActionItem).not.toHaveBeenCalled();
   });
 
   it('renders with zero Solid 2.0 reactivity diagnostics', async () => {
     const { artifact } = await captureArtifact(() => {
+      const board = makeBoard([openItem, doneItem]);
       render(() => (
         <ActionItemsDrawer
+          side="right"
           open={true}
-          board={makeBoard([openItem, doneItem])}
+          board={board}
+          cards={board.cards}
           isLocked={false}
           onClose={() => {}}
           onUpdateActionItem={vi.fn(async () => true)}

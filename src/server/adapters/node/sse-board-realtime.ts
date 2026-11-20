@@ -108,7 +108,13 @@ export function createNodeBoardRealtime(getStore: () => Promise<BoardStore>): Bo
           try {
             const snapshot = await store.getBoardSnapshot(boardId);
             if (!subscribers.has(connectionId)) return;
-            const pending = subscriber.pending!;
+            // The subscription guarantees a non-null queue until this first
+            // flush; a null here is an impossible-state invariant violation,
+            // not a replay to silently skip.
+            const pending = subscriber.pending;
+            if (pending === null) {
+              throw new Error('SSE replay reached after the pending queue was flushed');
+            }
             subscriber.pending = null;
             if (!snapshot) {
               send(subscriber, { type: 'board:deleted', version: 0 });

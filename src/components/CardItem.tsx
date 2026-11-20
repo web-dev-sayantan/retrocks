@@ -1,5 +1,6 @@
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
-import { Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
+import { Menu, MenuItem, MenuSub, MenuSubTrigger, MenuTrigger } from '@ui-sdk/solid/menu';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { ChevronRight, Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
@@ -8,16 +9,24 @@ import {
   type CardGroupDTO,
   type CardViewDTO,
   type ColumnDTO,
-  type ReactionEmoji,
 } from '../lib/board-types';
 import {
   REDACTED_CARD_WHISPERS,
   REDACTED_WHISPER_DURATION_MS,
 } from '../lib/easter-eggs';
 import { createDoubleTap } from '../lib/double-tap';
-import { getEnabledMenuItems } from '../lib/menu-keyboard';
+import {
+  canEditActionItemFollowUp,
+  canInteractWithCard,
+  canManageCard,
+} from '../lib/board-permissions';
+import { confirmBoardAction } from '../lib/board-confirm';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import { formatRelativeTime } from '../lib/recent-boards';
+import type { BoardMutations } from '../lib/board-controller';
+import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import BoardMenuContent from './BoardMenuContent';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
@@ -28,7 +37,8 @@ import {
   PlusIcon,
   TrashIcon,
 } from './Icons';
-import VoteControls, { type WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-controller';
+import VoteControls from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;
@@ -43,25 +53,21 @@ export interface CardItemProps {
   isLocked: boolean;
   isBlurred: boolean;
   nowMs: number;
-  draggingCardId: string | null;
-  draggingSourceColumnId: string | null;
-  onGroupCard: (
-    cardId: string,
-    targetType: 'card' | 'group',
-    targetId: string,
-  ) => Promise<boolean>;
-  onUngroupCard: (cardId: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
-  onUpdateActionItem: (
-    cardId: string,
-    patch: ActionItemPatch,
-  ) => Promise<boolean>;
-  onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
-  onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  /** The Board's createTransfer instance: this Card is one of its items. */
+  transfer: BoardTransferHandle;
+  /** Controller-shaped Card mutations (the workspace passes its session). */
+  actions: Pick<
+    BoardMutations,
+    | 'updateCard'
+    | 'updateActionItem'
+    | 'moveCard'
+    | 'deleteCard'
+    | 'toggleReaction'
+    | 'groupCard'
+    | 'ungroupCard'
+    | 'isActionItemPending'
+  >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
-  onDragStartCard: (cardId: string, sourceColumnId: string) => void;
-  onDragEndCard: () => void;
 }
 
 const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
@@ -70,26 +76,17 @@ const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
 const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
 
 export default function CardItem(props: CardItemProps) {
-  const [isEditing, setIsEditing] = createSignal(false);
-  const [editDraft, setEditDraft] = createSignal('');
-  const [isSaving, setIsSaving] = createSignal(false);
-  const [editError, setEditError] = createSignal<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
   const [isUngrouping, setIsUngrouping] = createSignal(false);
-  const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
-  const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
-  const [actionDoneDraft, setActionDoneDraft] = createSignal<boolean | null>(null);
-  const actionDone = () => actionDoneDraft() ?? props.card.actionDone;
+  const isUpdatingAction = createMemo(() => props.actions.isActionItemPending(props.card.id));
+  // The optimistic store is the draft: the pending value is the checkbox value.
+  const actionDone = () => props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
 
-  const [menuPage, setMenuPage] = createSignal<'actions' | 'move' | 'group' | null>(null);
+  const [menuOpen, setMenuOpen] = createSignal(false);
   let menuTrigger: HTMLButtonElement | undefined;
-  let menu: HTMLDivElement | undefined;
-  let editor: HTMLTextAreaElement | undefined;
-  let cancelDeleteButton: HTMLButtonElement | undefined;
   const pendingAction = createMemo(() => {
     if (isMoving()) return 'Moving Card…';
     if (isGrouping()) return 'Grouping Card…';
@@ -138,8 +135,7 @@ export default function CardItem(props: CardItemProps) {
       if (redacted) {
         setActionError('');
         cancelEdit();
-        setConfirmingDelete(false);
-        setMenuPage(null);
+        setMenuOpen(false);
       } else {
         clearPeekTimer();
         setPeekWhisper(null);
@@ -155,44 +151,40 @@ export default function CardItem(props: CardItemProps) {
     (locked) => {
       if (locked) {
         cancelEdit();
-        setConfirmingDelete(false);
-        setMenuPage(null);
+        setMenuOpen(false);
       }
     },
   );
 
+  const canManage = createMemo(() => canManageCard(props, props.card));
+
+  // Card text inline editing: createInlineEdit owns the session, input, and keyboard contract.
+  const textField = usePrimitive(inlineEdit, () => ({
+    value: () => props.card.content,
+    commit: (text) => textSave.commit(text),
+    disabled: () => !canManage(),
+  }));
+  const cardEdit = textField.api.edit;
+  const textSave = createInlineEditSave(saveCardText, () => cardEdit.cancel());
+  const isEditing = () => textField.present('input');
+  const [hasText, setHasText] = createSignal(true);
+  const [textLength, setTextLength] = createSignal(0);
+  let editorEl: HTMLTextAreaElement | undefined;
+
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isEditing, (editing) => {
+    if (editing && editorEl) cardEdit.bindInput(editorEl);
+  });
+
+  // A menu item that starts the edit unmounts, so fall back to the Card actions trigger.
   createEffect(isEditing, (editing, wasEditing) => {
-    if (editing) editor?.focus();
-    else if (wasEditing) menuTrigger?.focus();
-  });
-
-  createEffect(confirmingDelete, (confirming, wasConfirming) => {
-    if (confirming) cancelDeleteButton?.focus();
-    else if (wasConfirming) menuTrigger?.focus();
-  });
-
-  createEffect(menuPage, (page) => {
-    if (page) getEnabledMenuItems(menu)[0]?.focus({ preventScroll: true });
-  });
-
-  function closeMenu(): void {
-    setMenuPage(null);
-    menuTrigger?.focus();
-  }
-
-  const canManage = createMemo(() => {
-    if (props.isLocked || props.card.redacted) return false;
-    if (props.card.isMine) return true;
-    return props.isFacilitator && !props.isBlurred;
+    if (!editing && wasEditing && document.activeElement === document.body) {
+      menuTrigger?.focus();
+    }
   });
 
   const otherColumns = createMemo(
     () => props.columns.filter((col) => col.id !== props.card.columnId),
-    {
-      equals: (prev, next) =>
-        prev.length === next.length &&
-        prev.every((col, index) => col === next[index]),
-    },
   );
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
@@ -203,54 +195,23 @@ export default function CardItem(props: CardItemProps) {
         (other) =>
           other.id !== props.card.id &&
           !other.redacted &&
+          !other.pending &&
           other.groupId === null,
       ),
       groups: props.columnGroups.filter(
         (group) => group.id !== props.card.groupId,
       ),
     }),
-    {
-      equals: (prev, next) =>
-        prev.cards.length === next.cards.length &&
-        prev.groups.length === next.groups.length &&
-        prev.cards.every((card, index) => card === next.cards[index]) &&
-        prev.groups.every((group, index) => group === next.groups[index]),
-    },
   );
 
   const canGroup = createMemo(
     () =>
       props.canGroupCards &&
-      !props.isLocked &&
-      !props.card.redacted &&
+      canInteractWithCard(props, props.card) &&
       (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
   );
 
   const canDrag = createMemo(() => (canMove() || canGroup()) && !isEditing());
-
-  const draggingCard = createMemo(() => {
-    if (
-      !props.draggingCardId ||
-      props.draggingSourceColumnId !== props.card.columnId
-    ) {
-      return undefined;
-    }
-    return props.columnCards.find(
-      (card) => card.id === props.draggingCardId && !card.redacted,
-    );
-  });
-
-  const canAcceptGroupDrop = createMemo(() => {
-    const source = draggingCard();
-    return (
-      props.canGroupCards &&
-      !props.isLocked &&
-      !props.card.redacted &&
-      source !== undefined &&
-      source.id !== props.card.id &&
-      (props.card.groupId === null || source.groupId !== props.card.groupId)
-    );
-  });
 
   const relativeTimestamp = createMemo(() =>
     formatRelativeTime(props.card.createdAt, props.nowMs),
@@ -266,7 +227,7 @@ export default function CardItem(props: CardItemProps) {
   const textTap = createDoubleTap(isTextEditTarget, startEdit);
 
   function isTextEditTarget(target: EventTarget | null): boolean {
-    if (!canManage() || props.card.id.startsWith('optimistic:')) return false;
+    if (!canManage()) return false;
     return !(target instanceof Element && target.closest('a'));
   }
 
@@ -278,94 +239,72 @@ export default function CardItem(props: CardItemProps) {
 
   function startEdit(): void {
     textTap.reset();
-    setEditError(null);
-    setEditDraft(props.card.content);
-    setConfirmingDelete(false);
-    setMenuPage(null);
-    setIsEditing(true);
+    textSave.resetError();
+    setHasText(props.card.content.trim().length > 0);
+    setTextLength(props.card.content.length);
+    setMenuOpen(false);
+    cardEdit.start(props.card.id);
   }
 
   function cancelEdit(): void {
     textTap.reset();
-    setIsEditing(false);
-    setEditDraft('');
-    setEditError(null);
+    textSave.resetError();
+    cardEdit.cancel();
   }
 
-  async function saveEdit(): Promise<void> {
-    const trimmed = editDraft().trim();
-    if (trimmed.length === 0 || isSaving() || !canManage()) return;
-    if (trimmed === props.card.content) {
-      setIsEditing(false);
-      return;
-    }
-    setIsSaving(true);
-    setEditError(null);
-    try {
-      const error = await props.onUpdateCard(props.card.id, trimmed);
-      if (error === null) cancelEdit();
-      else {
-        setEditError(error);
-        editor?.focus();
-      }
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function handleEditKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelEdit();
-      return;
-    }
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      void saveEdit();
-    }
+  async function saveCardText(text: string): Promise<InlineEditOutcome> {
+    if (!canManage()) return false;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+    const error = await props.actions.updateCard(props.card.id, trimmed);
+    return error === null ? true : error;
   }
 
   async function runCardAction(
     request: () => Promise<boolean>,
     failureMessage: string,
-    setPending: (pending: boolean) => void,
+    setPending?: (pending: boolean) => void,
   ): Promise<boolean> {
-    setPending(true);
+    setPending?.(true);
     setActionError('');
     try {
       if (await request()) return true;
     } catch {
       // Report rejected requests alongside unsuccessful mutation responses.
     } finally {
-      setPending(false);
+      setPending?.(false);
     }
     if (!props.card.redacted) setActionError(failureMessage);
     return false;
   }
 
-  async function handleConfirmDelete(): Promise<void> {
+  async function handleDeleteCard(): Promise<void> {
     if (isDeleting()) return;
+    const confirmed = await confirmBoardAction({
+      title: 'Delete this Card?',
+      description: 'The Card and its comments are removed for everyone on this Board.',
+      confirmLabel: 'Delete Card',
+    });
+    if (!confirmed) return;
     await runCardAction(
-      () => props.onDeleteCard(props.card.id),
+      () => props.actions.deleteCard(props.card.id),
       'Could not delete the Card. Try again.',
       setIsDeleting,
     );
   }
 
-  async function updateAction(patch: ActionItemPatch): Promise<boolean> {
-    if (isUpdatingAction()) return false;
+  function updateAction(patch: ActionItemPatch): Promise<boolean> {
     return runCardAction(
-      () => props.onUpdateActionItem(props.card.id, patch),
+      // eslint-disable-next-line solid/reactivity -- invoked from event handlers only
+      () => props.actions.updateActionItem(props.card.id, patch),
       'Could not update the Action Item. Try again.',
-      setIsUpdatingAction,
     );
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    closeMenu();
     await runCardAction(
-      () => props.onMoveCard(props.card.id, targetColumnId),
+      () => props.actions.moveCard(props.card.id, targetColumnId),
       'Could not move the Card. Try again.',
       setIsMoving,
     );
@@ -377,9 +316,8 @@ export default function CardItem(props: CardItemProps) {
     targetId: string,
   ): Promise<void> {
     if (isGrouping()) return;
-    if (menuPage()) closeMenu();
     await runCardAction(
-      () => props.onGroupCard(cardId, targetType, targetId),
+      () => props.actions.groupCard(cardId, targetType, targetId),
       'Could not group the Card. Try again.',
       setIsGrouping,
     );
@@ -388,59 +326,15 @@ export default function CardItem(props: CardItemProps) {
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
     await runCardAction(
-      () => props.onUngroupCard(props.card.id),
+      () => props.actions.ungroupCard(props.card.id),
       'Could not ungroup the Card. Try again.',
       setIsUngrouping,
     );
   }
 
-  function handleGroupDragOver(event: DragEvent): void {
-    if (!canAcceptGroupDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-    setIsGroupDropActive(true);
-  }
-
-  function handleGroupDragLeave(event: DragEvent): void {
-    const currentTarget = event.currentTarget as HTMLElement | null;
-    const related = event.relatedTarget as Node | null;
-    if (currentTarget && related && currentTarget.contains(related)) return;
-    setIsGroupDropActive(false);
-  }
-
-  function handleGroupDrop(event: DragEvent): void {
-    if (!canAcceptGroupDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setIsGroupDropActive(false);
-    const source = draggingCard();
-    if (source) {
-      void groupWith(source.id, 'card', props.card.id);
-    }
-  }
-
-  function handleDragStart(event: DragEvent): void {
-    if (!canDrag()) {
-      event.preventDefault();
-      return;
-    }
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', props.card.id);
-      event.dataTransfer.setData('application/x-retrocks-card', props.card.id);
-    }
-    props.onDragStartCard(props.card.id, props.card.columnId);
-  }
-
-  function handleDragEnd(): void {
-    props.onDragEndCard();
-  }
-
   return (
     <article
+      {...props.transfer.slot('card', () => ({ value: `card:${props.card.id}` }))}
       data-card-id={props.card.id}
       data-private-mode={props.card.redacted ? 'server-redacted-nice-try' : undefined}
       style={
@@ -448,12 +342,10 @@ export default function CardItem(props: CardItemProps) {
           ? { '--card-reveal-delay': `${Math.min((props.revealIndex ?? 0) * 18, 250)}ms` }
           : undefined
       }
-      draggable={canDrag() ? 'true' : 'false'}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragOver={handleGroupDragOver}
-      onDragLeave={handleGroupDragLeave}
-      onDrop={handleGroupDrop}
+      /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
+         grab–move–drop (APG): transfer items are focusable. */
+      tabindex={canDrag() ? 0 : undefined}
+      aria-roledescription={canDrag() ? 'draggable' : undefined}
       class={[
         'relative min-w-0 rounded-xl border bg-surface p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70 sm:p-3.5',
         props.card.groupId === null ? 'border-border/80' : 'border-border/60',
@@ -462,17 +354,18 @@ export default function CardItem(props: CardItemProps) {
             canDrag(),
           'bg-surface-subtle': props.card.redacted,
           'card-revealed': wasRevealed(),
-          'ring-2 ring-focus/70': isGroupDropActive(),
         },
+        'data-drop-active:ring-2 data-drop-active:ring-focus/70 data-moving:opacity-50 data-dragging:opacity-50',
       ]}
     >
       <Show
         when={!props.card.redacted}
         fallback={
-          <div
+          <button
+            type="button"
             aria-label="Hidden Card in Private Mode"
             onClick={handleRedactedClick}
-            class="cursor-pointer select-none space-y-2 py-0.5"
+            class="block w-full cursor-pointer select-none space-y-2 py-0.5 text-left"
           >
             <div class="space-y-1.5" aria-hidden="true">
               <For each={placeholderLineWidths()}>
@@ -492,7 +385,7 @@ export default function CardItem(props: CardItemProps) {
               </span>
               <time class="shrink-0 tabular-nums">{relativeTimestamp()}</time>
             </div>
-          </div>
+          </button>
         }
       >
         <Show
@@ -500,15 +393,18 @@ export default function CardItem(props: CardItemProps) {
           fallback={
             <div class="space-y-2">
               <textarea
-                ref={editor}
+                ref={(el) => { editorEl = el; }}
                 aria-label="Edit card text"
-                aria-invalid={editError() ? 'true' : undefined}
-                readonly={isSaving()}
-                value={editDraft()}
+                aria-invalid={textSave.error() ? 'true' : undefined}
+                readonly={textSave.isSaving()}
                 maxlength={MAX_CARD_CONTENT_LENGTH}
                 rows={3}
-                onInput={(e) => setEditDraft(e.currentTarget.value)}
-                onKeyDown={handleEditKeyDown}
+                onKeyDown={(event) => cardEdit.inputKeydown(event)}
+                onFocusOut={(event) => cardEdit.end('focus-out', event)}
+                onInput={(e) => {
+                  setHasText(e.currentTarget.value.trim().length > 0);
+                  setTextLength(e.currentTarget.value.length);
+                }}
                 class={[
                   'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-base text-text',
                   'placeholder:text-text-muted focus:border-focus focus:outline-none',
@@ -516,37 +412,37 @@ export default function CardItem(props: CardItemProps) {
               />
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span class="text-[11px] text-text-muted tabular-nums">
-                  {editDraft().length}/{MAX_CARD_CONTENT_LENGTH}
+                  {textLength()}/{MAX_CARD_CONTENT_LENGTH}
                 </span>
                 <div class="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={cancelEdit}
-                    disabled={isSaving()}
+                    disabled={textSave.isSaving()}
                     class={[
                       'min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    onClick={() => void saveEdit()}
-                    disabled={isSaving() || editDraft().trim().length === 0}
+                    onClick={() => cardEdit.end()}
+                    disabled={textSave.isSaving() || !hasText()}
                     class={[
                       'min-h-11 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
-                    {isSaving() ? 'Saving…' : 'Save'}
+                    {textSave.isSaving() ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </div>
-              <Show when={editError()}>
-                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{editError()}</p>
+              <Show when={textSave.error()}>
+                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{textSave.error()}</p>
               </Show>
             </div>
           }
@@ -572,17 +468,12 @@ export default function CardItem(props: CardItemProps) {
                 <input
                   type="checkbox"
                   checked={actionDone()}
-                  disabled={
-                    (props.isLocked && !props.isFacilitator) || isUpdatingAction()
-                  }
+                  disabled={!canEditActionItemFollowUp(props, props.card)}
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {
-                    const done = event.currentTarget.checked;
-                    setActionDoneDraft(done);
-                    try {
-                      await updateAction({ actionDone: done });
-                    } finally {
-                      setActionDoneDraft(null);
+                    const checkbox = event.currentTarget;
+                    if (!await updateAction({ actionDone: checkbox.checked }) && checkbox.isConnected) {
+                      checkbox.checked = props.card.actionDone;
                     }
                   }}
                   class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -609,7 +500,7 @@ export default function CardItem(props: CardItemProps) {
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
               disabled={props.isLocked}
-              onToggleReaction={props.onToggleReaction}
+              onToggleReaction={props.actions.toggleReaction}
             />
 
             <div class="order-first flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-none sm:col-start-1">
@@ -636,7 +527,7 @@ export default function CardItem(props: CardItemProps) {
                   class={[
                     'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 text-[11px] font-medium text-text sm:min-h-7 sm:min-w-0',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   <LucideIcon icon={MessageSquare} class="size-3.5" />
@@ -651,7 +542,7 @@ export default function CardItem(props: CardItemProps) {
                 class={[
                   'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'board-focus-ring',
                 ]}
               >
                 <LucideIcon icon={PanelRightOpen} />
@@ -659,146 +550,107 @@ export default function CardItem(props: CardItemProps) {
 
               <Show when={!props.isLocked}>
                 <Menu
-                  open={menuPage() !== null}
+                  open={menuOpen()}
                   modal={false}
-                  onOpenChange={(open) => {
-                    if (open) setConfirmingDelete(false);
-                    setMenuPage(open ? 'actions' : null);
-                  }}
+                  onOpenChange={(open) => setMenuOpen(open)}
                 >
                   <MenuTrigger
                     ref={menuTrigger}
                     aria-label="Card actions"
                     title="Card actions"
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" />
                   </MenuTrigger>
-                  <MenuContent
-                    ref={menu}
-                    side="bottom"
-                    align="end"
-                    sideOffset={6}
-                    collisionPadding={12}
-                    finalFocus={isEditing() || confirmingDelete() ? 'none' : undefined}
-                    render={(contentProps) => (
-                      <div
-                        {...contentProps}
-                        aria-labelledby={undefined}
-                        aria-label={menuPage() === 'move' ? 'Move Card to Column' : menuPage() === 'group' ? 'Group Card with' : 'Card actions'}
-                        data-board-overlay={menuPage() ? 'true' : undefined}
-                        data-print-hide="true"
-                      />
-                    )}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ArrowLeft' && menuPage() !== 'actions') {
-                        event.preventDefault();
-                        setMenuPage('actions');
-                      }
-                    }}
+                  <BoardMenuContent
+                    aria-label="Card actions"
+                    finalFocus={isEditing() ? 'none' : undefined}
                     class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                   >
-                    <Show when={menuPage() === 'actions'}>
-                      <Show when={canManage()}>
-                        <MenuItem value="edit" class={menuItemClass} onSelect={startEdit}>
-                          <PencilIcon /> Edit Card
-                        </MenuItem>
-                      </Show>
-                      <Show when={canMove()}>
-                        <MenuItem value="move" class={menuItemClass} disabled={isMoving()} closeOnSelect={false} onSelect={() => setMenuPage('move')}>
+                    <Show when={canManage()}>
+                      <MenuItem value="edit" class={menuItemClass} onSelect={startEdit}>
+                        <PencilIcon /> Edit Card
+                      </MenuItem>
+                    </Show>
+                    <Show when={canMove()}>
+                      <MenuSub>
+                        <MenuSubTrigger class={menuItemClass} disabled={isMoving()}>
                           <ArrowRightLeftIcon /> Move to…
-                        </MenuItem>
-                      </Show>
-                      <Show when={canGroup()}>
-                        <MenuItem value="group" class={menuItemClass} disabled={isGrouping()} closeOnSelect={false} onSelect={() => setMenuPage('group')}>
-                          <PlusIcon /> Group with…
-                        </MenuItem>
-                      </Show>
-                      <Show when={props.card.groupId !== null && props.canUngroup}>
-                        <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
-                          Ungroup Card
-                        </MenuItem>
-                      </Show>
-                      <MenuItem
-                        value="flag"
-                        class={menuItemClass}
-                        disabled={isUpdatingAction()}
-                        onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
-                      >
-                        <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
-                      </MenuItem>
-                      <Show when={canManage()}>
-                        <MenuItem
-                          value="delete"
-                          class={menuItemClass}
-                          disabled={isDeleting()}
-                          onSelect={() => {
-                            setActionError('');
-                            setConfirmingDelete(true);
-                          }}
+                          <LucideIcon icon={ChevronRight} class="ml-auto size-3.5 text-text-muted" />
+                        </MenuSubTrigger>
+                        <BoardMenuContent
+                          aria-label="Move Card to Column"
+                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                         >
-                          <TrashIcon /> Delete Card
-                        </MenuItem>
-                      </Show>
+                          <For each={otherColumns()}>
+                            {(target) => (
+                              <MenuItem value={target.id} class={menuItemClass} onSelect={() => { void handleSelectMoveTarget(target.id); }}>
+                                <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
+                                <span class="min-w-0 wrap-anywhere">{target.title}</span>
+                              </MenuItem>
+                            )}
+                          </For>
+                        </BoardMenuContent>
+                      </MenuSub>
                     </Show>
-                    <Show when={menuPage() === 'move'}>
-                      <For each={otherColumns()}>
-                        {(target) => (
-                          <MenuItem value={target.id} class={menuItemClass} onSelect={() => { void handleSelectMoveTarget(target.id); }}>
-                            <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
-                            <span class="min-w-0 wrap-anywhere">{target.title}</span>
-                          </MenuItem>
-                        )}
-                      </For>
+                    <Show when={canGroup()}>
+                      <MenuSub>
+                        <MenuSubTrigger class={menuItemClass} disabled={isGrouping()}>
+                          <PlusIcon /> Group with…
+                          <LucideIcon icon={ChevronRight} class="ml-auto size-3.5 text-text-muted" />
+                        </MenuSubTrigger>
+                        <BoardMenuContent
+                          aria-label="Group Card with"
+                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                        >
+                          <For each={groupTargets().cards}>
+                            {(target) => (
+                              <MenuItem value={`card:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'card', target.id); }}>
+                                <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.content}</span>
+                              </MenuItem>
+                            )}
+                          </For>
+                          <For each={groupTargets().groups}>
+                            {(target) => (
+                              <MenuItem value={`group:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'group', target.id); }}>
+                                <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.title || 'Card Group'}</span>
+                              </MenuItem>
+                            )}
+                          </For>
+                        </BoardMenuContent>
+                      </MenuSub>
                     </Show>
-                    <Show when={menuPage() === 'group'}>
-                      <For each={groupTargets().cards}>
-                        {(target) => (
-                          <MenuItem value={`card:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'card', target.id); }}>
-                            <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.content}</span>
-                          </MenuItem>
-                        )}
-                      </For>
-                      <For each={groupTargets().groups}>
-                        {(target) => (
-                          <MenuItem value={`group:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'group', target.id); }}>
-                            <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.title || 'Card Group'}</span>
-                          </MenuItem>
-                        )}
-                      </For>
-                    </Show>
-                    <Show when={menuPage() === 'move' || menuPage() === 'group'}>
-                      <MenuItem value="back" class={menuItemClass} closeOnSelect={false} onSelect={() => setMenuPage('actions')}>
-                        Back to Card actions
+                    <Show when={props.card.groupId !== null && props.canUngroup}>
+                      <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
+                        Ungroup Card
                       </MenuItem>
                     </Show>
-                  </MenuContent>
+                    <MenuItem
+                      value="flag"
+                      class={menuItemClass}
+                      disabled={isUpdatingAction()}
+                      onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
+                    >
+                      <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
+                    </MenuItem>
+                    <Show when={canManage()}>
+                      <MenuItem
+                        value="delete"
+                        class={menuItemClass}
+                        disabled={isDeleting()}
+                        onSelect={() => {
+                          setActionError('');
+                          void handleDeleteCard();
+                        }}
+                      >
+                        <TrashIcon /> Delete Card
+                      </MenuItem>
+                    </Show>
+                  </BoardMenuContent>
                 </Menu>
               </Show>
             </div>
           </footer>
-          <Show when={canManage() && confirmingDelete()}>
-            <div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" data-print-hide="true">
-              <span class="mr-auto text-sm text-text">Delete this Card?</span>
-              <button
-                ref={cancelDeleteButton}
-                type="button"
-                onClick={() => setConfirmingDelete(false)}
-                disabled={isDeleting()}
-                class="min-h-11 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-8"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleConfirmDelete()}
-                disabled={isDeleting()}
-                class="min-h-11 rounded-md bg-rose-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:min-h-8"
-              >
-                {isDeleting() ? 'Deleting…' : 'Confirm?'}
-              </button>
-            </div>
-          </Show>
           <p class="sr-only" aria-live="polite" aria-atomic="true">{pendingAction()}</p>
           <Show when={actionError()}>
             <p role="alert" data-print-hide="true" class="mt-1 text-xs text-rose-700 dark:text-rose-300">{actionError()}</p>

@@ -1,27 +1,14 @@
 import { Minus, Plus } from 'lucide';
-import { Show, createMemo } from 'solid-js';
+import { Show, createMemo, latest } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
-import type { ChangeVoteInput } from '../lib/voting-schemas';
+import { canCastVote, canContribute } from '../lib/board-permissions';
+import type { WorkspaceVoting } from '../lib/board-controller';
 import LucideIcon from './LucideIcon';
-
-type VoteDelta = ChangeVoteInput['delta'];
-
-export interface WorkspaceVoting {
-  remainingVotes: number | null;
-  maxVotesPerCard: number | null;
-  pending: boolean;
-  optimisticVote: { targetId: string; delta: VoteDelta } | null;
-  onChange: (
-    targetType: 'card' | 'group',
-    targetId: string,
-    delta: VoteDelta,
-  ) => void;
-}
 
 const buttonClass = [
   'spring-press inline-flex h-full min-w-11 cursor-pointer items-center justify-center text-text sm:min-w-7',
-  'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+  'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:z-10 board-focus-ring',
   'disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-50',
 ];
 
@@ -31,16 +18,9 @@ export default function VoteControls(props: {
   voting: WorkspaceVoting;
   isLocked: boolean;
 }) {
-  const delta = createMemo(() => {
-    const vote = props.voting.optimisticVote;
-    return vote?.targetId === props.target.id ? vote.delta : 0;
-  });
-  const myVotes = createMemo(() => props.target.myVotes + delta());
-  const votes = createMemo(() => props.target.votes === null ? null : props.target.votes + delta());
-  const canCast = createMemo(() =>
-    (props.voting.remainingVotes === null || props.voting.remainingVotes > 0) &&
-    (props.voting.maxVotesPerCard === null || myVotes() < props.voting.maxVotesPerCard),
-  );
+  const myVotes = createMemo(() => latest(() => props.target.myVotes));
+  const votes = createMemo(() => latest(() => props.target.votes));
+  const canCast = createMemo(() => canCastVote(props.voting, myVotes()));
 
   return (
     <div
@@ -51,7 +31,7 @@ export default function VoteControls(props: {
         myVotes() > 0 ? 'border-accent/30 bg-accent/10' : 'border-border/75 bg-surface-subtle/75',
       ]}
     >
-      <Show when={!props.isLocked}>
+      <Show when={canContribute(props)}>
         <button
           type="button"
           data-print-hide="true"
@@ -69,7 +49,7 @@ export default function VoteControls(props: {
       >
         {votes() === null ? `${myVotes()} yours` : votes()}
       </span>
-      <Show when={!props.isLocked}>
+      <Show when={canContribute(props)}>
         <button
           type="button"
           data-print-hide="true"

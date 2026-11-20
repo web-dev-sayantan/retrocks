@@ -9,6 +9,9 @@ export function filterActionItems(
   return cards.filter(
     (card) =>
       card.isActionItem &&
+      // Optimistic rows are client-only placeholders; their Action Item
+      // controls cannot succeed until the server id exists.
+      !card.pending &&
       (filter === 'all' ||
         (filter === 'open' ? !card.actionDone : card.actionDone)),
   );

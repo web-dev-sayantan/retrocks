@@ -1,5 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { fireEvent, render } from '@solidjs/testing-library';
+import { shortcuts } from '@ui-sdk/solid/shortcuts';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -155,9 +156,11 @@ describe('Board Countdown Timer', () => {
       fireEvent.keyDown(document.body, { key: 't' });
       flush();
       expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toHaveFocus();
-      fireEvent.click(view.getByRole('button', { name: '10m' }));
+      // While the popover is open, its layer owns "t": exactly one listing for it.
+      expect(shortcuts.list().filter((entry) => entry.keys === 't')).toHaveLength(1);
+      fireEvent.click(view.getByRole('radio', { name: '10m' }));
       flush();
-      expect(view.getByRole('spinbutton', { name: 'Minutes' })).toHaveValue(10);
+      expect(view.getByRole('textbox', { name: 'Minutes' })).toHaveValue('10');
       fireEvent.click(view.getByRole('button', { name: 'Start' }));
       await Promise.resolve();
       await Promise.resolve();
@@ -171,6 +174,20 @@ describe('Board Countdown Timer', () => {
       flush();
       expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
       expect(view.getByRole('button', { name: /Countdown Timer/ })).toHaveFocus();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps T facilitator-only: a Participant has no T registration and no popover', () => {
+    const board = makeBoard({ isFacilitator: false });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    try {
+      flush();
+      expect(shortcuts.list().map((entry) => entry.keys)).toEqual(['/', 'n', 'a']);
+      fireEvent.keyDown(document.body, { key: 't' });
+      flush();
+      expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
     } finally {
       view.unmount();
     }
@@ -336,7 +353,7 @@ describe('Board Countdown Timer', () => {
           sendSnapshot(board, SERVER_TIME);
 
           const trigger = view.getByRole('button', { name: 'Countdown Timer' });
-          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9', 'min-w-[5.75rem]');
+          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'board-touch-target', 'min-w-[5.75rem]');
           expect(trigger).toHaveAttribute('data-timer-state', 'idle');
 
           // Transition to running

@@ -37,6 +37,13 @@ export type RetentionDaysOption = (typeof RETENTION_DAYS_OPTIONS)[number];
 export const REACTION_EMOJIS = ['👍', '❤️', '🎉', '🤔', '🔥', '👀'] as const;
 export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
 
+const REACTION_EMOJI_VALUES = new Set<string>(REACTION_EMOJIS);
+
+/** Reaction rows are only written after REACTION_EMOJIS validation; this narrows DB reads back. */
+export function isReactionEmoji(value: string): value is ReactionEmoji {
+  return REACTION_EMOJI_VALUES.has(value);
+}
+
 export const MAX_COLUMNS_PER_BOARD = 10;
 export const MAX_CARDS_PER_BOARD = 500;
 export const MAX_COMMENTS_PER_CARD = 50;
@@ -102,14 +109,16 @@ export interface CardViewDTO {
   content: string;
   redacted: boolean;
   placeholderLines?: 1 | 2 | 3;
+  /** Client-only optimistic row; never sent by the server nor accepted for mutations. */
+  pending?: boolean;
   isMine: boolean;
   isActionItem: boolean;
   actionDone: boolean;
   actionOwner: string;
   votes: number | null;
   myVotes: number;
-  reactions: Record<string, number>;
-  myReactions: string[];
+  reactions: Partial<Record<ReactionEmoji, number>>;
+  myReactions: ReactionEmoji[];
   commentCount: number;
   comments: CommentViewDTO[];
   createdAt: number;
@@ -125,6 +134,22 @@ export interface CardGroupDTO {
   votes: number | null;
   myVotes: number;
   createdAt: number;
+}
+
+// Store adoption discipline: a pushed object becomes the backing as-is, so
+// callers hand over defensive copies — never a wire payload or another
+// store's raw, whose in-place mutation would go unnotified.
+export function cloneCardView(card: CardViewDTO): CardViewDTO {
+  return {
+    ...card,
+    reactions: { ...card.reactions },
+    myReactions: [...card.myReactions],
+    comments: card.comments.map((comment) => ({ ...comment })),
+  };
+}
+
+export function cloneCardGroup(group: CardGroupDTO): CardGroupDTO {
+  return { ...group, cardIds: [...group.cardIds] };
 }
 
 export interface TimerStateDTO {

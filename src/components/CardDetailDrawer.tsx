@@ -1,3 +1,9 @@
+import {
+  Drawer,
+  DrawerBackdrop,
+  DrawerContent,
+} from '@ui-sdk/solid/drawer';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Trash2 } from 'lucide';
 import {
   For,
@@ -19,9 +25,16 @@ import {
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import { confirmBoardAction } from '../lib/board-confirm';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
+import {
+  canContribute,
+  canDeleteComment,
+  canEditActionItem,
+  canEditActionItemFollowUp,
+} from '../lib/board-permissions';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
-import { closeBoardDrawer, createDrawerBackdropDismiss, showBoardDrawer } from './board-drawer';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
@@ -35,6 +48,7 @@ export interface CardDetailDrawerProps {
   isBlurred: boolean;
   nowMs: number;
   isOpen: boolean;
+  side: 'bottom' | 'right';
   onClose: () => void;
   onExit: () => void;
   restoreFocus: () => void;
@@ -45,110 +59,70 @@ export interface CardDetailDrawerProps {
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
   onCreateComment: (cardId: string, content: string) => Promise<string | null>;
   onDeleteComment: (cardId: string, commentId: string) => Promise<string | null>;
+  /** Controller-owned in-flight Action Item patch for a Card (isPending). */
+  isActionItemPending?: (cardId: string) => boolean;
 }
 
 export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const actionOwnerId = createUniqueId();
-  const [ownerDraft, setOwnerDraft] = createSignal(
-    untrack(() => props.card.actionOwner),
-  );
-  const [isSavingAction, setIsSavingAction] = createSignal(false);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [commentDraft, setCommentDraft] = createSignal('');
   const [commentError, setCommentError] = createSignal<string | null>(null);
   const [deleteCommentError, setDeleteCommentError] = createSignal<string | null>(null);
   const [isPosting, setIsPosting] = createSignal(false);
-  const [confirmingCommentId, setConfirmingCommentId] = createSignal<
-    string | null
-  >(null);
   const [deletingCommentId, setDeletingCommentId] = createSignal<string | null>(
     null,
   );
+  let ownerInputEl: HTMLInputElement | undefined;
 
-  let dialog: HTMLDialogElement | undefined;
-  let closeButton: HTMLButtonElement | undefined;
-  let focusRestored = false;
-  const backdropDismiss = createDrawerBackdropDismiss(() => props.onClose());
+  // The owner input edits in place: createInlineEdit owns the draft-and-save
+  // contract, with the edit starting on the first change so an untouched
+  // Escape still reaches the drawer.
+  const ownerField = usePrimitive(inlineEdit, () => ({
+    value: () => props.card.actionOwner,
+    commit: (text) => ownerSave.commit(text),
+    disabled: () => !canEditActionItemFollowUp(props, props.card),
+  }));
+  const ownerEdit = ownerField.api.edit;
+  const ownerSave = createInlineEditSave(saveActionOwnerText, () => ownerEdit.cancel());
+  const ownerEditing = () => ownerField.present('input');
 
+  function bindOwnerInput(el: HTMLInputElement): void {
+    ownerInputEl = el;
+  }
+
+  // Live sync: another viewer's optimistic/live owner change shows while this
+  // editor is idle; an active edit keeps its draft.
   createEffect(
-    () => props.isOpen,
-    (open) => {
-      const element = dialog;
-      if (!element) return;
-      if (open) {
-        focusRestored = false;
-        backdropDismiss.reset();
-        showBoardDrawer(element);
-        closeButton?.focus({ preventScroll: true });
-        return;
+    () => ({ next: props.card.actionOwner, editing: ownerEditing() }),
+    ({ next, editing }) => {
+      if (!editing && ownerInputEl && ownerInputEl.value !== next) {
+        ownerInputEl.value = next;
       }
-      return closeBoardDrawer(
-        element,
-        () => {
-          focusRestored = true;
-          props.restoreFocus();
-        },
-        () => props.onExit(),
-      );
     },
   );
 
-  onSettled(() => {
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (!dialog?.open || event.isComposing || event.key !== 'Tab') return;
-
-      // Native modal containment handles the rest of the tab order.
-      const stops = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'a[href], button, input, textarea, select, [tabindex]',
-      )).filter((item) => item.tabIndex >= 0 && !item.matches(':disabled, [hidden]'));
-      const boundary = event.shiftKey ? stops[0] : stops.at(-1);
-      if (document.activeElement === boundary || !dialog.contains(document.activeElement)) {
-        event.preventDefault();
-        (event.shiftKey ? stops.at(-1) : stops[0])?.focus();
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown, { capture: true });
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown, { capture: true });
-      if (!focusRestored) {
-        if (dialog?.open) dialog.close?.();
-        // Wait until the same snapshot has updated the trigger in the Board.
-        const restoreFocus = untrack(() => props.restoreFocus);
-        queueMicrotask(() => {
-          if (document.activeElement === document.body) restoreFocus();
-        });
-      }
-    };
+  onSettled(() => () => {
+    // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
+    const restoreFocus = untrack(() => props.restoreFocus);
+    queueMicrotask(() => {
+      if (document.activeElement === document.body) restoreFocus();
+    });
   });
 
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
-  const canEditActionItemFollowUp = createMemo(
-    () =>
-      props.card.isActionItem && (!props.isLocked || props.isFacilitator),
-  );
 
-  createEffect(
-    () => props.card.actionOwner,
-    (owner) => {
-      setOwnerDraft(owner);
-    },
-  );
+  createEffect(() => props.isOpen, (open, wasOpen) => {
+    if (!open && wasOpen) untrack(() => props.restoreFocus());
+  });
+
+  const isSavingAction = () => props.isActionItemPending?.(props.card.id) ?? false;
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
-    if (props.isLocked) {
-      if (
-        !props.isFacilitator ||
-        !props.card.isActionItem ||
-        patch.isActionItem !== undefined
-      ) {
-        return false;
-      }
-    }
-    setIsSavingAction(true);
+    if (!canEditActionItem(props, props.card, patch)) return false;
     setActionError(null);
     try {
       const ok = await props.onUpdateActionItem(props.card.id, patch);
@@ -157,20 +131,15 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     } catch {
       setActionError('Could not update the Action Item. Try again.');
       return false;
-    } finally {
-      setIsSavingAction(false);
     }
   }
 
-  async function saveActionOwner(value: string): Promise<void> {
-    if (!canEditActionItemFollowUp() || isSavingAction()) return;
-    const trimmed = value.trim();
-    if (trimmed === props.card.actionOwner) {
-      setOwnerDraft(props.card.actionOwner);
-      return;
-    }
+  async function saveActionOwnerText(text: string): Promise<InlineEditOutcome> {
+    if (!canEditActionItemFollowUp(props, props.card)) return false;
+    const trimmed = text.trim();
     const ok = await updateAction({ actionOwner: trimmed });
-    if (ok) setOwnerDraft(trimmed);
+    if (ok && ownerInputEl) ownerInputEl.value = trimmed;
+    return ok ? true : false;
   }
 
   async function submitComment(): Promise<void> {
@@ -206,49 +175,50 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     }
   }
 
-  async function handleConfirmDeleteComment(commentId: string): Promise<void> {
+  async function handleDeleteComment(commentId: string): Promise<void> {
     if (deletingCommentId() !== null) return;
+    const confirmed = await confirmBoardAction({
+      title: 'Delete this comment?',
+      description: 'The comment is removed for everyone on this Board.',
+      confirmLabel: 'Delete comment',
+    });
+    if (!confirmed) return;
     setDeletingCommentId(commentId);
     setDeleteCommentError(null);
     try {
       const error = await props.onDeleteComment(props.card.id, commentId);
       if (error) setDeleteCommentError(error);
-      else setConfirmingCommentId(null);
     } finally {
       setDeletingCommentId(null);
     }
   }
 
-  function canDeleteComment(isMine: boolean): boolean {
-    if (props.isLocked) return false;
-    if (isMine) return true;
-    return props.isFacilitator && !props.isBlurred;
-  }
-
   return (
-    <dialog
-      ref={dialog}
-      aria-label="Card details"
-      data-board-overlay={props.isOpen ? 'true' : undefined}
-      data-print-hide="true"
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
-        event.preventDefault();
-        event.stopPropagation();
-        props.onClose();
+    <Drawer
+      open={props.isOpen}
+      side={props.side}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
       }}
-      onCancel={(event) => {
-        event.preventDefault();
-        props.onClose();
+      onOpenChangeComplete={(open) => {
+        if (!open) props.onExit();
       }}
-      class="board-drawer-dialog"
-      onPointerDown={backdropDismiss.onPointerDown}
-      onPointerCancel={backdropDismiss.reset}
-      onClick={backdropDismiss.onClick}
     >
-      <div class="board-drawer-panel">
+      <DrawerBackdrop data-print-hide="true" class="board-drawer-backdrop" />
+      <DrawerContent
+        finalFocus="none"
+        render={(contentProps) => (
+          <div
+            {...contentProps}
+            aria-labelledby={undefined}
+            aria-label="Card details"
+            data-board-overlay="true"
+            data-print-hide="true"
+            class="board-drawer-panel"
+          />
+        )}
+      >
         <BoardOverlayHeader
-          closeRef={(button) => { closeButton = button; }}
           closeLabel="Close Card details"
           onClose={() => props.onClose()}
         >
@@ -313,7 +283,11 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   <input
                     type="checkbox"
                     checked={props.card.isActionItem}
-                    disabled={props.isLocked || isSavingAction()}
+                    disabled={
+                      !canEditActionItem(props, props.card, {
+                        isActionItem: !props.card.isActionItem,
+                      }) || isSavingAction()
+                    }
                     onChange={async (event) => {
                       const checkbox = event.currentTarget;
                       const ok = await updateAction({ isActionItem: checkbox.checked });
@@ -332,7 +306,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   <input
                     type="checkbox"
                     checked={props.card.actionDone}
-                    disabled={!canEditActionItemFollowUp() || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
                     onChange={async (event) => {
                       const checkbox = event.currentTarget;
                       const ok = await updateAction({ actionDone: checkbox.checked });
@@ -351,29 +325,38 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     Owner (optional)
                   </label>
                   <input
+                    ref={bindOwnerInput}
                     id={actionOwnerId}
                     type="text"
                     aria-label="Action owner"
                     placeholder={'e.g. "Platform"'}
-                    value={ownerDraft()}
+                    // Uncontrolled: seeded on mount and re-synced while idle; typing and saves live in the DOM.
+                    defaultValue={props.card.actionOwner}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
-                    disabled={!canEditActionItemFollowUp() || isSavingAction()}
-                    onInput={(event) => setOwnerDraft(event.currentTarget.value)}
-                    onBlur={(event) => void saveActionOwner(event.currentTarget.value)}
+                    disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
+                    onInput={(event) => {
+                      if (!ownerEditing() && event.currentTarget.value !== props.card.actionOwner) {
+                        ownerEdit.start(props.card.id, { reason: 'type', text: event.currentTarget.value });
+                        ownerEdit.bindInput(event.currentTarget);
+                      }
+                    }}
                     onKeyDown={(event) => {
                       if (event.isComposing) return;
                       const input = event.currentTarget;
                       if (event.key === 'Enter') {
                         event.preventDefault();
-                        void saveActionOwner(input.value);
-                      } else if (event.key === 'Escape' && input.value !== props.card.actionOwner) {
+                        ownerEdit.end('enter-key', event);
+                      } else if (event.key === 'Escape') {
+                        // Unchanged text lets the drawer's Escape close it.
+                        if (input.value === props.card.actionOwner) return;
                         event.preventDefault();
                         event.stopPropagation();
+                        ownerEdit.cancel();
                         input.value = props.card.actionOwner;
-                        setOwnerDraft(input.value);
                         setActionError(null);
                       }
                     }}
+                    onFocusOut={(event) => ownerEdit.end('focus-out', event)}
                     class={[
                       'mt-1 min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text sm:min-h-9',
                       'placeholder:text-text-muted focus:border-focus focus:outline-none disabled:opacity-50',
@@ -431,62 +414,28 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                           </time>
                         </div>
 
-                        <Show when={canDeleteComment(comment.isMine)}>
-                          <Show
-                            when={confirmingCommentId() !== comment.id}
-                            fallback={
-                              <div class="flex flex-wrap items-center gap-1">
-                                <button
-                                  type="button"
-                                  disabled={deletingCommentId() === comment.id}
-                                  onClick={() =>
-                                    void handleConfirmDeleteComment(comment.id)
-                                  }
-                                  class={[
-                                    'min-h-11 rounded-md bg-col-rose px-2.5 py-1 text-xs font-medium text-white sm:min-h-7 sm:px-2',
-                                    'cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50',
-                                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                                  ]}
-                                >
-                                  {deletingCommentId() === comment.id
-                                    ? 'Deleting...'
-                                    : 'Confirm?'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={deletingCommentId() === comment.id}
-                                  onClick={() => setConfirmingCommentId(null)}
-                                  class={[
-                                    'min-h-11 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2',
-                                    'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
-                                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                                  ]}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            }
+                        <Show when={canDeleteComment(props, comment)}>
+                          <button
+                            type="button"
+                            aria-label="Delete"
+                            title="Delete comment"
+                            disabled={deletingCommentId() !== null}
+                            onClick={() => {
+                              setDeleteCommentError(null);
+                              void handleDeleteComment(comment.id);
+                            }}
+                            class={[
+                              'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
+                              'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
+                              'board-focus-ring',
+                              'disabled:cursor-not-allowed disabled:opacity-50',
+                            ]}
                           >
-                            <button
-                              type="button"
-                              aria-label="Delete"
-                              title="Delete comment"
-                              onClick={() => {
-                                setDeleteCommentError(null);
-                                setConfirmingCommentId(comment.id);
-                              }}
-                              class={[
-                                'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
-                                'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
-                                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                              ]}
-                            >
-                              <LucideIcon icon={Trash2} class="size-3.5" />
-                            </button>
-                          </Show>
+                            <LucideIcon icon={Trash2} class="size-3.5" />
+                          </button>
                         </Show>
                       </div>
-                      <Show when={confirmingCommentId() === comment.id && deleteCommentError()}>
+                      <Show when={deletingCommentId() === comment.id && deleteCommentError()}>
                         <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">{deleteCommentError()}</p>
                       </Show>
                     </li>
@@ -498,7 +447,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         </div>
 
         {/* Comment composer footer */}
-        <Show when={!props.isLocked}>
+        <Show when={canContribute(props)}>
           <div class="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
             <Show
               when={!isAtCommentLimit()}
@@ -540,7 +489,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     class={[
                       'min-h-11 rounded-lg bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-8',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {isPosting() ? 'Posting…' : 'Post comment'}
@@ -550,7 +499,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
             </Show>
           </div>
         </Show>
-      </div>
-    </dialog>
+      </DrawerContent>
+    </Drawer>
   );
 }

@@ -7,8 +7,8 @@ import LucideIcon from './LucideIcon';
 
 export interface CardReactionsProps {
   cardId: string;
-  reactions: Record<string, number>;
-  myReactions: readonly string[];
+  reactions: Partial<Record<ReactionEmoji, number>>;
+  myReactions: readonly ReactionEmoji[];
   disabled: boolean;
   inCardFooter?: boolean;
   onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
@@ -21,54 +21,11 @@ export default function CardReactions(props: CardReactionsProps) {
   );
 
   const [reactionError, setReactionError] = createSignal<string | null>(null);
-  let controls: HTMLDivElement | undefined;
   let pickerTrigger: HTMLButtonElement | undefined;
-  let pressingOutside = false;
-
-  createEffect(pickerOpen, (open) => {
-    const root = controls;
-    if (!open || !root) return;
-
-    const doc = root.ownerDocument;
-    let releaseCheck: number | undefined;
-    const handleMouseEvent = (event: MouseEvent): void => {
-      const outside = event.target instanceof Node && !root.contains(event.target);
-      if (event.type === 'mousedown') {
-        pressingOutside = event.button === 0 && outside;
-        return;
-      }
-
-      if (event.type === 'mouseup' && pressingOutside && releaseCheck === undefined) {
-        // An outside press can move focus without producing a click.
-        releaseCheck = requestAnimationFrame(() => {
-          releaseCheck = undefined;
-          if (!root.contains(doc.activeElement)) setPickerOpen(false);
-        });
-      }
-      pressingOutside = false;
-      if (event.type === 'click' && outside) setPickerOpen(false);
-    };
-
-    const mouseEvents = ['mousedown', 'mouseup', 'click'] as const;
-    for (const type of mouseEvents) doc.addEventListener(type, handleMouseEvent, true);
-    return () => {
-      pressingOutside = false;
-      if (releaseCheck !== undefined) cancelAnimationFrame(releaseCheck);
-      for (const type of mouseEvents) doc.removeEventListener(type, handleMouseEvent, true);
-    };
-  });
 
   createEffect(() => props.disabled, (disabled) => {
     if (disabled) setPickerOpen(false);
   });
-
-  function handlePickerKeyDown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape' || event.isComposing || !pickerOpen()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setPickerOpen(false);
-    pickerTrigger?.focus();
-  }
 
   const activeReactions = createMemo(() => {
     const counts = props.reactions;
@@ -100,16 +57,6 @@ export default function CardReactions(props: CardReactionsProps) {
 
   return (
     <div
-      ref={controls}
-      onKeyDown={handlePickerKeyDown}
-      onFocusOut={(event) => {
-        // Keep an outside pointer press active until its click can reach the target.
-        if (!pickerOpen() || pressingOutside) return;
-        const nextFocus = event.relatedTarget;
-        if (!(nextFocus instanceof Node) || !event.currentTarget.contains(nextFocus)) {
-          setPickerOpen(false);
-        }
-      }}
       class={[
         'flex flex-wrap items-center gap-1.5',
         {
@@ -129,7 +76,7 @@ export default function CardReactions(props: CardReactionsProps) {
             onClick={() => void handleToggle(item.emoji)}
             class={[
               'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors sm:min-h-6 sm:min-w-0',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-60',
+              'board-focus-ring disabled:cursor-not-allowed disabled:opacity-60',
               {
                 'border-accent bg-accent/10 font-medium text-text': item.isMine,
                 'border-border bg-surface-subtle text-text-muted hover:border-text-muted/50 hover:text-text':
@@ -146,13 +93,7 @@ export default function CardReactions(props: CardReactionsProps) {
       <Show when={!props.disabled}>
         <Popover
           open={pickerOpen()}
-          onOpenChange={(open, details) => {
-            if (details.reason === 'outside-press' || details.reason === 'focus-out') {
-              details.cancel();
-              return;
-            }
-            setPickerOpen(open);
-          }}
+          onOpenChange={(open) => setPickerOpen(open)}
         >
           <PopoverTrigger
             ref={pickerTrigger}
@@ -165,7 +106,7 @@ export default function CardReactions(props: CardReactionsProps) {
             class={[
               'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
               'transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text data-disabled:cursor-not-allowed data-disabled:opacity-60',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+              'board-focus-ring',
             ]}
           >
             <LucideIcon icon={SmilePlus} />
@@ -194,7 +135,7 @@ export default function CardReactions(props: CardReactionsProps) {
                     }}
                     class={[
                       'inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-base transition-colors sm:size-7 sm:text-sm',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                       {
                         'bg-accent/15 ring-1 ring-accent': props.myReactions.includes(emoji),
                         'hover:bg-surface-subtle': !props.myReactions.includes(emoji),

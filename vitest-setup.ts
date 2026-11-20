@@ -14,11 +14,24 @@ if (typeof HTMLDialogElement !== 'undefined' && !HTMLDialogElement.prototype.sho
   };
 }
 
-// @ui-sdk/solid popups, menus, dialogs, and drawers rely on Popover API, Web Animations,
-// geometry helpers, and ResizeObserver, which jsdom omits or leaves unimplemented.
+// jsdom omits or leaves unimplemented several members @ui-sdk/solid relies on.
 if (typeof HTMLElement !== 'undefined') {
   HTMLElement.prototype.showPopover = function () {};
   HTMLElement.prototype.hidePopover = function () {};
+}
+
+// jsdom never implements isContentEditable, so @ui-sdk/solid's shortcut
+// registry cannot tell a contenteditable region from plain markup.
+if (
+  typeof HTMLElement !== 'undefined' &&
+  typeof HTMLElement.prototype.isContentEditable === 'undefined'
+) {
+  Object.defineProperty(HTMLElement.prototype, 'isContentEditable', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.closest('[contenteditable]:not([contenteditable="false"])') !== null;
+    },
+  });
 }
 if (typeof Element !== 'undefined') {
   Element.prototype.getAnimations = () => [];

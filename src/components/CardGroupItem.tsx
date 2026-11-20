@@ -1,19 +1,25 @@
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/solid/collapsible';
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import type {
-  ActionItemPatch,
   CardGroupDTO,
   CardViewDTO,
   ColumnDTO,
-  ReactionEmoji,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
+import { isGroupRedacted } from '../lib/board-permissions';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
+import type { BoardMutations } from '../lib/board-controller';
+import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import VoteControls, { type WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-controller';
+import VoteControls from './VoteControls';
 
 export interface CardGroupItemProps {
   group: CardGroupDTO;
@@ -29,45 +35,37 @@ export interface CardGroupItemProps {
   canGroupCards: boolean;
   canManage: boolean;
   nowMs: number;
-  draggingCardId: string | null;
-  draggingSourceColumnId: string | null;
-  onRename: (groupId: string, title: string) => Promise<boolean>;
-  onDissolve: (groupId: string) => Promise<boolean>;
-  onMoveGroup: (groupId: string, targetColumnId: string) => Promise<boolean>;
-  onGroupCard: (
-    cardId: string,
-    targetType: 'card' | 'group',
-    targetId: string,
-  ) => Promise<boolean>;
-  onUngroupCard: (cardId: string) => Promise<boolean>;
-  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
-  onUpdateActionItem: (
-    cardId: string,
-    patch: ActionItemPatch,
-  ) => Promise<boolean>;
-  onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
-  onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  /** The Board's createTransfer instance: this Group's header is one of its items. */
+  transfer: BoardTransferHandle;
+  /** Controller-shaped Card/Group mutations (the workspace passes its controller). */
+  actions: Pick<
+    BoardMutations,
+    | 'updateCard'
+    | 'updateActionItem'
+    | 'moveCard'
+    | 'deleteCard'
+    | 'toggleReaction'
+    | 'groupCard'
+    | 'ungroupCard'
+    | 'renameCardGroup'
+    | 'dissolveCardGroup'
+    | 'moveCardGroup'
+    | 'isActionItemPending'
+  >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
-  onDragStartCard: (cardId: string, sourceColumnId: string) => void;
-  onDragEndCard: () => void;
-  onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
 }
 
-const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7';
+const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface board-focus-ring disabled:opacity-50 sm:size-7';
 const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibold text-ellipsis text-text';
 
 export default function CardGroupItem(props: CardGroupItemProps) {
   const [expanded, setExpanded] = createSignal(true);
-  const [isRenaming, setIsRenaming] = createSignal(false);
-  const [renameDraft, setRenameDraft] = createSignal('');
-  const [isSaving, setIsSaving] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
   const [moveFailed, setMoveFailed] = createSignal(false);
   const [isDissolving, setIsDissolving] = createSignal(false);
-  const [isDropActive, setIsDropActive] = createSignal(false);
   let moveTrigger: HTMLButtonElement | undefined;
+  let titleButtonEl: HTMLButtonElement | undefined;
 
   createEffect(isMoving, (moving, wasMoving) => {
     if (!moving && wasMoving && moveFailed()) moveTrigger?.focus({ preventScroll: true });
@@ -75,77 +73,55 @@ export default function CardGroupItem(props: CardGroupItemProps) {
 
   const otherColumns = createMemo(
     () => props.columns.filter((column) => column.id !== props.group.columnId),
-    {
-      equals: (prev, next) =>
-        prev.length === next.length &&
-        prev.every((col, index) => col === next[index]),
-    },
   );
-
-  const draggingCard = createMemo(() => {
-    if (
-      !props.draggingCardId ||
-      props.draggingSourceColumnId !== props.group.columnId
-    ) {
-      return undefined;
-    }
-    return props.columnCards.find(
-      (card) => card.id === props.draggingCardId && !card.redacted,
-    );
-  });
 
   const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
-  const canManageGroup = createMemo(() => props.canManage && !isRedacted());
+  const canManageGroup = createMemo(
+    () => props.canManage && !isGroupRedacted(props.group),
+  );
 
-  const canAcceptDrop = createMemo(() => {
-    const card = draggingCard();
-    return (
-      props.canGroupCards &&
-      !props.isLocked &&
-      !isRedacted() &&
-      card !== undefined &&
-      !props.group.cardIds.includes(card.id)
-    );
+  // Inline title editing: createInlineEdit owns the edit, input, and keyboard contract.
+  const titleField = usePrimitive(inlineEdit, () => ({
+    value: () => props.group.title,
+    commit: (text) => titleSave.commit(text),
+    disabled: () => !canManageGroup(),
+  }));
+  const groupEdit = titleField.api.edit;
+  const titleSave = createInlineEditSave(saveGroupTitle, () => groupEdit.cancel());
+  const isRenaming = () => titleField.present('input');
+  const [hasTitleText, setHasTitleText] = createSignal(true);
+  let renameInputEl: HTMLInputElement | undefined;
+
+  // bindInput fills, selects, and focuses the editor once its element mounts.
+  createEffect(isRenaming, (renaming) => {
+    if (renaming && renameInputEl) groupEdit.bindInput(renameInputEl);
+  });
+
+  // The title button re-mounts while editing ends, so guide focus back when nothing took it.
+  createEffect(isRenaming, (renaming, wasRenaming) => {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
+      titleButtonEl?.focus();
+    }
   });
 
   function startRename(): void {
-    setRenameDraft(props.group.title);
+    setHasTitleText(props.group.title.trim().length > 0);
     setMoveMenuOpen(false);
-    setIsRenaming(true);
+    groupEdit.start(props.group.id);
   }
 
   function cancelRename(): void {
-    setIsRenaming(false);
-    setRenameDraft('');
+    titleSave.resetError();
+    groupEdit.cancel();
   }
 
-  async function saveRename(): Promise<void> {
-    const title = renameDraft().trim();
-    if (title.length === 0 || isSaving()) return;
-    if (title === props.group.title) {
-      setIsRenaming(false);
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const ok = await props.onRename(props.group.id, title);
-      if (ok) setIsRenaming(false);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function handleRenameKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelRename();
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void saveRename();
-    }
+  async function saveGroupTitle(text: string): Promise<InlineEditOutcome> {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+    return (await props.actions.renameCardGroup(props.group.id, trimmed))
+      ? true
+      : false;
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
@@ -153,7 +129,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     setIsMoving(true);
     setMoveFailed(false);
     try {
-      const ok = await props.onMoveGroup(props.group.id, targetColumnId);
+      const ok = await props.actions.moveCardGroup(props.group.id, targetColumnId);
       setMoveFailed(!ok);
     } catch {
       setMoveFailed(true);
@@ -166,115 +142,83 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     if (isDissolving()) return;
     setIsDissolving(true);
     try {
-      await props.onDissolve(props.group.id);
+      await props.actions.dissolveCardGroup(props.group.id);
     } finally {
       setIsDissolving(false);
     }
   }
 
-  function handleDragStart(event: DragEvent): void {
-    if (!canManageGroup() || props.isLocked) {
-      event.preventDefault();
-      return;
-    }
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', props.group.id);
-      event.dataTransfer.setData('application/x-retrocks-group', props.group.id);
-    }
-    props.onDragStartGroup(props.group.id, props.group.columnId);
-  }
-
-  function handleDragOver(event: DragEvent): void {
-    if (!canAcceptDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-    setIsDropActive(true);
-  }
-
-  function handleDragLeave(event: DragEvent): void {
-    const currentTarget = event.currentTarget as HTMLElement | null;
-    const related = event.relatedTarget as Node | null;
-    if (currentTarget && related && currentTarget.contains(related)) return;
-    setIsDropActive(false);
-  }
-
-  function handleDrop(event: DragEvent): void {
-    if (!canAcceptDrop()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDropActive(false);
-    const card = draggingCard();
-    if (card) {
-      void props.onGroupCard(card.id, 'group', props.group.id);
-    }
-  }
-
   return (
-    <article
-      data-group-id={props.group.id}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      class={[
-        'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
-        {
-          'ring-2 ring-focus/70': isDropActive(),
-        },
-      ]}
+    <Collapsible
+      open={expanded()}
+      onOpenChange={setExpanded}
+      render={(rootProps) => (
+        <article
+          {...props.transfer.slot(
+            'group-target',
+            () => ({ value: `group:${props.group.id}` }),
+            // rootProps rides as the slot's author props: the Collapsible's
+            // ref and state attrs compose with the transfer zone binding.
+            rootProps,
+          )}
+          data-group-id={props.group.id}
+          class={[
+            'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
+            'data-drop-active:ring-2 data-drop-active:ring-focus/70',
+          ]}
+        />
+      )}
     >
       <div
-        draggable={canManageGroup() && !props.isLocked ? 'true' : 'false'}
-        onDragStart={handleDragStart}
-        onDragEnd={() => props.onDragEndCard()}
+        {...props.transfer.slot('group-members', () => ({ value: `group:${props.group.id}` }))}
+        /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
+           grab–move–drop (APG): transfer items are focusable. */
+        tabindex={canManageGroup() && !props.isLocked ? 0 : undefined}
+        aria-roledescription={canManageGroup() && !props.isLocked ? 'draggable' : undefined}
         class={[
           'grid min-w-0 gap-1 px-0.5',
           {
-            'cursor-grab active:cursor-grabbing':
+            'cursor-grab active:cursor-grabbing touch-none':
               canManageGroup() && !props.isLocked,
           },
+          'data-moving:opacity-50 data-dragging:opacity-50',
         ]}
       >
         <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-1.5">
-          <button
-            type="button"
+          <CollapsibleTrigger
             data-print-hide="true"
             aria-label={expanded() ? 'Collapse Card Group' : 'Expand Card Group'}
-            aria-expanded={expanded() ? 'true' : 'false'}
-            onClick={() => setExpanded((prev) => !prev)}
             class={actionButtonClass}
           >
             <LucideIcon
               icon={ChevronRight}
-              class={expanded()
-                ? 'spring-chevron size-4 rotate-90 motion-reduce:transition-none'
-                : 'spring-chevron size-4 motion-reduce:transition-none'}
+              class="spring-chevron size-4 data-open:rotate-90 motion-reduce:transition-none"
             />
-          </button>
+          </CollapsibleTrigger>
 
           <Show
             when={!isRenaming() || !canManageGroup()}
             fallback={
               <div class="col-span-2 flex min-w-0 items-center gap-1">
                 <input
+                  ref={renameInputEl}
                   type="text"
                   aria-label="Card Group title"
-                  value={renameDraft()}
-                  readonly={isSaving()}
+                  readonly={titleSave.isSaving()}
                   maxlength={MAX_GROUP_TITLE_LENGTH}
-                  onInput={(event) => setRenameDraft(event.currentTarget.value)}
-                  onKeyDown={handleRenameKeyDown}
+                  onKeyDown={(event) => groupEdit.inputKeydown(event)}
+                  onFocusOut={(event) => groupEdit.end('focus-out', event)}
+                  onInput={(event) =>
+                    setHasTitleText(event.currentTarget.value.trim().length > 0)
+                  }
                   class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text focus:border-focus focus:outline-none sm:min-h-7"
                 />
                 <button
                   type="button"
                   aria-label="Save Card Group title"
-                  disabled={isSaving() || renameDraft().trim().length === 0}
-                  onClick={() => void saveRename()}
-                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7"
+                  disabled={titleSave.isSaving() || !hasTitleText()}
+                  onClick={() => groupEdit.end()}
+                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 board-focus-ring disabled:opacity-50 sm:size-7"
                 >
                   <LucideIcon icon={Check} />
                 </button>
@@ -306,11 +250,12 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 }
               >
                 <button
+                  ref={titleButtonEl}
                   type="button"
                   aria-label={`${groupTitle()} — Edit Card Group title`}
                   title={groupTitle()}
                   onClick={startRename}
-                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:py-1"
+                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline board-focus-ring sm:py-1"
                 >
                   <span class={titleTextClass}>{groupTitle()}</span>
                 </button>
@@ -347,19 +292,8 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                     >
                       <LucideIcon icon={ArrowRightLeft} />
                     </MenuTrigger>
-                    <MenuContent
-                      side="bottom"
-                      align="end"
-                      sideOffset={6}
-                      collisionPadding={12}
-                      render={(contentProps) => (
-                        <div
-                          {...contentProps}
-                          aria-labelledby={undefined}
-                          aria-label="Move Card Group to Column"
-                          data-board-overlay={moveMenuOpen() ? 'true' : undefined}
-                        />
-                      )}
+                    <BoardMenuContent
+                      aria-label="Move Card Group to Column"
                       class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                     >
                       <For each={otherColumns()}>
@@ -380,7 +314,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                           </MenuItem>
                         )}
                       </For>
-                    </MenuContent>
+                    </BoardMenuContent>
                   </Menu>
                 </Show>
 
@@ -416,13 +350,12 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             </p>
           </Show>
           <p role="status" class="sr-only">
-            {isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
+            {titleSave.isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
           </p>
         </Show>
       </div>
 
-      <Show when={expanded()}>
-        <div class="mt-1.5 flex flex-col gap-1.5">
+        <CollapsiblePanel class="mt-1.5 flex flex-col gap-1.5">
           <For each={props.cards}>
             {(card, cardIndex) => (
               <CardItem
@@ -438,23 +371,13 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 isLocked={props.isLocked}
                 isBlurred={props.isBlurred}
                 nowMs={props.nowMs}
-                draggingCardId={props.draggingCardId}
-                draggingSourceColumnId={props.draggingSourceColumnId}
-                onGroupCard={props.onGroupCard}
-                onUngroupCard={props.onUngroupCard}
-                onUpdateCard={props.onUpdateCard}
-                onUpdateActionItem={props.onUpdateActionItem}
-                onMoveCard={props.onMoveCard}
-                onDeleteCard={props.onDeleteCard}
-                onToggleReaction={props.onToggleReaction}
+                transfer={props.transfer}
+                actions={props.actions}
                 onOpenCardDetail={props.onOpenCardDetail}
-                onDragStartCard={props.onDragStartCard}
-                onDragEndCard={props.onDragEndCard}
               />
             )}
           </For>
-        </div>
-      </Show>
-    </article>
+        </CollapsiblePanel>
+    </Collapsible>
   );
 }
