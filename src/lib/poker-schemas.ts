@@ -18,7 +18,13 @@ export const PokerCommand = v.variant('type', [
     targetId: PokerEntityId,
     placement: v.picklist(['before', 'after']),
   }),
-  v.object({ type: v.literal('select-story'), storyId: PokerEntityId }),
+  v.object({
+    type: v.literal('select-story'),
+    storyId: PokerEntityId,
+    discardRoundId: v.optional(PokerEntityId),
+  }),
+  v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(v.string()) }),
+  v.object({ type: v.literal('reveal'), roundId: PokerEntityId }),
 ]);
 
 const Participant = v.object({
@@ -34,6 +40,24 @@ const Story = v.object({
   acceptedEstimate: v.optional(v.string()),
 });
 
+const Round = v.variant('phase', [
+  v.object({
+    id: PokerEntityId,
+    phase: v.literal('open'),
+    submittedParticipantIds: v.array(PokerEntityId),
+    ownChoice: v.nullable(v.string()),
+  }),
+  v.object({
+    id: PokerEntityId,
+    phase: v.literal('revealed'),
+    ballots: v.array(v.object({
+      participantId: PokerEntityId,
+      displayName: PokerDisplayName,
+      choice: v.string(),
+    })),
+  }),
+]);
+
 const Room = v.object({
   id: PokerRoomId,
   version: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
@@ -42,6 +66,8 @@ const Room = v.object({
   participants: v.array(Participant),
   stories: v.array(Story),
   activeStoryId: v.nullable(PokerEntityId),
+  deck: v.array(v.string()),
+  round: v.nullable(Round),
 });
 
 const PokerLiveFrame = v.variant('type', [

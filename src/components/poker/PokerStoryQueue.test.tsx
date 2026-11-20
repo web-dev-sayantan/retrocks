@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import { createAgent } from '@ui-sdk/solid/agent';
 import { createSignal } from 'solid-js';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
-import type { PokerResult, PokerRoomView, PokerStory, PokerStoryCommand } from '../../lib/poker-types';
+import { FIBONACCI_DECK, type PokerResult, type PokerRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
+import BoardConfirmDialog from '../BoardConfirmDialog';
 import PokerStoryQueue from './PokerStoryQueue';
 import PokerWorkspace from './PokerWorkspace';
 
@@ -16,6 +17,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
   const [stories, setStories] = createSignal([first]);
   const room: PokerRoomView = {
     id: 'room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
+    deck: FIBONACCI_DECK, round: null,
   };
 
   async function change(command: PokerStoryCommand): Promise<PokerResult> {
@@ -58,6 +60,8 @@ test('a Participant can read Story statuses and the active Story without queue c
     viewer: { id: 'sam', displayName: 'Sam', isFacilitator: false },
     participants: [],
     activeStoryId: pending.id,
+    deck: FIBONACCI_DECK,
+    round: null,
     stories: [
       pending,
       { id: 'estimated', title: 'Update billing', status: 'estimated', acceptedEstimate: '5' },
@@ -65,7 +69,7 @@ test('a Participant can read Story statuses and the active Story without queue c
     ],
   };
   render(() => (
-    <PokerWorkspace room={room} online={[]} status="live" onChangeStory={() => {
+    <PokerWorkspace room={room} online={[]} status="live" onChange={() => {
       throw new Error('A Participant should have no Story mutation controls.');
     }} />
   ));
@@ -81,4 +85,41 @@ test('a Participant can read Story statuses and the active Story without queue c
   ]);
   expect(items[0]).toHaveAttribute('aria-current', 'true');
   expect(within(screen.getByRole('region', { name: 'Story queue' })).queryByRole('button')).toBeNull();
+});
+
+test('A Facilitator can stay with the current Voting Round or confirm picking a different Story', async () => {
+  const current = { id: 'checkout', title: 'Save checkout', status: 'pending' } as const;
+  const target = { id: 'receipt', title: 'Send receipt', status: 'pending' } as const;
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const room: PokerRoomView = {
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [current, target],
+    activeStoryId: current.id,
+    deck: FIBONACCI_DECK,
+    round: { id: 'checkout-round', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  };
+  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
+  render(() => (
+    <>
+      <PokerWorkspace room={room} online={[]} status="live" onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+
+  const select = screen.getByRole('button', { name: 'Select Send receipt' });
+  fireEvent.click(select);
+  const dialog = await screen.findByRole('alertdialog', { name: 'Switch Stories?' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Stay with this Story' }));
+  await waitFor(() => expect(dialog).not.toBeVisible());
+  expect(change).not.toHaveBeenCalled();
+
+  fireEvent.click(select);
+  const reopened = await screen.findByRole('alertdialog', { name: 'Switch Stories?' });
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Switch Story' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'select-story', storyId: target.id, discardRoundId: 'checkout-round',
+  }));
 });
