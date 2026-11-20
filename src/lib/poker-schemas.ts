@@ -23,6 +23,13 @@ const CustomDeckChoices = v.pipe(
 export const PokerCommand = v.variant('type', [
   v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
   v.object({ type: v.literal('add-story'), title: PokerStoryTitle }),
+  v.object({
+    type: v.literal('correct-estimate'),
+    storyId: PokerEntityId,
+    expectedEstimate: PokerDeckChoice,
+    choice: PokerDeckChoice,
+  }),
+  v.object({ type: v.literal('return-story'), storyId: PokerEntityId }),
   v.object({ type: v.literal('edit-story'), storyId: PokerEntityId, title: PokerStoryTitle }),
   v.object({
     type: v.literal('move-story'),
@@ -37,6 +44,9 @@ export const PokerCommand = v.variant('type', [
   }),
   v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(PokerDeckChoice) }),
   v.object({ type: v.literal('reveal'), roundId: PokerEntityId }),
+  v.object({ type: v.literal('restart-round'), roundId: PokerEntityId }),
+  v.object({ type: v.literal('skip-story'), roundId: PokerEntityId }),
+  v.object({ type: v.literal('confirm-estimate'), roundId: PokerEntityId, choice: PokerDeckChoice }),
   v.object({
     type: v.literal('set-deck'),
     deck: v.variant('type', [
@@ -69,7 +79,7 @@ const Round = v.variant('phase', [
   }),
   v.object({
     id: PokerEntityId,
-    phase: v.literal('revealed'),
+    phase: v.picklist(['revealed', 'accepted']),
     ballots: v.array(v.object({
       participantId: PokerEntityId,
       displayName: PokerDisplayName,

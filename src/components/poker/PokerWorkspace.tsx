@@ -21,6 +21,7 @@ export default function PokerWorkspace(props: {
     return round?.phase === 'open' ? new Set(round.submittedParticipantIds) : null;
   });
   let heading!: HTMLHeadingElement;
+  let activeHeading!: HTMLHeadingElement;
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
@@ -40,13 +41,20 @@ export default function PokerWorkspace(props: {
       </p>
       <div class="poker-layout">
         <section class="poker-active min-w-0 rounded-xl p-5 sm:p-7" aria-labelledby="poker-active-story">
-          <h2 id="poker-active-story" class="text-sm font-semibold">Active Story</h2>
+          <h2 ref={activeHeading} id="poker-active-story" tabindex={-1} class="text-sm font-semibold">Active Story</h2>
           <Show when={activeStory()} fallback={
             <p class="mt-2 text-base leading-relaxed">
               {props.room.viewer?.isFacilitator ? 'Select a Story from the queue.' : 'Waiting for the Facilitator to select a Story.'}
             </p>
           }>
-            {(story) => <p class="poker-active-title mt-2 font-semibold [overflow-wrap:anywhere]">{story().title}</p>}
+            {(story) => (
+              <>
+                <p class="poker-active-title mt-2 font-semibold [overflow-wrap:anywhere]">{story().title}</p>
+                <p class="mt-2 text-sm font-semibold [overflow-wrap:anywhere]" role="status">
+                  {story().acceptedEstimate !== undefined ? `Accepted Estimate · ${story().acceptedEstimate}` : ''}
+                </p>
+              </>
+            )}
           </Show>
           <Show when={props.room.round} fallback={
             <PokerDeckSettings
@@ -61,7 +69,9 @@ export default function PokerWorkspace(props: {
               <PokerVotingRound
                 round={round()}
                 deck={props.room.deck}
-                canReveal={props.room.viewer?.isFacilitator === true}
+                hasEstimate={activeStory()?.acceptedEstimate !== undefined}
+                onSkip={() => activeHeading.focus()}
+                canManage={props.room.viewer?.isFacilitator === true}
                 onChange={props.onChange}
               />
             )}
@@ -72,7 +82,9 @@ export default function PokerWorkspace(props: {
           stories={props.room.stories}
           activeStoryId={props.room.activeStoryId}
           canManage={props.room.viewer?.isFacilitator === true}
-          discardRoundId={props.room.round?.id}
+          deck={props.room.deck}
+          roundId={props.room.round?.id}
+          discardRoundId={props.room.round?.phase !== 'accepted' ? props.room.round?.id : undefined}
           onChange={props.onChange}
         />
 

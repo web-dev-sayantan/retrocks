@@ -3,7 +3,7 @@ import { createAgent } from '@ui-sdk/solid/agent';
 import { createSignal, untrack } from 'solid-js';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { FIBONACCI_DECK, type PokerResult, type PokerRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
+import { FIBONACCI_DECK, type PokerResult, type PokerRoomChange, type PokerRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
 import BoardConfirmDialog from '../BoardConfirmDialog';
 import PokerStoryQueue from './PokerStoryQueue';
 import PokerWorkspace from './PokerWorkspace';
@@ -28,7 +28,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
     setStories(next);
     return { ok: true, room: { ...room, stories: next } };
   }
-  render(() => <PokerStoryQueue stories={stories()} activeStoryId={null} canManage onChange={change} />);
+  render(() => <PokerStoryQueue stories={stories()} activeStoryId={null} deck={FIBONACCI_DECK} canManage onChange={change} />);
 
   const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
   expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
@@ -126,6 +126,69 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'select-story', storyId: target.id, discardRoundId: 'checkout-round',
   }));
+});
+
+test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it from the Story queue', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const current = { id: 'checkout', title: 'Save checkout', status: 'pending' } as const;
+  const [room, setRoom] = createSignal<PokerRoomView>({
+    id: 'room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
+    activeStoryId: current.id, deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'round', phase: 'revealed', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
+  });
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const r = untrack(room);
+    if (command.type === 'confirm-estimate' && r.round?.phase === 'revealed') {
+      const next: PokerRoomView = {
+        ...r, version: 2, round: { ...r.round, phase: 'accepted' },
+        stories: [{ ...current, status: 'estimated', acceptedEstimate: command.choice }],
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    if (command.type === 'correct-estimate') {
+      const next: PokerRoomView = {
+        ...r, version: 3,
+        stories: [{ ...r.stories[0], acceptedEstimate: command.choice }],
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error('Unexpected Room command.');
+  });
+
+  render(() => <PokerWorkspace room={room()} online={[]} status="live" onChange={change} />);
+  const active = screen.getByRole('region', { name: 'Active Story' });
+  const estimate = within(active).getByRole('radiogroup', { name: 'Accepted Estimate' });
+  expect(within(estimate).queryByRole('radio', { checked: true })).toBeNull();
+  expect(agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more').every((entry) => entry.label)).toBe(true);
+  const confirm = within(active).getByRole('button', { name: 'Confirm estimate' });
+  fireEvent.click(confirm);
+  expect(change).not.toHaveBeenCalled();
+
+  const zero = within(estimate).getByRole('radio', { name: '0' });
+  zero.focus();
+  fireEvent.keyDown(zero, { key: 'ArrowRight' });
+  await waitFor(() => expect(within(estimate).getByRole('radio', { name: '1' })).toHaveAttribute('aria-checked', 'true'));
+  expect(change).not.toHaveBeenCalled();
+  const confirmed = await agent.act({ steps: [{ ref: 'Confirm estimate', action: 'press' }] });
+  expect(confirmed.ok, confirmed.error?.message).toBe(true);
+  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ type: 'confirm-estimate', roundId: 'round', choice: '1' }));
+
+  const edit = await agent.act({ steps: [{ ref: 'Edit estimate for Save checkout', action: 'press' }] });
+  expect(edit.ok, edit.error?.message).toBe(true);
+  const correcting = await screen.findByRole('radiogroup', { name: 'Correct Accepted Estimate' });
+  expect(within(correcting).getByRole('radio', { name: '1' })).toHaveFocus();
+  fireEvent.click(within(correcting).getByRole('radio', { name: '0' }));
+  const saved = await agent.act({ steps: [{ ref: 'Save estimate', action: 'press' }] });
+  expect(saved.ok, saved.error?.message).toBe(true);
+  await waitFor(() => expect(change).toHaveBeenLastCalledWith({
+    type: 'correct-estimate', storyId: current.id, expectedEstimate: '1', choice: '0',
+  }));
+  expect(await screen.findByText('Estimated · 0')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Edit estimate for Save checkout' })).toHaveFocus();
 });
 
 test('a Facilitator can save an ordered custom Deck through the labeled settings', async () => {

@@ -30,7 +30,7 @@ export interface PokerStory {
 
 export type PokerRoundView =
   | { id: string; phase: 'open'; submittedParticipantIds: string[]; ownChoice: string | null }
-  | { id: string; phase: 'revealed'; ballots: { participantId: string; displayName: string; choice: string }[] };
+  | { id: string; phase: 'revealed' | 'accepted'; ballots: { participantId: string; displayName: string; choice: string }[] };
 
 export interface PokerRoomView {
   id: string;
@@ -50,11 +50,16 @@ export type PokerStoryCommand =
   | { type: 'add-story'; title: string }
   | { type: 'edit-story'; storyId: string; title: string }
   | { type: 'move-story'; storyId: string; targetId: string; placement: 'before' | 'after' }
+  | { type: 'correct-estimate'; storyId: string; expectedEstimate: string; choice: string }
+  | { type: 'return-story'; storyId: string }
   | { type: 'select-story'; storyId: string; discardRoundId?: string };
 
 export type PokerVotingCommand =
   | { type: 'vote'; roundId: string; choice: string | null }
-  | { type: 'reveal'; roundId: string };
+  | { type: 'reveal'; roundId: string }
+  | { type: 'restart-round'; roundId: string }
+  | { type: 'skip-story'; roundId: string }
+  | { type: 'confirm-estimate'; roundId: string; choice: string };
 
 export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand;
 
