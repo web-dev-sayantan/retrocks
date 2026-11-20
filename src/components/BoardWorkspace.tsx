@@ -1,4 +1,32 @@
 import {
+  Dialog,
+  DialogBackdrop,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from '@ui-sdk/solid/dialog';
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+} from '@ui-sdk/solid/menu';
+import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
+import {
+  Check,
+  Columns3,
+  Ellipsis,
+  Eye,
+  EyeOff,
+  Flag,
+  Lock,
+  Pencil,
+  Plus,
+  Vote,
+  X,
+} from 'lucide';
+import {
   For,
   Repeat,
   Show,
@@ -6,7 +34,6 @@ import {
   createMemo,
   createSignal,
   createStore,
-  createUniqueId,
   flush,
   onSettled,
   reconcile,
@@ -47,12 +74,13 @@ import {
   logPrivacyColophon,
   matchSecretSearch,
 } from '../lib/easter-eggs';
-import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
 import type { TimerChange } from '../lib/schemas';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import { toggleTheme } from '../lib/theme';
 import type { ServerClockSample } from '../lib/timer';
 import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
+import { createDoubleTap } from '../lib/double-tap';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
@@ -61,14 +89,8 @@ import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import ExportBoardMenu, { type ExportFeedback } from './ExportBoardMenu';
-import {
-  CheckIcon,
-  CloseIcon,
-  FlagIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  PlusIcon,
-} from './Icons';
+import { CloseIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
 import ShareBoard from './ShareBoard';
@@ -80,6 +102,26 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   actions?: BoardWorkspaceActions;
+}
+
+function BoardHomeLink(props: { href: string; class: string }) {
+  return (
+    <a
+      href={props.href}
+      aria-label="Retrocks home"
+      class={[
+        'spring-press min-h-11 min-w-11 w-fit items-center justify-center gap-2 rounded-full px-2 text-sm font-semibold tracking-tight text-text sm:min-h-10 sm:min-w-10 sm:pr-3',
+        'hover:bg-surface-subtle/80 active:bg-surface-subtle',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+        props.class,
+      ]}
+    >
+      <span aria-hidden="true" class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-accent text-accent-contrast">
+        <LucideIcon icon={Columns3} class="size-3.5" strokeWidth={2.1} />
+      </span>
+      <span class="hidden sm:inline">Retrocks</span>
+    </a>
+  );
 }
 
 function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
@@ -110,12 +152,22 @@ function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): st
     ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(2,minmax(0,1fr))_auto]'
     : 'sm:grid sm:grid-cols-2';
   if (columnCount === 3) return showAddColumn
-    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]'
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(3,minmax(0,1fr))_auto]'
     : 'sm:grid sm:grid-cols-2 lg:grid-cols-3';
   if (columnCount === 4) return showAddColumn
-    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]'
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-[repeat(4,minmax(0,1fr))_auto]'
     : 'sm:grid sm:grid-cols-2 lg:grid-cols-4';
   return 'sm:flex sm:overflow-x-auto sm:snap-x sm:snap-mandatory sm:pb-4';
+}
+
+function getAddColumnSlotClass(columnCount: number): string {
+  if (columnCount === 3) {
+    return 'lg:col-span-3 lg:justify-self-end xl:col-span-1 xl:justify-self-start';
+  }
+  if (columnCount === 4) {
+    return 'lg:col-span-4 lg:justify-self-end 2xl:col-span-1 2xl:justify-self-start';
+  }
+  return '';
 }
 
 export default function BoardWorkspace(props: BoardWorkspaceProps) {
@@ -187,7 +239,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   // More disclosure and Board Settings
-  const boardMenuId = createUniqueId();
   const [boardMenuOpen, setBoardMenuOpen] = createSignal(false);
   const [exportFeedback, setExportFeedback] = createSignal<ExportFeedback | null>(null);
   const [isPrinting, setIsPrinting] = createSignal(false);
@@ -207,9 +258,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     };
   });
   const [isBoardSettingsOpen, setIsBoardSettingsOpen] = createSignal(false);
-  let boardMenuRootEl: HTMLDivElement | undefined;
   let boardMenuTriggerEl: HTMLButtonElement | undefined;
   let boardMenuEl: HTMLDivElement | undefined;
+
+  createEffect(boardMenuOpen, (isOpen) => {
+    if (isOpen && boardMenuEl && !boardMenuEl.contains(document.activeElement)) {
+      boardMenuEl.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
+    }
+  });
 
   function closeBoardMenu(restoreFocus: boolean): void {
     setBoardMenuOpen(false);
@@ -222,6 +278,18 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const [isRenamingBoard, setIsRenamingBoard] = createSignal(false);
   const [boardTitleDraft, setBoardTitleDraft] = createSignal('');
   const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
+  let boardTitleInputEl: HTMLInputElement | undefined;
+  let renameBoardButtonEl: HTMLButtonElement | undefined;
+  const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
+
+  createEffect(isRenamingBoard, (renaming, wasRenaming) => {
+    if (renaming) {
+      boardTitleInputEl?.focus();
+    } else if (wasRenaming && document.activeElement === document.body) {
+      renameBoardButtonEl?.focus();
+      if (document.activeElement === document.body) boardMenuTriggerEl?.focus();
+    }
+  });
 
   // Add Column inline composer state
   const [isAddingColumn, setIsAddingColumn] = createSignal(false);
@@ -246,6 +314,15 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   // Mobile active Column + swipe + bottom quick-add state
+  const [isMobileBoard, setIsMobileBoard] = createSignal(false);
+  onSettled(() => {
+    const media = window.matchMedia?.('(width < 40rem)');
+    if (!media) return;
+    const update = () => setIsMobileBoard(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  });
   const [activeColumnId, setActiveColumnId] = createSignal<string | null>(null);
   const [mobileDrafts, setMobileDrafts] = createStore<Record<string, { content: string; error: string | null }>>({});
   const [isSubmittingMobileCard, setIsSubmittingMobileCard] =
@@ -392,22 +469,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       }
     },
   );
-
-  createEffect(boardMenuOpen, (isOpen) => {
-    if (!isOpen) return;
-    getEnabledMenuItems(boardMenuEl)[0]?.focus();
-    function handlePointerDown(event: PointerEvent): void {
-      if (
-        event.target instanceof Node &&
-        boardMenuRootEl &&
-        !boardMenuRootEl.contains(event.target)
-      ) {
-        closeBoardMenu(false);
-      }
-    }
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  });
 
   createEffect(
     () => props.boardId,
@@ -794,7 +855,20 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       (card.isMine || (board.isFacilitator && !board.isBlurred));
   }
 
+  function isBoardTitleEditTarget(target: EventTarget | null): boolean {
+    const board = workspace.board;
+    if (!board || !board.isFacilitator || board.isLocked) return false;
+    return !(target instanceof Element && target.closest('button'));
+  }
+
+  function handleBoardTitleDoubleClick(event: MouseEvent): void {
+    if (!isBoardTitleEditTarget(event.target)) return;
+    boardTitleTap.reset();
+    startBoardRename();
+  }
+
   function startBoardRename(): void {
+    boardTitleTap.reset();
     const board = workspace.board;
     if (!board || !board.isFacilitator || board.isLocked) return;
     setBoardTitleDraft(board.title);
@@ -802,6 +876,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function cancelBoardRename(): void {
+    boardTitleTap.reset();
     setIsRenamingBoard(false);
     setBoardTitleDraft('');
   }
@@ -1391,6 +1466,23 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
+  function updateColumnTabEdges(list: HTMLDivElement): void {
+    const offset = Math.abs(list.scrollLeft);
+    list.toggleAttribute('data-fade-start', offset > 1);
+    list.toggleAttribute('data-fade-end', offset < list.scrollWidth - list.clientWidth - 1);
+  }
+
+  createEffect(() => workspace.board?.id, () => {
+    const list = columnTabListEl;
+    const track = list?.firstElementChild;
+    if (!list || !track) return;
+    updateColumnTabEdges(list);
+    const observer = new ResizeObserver(() => updateColumnTabEdges(list));
+    observer.observe(list);
+    observer.observe(track);
+    return () => observer.disconnect();
+  });
+
   createEffect(resolvedActiveColumnIndex, (index) => {
     const list = columnTabListEl;
     const tab = list?.querySelectorAll<HTMLElement>('[role=tab]')[index];
@@ -1400,29 +1492,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const offset = item.left < rail.left ? item.left - rail.left - 12
       : item.right > rail.right ? item.right - rail.right + 12 : 0;
     if (offset !== 0) list.scrollLeft += offset;
+    updateColumnTabEdges(list);
   });
-
-  function handleColumnTabsKeyDown(event: KeyboardEvent): void {
-    const cols = workspace.board?.columns ?? [];
-    const index = resolvedActiveColumnIndex();
-    let next: number;
-    switch (event.key) {
-      case 'Home': next = 0; break;
-      case 'End': next = cols.length - 1; break;
-      case 'ArrowLeft': next = (index - 1 + cols.length) % cols.length; break;
-      case 'ArrowRight': next = (index + 1) % cols.length; break;
-      default: return;
-    }
-    if (!cols[next]) return;
-    event.preventDefault();
-    setActiveColumnId(cols[next].id);
-    columnTabListEl?.querySelectorAll<HTMLElement>('[role=tab]')[next]?.focus({ preventScroll: true });
-  }
 
   function handleTouchStart(event: TouchEvent): void {
     const touch = event.changedTouches[0];
     if (!touch || (event.touches && event.touches.length > 1) ||
-        (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, [data-board-overlay]'))) {
+        (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, [data-board-overlay], [role=tablist]'))) {
       swipeStart = undefined;
       return;
     }
@@ -1474,22 +1550,27 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       when={workspace.board}
       fallback={
         <div class="flex min-h-dvh flex-col">
-          <header class="border-b border-border bg-canvas">
-            <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-              <a
-                href={props.homeHref ?? '/'}
-                class={[
-                  'inline-flex min-h-11 items-center gap-2 rounded-md text-sm font-semibold tracking-tight text-text',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                ]}
-              >
-                <span
-                  aria-hidden="true"
-                  class="inline-block h-2.5 w-2.5 rounded-sm bg-accent"
-                />
-                <span>Retrocks</span>
-              </a>
-              <ThemeToggle />
+          <header class="pointer-events-none sticky top-0 z-30 px-4 pt-3 pb-1 sm:px-6 sm:pt-4">
+            <div class="mx-auto flex max-w-6xl justify-center">
+              <div class="board-island pointer-events-auto inline-flex w-full max-w-md items-center justify-between gap-2 rounded-full px-2 py-1.5 sm:w-auto sm:min-w-80 sm:gap-3">
+                <a
+                  href={props.homeHref ?? '/'}
+                  class={[
+                    'spring-press inline-flex min-h-10 items-center gap-2 rounded-full pl-2 pr-3 text-sm font-semibold tracking-tight text-text',
+                    'hover:bg-surface-subtle/80 active:bg-surface-subtle',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  ]}
+                >
+                  <span
+                    aria-hidden="true"
+                    class="inline-flex size-6 items-center justify-center rounded-full bg-accent text-accent-contrast"
+                  >
+                    <LucideIcon icon={Columns3} class="size-3.5" strokeWidth={2.1} />
+                  </span>
+                  <span>Retrocks</span>
+                </a>
+                <ThemeToggle variant="island" />
+              </div>
             </div>
           </header>
 
@@ -1517,23 +1598,17 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           <div aria-live="polite" aria-atomic="true" class="sr-only">
             {modeAnnouncement()}
           </div>
-          <header class="@container relative z-20 border-b border-border bg-canvas">
-            <div class="mx-auto grid max-w-[1600px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 pt-3 pb-4 @max-[20rem]:grid-cols-[minmax(0,1fr)] sm:px-6 sm:pt-5">
-              <a
-                href={props.homeHref ?? '/'}
-                aria-label="Retrocks home"
-                class="inline-flex min-h-11 w-fit items-center gap-2 rounded-md text-sm font-semibold text-text-muted hover:text-text sm:min-h-8"
-              >
-                <span aria-hidden="true" class="size-2.5 rounded-sm bg-accent" />
-                Retrocks
-              </a>
-
-              <div class="col-span-2 row-start-2 min-w-0 @max-[20rem]:col-span-1 @max-[20rem]:row-start-3 sm:col-span-1">
+          <header role="banner" class="board-masthead">
+            <div class="board-island board-masthead-island">
+              <BoardHomeLink href={props.homeHref ?? '/'} class="hidden justify-self-start sm:inline-flex" />
+              <div data-renaming={isRenamingBoard() ? "" : undefined}
+                class="board-masthead-title flex h-7 min-w-0 max-w-full items-center px-3 sm:h-10 sm:justify-center sm:px-0">
                 <Show
                   when={!isRenamingBoard()}
                   fallback={
-                    <div class="flex max-w-md items-center gap-1.5">
+                    <div class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
                       <input
+                        ref={boardTitleInputEl}
                         type="text"
                         aria-label="Board title"
                         value={boardTitleDraft()}
@@ -1543,7 +1618,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         }
                         onKeyDown={handleBoardTitleKeyDown}
                         class={[
-                          'min-w-0 flex-1 rounded-md border border-border bg-canvas px-2.5 py-1 text-base font-semibold text-text',
+                          'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
                           'focus:border-focus focus:outline-none',
                         ]}
                       />
@@ -1555,188 +1630,236 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           boardTitleDraft().trim().length === 0
                         }
                         onClick={() => void saveBoardRename()}
-                        class="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
+                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
                       >
-                        <CheckIcon />
+                        <LucideIcon icon={Check} class="size-4" strokeWidth={2} />
                       </button>
                       <button
                         type="button"
                         aria-label="Cancel Board rename"
                         onClick={cancelBoardRename}
-                        class="inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
+                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/80 bg-surface text-text-muted hover:bg-surface-subtle hover:text-text sm:size-9"
                       >
-                        <CloseIcon />
+                        <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
                       </button>
                     </div>
                   }
                 >
-                  <div class="flex items-start gap-1.5">
-                    <h1 class="min-w-0 wrap-anywhere text-3xl leading-tight font-semibold tracking-tight text-text sm:text-4xl">
+                  <div
+                    onDblClick={handleBoardTitleDoubleClick}
+                    onPointerDown={boardTitleTap.onPointerDown}
+                    onPointerUp={boardTitleTap.onPointerUp}
+                    onPointerCancel={boardTitleTap.onPointerCancel}
+                    class="flex h-full max-w-full min-w-0 items-center gap-1 sm:justify-center"
+                  >
+                    <h1
+                      title={
+                        board().isFacilitator && !board().isLocked
+                          ? `${board().title} — Double-click to rename`
+                          : board().title
+                      }
+                      class={[
+                        'min-w-0 truncate text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:text-lg',
+                        board().isFacilitator && !board().isLocked && 'cursor-text touch-manipulation',
+                      ]}
+                    >
                       {board().title}
                     </h1>
                     <Show when={board().isFacilitator && !board().isLocked}>
                       <button
+                        ref={renameBoardButtonEl}
                         type="button"
                         aria-label="Rename Board"
                         title="Rename Board"
                         data-print-hide="true"
                         onClick={startBoardRename}
                         class={[
-                          'inline-flex min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted',
-                          'transition-colors hover:bg-surface-subtle hover:text-text',
+                          'spring-press hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-muted sm:inline-flex',
+                          'transition-colors hover:bg-surface-subtle/90 hover:text-text',
                           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                         ]}
                       >
-                        <PencilIcon />
+                        <LucideIcon icon={Pencil} class="size-3.5" strokeWidth={1.85} />
                       </button>
                     </Show>
                   </div>
                 </Show>
-                <Show when={board().subtitle.length > 0}>
-                  <p class="mt-1 max-w-[65ch] wrap-anywhere text-base leading-relaxed text-text-muted">{board().subtitle}</p>
-                </Show>
               </div>
 
-              <div data-print-hide="true" class="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-1.5 @max-[20rem]:col-start-1 @max-[20rem]:row-start-2 sm:row-span-2 sm:gap-2 sm:self-end">
-                <button
-                  ref={actionItemsHeaderEntry}
-                  type="button"
-                  aria-keyshortcuts="A"
-                  aria-haspopup="dialog"
-                  aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
-                  title="Action Items (A)"
-                  onClick={(event) => {
-                    event.currentTarget.focus();
-                    setIsActionItemsOpen(true);
-                  }}
-                  class={[
-                    'hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 text-xs font-medium text-text @min-[26rem]:inline-flex sm:min-h-9 sm:px-3',
-                    'transition-colors hover:bg-surface-subtle active:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  <FlagIcon class="h-3.5 w-3.5" />
-                  <span>Action Items</span>{' '}
-                  <span class="inline-flex min-w-5 items-center justify-center rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-text tabular-nums">
-                    {openActionItemCount()}
-                  </span>{' '}
-                  <span class="sr-only">open</span>
-                </button>
-                <Show when={board().id} keyed>
-                  {(boardId) => (
-                    <ShareBoard
-                      boardId={boardId}
-                      isFacilitator={board().isFacilitator}
-                    />
-                  )}
-                </Show>
-
-                <div
-                  ref={boardMenuRootEl}
-                  class="relative"
-                  onFocusOut={(event) => {
-                    if (boardMenuOpen() && event.relatedTarget instanceof Node &&
-                        !event.currentTarget.contains(event.relatedTarget)) {
-                      closeBoardMenu(false);
-                    }
-                  }}
-                >
-                  <button
-                    ref={boardMenuTriggerEl}
-                    type="button"
-                    aria-label="More board actions"
-                    aria-haspopup="menu"
-                    aria-expanded={boardMenuOpen() ? 'true' : 'false'}
-                    aria-controls={boardMenuId}
-                    onPointerDown={(event) => {
-                      // Let the click close More before focus leaves the menu.
-                      if (boardMenuOpen()) event.preventDefault();
-                    }}
-                    onClick={() => {
-                      if (boardMenuOpen()) closeBoardMenu(true);
-                      else setBoardMenuOpen(true);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ArrowDown' && !boardMenuOpen()) {
-                        event.preventDefault();
-                        setBoardMenuOpen(true);
-                      }
-                    }}
-                    class="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-sm font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle @max-[20rem]:px-2 sm:min-h-9"
-                  >
-                    <MoreHorizontalIcon />
-                    <span>More</span>
-                  </button>
-
-                  <div
-                    ref={boardMenuEl}
-                    id={boardMenuId}
-                    hidden={!boardMenuOpen()}
-                    role="menu"
-                    aria-label="More board actions"
-                    data-board-overlay={boardMenuOpen() ? 'true' : undefined}
-                    onKeyDown={handleMenuNavigation}
-                    onFocusOut={(event) => {
-                      if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-                        closeBoardMenu(false);
-                      }
-                    }}
-                    class="absolute top-full right-0 z-30 mt-2 max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-border bg-surface p-2 shadow-lg"
-                  >
-                    <ThemeToggle menuItem />
-                    <Show when={board().isFacilitator}>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        tabindex={-1}
-                        aria-haspopup="dialog"
-                        class="board-menu-item"
-                        onClick={() => {
-                          closeBoardMenu(true);
-                          setIsBoardSettingsOpen(true);
-                        }}
-                      >
-                        Board Settings
-                      </button>
+              <div data-print-hide="true" class="hidden justify-self-end sm:block">
+                <ThemeToggle variant="island" />
+              </div>
+            </div>
+            <div class="board-masthead-toolbar">
+              <div role="group" aria-label="Board controls" class="board-masthead-controls">
+                <BoardHomeLink href={props.homeHref ?? '/'} class="inline-flex sm:hidden" />
+                <div class="flex items-center justify-end gap-1.5 sm:flex-wrap sm:gap-2">
+                  <div data-print-hide="true">
+                    <Show when={board().id} keyed>
+                      {(boardId) => (
+                        <CountdownTimer
+                          timer={board().timer}
+                          clock={timerClock()}
+                          canControl={board().isFacilitator && !board().isLocked}
+                          onChange={(change) => changeCountdown(boardId, change)}
+                        />
+                      )}
                     </Show>
-                    <Show when={canAddColumn()}>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        tabindex={-1}
-                        class="board-menu-item sm:hidden"
-                        onClick={openAddColumn}
-                      >
-                        <span class="inline-flex items-center gap-2"><PlusIcon /> Add column</span>
-                      </button>
-                    </Show>
+                  </div>
+
+                  <Show when={board().isFacilitator && !board().isLocked}>
                     <button
                       type="button"
-                      role="menuitem"
-                        tabindex={-1}
+                      data-print-hide="true"
+                      data-cta-emphasis={board().isBlurred ? 'primary' : 'secondary'}
+                      aria-keyshortcuts="B"
+                      title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
+                      disabled={isChangingPrivateMode()}
+                      onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
+                      class={[
+                        'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:h-9 sm:min-h-9',
+                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                        board().isBlurred
+                          ? 'border-transparent bg-accent sm:px-3.5 text-accent-contrast shadow-xs hover:opacity-92'
+                          : 'border-border/80 bg-surface text-text hover:bg-surface-subtle',
+                      ]}
+                    >
+                      <Show
+                        when={board().isBlurred}
+                        fallback={<LucideIcon icon={EyeOff} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />}
+                      >
+                        <LucideIcon icon={Eye} class="size-3.5 shrink-0" strokeWidth={1.9} />
+                      </Show>
+                      <span class="sr-only sm:not-sr-only">{board().isBlurred ? 'Reveal All' : 'Private Mode'}</span>
+                    </button>
+                  </Show>
+
+                  <div data-print-hide="true" class="flex shrink-0 items-center gap-1.5 sm:gap-2">
+                    <button
+                      ref={actionItemsHeaderEntry}
+                      type="button"
+                      aria-keyshortcuts="A"
                       aria-haspopup="dialog"
-                      class="board-menu-item @min-[26rem]:hidden"
-                      onClick={() => {
-                        closeBoardMenu(true);
+                      aria-expanded={isActionItemsOpen() ? 'true' : 'false'}
+                      title="Action Items (A)"
+                      onClick={(event) => {
+                        event.currentTarget.focus();
                         setIsActionItemsOpen(true);
                       }}
+                      class={[
+                        'spring-press hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9 sm:min-h-9',
+                        'hover:bg-surface-subtle active:bg-surface-subtle',
+                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      ]}
                     >
-                      <span class="inline-flex items-center gap-2"><FlagIcon /> Action Items</span>{' '}
-                      <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
+                      <LucideIcon icon={Flag} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />
+                      <span>Action Items</span>{' '}
+                      <span class="inline-flex min-w-5 items-center justify-center rounded-full bg-surface-subtle px-1.5 py-0.5 text-xs font-semibold text-text tabular-nums">
+                        {openActionItemCount()}
+                      </span>{' '}
+                      <span class="sr-only">open</span>
                     </button>
-                    <div role="separator" class="my-1 border-t border-border" />
-                    <ExportBoardMenu
-                      board={board()}
-                      onClose={() => closeBoardMenu(true)}
-                      onFeedback={setExportFeedback}
-                    />
+
+                    <Show when={board().id} keyed>
+                      {(boardId) => (
+                        <ShareBoard
+                          boardId={boardId}
+                          isFacilitator={board().isFacilitator}
+                          emphasis={board().isBlurred ? 'secondary' : 'primary'}
+                        />
+                      )}
+                    </Show>
+
+                    <Menu open={boardMenuOpen()} onOpenChange={setBoardMenuOpen} modal={false}>
+                      <MenuTrigger
+                        ref={boardMenuTriggerEl}
+                        aria-label="More board actions"
+                        class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle sm:h-9 sm:min-h-9"
+                      >
+                        <LucideIcon icon={Ellipsis} class="size-4 shrink-0" strokeWidth={1.9} />
+                        <span class="hidden sm:inline">More</span>
+                      </MenuTrigger>
+
+                      <MenuContent
+                        ref={boardMenuEl}
+                        finalFocus={isRenamingBoard() ? 'none' : undefined}
+                        side="bottom"
+                        align="end"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        aria-label="More board actions"
+                        data-board-overlay="true"
+                        class="board-popover max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl p-1.5"
+                      >
+                        <MenuItem
+                          value="toggle-theme"
+                          closeOnSelect={false}
+                          onSelect={toggleTheme}
+                          render={(itemProps) => <ThemeToggle menuItem menuItemProps={itemProps} />}
+                        />
+                        <Show when={board().isFacilitator}>
+                          <MenuItem
+                            value="board-settings"
+                            aria-haspopup="dialog"
+                            class="board-menu-item"
+                            onSelect={() => {
+                              closeBoardMenu(true);
+                              setIsBoardSettingsOpen(true);
+                            }}
+                          >
+                            Board Settings
+                          </MenuItem>
+                        </Show>
+                        <Show when={isMobileBoard()}>
+                          <Show when={board().isFacilitator && !board().isLocked}>
+                            <MenuItem
+                              value="rename-board"
+                              class="board-menu-item"
+                              closeOnSelect={false}
+                              onSelect={() => {
+                                closeBoardMenu(false);
+                                startBoardRename();
+                              }}
+                            >
+                              Rename Board
+                            </MenuItem>
+                          </Show>
+                          <Show when={canAddColumn()}>
+                            <MenuItem
+                              value="add-column"
+                              class="board-menu-item"
+                              onSelect={openAddColumn}
+                            >
+                              <span class="inline-flex items-center gap-2"><LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} /> Add column</span>
+                            </MenuItem>
+                          </Show>
+                          <MenuItem
+                            value="action-items"
+                            aria-haspopup="dialog"
+                            class="board-menu-item"
+                            onSelect={() => {
+                              closeBoardMenu(true);
+                              setIsActionItemsOpen(true);
+                            }}
+                          >
+                            <span class="inline-flex items-center gap-2"><LucideIcon icon={Flag} class="size-3.5" strokeWidth={1.9} /> Action Items</span>{' '}
+                            <span class="text-text-muted tabular-nums">{openActionItemCount()} open</span>
+                          </MenuItem>
+                        </Show>
+                        <MenuSeparator class="my-1 border-t border-border/75" />
+                        <ExportBoardMenu
+                          board={board()}
+                          onClose={() => closeBoardMenu(true)}
+                          onFeedback={setExportFeedback}
+                        />
+                      </MenuContent>
+                    </Menu>
                   </div>
                 </div>
               </div>
-
-              <div role="group" aria-label="Board status" class="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 @max-[20rem]:col-span-1">
-                <div data-print-hide="true" class="flex items-center gap-2 text-sm text-text-muted">
-                  <span role="status" class="inline-flex items-center gap-1.5 font-medium">
+              <div role="group" aria-label="Board status" class="board-masthead-status flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 text-xs leading-4 sm:gap-x-2.5 sm:px-0">
+                <div data-print-hide="true" class="inline-flex items-center gap-2 text-text-muted sm:min-h-9 sm:text-[13px]">
+                  <span role="status" class="inline-flex items-center gap-1.5 font-medium text-text">
                     <span
                       aria-hidden="true"
                       class={['size-1.5 shrink-0 rounded-full', isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
@@ -1744,75 +1867,53 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     {isLive() ? 'Live' : 'Reconnecting…'}
                   </span>
                   <Show when={isLive() && onlineCount() !== null}>
-                    <span class="border-l border-border pl-2 tabular-nums">{onlineCount()} online</span>
+                    <span class="border-l border-border/80 pl-2 tabular-nums">{onlineCount()} online</span>
                   </Show>
                 </div>
-                <div data-print-hide="true">
-                  <Show when={board().id} keyed>
-                    {(boardId) => (
-                      <CountdownTimer
-                        timer={board().timer}
-                        clock={timerClock()}
-                        canControl={board().isFacilitator && !board().isLocked}
-                        onChange={(change) => changeCountdown(boardId, change)}
-                      />
-                    )}
-                  </Show>
-                </div>
-                <Show when={board().isBlurred || (board().isFacilitator && !board().isLocked)}>
-                  <div class="flex max-w-full flex-wrap items-center gap-2">
-                    <Show when={board().isBlurred}>
-                      <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Private Mode</span>
-                    </Show>
-                    <Show when={board().isFacilitator && !board().isLocked}>
-                      <button
-                        type="button"
-                        data-print-hide="true"
-                        aria-keyshortcuts="B"
-                        title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
-                        disabled={isChangingPrivateMode()}
-                        onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
-                        class={[
-                          'inline-flex min-h-11 min-w-11 cursor-pointer items-center rounded-lg border px-2.5 text-sm font-medium transition-colors active:opacity-80 sm:min-h-9 sm:px-3',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
-                          board().isBlurred
-                            ? 'border-accent bg-accent text-accent-contrast hover:opacity-90'
-                            : 'border-border bg-surface text-text hover:bg-surface-subtle',
-                        ]}
-                      >
-                        {board().isBlurred ? 'Reveal All' : 'Private Mode'}
-                      </button>
-                    </Show>
-                  </div>
-                </Show>
+                <span aria-hidden="true" data-print-hide="true" class="hidden h-4 w-px bg-border/75 sm:block" />
+
                 <Show when={board().blindVoting}>
-                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Blind Voting</span>
+                  <span class="inline-flex items-center gap-1 text-text-muted sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/90 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text">
+                    <LucideIcon icon={EyeOff} class="hidden size-3.5 shrink-0 text-text-muted sm:block" strokeWidth={1.9} />
+                    <span>Blind Voting</span>
+                  </span>
                 </Show>
                 <Show when={board().isLocked}>
-                  <span class="rounded-full bg-surface-subtle px-2.5 py-1 text-sm font-medium">Locked</span>
+                  <span class="inline-flex items-center gap-1 text-text-muted sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/90 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text">
+                    <LucideIcon icon={Lock} class="hidden size-3.5 shrink-0 text-text-muted sm:block" strokeWidth={1.9} />
+                    <span>Locked</span>
+                  </span>
                 </Show>
                 <Show when={board().voteLimit !== null}>
-                  <span aria-live="polite" aria-atomic="true" class="text-sm font-medium text-text tabular-nums">
-                    {voting().remainingVotes} / {board().voteLimit} votes left
+                  <span
+                    aria-live="polite"
+                    aria-atomic="true"
+                    class="inline-flex items-center gap-1 text-text-muted tabular-nums sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/75 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text"
+                  >
+                    <LucideIcon icon={Vote} class="hidden size-3.5 shrink-0 text-text-muted sm:block" strokeWidth={1.85} />
+                    <span class="tabular-nums">{voting().remainingVotes} / {board().voteLimit} votes left</span>
                   </span>
                 </Show>
                 <Show when={board().isBlurred}>
-                  <p class="basis-full text-sm text-text-muted">Only you can read your Cards until they’re revealed.</p>
+                  <span title="Only you can read your Cards until they’re revealed." class="font-medium text-text">Private Mode</span>
+                  <span class="sr-only">Only you can read your Cards until they’re revealed.</span>
                 </Show>
               </div>
-
-              <p
-                data-print-hide="true"
-                aria-live="polite"
-                aria-atomic="true"
-                class={[
-                  'col-span-2 text-sm empty:absolute',
-                  exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
-                ]}
-              >
-                {exportFeedback()?.message}
-              </p>
             </div>
+            <Show when={board().subtitle.length > 0}>
+              <p class="board-masthead-subtitle mx-3 max-w-[65ch] sm:mx-0 wrap-anywhere text-sm leading-snug text-text-muted">{board().subtitle}</p>
+            </Show>
+            <p
+              data-print-hide="true"
+              aria-live="polite"
+              aria-atomic="true"
+              class={[
+                'board-masthead-feedback mx-3 text-xs empty:sr-only sm:mx-0',
+                exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
+              ]}
+            >
+              {exportFeedback()?.message}
+            </p>
           </header>
 
           <Show when={board().isFacilitator}>
@@ -1829,62 +1930,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               onDeleteBoard={deleteCurrentBoard}
             />
           </Show>
-
-          {/* Mobile (< 640px) scrollable Column Tab Bar */}
-          <nav
-            aria-label="Board Columns"
-            data-print-hide="true"
-            class="sticky top-0 z-10 min-w-0 border-b border-border bg-canvas sm:hidden"
-          >
-            <div
-              ref={columnTabListEl}
-              onKeyDown={handleColumnTabsKeyDown}
-              role="tablist"
-              aria-label="Select Column"
-              class="flex items-center gap-1.5 overflow-x-auto px-3 py-2"
-            >
-              <For each={board().columns}>
-                {(column, index) => (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-controls={`column-${column.id}`}
-                    tabindex={resolvedActiveColumnIndex() === index() ? 0 : -1}
-                    aria-selected={
-                      resolvedActiveColumnIndex() === index()
-                        ? 'true'
-                        : 'false'
-                    }
-                    onClick={() => setActiveColumnId(column.id)}
-                    class={[
-                      'inline-flex min-h-11 max-w-[min(18rem,85vw)] shrink-0 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors active:bg-surface-subtle',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                      {
-                        'border-text bg-surface-subtle text-text':
-                          resolvedActiveColumnIndex() === index(),
-                        'border-border bg-surface text-text-muted hover:text-text':
-                          resolvedActiveColumnIndex() !== index(),
-                      },
-                    ]}
-                  >
-                    <span
-                      aria-hidden="true"
-                      class={[
-                        'h-2 w-2 shrink-0 rounded-full',
-                        COLUMN_ACCENT_STYLES[column.accent].swatch,
-                      ]}
-                    />
-                    <span class="min-w-0 wrap-anywhere text-left">{column.title}</span>
-                    <span class="text-xs text-text-muted tabular-nums">
-                      {boardView()?.hasActiveFilter
-                        ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
-                        : column.cardCount}
-                    </span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </nav>
 
           {/* Viewer-local Search, Quick Filter & Sort toolbar */}
           <Show when={boardView()}>
@@ -1933,106 +1978,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             )}
           </Show>
 
-          {/* Facilitator Add Column inline form */}
-          <Show when={isAddingColumn() && board().isFacilitator && !board().isLocked}>
-            <div data-print-hide="true" class="mx-auto mt-4 w-full max-w-[1600px] px-4 sm:px-6">
-              <form
-                onSubmit={(e) => void handleAddColumn(e)}
-                class="rounded-xl border border-border bg-surface p-4 shadow-2xs"
-              >
-                <div class="flex flex-wrap items-end gap-3">
-                  <div class="w-full min-w-0 flex-1 basis-52">
-                    <label
-                      for="new-column-title"
-                      class="block text-xs font-medium text-text-muted"
-                    >
-                      New column title
-                    </label>
-                    <input
-                      ref={newColumnTitleEl}
-                      id="new-column-title"
-                      type="text"
-                      aria-label="New column title"
-                      placeholder="e.g. Kudos, Questions, Risks"
-                      value={newColumnTitle()}
-                      maxlength={MAX_COLUMN_TITLE_LENGTH}
-                      onInput={(e) => setNewColumnTitle(e.currentTarget.value)}
-                      class="mt-1.5 min-h-11 w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-focus focus:outline-none sm:min-h-9"
-                    />
-                  </div>
-
-                  <div>
-                    <span class="block text-xs font-medium text-text-muted">
-                      Accent
-                    </span>
-                    <div class="mt-1.5 grid w-fit grid-cols-4 gap-1.5 sm:grid-cols-8">
-                      <For each={COLUMN_ACCENTS}>
-                        {(accent) => (
-                          <button
-                            type="button"
-                            aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                            aria-pressed={
-                              newColumnAccent() === accent ? 'true' : 'false'
-                            }
-                            onClick={() => setNewColumnAccent(accent)}
-                            class={[
-                              'inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:size-9',
-                              {
-                                'border-focus bg-surface-subtle':
-                                  newColumnAccent() === accent,
-                                'border-border bg-surface hover:bg-surface-subtle':
-                                  newColumnAccent() !== accent,
-                              },
-                            ]}
-                          >
-                            <span
-                              aria-hidden="true"
-                              class={[
-                                'h-3.5 w-3.5 rounded-full',
-                                COLUMN_ACCENT_STYLES[accent].swatch,
-                              ]}
-                            />
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-
-                  <label class="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm text-text-muted sm:min-h-9">
-                    <input
-                      type="checkbox"
-                      checked={newColumnIsAction()}
-                      onChange={(e) =>
-                        setNewColumnIsAction(e.currentTarget.checked)
-                      }
-                      class="h-4 w-4 rounded border-border accent-accent"
-                    />
-                    <span>Action Items column</span>
-                  </label>
-
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="submit"
-                      disabled={
-                        isSavingColumn() || newColumnTitle().trim().length === 0
-                      }
-                      class="min-h-11 cursor-pointer rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
-                    >
-                      {isSavingColumn() ? 'Adding...' : 'Add column'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingColumn(false)}
-                      class="min-h-11 cursor-pointer rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-text-muted hover:text-text sm:min-h-9"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </Show>
-
           {/* Responsive Columns workspace (single-column + swipe on mobile, grid/snap on tablet & desktop) */}
           <main
             ref={boardMain}
@@ -2040,19 +1985,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={() => { swipeStart = undefined; }}
-            class="mx-auto w-full max-w-[1600px] flex-1 touch-pan-y touch-pinch-zoom px-3 py-4 sm:touch-auto sm:px-6 sm:py-6"
+            class="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-28 sm:px-6 sm:py-6"
           >
-            <Show
-              when={
-                secretSearch() ||
-                (boardView()?.hasActiveFilter &&
-                  (boardView()?.totalCardCount ?? 0) > 0 &&
-                  (boardView()?.matchedCardCount ?? 0) === 0)
-              }
-            >
+            <Show when={secretSearch()}>
               <div class="relative mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
                 <p class="flex items-center gap-2">
-                  {secretSearch()?.message ?? 'No Cards match your current search or filter.'}
+                  {secretSearch()?.message}
                   <Show when={secretSearch()?.id === 'rock'}>
                     <svg
                       aria-hidden="true"
@@ -2090,120 +2028,319 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               </div>
             </Show>
 
-            <div
-              data-board-columns="true"
-              class={[
-                'gap-4',
-                getResponsiveGridClass(board().columns.length, canAddColumn()),
-                { 'secret-search-pivot': secretSearch()?.id === 'pivot' },
-              ]}
+            <Tabs
+              value={activeMobileColumn()?.id ?? null}
+              onValueChange={setActiveColumnId}
+              class="board-column-deck relative"
+              data-can-manage={board().isFacilitator && !board().isLocked ? "" : undefined}
             >
-              <For each={board().columns}>
-                {(column, index) => {
-                  const columnCards = createMemo(
-                    () => cardsByColumn().get(column.id) ?? EMPTY_CARDS,
-                    {
-                      equals: (prev, next) =>
-                        prev.length === next.length &&
-                        prev.every((card, i) => card === next[i]),
-                    },
-                  );
-                  const columnGroups = createMemo(
-                    () => groupsByColumn().get(column.id) ?? EMPTY_GROUPS,
-                    {
-                      equals: (prev, next) =>
-                        prev.length === next.length &&
-                        prev.every((group, i) => group === next[i]),
-                    },
-                  );
-                  const columnStreamItems = createMemo(
-                    () =>
-                      boardView()?.columns.get(column.id)?.items ??
-                      EMPTY_STREAM_ITEMS,
-                    {
-                      equals: (prev, next) =>
-                        prev.length === next.length &&
-                        prev.every((item, i) => {
-                          const other = next[i];
-                          if (item.kind !== other.kind || item.key !== other.key) {
-                            return false;
-                          }
-                          if (item.kind === 'card' && other.kind === 'card') {
-                            return item.card === other.card;
-                          }
-                          if (item.kind === 'group' && other.kind === 'group') {
-                            return (
-                              item.group === other.group &&
-                              item.cards.length === other.cards.length &&
-                              item.cards.every((c, j) => c === other.cards[j])
-                            );
-                          }
-                          return false;
-                        }),
-                    },
-                  );
-                  return (
-                    <ColumnPanel
-                      column={column}
-                      columnIndex={index()}
-                      totalColumns={board().columns.length}
-                      columns={board().columns}
-                      cards={columnCards()}
-                      groups={columnGroups()}
-                      streamItems={columnStreamItems()}
-                      visibleCardCount={
-                        boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
-                      }
-                      hasActiveFilter={boardView()?.hasActiveFilter ?? false}
-                      voting={voting()}
-                      isFacilitator={board().isFacilitator}
-                      isLocked={board().isLocked}
-                      isBlurred={board().isBlurred}
-                      canGroupCards={canManageGrouping(board())}
-                      nowMs={nowMs()}
-                      isMobileActive={resolvedActiveColumnIndex() === index()}
-                      isHorizontalSnap={isHorizontalSnap()}
-                      draggingCardId={draggingCardId()}
-                      draggingGroupId={draggingGroupId()}
-                      draggingSourceColumnId={draggingSourceColumnId()}
-                      onResetFilters={resetFilters}
-                      onRegisterComposer={registerColumnComposer}
-                      onActivateColumn={(colId) => setActiveColumnId(colId)}
-                      onCreateCard={handleCreateCard}
-                      onUpdateCard={handleUpdateCard}
-                      onUpdateActionItem={handleUpdateActionItem}
-                      onMoveCard={handleMoveCard}
-                      onDeleteCard={handleDeleteCard}
-                      onToggleReaction={handleToggleReaction}
-                      onOpenCardDetail={handleOpenCardDetail}
-                      onUpdateColumn={handleUpdateColumn}
-                      onMoveColumn={handleMoveColumn}
-                      onDeleteColumn={handleDeleteColumn}
-                      onGroupCard={handleGroupCard}
-                      onUngroupCard={handleUngroupCard}
-                      onRenameCardGroup={handleRenameCardGroup}
-                      onDissolveCardGroup={handleDissolveCardGroup}
-                      onMoveCardGroup={handleMoveCardGroup}
-                      onDragStartCard={handleDragStartCard}
-                      onDragStartGroup={handleDragStartGroup}
-                      onDragEndCard={handleDragEndCard}
-                    />
-                  );
-                }}
-              </For>
-              <Show when={canAddColumn()}>
-                <button
-                  type="button"
-                  data-print-hide="true"
-                  onClick={openAddColumn}
-                  class="hidden w-fit shrink-0 items-center gap-1.5 self-start rounded-lg border border-dashed border-border px-3 py-2 text-sm font-medium text-text-muted hover:bg-surface active:bg-surface-subtle sm:inline-flex sm:min-h-11"
+              <nav
+                aria-label="Board Columns"
+                data-print-hide="true"
+                class="board-column-tabs min-w-0 rounded-full bg-surface-subtle sm:hidden"
+              >
+                <TabsList
+                  ref={columnTabListEl}
+                  onScroll={(event) => updateColumnTabEdges(event.currentTarget)}
+                  aria-label="Select Column"
+                  class="scroll-edge-fade overflow-x-auto"
                 >
-                  <PlusIcon />
-                  <span>Add a Column</span>
-                </button>
-              </Show>
-            </div>
+                  <div class="flex w-max min-w-full items-center gap-0.5 px-0.5 py-0.5">
+                    <For each={board().columns}>
+                      {(column) => (
+                        <TabsTab
+                          value={column.id}
+                          title={column.title}
+                          render={(tabProps) => (
+                            <button
+                              {...tabProps}
+                              id={`column-tab-${column.id}`}
+                              aria-controls={`column-${column.id}`}
+                            />
+                          )}
+                          class="inline-flex min-h-11 min-w-11 max-w-[min(17rem,72vw)] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-3 text-[13px] font-medium text-text-muted transition-colors hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus data-selected:border-border data-selected:bg-surface data-selected:text-text data-selected:shadow-xs"
+                        >
+                          <span
+                            aria-hidden="true"
+                            class={[
+                              'h-2 w-2 shrink-0 rounded-full',
+                              COLUMN_ACCENT_STYLES[column.accent].swatch,
+                            ]}
+                          />
+                          <Show when={column.isActionColumn}>
+                            <LucideIcon icon={Flag} class="size-3 shrink-0 text-col-sky" />
+                          </Show>
+                          <span class="min-w-0 truncate text-left">{column.title}</span>
+                          <span class="text-xs text-text-muted tabular-nums">
+                            {boardView()?.hasActiveFilter
+                              ? `${boardView()?.columns.get(column.id)?.visibleCardCount ?? 0}/${column.cardCount}`
+                              : column.cardCount}
+                          </span>
+                        </TabsTab>
+                      )}
+                    </For>
+                  </div>
+                </TabsList>
+              </nav>
+              <div
+                data-board-columns="true"
+                class={[
+                  'gap-4 touch-pan-y touch-pinch-zoom sm:touch-auto',
+                  getResponsiveGridClass(board().columns.length, canAddColumn()),
+                  { 'secret-search-pivot': secretSearch()?.id === 'pivot' },
+                ]}
+              >
+                <For each={board().columns}>
+                  {(column, index) => {
+                    const columnCards = createMemo(
+                      () => cardsByColumn().get(column.id) ?? EMPTY_CARDS,
+                      {
+                        equals: (prev, next) =>
+                          prev.length === next.length &&
+                          prev.every((card, i) => card === next[i]),
+                      },
+                    );
+                    const columnGroups = createMemo(
+                      () => groupsByColumn().get(column.id) ?? EMPTY_GROUPS,
+                      {
+                        equals: (prev, next) =>
+                          prev.length === next.length &&
+                          prev.every((group, i) => group === next[i]),
+                      },
+                    );
+                    const columnStreamItems = createMemo(
+                      () =>
+                        boardView()?.columns.get(column.id)?.items ??
+                        EMPTY_STREAM_ITEMS,
+                      {
+                        equals: (prev, next) =>
+                          prev.length === next.length &&
+                          prev.every((item, i) => {
+                            const other = next[i];
+                            if (item.kind !== other.kind || item.key !== other.key) {
+                              return false;
+                            }
+                            if (item.kind === 'card' && other.kind === 'card') {
+                              return item.card === other.card;
+                            }
+                            if (item.kind === 'group' && other.kind === 'group') {
+                              return (
+                                item.group === other.group &&
+                                item.cards.length === other.cards.length &&
+                                item.cards.every((c, j) => c === other.cards[j])
+                              );
+                            }
+                            return false;
+                          }),
+                      },
+                    );
+                    return (
+                      <ColumnPanel
+                        column={column}
+                        columnIndex={index()}
+                        totalColumns={board().columns.length}
+                        columns={board().columns}
+                        cards={columnCards()}
+                        groups={columnGroups()}
+                        streamItems={columnStreamItems()}
+                        visibleCardCount={
+                          boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
+                        }
+                        hasActiveFilter={boardView()?.hasActiveFilter ?? false}
+                        voting={voting()}
+                        isFacilitator={board().isFacilitator}
+                        isLocked={board().isLocked}
+                        isBlurred={board().isBlurred}
+                        canGroupCards={canManageGrouping(board())}
+                        nowMs={nowMs()}
+                        isMobile={isMobileBoard()}
+                        isMobileActive={resolvedActiveColumnIndex() === index()}
+                        isHorizontalSnap={isHorizontalSnap()}
+                        draggingCardId={draggingCardId()}
+                        draggingGroupId={draggingGroupId()}
+                        draggingSourceColumnId={draggingSourceColumnId()}
+                        onResetFilters={resetFilters}
+                        onRegisterComposer={registerColumnComposer}
+                        onActivateColumn={(colId) => setActiveColumnId(colId)}
+                        onCreateCard={handleCreateCard}
+                        onUpdateCard={handleUpdateCard}
+                        onUpdateActionItem={handleUpdateActionItem}
+                        onMoveCard={handleMoveCard}
+                        onDeleteCard={handleDeleteCard}
+                        onToggleReaction={handleToggleReaction}
+                        onOpenCardDetail={handleOpenCardDetail}
+                        onUpdateColumn={handleUpdateColumn}
+                        onMoveColumn={handleMoveColumn}
+                        onDeleteColumn={handleDeleteColumn}
+                        onGroupCard={handleGroupCard}
+                        onUngroupCard={handleUngroupCard}
+                        onRenameCardGroup={handleRenameCardGroup}
+                        onDissolveCardGroup={handleDissolveCardGroup}
+                        onMoveCardGroup={handleMoveCardGroup}
+                        onDragStartCard={handleDragStartCard}
+                        onDragStartGroup={handleDragStartGroup}
+                        onDragEndCard={handleDragEndCard}
+                      />
+                    );
+                  }}
+                </For>
+                <Show when={canAddColumn()}>
+                  <button
+                    type="button"
+                    data-print-hide="true"
+                    onClick={openAddColumn}
+                    class={[
+                      'spring-press hidden w-fit shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-2xl border border-dashed border-border/85 bg-surface-subtle/25 px-3.5 py-2.5 text-[13px] font-medium text-text-muted',
+                      'transition-colors hover:border-control/80 hover:bg-surface hover:text-text active:bg-surface-subtle sm:inline-flex sm:min-h-11',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      getAddColumnSlotClass(board().columns.length),
+                    ]}
+                  >
+                    <LucideIcon icon={Plus} class="size-4" strokeWidth={2} />
+                    <span>Add a Column</span>
+                  </button>
+                </Show>
+              </div>
+            </Tabs>
           </main>
+
+          <Dialog
+            open={isAddingColumn() && board().isFacilitator && !board().isLocked}
+            onOpenChange={(next) => setIsAddingColumn(next)}
+          >
+            <DialogBackdrop
+              data-print-hide="true"
+              class="board-dialog-backdrop z-40"
+            />
+            <DialogContent
+              data-board-overlay="true"
+              data-print-hide="true"
+              initialFocus={() => newColumnTitleEl ?? null}
+              class="board-dialog-surface z-50 w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
+            >
+              <div
+                aria-hidden="true"
+                class={['h-[3px] w-full transition-colors duration-200', COLUMN_ACCENT_STYLES[newColumnAccent()].bar]}
+              />
+              <div
+                class={[
+                  'flex items-center justify-between gap-3 border-b border-border/70 px-5 py-3.5 transition-colors duration-200',
+                  COLUMN_ACCENT_STYLES[newColumnAccent()].tint,
+                ]}
+              >
+                <div class="flex min-w-0 items-center gap-2">
+                  <DialogTitle class="truncate text-base font-semibold tracking-[-0.015em] text-text">
+                    Add a Column
+                  </DialogTitle>
+                  <Show when={newColumnIsAction()}>
+                    <span class="inline-flex shrink-0 items-center text-col-sky">
+                      <LucideIcon icon={Flag} class="size-3.5" strokeWidth={2} />
+                    </span>
+                  </Show>
+                </div>
+                <DialogClose
+                  aria-label="Close Add Column"
+                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
+                >
+                  <LucideIcon icon={X} class="size-4" strokeWidth={2} />
+                </DialogClose>
+              </div>
+
+              <form onSubmit={(e) => void handleAddColumn(e)} class="space-y-4 p-5">
+                <div>
+                  <label
+                    for="new-column-title"
+                    class="block text-xs font-medium text-text-muted"
+                  >
+                    New column title
+                  </label>
+                  <input
+                    ref={newColumnTitleEl}
+                    id="new-column-title"
+                    type="text"
+                    aria-label="New column title"
+                    placeholder="e.g. Kudos, Questions, Risks"
+                    value={newColumnTitle()}
+                    maxlength={MAX_COLUMN_TITLE_LENGTH}
+                    onInput={(e) => setNewColumnTitle(e.currentTarget.value)}
+                    class="mt-1.5 min-h-11 w-full rounded-xl border border-border/85 bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none sm:min-h-10"
+                  />
+                </div>
+
+                <div>
+                  <span class="block text-xs font-medium text-text-muted">
+                    Accent color
+                  </span>
+                  <div class="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-8">
+                    <For each={COLUMN_ACCENTS}>
+                      {(accent) => (
+                        <button
+                          type="button"
+                          aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
+                          aria-pressed={
+                            newColumnAccent() === accent ? 'true' : 'false'
+                          }
+                          onClick={() => setNewColumnAccent(accent)}
+                          class={[
+                            'spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-9',
+                            {
+                              'border-border bg-surface-subtle':
+                                newColumnAccent() === accent,
+                              'border-transparent hover:bg-surface-subtle':
+                                newColumnAccent() !== accent,
+                            },
+                          ]}
+                        >
+                          <span
+                            aria-hidden="true"
+                            class={[
+                              'size-4 rounded-full',
+                              COLUMN_ACCENT_STYLES[accent].swatch,
+                              {
+                                'ring-2 ring-text ring-offset-2 ring-offset-surface':
+                                  newColumnAccent() === accent,
+                              },
+                            ]}
+                          />
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+
+                <label class="inline-flex min-h-11 cursor-pointer items-center gap-2.5 text-sm text-text-muted sm:min-h-9">
+                  <input
+                    type="checkbox"
+                    checked={newColumnIsAction()}
+                    onChange={(e) =>
+                      setNewColumnIsAction(e.currentTarget.checked)
+                    }
+                    class="size-4 rounded border-border accent-accent"
+                  />
+                  <span>Action Items column</span>
+                </label>
+
+                <div class="flex items-center justify-end gap-2 border-t border-border/70 pt-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingColumn(false)}
+                    class="spring-press min-h-11 cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text sm:min-h-9"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isSavingColumn() || newColumnTitle().trim().length === 0
+                    }
+                    class="spring-press min-h-11 cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                  >
+                    {isSavingColumn() ? 'Adding…' : 'Add column'}
+                  </button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
 
           {/* Card Detail Drawer / Bottom Sheet */}
           <Show when={openDetailCard() && openCardDetailId()} keyed>
@@ -2252,7 +2389,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               <div
                 data-print-hide="true"
                 ref={mobileComposerBarEl}
-                class="sticky bottom-[var(--keyboard-inset,0px)] z-20 border-t border-border bg-surface px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden"
+                class="board-mobile-composer sticky bottom-[var(--keyboard-inset,0px)] z-20 border-t border-border px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden"
               >
                 <p class="mb-1 wrap-anywhere text-sm text-text-muted">
                   Write in <span class="font-semibold text-text">{targetCol().title}</span>

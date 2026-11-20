@@ -13,3 +13,32 @@ if (typeof HTMLDialogElement !== 'undefined' && !HTMLDialogElement.prototype.sho
     this.dispatchEvent(new Event('close'));
   };
 }
+
+// @ui-sdk/solid popups, menus, dialogs, and drawers rely on Popover API, Web Animations,
+// geometry helpers, and ResizeObserver, which jsdom omits or leaves unimplemented.
+if (typeof HTMLElement !== 'undefined') {
+  HTMLElement.prototype.showPopover = function () {};
+  HTMLElement.prototype.hidePopover = function () {};
+}
+if (typeof Element !== 'undefined') {
+  Element.prototype.getAnimations = () => [];
+  Element.prototype.scrollIntoView = function () {};
+  Element.prototype.checkVisibility = () => true;
+  Element.prototype.getClientRects = () => [] as unknown as DOMRectList;
+}
+if (typeof document !== 'undefined') {
+  document.elementFromPoint = () => null;
+  document.elementsFromPoint = () => [];
+  document.head.appendChild(
+    Object.assign(document.createElement('style'), {
+      textContent: '[popover]:not([hidden]) { display: block !important }',
+    }),
+  );
+}
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}

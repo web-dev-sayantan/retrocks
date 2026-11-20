@@ -98,6 +98,41 @@ async function flushPromises(): Promise<void> {
 afterEach(cleanup);
 
 describe('<ActionItemsDrawer />', () => {
+  it('moves focus between Action Items filters with the arrow keys', async () => {
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <ActionItemsDrawer
+          open={true}
+          board={makeBoard([openItem, doneItem])}
+          isLocked={false}
+          onClose={() => {}}
+          onUpdateActionItem={() => Promise.resolve(true)}
+        />
+      ));
+      flush();
+
+      const filters = within(view.getByRole('group', { name: 'Filter Action Items' }));
+      const all = filters.getByRole('button', { name: 'All (2)' });
+      const open = filters.getByRole('button', { name: 'Open (1)' });
+      const done = filters.getByRole('button', { name: 'Done (1)' });
+      all.focus();
+      fireEvent.keyDown(all, { key: 'ArrowRight' });
+      flush();
+      expect(open).toHaveFocus();
+      fireEvent.keyDown(open, { key: 'ArrowRight' });
+      flush();
+      expect(done).toHaveFocus();
+      fireEvent.keyDown(done, { key: 'ArrowLeft' });
+      flush();
+      expect(open).toHaveFocus();
+      fireEvent.click(open);
+      flush();
+      expect(open).toHaveAttribute('aria-pressed', 'true');
+      expect(view.queryByText('Write runbook')).not.toBeInTheDocument();
+    });
+    expectNoDiagnostics(artifact);
+  });
+
   it('lists only Action Items with All/Open/Done filters and inline completion and owner edits', async () => {
     const onUpdateActionItem = vi.fn(async () => true);
     const view = render(() => (

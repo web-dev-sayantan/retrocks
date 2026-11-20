@@ -1,8 +1,10 @@
+import { Share2 } from 'lucide';
 import { Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 import { encode } from 'uqr';
 
 import { getFacilitatorLink, rotateFacilitatorLink } from '../lib/sharing-actions';
-import { CloseIcon } from './Icons';
+import BoardOverlayHeader from './BoardOverlayHeader';
+import LucideIcon from './LucideIcon';
 
 const buttonClass = [
   'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium',
@@ -36,7 +38,7 @@ function CopyLink(props: { label: string; labelId: string; link: string; primary
         <input
           ref={input}
           aria-labelledby={props.labelId}
-          class="min-h-11 min-w-0 flex-1 rounded-lg border border-control bg-canvas px-3 text-base text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          class="board-modal-field min-h-11 min-w-0 flex-1 px-3 text-base"
           type="text"
           value={props.link}
           readonly
@@ -184,6 +186,7 @@ function FacilitatorSharing(props: { boardId: string }) {
 export default function ShareBoard(props: {
   boardId: string;
   isFacilitator: boolean;
+  emphasis?: 'primary' | 'secondary';
 }) {
   let dialog!: HTMLDialogElement;
   let trigger!: HTMLButtonElement;
@@ -191,6 +194,7 @@ export default function ShareBoard(props: {
   const titleId = createUniqueId();
   const participantTitleId = createUniqueId();
   const [participantLink, setParticipantLink] = createSignal('');
+  const emphasis = () => props.emphasis ?? 'primary';
 
   function openDialog() {
     const link = new URL(`/b/${props.boardId}`, window.location.origin).href;
@@ -225,39 +229,37 @@ export default function ShareBoard(props: {
       <button
         ref={trigger}
         type="button"
+        data-cta-emphasis={emphasis()}
         class={[
-          'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text sm:min-h-9',
-          'transition-colors hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+          'spring-press inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium sm:h-9 sm:min-h-9',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+          emphasis() === 'primary'
+            ? 'border-transparent bg-accent text-accent-contrast shadow-xs hover:opacity-92 active:opacity-85'
+            : 'border-border/80 bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle',
         ]}
         onClick={openDialog}
         aria-haspopup="dialog"
       >
-        Share
+        <LucideIcon icon={Share2} class="size-3.5 shrink-0" strokeWidth={1.9} />
+        <span>Share</span>
       </button>
       <dialog
         ref={dialog}
         aria-labelledby={titleId}
         onClose={clearDialog}
         onKeyDown={wrapTabFocus}
-        class="m-auto max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-md overflow-y-auto overscroll-contain scroll-pt-20 rounded-2xl border border-border bg-surface p-0 text-text shadow-xl backdrop:bg-black/55"
+        class="board-dialog-surface rounded-2xl border border-border bg-surface text-text shadow-2xl"
       >
-        <div class="sticky top-0 z-10 flex items-center justify-between gap-3 bg-surface p-4 sm:p-5">
-          <h2 id={titleId} class="text-xl font-semibold tracking-tight">
-            Share Board
-          </h2>
-          <button
-            ref={closeButton}
-            type="button"
-            aria-label="Close Share"
-            class={secondaryButtonClass}
-            onClick={() => dialog.close()}
-          >
-            <CloseIcon class="size-4" />
-          </button>
-        </div>
+        <BoardOverlayHeader
+          closeRef={(button) => { closeButton = button; }}
+          closeLabel="Close Share"
+          onClose={() => dialog.close()}
+        >
+          <h2 id={titleId}>Share Board</h2>
+        </BoardOverlayHeader>
         <Show when={participantLink()}>
           {(link) => (
-            <div class="space-y-4 px-4 pb-4 sm:px-5 sm:pb-5">
+            <div class="space-y-4 p-5">
               <section aria-labelledby={participantTitleId} class="space-y-3">
                 <div class="space-y-1">
                   <h3 id={participantTitleId} class="text-base font-semibold">Participant Link</h3>

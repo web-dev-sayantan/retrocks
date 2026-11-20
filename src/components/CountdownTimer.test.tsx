@@ -1,3 +1,4 @@
+import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { fireEvent, render } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -144,10 +145,13 @@ describe('Board Countdown Timer', () => {
       flush();
       fireEvent.click(view.getByRole('button', { name: 'Rename Board' }));
       flush();
-      fireEvent.keyDown(view.getByRole('textbox', { name: 'Board title' }), { key: 't' });
+      const titleInput = view.getByRole('textbox', { name: 'Board title' });
+      fireEvent.keyDown(titleInput, { key: 't' });
       flush();
       expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
 
+      fireEvent.keyDown(titleInput, { key: 'Escape' });
+      flush();
       fireEvent.keyDown(document.body, { key: 't' });
       flush();
       expect(view.getByRole('dialog', { name: 'Countdown Timer' })).toHaveFocus();
@@ -320,5 +324,68 @@ describe('Board Countdown Timer', () => {
     } finally {
       nextVisit.unmount();
     }
+  });
+
+  it('keeps stable trigger width across idle, running, and paused states and floats the popover via @ui-sdk/solid/popover with zero diagnostics', async () => {
+    const board = makeBoard({ isFacilitator: true });
+    const { artifact } = await captureArtifact(
+      () => {
+        const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+        try {
+          flush();
+          sendSnapshot(board, SERVER_TIME);
+
+          const trigger = view.getByRole('button', { name: 'Countdown Timer' });
+          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9', 'min-w-[5.75rem]');
+          expect(trigger).toHaveAttribute('data-timer-state', 'idle');
+
+          // Transition to running
+          streams[0].receive({
+            type: 'board:mutation',
+            version: 2,
+            events: [{
+              type: 'timer:updated',
+              version: 2,
+              serverNow: SERVER_TIME,
+              timer: { endsAt: SERVER_TIME + 180_000, remainingMs: null, durationMs: 180_000 },
+            }],
+          });
+          expect(trigger).toHaveAttribute('data-timer-state', 'running');
+          expect(trigger).toHaveAccessibleName('Countdown Timer, 03:00');
+
+          // Transition to paused: keeps compact width (no wide visible "Paused" text node pushing siblings)
+          streams[0].receive({
+            type: 'board:mutation',
+            version: 3,
+            events: [{
+              type: 'timer:updated',
+              version: 3,
+              serverNow: SERVER_TIME + 60_000,
+              timer: { endsAt: null, remainingMs: 72_000, durationMs: 180_000 },
+            }],
+          });
+          expect(trigger).toHaveAttribute('data-timer-state', 'paused');
+          expect(trigger).toHaveAccessibleName('Countdown Timer, paused at 01:12');
+          expect(trigger.textContent?.trim()).toBe('01:12');
+
+          // Opening via click mounts top-layer @ui-sdk/solid/popover with data-board-overlay
+          fireEvent.click(trigger);
+          flush();
+          const dialog = view.getByRole('dialog', { name: 'Countdown Timer' });
+          expect(dialog).toHaveAttribute('data-slot', 'popover-content');
+          expect(dialog).toHaveAttribute('data-board-overlay', 'true');
+          expect(dialog).toHaveClass('board-popover');
+
+          fireEvent.keyDown(dialog, { key: 'Escape' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
+          expect(trigger).toHaveFocus();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'countdown-timer-popover-zero-cls' },
+    );
+    expectNoDiagnostics(artifact);
   });
 });

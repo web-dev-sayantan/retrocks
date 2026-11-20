@@ -1,3 +1,14 @@
+import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Ellipsis,
+  Flag,
+  Pencil,
+  Trash2,
+  X,
+} from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
@@ -15,16 +26,8 @@ import type { ColumnStreamItem } from '../lib/board-view';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
+import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from './VoteControls';
-import {
-  CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  TrashIcon,
-} from './Icons';
 
 export interface ColumnPanelProps {
   column: ColumnDTO;
@@ -42,6 +45,7 @@ export interface ColumnPanelProps {
   isBlurred: boolean;
   canGroupCards: boolean;
   nowMs: number;
+  isMobile: boolean;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
   draggingCardId: string | null;
@@ -89,8 +93,6 @@ export interface ColumnPanelProps {
 export default function ColumnPanel(props: ColumnPanelProps) {
   const [cardDraft, setCardDraft] = createSignal('');
   const [cardError, setCardError] = createSignal<string | null>(null);
-  // Keep Cards below the composer stationary when focus leaves the textarea.
-  const [hasFocusedComposer, setHasFocusedComposer] = createSignal(false);
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
 
   const [menuOpen, setMenuOpen] = createSignal(false);
@@ -141,54 +143,16 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     return map;
   });
 
-  let menuRootEl: HTMLDivElement | undefined;
-  let menuTriggerEl: HTMLButtonElement | undefined;
-  let menuPanelEl: HTMLDivElement | undefined;
-
-  createEffect(menuOpen, (isOpen) => {
-    if (!isOpen) return;
-
-    function positionMenu(): void {
-      if (!menuTriggerEl || !menuPanelEl) return;
-      const anchor = menuTriggerEl.getBoundingClientRect();
-      const below = window.innerHeight - anchor.bottom - 12;
-      const above = anchor.top - 12;
-      const opensBelow = below >= 320 || below >= above;
-      menuPanelEl.style.right = `${Math.max(12, window.innerWidth - anchor.right)}px`;
-      menuPanelEl.style.top = opensBelow ? `${anchor.bottom + 4}px` : 'auto';
-      menuPanelEl.style.bottom = opensBelow ? 'auto' : `${window.innerHeight - anchor.top + 4}px`;
-      menuPanelEl.style.maxHeight = `${Math.max(44, opensBelow ? below : above)}px`;
-    }
-
-    function handlePointerDown(event: PointerEvent): void {
-      if (event.target instanceof Node && !menuRootEl?.contains(event.target)) {
-        setMenuOpen(false);
-        setConfirmingDelete(false);
-      }
-    }
-
-    positionMenu();
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape' && !event.defaultPrevented) {
-        event.preventDefault();
-        menuTriggerEl?.focus();
-        setMenuOpen(false);
-        setConfirmingDelete(false);
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('scroll', positionMenu, { capture: true, passive: true });
-    window.addEventListener('resize', positionMenu);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('scroll', positionMenu, true);
-      window.removeEventListener('resize', positionMenu);
-    };
-  });
-
+  let renameInputEl: HTMLInputElement | undefined;
   let composerEl: HTMLTextAreaElement | undefined;
+  let deleteItemEl: HTMLDivElement | undefined;
+  let confirmDeleteItemEl: HTMLDivElement | undefined;
+
+  createEffect(isRenaming, (renaming) => {
+    if (renaming) {
+      renameInputEl?.focus();
+    }
+  });
 
   createEffect(
     () => (props.isLocked ? null : props.column.id),
@@ -198,6 +162,24 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       return () => {
         props.onRegisterComposer?.(columnId, null);
       };
+    },
+  );
+
+  createEffect(
+    () => cardDraft(),
+    (draft) => {
+      if (!composerEl) return;
+      if (draft.length === 0) {
+        composerEl.style.height = '';
+        return;
+      }
+      if (typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content')) {
+        return;
+      }
+      if (composerEl.scrollHeight > 0) {
+        composerEl.style.height = 'auto';
+        composerEl.style.height = `${Math.min(composerEl.scrollHeight, 144)}px`;
+      }
     },
   );
 
@@ -217,16 +199,26 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   async function submitNewCard(): Promise<void> {
-    const draft = cardDraft();
+    const draft = composerEl ? composerEl.value : cardDraft();
     const trimmed = draft.trim();
     if (trimmed.length === 0 || isCreatingCard() || props.isLocked) return;
+    if (cardDraft() !== draft) {
+      setCardDraft(draft);
+    }
     setIsCreatingCard(true);
     setCardError(null);
     try {
       const error = await props.onCreateCard(props.column.id, trimmed);
-      if (cardDraft() === draft) {
+      const currentDraft = composerEl ? composerEl.value : cardDraft();
+      if (currentDraft === draft) {
         setCardError(error);
-        if (error === null) setCardDraft('');
+        if (error === null) {
+          setCardDraft('');
+          if (composerEl) {
+            composerEl.value = '';
+            composerEl.style.height = '';
+          }
+        }
       }
     } finally {
       setIsCreatingCard(false);
@@ -285,14 +277,20 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
-    setMenuOpen(false);
     if (accent === props.column.accent) return;
     await props.onUpdateColumn(props.column.id, { accent });
   }
 
   async function handleReorder(direction: -1 | 1): Promise<void> {
-    setMenuOpen(false);
     await props.onMoveColumn(props.column.id, direction);
+  }
+
+  function showDeleteConfirmation(confirm: boolean): void {
+    setConfirmingDelete(confirm);
+    queueMicrotask(() => {
+      const item = confirm ? confirmDeleteItemEl : deleteItemEl;
+      if (item?.isConnected) item.focus();
+    });
   }
 
   async function handleConfirmDeleteColumn(): Promise<void> {
@@ -301,7 +299,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     try {
       const ok = await props.onDeleteColumn(props.column.id);
       if (!ok) {
-        setConfirmingDelete(false);
+        showDeleteConfirmation(false);
       }
     } finally {
       setIsDeletingColumn(false);
@@ -374,14 +372,18 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   return (
     <section
       id={`column-${props.column.id}`}
-      aria-label={props.column.title}
+      role={props.isMobile ? 'tabpanel' : undefined}
+      aria-hidden={props.isMobile && !props.isMobileActive ? 'true' : undefined}
+      aria-labelledby={props.isMobile ? `column-tab-${props.column.id}` : undefined}
+      aria-label={props.isMobile ? undefined : props.column.title}
+      tabindex={props.isMobile && props.isMobileActive ? 0 : undefined}
       data-column-id={props.column.id}
       onFocusIn={() => props.onActivateColumn?.(props.column.id)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       class={[
-        'flex-col gap-3 rounded-xl transition-shadow',
+        'board-column-rail flex-col rounded-2xl border transition-shadow',
         {
           flex: props.isMobileActive,
           'hidden sm:flex': !props.isMobileActive,
@@ -392,327 +394,379 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         },
       ]}
     >
-      <div class="relative flex min-h-11 items-center justify-between gap-2 sm:min-h-9">
-        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
-          <span
-            aria-hidden="true"
+      {/* Rounded-top accent & tint cap stays pointer-events-none so floating popovers inside the rail never clip. */}
+      <div class="board-column-cap relative rounded-t-[calc(1rem-1px)] border-b border-border/60">
+        <div
+          aria-hidden="true"
+          class="pointer-events-none absolute inset-0 hidden overflow-hidden rounded-t-[calc(1rem-1px)] sm:block"
+        >
+          <div
             data-column-accent-bar="true"
-            class={['size-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[props.column.accent].swatch]}
+            class={[
+              'h-[3px] w-full transition-colors duration-200',
+              COLUMN_ACCENT_STYLES[props.column.accent].bar,
+            ]}
           />
-          <Show
-            when={!isRenaming()}
-            fallback={
-              <div class="flex min-w-0 flex-1 items-center gap-1">
-                <input
-                  type="text"
-                  aria-label="Column title"
-                  value={renameDraft()}
-                  maxlength={MAX_COLUMN_TITLE_LENGTH}
-                  onInput={(e) => setRenameDraft(e.currentTarget.value)}
-                  onKeyDown={handleRenameKeyDown}
-                  class={[
-                    'min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text',
-                    'focus:border-focus focus:outline-none',
-                  ]}
-                />
-                <button
-                  type="button"
-                  aria-label="Save column title"
-                  disabled={isSavingRename() || renameDraft().trim().length === 0}
-                  onClick={() => void saveRename()}
-                  class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-9 sm:min-w-9 items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50"
-                >
-                  <CheckIcon />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Cancel column rename"
-                  onClick={cancelRename}
-                  class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-9 sm:min-w-9 items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text"
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-            }
-          >
-            <h2 class="min-w-0 flex-[1_1_0] wrap-anywhere text-base leading-snug font-semibold text-text sm:text-lg">
-              <Show
-                when={canManageColumn()}
-                fallback={props.column.title}
-              >
-                <button
-                  type="button"
-                  onClick={startRename}
-                  title="Click to rename Column"
-                  class={[
-                    'min-h-11 w-full cursor-pointer rounded-sm text-left wrap-anywhere hover:underline sm:min-h-8',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                  ]}
-                >
-                  {props.column.title}
-                </button>
-              </Show>
-            </h2>
-            <Show when={props.column.isActionColumn}>
-              <span class="shrink-0 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
-                Actions
-              </span>
-            </Show>
-          </Show>
+          <div
+            class={[
+              'h-full w-full transition-colors duration-200',
+              COLUMN_ACCENT_STYLES[props.column.accent].tint,
+            ]}
+          />
         </div>
 
-        <div class="flex shrink-0 items-center gap-1.5">
-          <span
-            aria-label={
-              props.hasActiveFilter
-                ? `${props.visibleCardCount} of ${props.column.cardCount} cards`
-                : `${props.column.cardCount} cards`
-            }
-            class="inline-flex min-w-6 items-center justify-center rounded-full bg-surface-subtle px-2 py-1 text-xs font-medium text-text-muted tabular-nums"
-          >
-            {props.hasActiveFilter
-              ? `${props.visibleCardCount}/${props.column.cardCount}`
-              : props.column.cardCount}
-          </span>
-
-          <Show when={canManageColumn()}>
-            <div ref={menuRootEl} data-print-hide="true">
-              <button
-                ref={menuTriggerEl}
-                type="button"
-                aria-label={`Column options for ${props.column.title}`}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen() ? 'true' : 'false'}
-                onClick={() => {
-                  setConfirmingDelete(false);
-                  setMenuOpen((prev) => !prev);
-                }}
-                class={[
-                  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-8 sm:min-w-8',
-                  'transition-colors hover:bg-surface hover:text-text',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                ]}
-              >
-                <MoreHorizontalIcon />
-              </button>
-
-              <Show when={menuOpen()}>
-                <div
-                  ref={menuPanelEl}
-                  role="menu"
-                  aria-label={`Options for ${props.column.title}`}
-                  data-board-overlay="true"
-                  class="fixed z-30 w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 shadow-lg"
+        <div class="board-column-cap-row relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-[calc(0.625rem+3px)] pb-2.5">
+          <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={isRenaming() ? "" : undefined}>
+            <Show
+              when={!isRenaming()}
+              fallback={
+                <div class="flex min-w-0 flex-1 items-center gap-1">
+                  <input
+                    ref={renameInputEl}
+                    type="text"
+                    aria-label="Column title"
+                    value={renameDraft()}
+                    maxlength={MAX_COLUMN_TITLE_LENGTH}
+                    onInput={(e) => setRenameDraft(e.currentTarget.value)}
+                    onKeyDown={handleRenameKeyDown}
+                    class={[
+                      'min-w-0 flex-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
+                      'focus:border-accent focus:outline-none',
+                    ]}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Save column title"
+                    disabled={isSavingRename() || renameDraft().trim().length === 0}
+                    onClick={() => void saveRename()}
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:min-h-8 sm:min-w-8"
+                  >
+                    <LucideIcon icon={Check} class="size-3.5" strokeWidth={2.2} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Cancel column rename"
+                    onClick={cancelRename}
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-text-muted hover:text-text sm:min-h-8 sm:min-w-8"
+                  >
+                    <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />
+                  </button>
+                </div>
+              }
+            >
+              <h2 class="min-w-0 flex-1 wrap-anywhere text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text">
+                <Show
+                  when={canManageColumn()}
+                  fallback={props.column.title}
                 >
                   <button
                     type="button"
-                    role="menuitem"
                     onClick={startRename}
-                    class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-text hover:bg-surface-subtle"
+                    title="Click to rename Column"
+                    class={[
+                      'min-h-11 w-full cursor-pointer rounded-sm text-left wrap-anywhere hover:underline sm:min-h-7',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    ]}
                   >
-                    <PencilIcon />
-                    <span>Rename column</span>
+                    {props.column.title}
                   </button>
-
-                  <div class="mt-1 grid grid-cols-2 gap-1">
-                    <button
-                      type="button"
-                      disabled={!canMoveLeft()}
-                      onClick={() => void handleReorder(-1)}
-                      class="inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <ChevronLeftIcon />
-                      <span>Move left</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canMoveRight()}
-                      onClick={() => void handleReorder(1)}
-                      class="inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <span>Move right</span>
-                      <ChevronRightIcon />
-                    </button>
-                  </div>
-
-                  <div class="mt-2 border-t border-border pt-2">
-                    <p class="px-1 text-[11px] font-medium text-text-muted">
-                      Accent color
-                    </p>
-                    <div class="mt-1.5 grid grid-cols-4 gap-1 px-1">
-                      <For each={COLUMN_ACCENTS}>
-                        {(accent) => (
-                          <button
-                            type="button"
-                            aria-label={`Accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                            aria-pressed={
-                              props.column.accent === accent ? 'true' : 'false'
-                            }
-                            onClick={() => void handleSelectAccent(accent)}
-                            class={[
-                              'flex min-h-11 cursor-pointer sm:min-h-9 items-center justify-center rounded-md border transition-colors',
-                              {
-                                'border-focus bg-surface-subtle':
-                                  props.column.accent === accent,
-                                'border-border hover:bg-surface-subtle':
-                                  props.column.accent !== accent,
-                              },
-                            ]}
-                          >
-                            <span
-                              aria-hidden="true"
-                              class={[
-                                'h-3.5 w-3.5 rounded-full',
-                                COLUMN_ACCENT_STYLES[accent].swatch,
-                              ]}
-                            />
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-
-                  <div class="mt-2 border-t border-border pt-2">
-                    <Show
-                      when={!confirmingDelete()}
-                      fallback={
-                        <div class="space-y-2 rounded-lg bg-surface-subtle p-2">
-                          <p class="text-xs text-text">
-                            <Show
-                              when={props.column.cardCount > 0}
-                              fallback="Delete this empty Column?"
-                            >
-                              Delete this Column and its{' '}
-                              <span class="font-semibold tabular-nums">
-                                {props.column.cardCount}{' '}
-                                {props.column.cardCount === 1
-                                  ? 'card'
-                                  : 'cards'}
-                              </span>
-                              ?
-                            </Show>
-                          </p>
-                          <div class="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={isDeletingColumn() || !canDeleteColumn()}
-                              onClick={() => void handleConfirmDeleteColumn()}
-                              class="min-h-11 min-w-11 flex-1 cursor-pointer rounded-md bg-col-rose sm:min-h-9 px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
-                            >
-                              {isDeletingColumn()
-                                ? 'Deleting...'
-                                : 'Confirm delete'}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isDeletingColumn()}
-                              onClick={() => setConfirmingDelete(false)}
-                              class="min-h-11 min-w-11 cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text sm:min-h-9"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      }
-                    >
-                      <button
-                        type="button"
-                        disabled={!canDeleteColumn()}
-                        title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
-                        onClick={() => setConfirmingDelete(true)}
-                        class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300"
-                      >
-                        <TrashIcon />
-                        <span>Delete column</span>
-                      </button>
-                    </Show>
-                  </div>
-                </div>
+                </Show>
+              </h2>
+              <Show when={props.column.isActionColumn}>
+                <span
+                  title="Action Column"
+                  role="img"
+                  aria-label="Action Column"
+                  class="inline-flex shrink-0 items-center text-col-sky"
+                >
+                  <LucideIcon icon={Flag} class="size-3.5" strokeWidth={2} />
+                </span>
               </Show>
-            </div>
-          </Show>
+            </Show>
+          </div>
+
+          <div class="contents shrink-0 items-center gap-1.5 sm:flex">
+            <span
+              aria-label={
+                props.hasActiveFilter
+                  ? `${props.visibleCardCount} of ${props.column.cardCount} cards`
+                  : `${props.column.cardCount} cards`
+              }
+              class="hidden min-w-6 items-center justify-center rounded-full bg-surface/85 sm:inline-flex px-2 py-0.5 text-xs font-medium text-text-muted tabular-nums dark:bg-surface-subtle/80"
+            >
+              {props.hasActiveFilter
+                ? `${props.visibleCardCount}/${props.column.cardCount}`
+                : props.column.cardCount}
+            </span>
+
+            <Show when={canManageColumn()}>
+              <div data-print-hide="true" class="board-column-options">
+                <Menu
+                  open={menuOpen()}
+                  onOpenChange={(next) => {
+                    setMenuOpen(next);
+                    if (!next) setConfirmingDelete(false);
+                  }}
+                >
+                  <MenuTrigger
+                    aria-label={`Column options for ${props.column.title}`}
+                    class={[
+                      'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-lg sm:border-transparent sm:bg-transparent',
+                      'transition-colors hover:bg-surface/80 hover:text-text data-open:bg-surface data-open:text-text',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    ]}
+                  >
+                    <LucideIcon icon={Ellipsis} class="size-4" strokeWidth={1.9} />
+                  </MenuTrigger>
+
+                  <MenuContent
+                    side="bottom"
+                    align="end"
+                    sideOffset={6}
+                    collisionPadding={12}
+                    finalFocus={isRenaming() ? 'none' : undefined}
+                    render={(contentProps) => (
+                      <div
+                        {...contentProps}
+                        aria-labelledby={undefined}
+                        aria-label={`Options for ${props.column.title}`}
+                        data-board-overlay="true"
+                        data-print-hide="true"
+                      />
+                    )}
+                    class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg"
+                  >
+                    <MenuItem
+                      value="rename"
+                      onSelect={startRename}
+                      class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-9"
+                    >
+                      <LucideIcon icon={Pencil} class="size-3.5 text-text-muted" strokeWidth={1.85} />
+                      <span>Rename column</span>
+                    </MenuItem>
+
+                    <div class="mt-1 grid grid-cols-2 gap-1">
+                      <MenuItem
+                        value="move-left"
+                        disabled={!canMoveLeft()}
+                        onSelect={() => void handleReorder(-1)}
+                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
+                      >
+                        <LucideIcon icon={ChevronLeft} class="size-3.5" strokeWidth={2} />
+                        <span>Move left</span>
+                      </MenuItem>
+                      <MenuItem
+                        value="move-right"
+                        disabled={!canMoveRight()}
+                        onSelect={() => void handleReorder(1)}
+                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
+                      >
+                        <span>Move right</span>
+                        <LucideIcon icon={ChevronRight} class="size-3.5" strokeWidth={2} />
+                      </MenuItem>
+                    </div>
+
+                    <MenuSeparator class="my-2 border-t border-border/80" />
+                    <div>
+                      <p class="px-1 text-[11px] font-medium text-text-muted">
+                        Accent color
+                      </p>
+                      <MenuRadioGroup<ColumnAccent>
+                        aria-label="Accent color"
+                        value={props.column.accent}
+                        onValueChange={(accent) => { if (accent) void handleSelectAccent(accent); }}
+                        class="mt-1.5 grid grid-cols-4 gap-1 px-1"
+                      >
+                        <For each={COLUMN_ACCENTS}>
+                          {(accent) => (
+                            <MenuRadioItem
+                              value={accent}
+                              aria-label={`Accent ${COLUMN_ACCENT_STYLES[accent].label}`}
+                              closeOnSelect
+                              class={[
+                                'spring-press flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-8',
+                                {
+                                  'border-border bg-surface-subtle':
+                                    props.column.accent === accent,
+                                  'border-transparent hover:bg-surface-subtle data-highlighted:bg-surface-subtle':
+                                    props.column.accent !== accent,
+                                },
+                              ]}
+                            >
+                              <span
+                                aria-hidden="true"
+                                class={[
+                                  'size-3.5 rounded-full',
+                                  COLUMN_ACCENT_STYLES[accent].swatch,
+                                  {
+                                    'ring-2 ring-text ring-offset-2 ring-offset-surface':
+                                      props.column.accent === accent,
+                                  },
+                                ]}
+                              />
+                            </MenuRadioItem>
+                          )}
+                        </For>
+                      </MenuRadioGroup>
+                    </div>
+
+                    <MenuSeparator class="my-2 border-t border-border/80" />
+                    <div>
+                      <Show
+                        when={!confirmingDelete()}
+                        fallback={
+                          <div class="space-y-2 rounded-lg bg-surface-subtle p-2">
+                            <p class="text-xs text-text">
+                              <Show
+                                when={props.column.cardCount > 0}
+                                fallback="Delete this empty Column?"
+                              >
+                                Delete this Column and its{' '}
+                                <span class="font-semibold tabular-nums">
+                                  {props.column.cardCount}{' '}
+                                  {props.column.cardCount === 1
+                                    ? 'card'
+                                    : 'cards'}
+                                </span>
+                                ?
+                              </Show>
+                            </p>
+                            <div class="flex items-center gap-1.5">
+                              <MenuItem
+                                ref={confirmDeleteItemEl}
+                                value="confirm-delete"
+                                closeOnSelect={false}
+                                disabled={isDeletingColumn() || !canDeleteColumn()}
+                                onSelect={() => void handleConfirmDeleteColumn()}
+                                class="spring-press min-h-11 min-w-11 flex flex-1 cursor-pointer items-center justify-center rounded-lg bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 data-highlighted:opacity-90 data-disabled:opacity-50 sm:min-h-8"
+                              >
+                                {isDeletingColumn()
+                                  ? 'Deleting…'
+                                  : 'Confirm delete'}
+                              </MenuItem>
+                              <MenuItem
+                                value="cancel-delete"
+                                closeOnSelect={false}
+                                disabled={isDeletingColumn()}
+                                onSelect={() => showDeleteConfirmation(false)}
+                                class="spring-press min-h-11 min-w-11 flex cursor-pointer items-center justify-center rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text data-highlighted:text-text sm:min-h-8"
+                              >
+                                Cancel
+                              </MenuItem>
+                            </div>
+                          </div>
+                        }
+                      >
+                        <MenuItem
+                          ref={deleteItemEl}
+                          value="delete"
+                          closeOnSelect={false}
+                          disabled={!canDeleteColumn()}
+                          title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
+                          onSelect={() => showDeleteConfirmation(true)}
+                          class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
+                        >
+                          <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
+                          <span>Delete column</span>
+                        </MenuItem>
+                      </Show>
+                    </div>
+                  </MenuContent>
+                </Menu>
+              </div>
+            </Show>
+          </div>
         </div>
       </div>
 
-      {/* Pinned top quick inline "+ Add card" composer */}
       <Show when={!props.isLocked}>
-        <div data-print-hide="true" class="hidden sm:block">
-          <textarea
-            ref={composerEl}
-            aria-label={`Add card to ${props.column.title}`}
-            placeholder="+ Add Card"
-            value={cardDraft()}
-            maxlength={MAX_CARD_CONTENT_LENGTH}
-            rows={hasFocusedComposer() || cardDraft().length > 0 ? 2 : 1}
-            onFocus={() => setHasFocusedComposer(true)}
-            onInput={(e) => {
-              setCardDraft(e.currentTarget.value);
-              setCardError(null);
-            }}
-            onKeyDown={handleComposerKeyDown}
+        <div data-print-hide="true" class="hidden px-3 pt-3 sm:block">
+          <div
             class={[
-              'min-h-11 w-full resize-none rounded-lg border border-control bg-surface px-3 py-2 text-base text-text',
-              'placeholder:text-text-muted focus:border-focus focus:outline-none',
+              'relative flex items-end gap-1.5 rounded-xl border bg-surface px-3 py-1.5 transition-colors',
+              'hover:border-control/70 focus-within:border-accent',
+              cardError()
+                ? 'border-col-rose/75 focus-within:border-col-rose'
+                : 'border-border/85',
             ]}
-          />
-          <Show when={cardError()}>
-            {(error) => <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
-          </Show>
-          <Show when={hasFocusedComposer() || cardDraft().length > 0}>
-            <div class="mt-2 flex items-center justify-between gap-2">
-              <span class="text-[11px] text-text-muted">
-                <Show
-                  when={cardDraft().length > 800}
-                  fallback="Enter to add · Shift+Enter for new line"
-                >
-                  <span class="tabular-nums">
-                    {cardDraft().length}/{MAX_CARD_CONTENT_LENGTH}
-                  </span>
-                </Show>
-              </span>
-              <button
-                type="button"
-                disabled={isCreatingCard() || cardDraft().trim().length === 0}
-                onClick={() => void submitNewCard()}
-                class={[
-                  'min-h-11 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-7 sm:px-2.5 sm:py-1',
-                  'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                ]}
+          >
+            <textarea
+              ref={composerEl}
+              aria-label={`Add card to ${props.column.title}`}
+              placeholder="+ Add Card"
+              title="Enter to add · Shift+Enter for new line"
+              value={cardDraft()}
+              maxlength={MAX_CARD_CONTENT_LENGTH}
+              rows={1}
+              onInput={(e) => {
+                setCardDraft(e.currentTarget.value);
+                setCardError(null);
+              }}
+              onKeyDown={handleComposerKeyDown}
+              class={[
+                'board-composer-textarea min-h-8 max-h-36 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 text-text',
+                'placeholder:text-text-muted focus:outline-none',
+              ]}
+            />
+            <Show when={cardDraft().length > 800}>
+              <span
+                aria-live="polite"
+                class="shrink-0 self-end pb-1.5 text-[11px] font-medium text-text-muted tabular-nums"
               >
-                {isCreatingCard() ? 'Adding...' : 'Add'}
-              </button>
-            </div>
+                {cardDraft().length}/{MAX_CARD_CONTENT_LENGTH}
+              </span>
+            </Show>
+            <button
+              type="button"
+              disabled={isCreatingCard() || cardDraft().trim().length === 0}
+              onClick={() => void submitNewCard()}
+              class={[
+                'spring-press mb-0.5 inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-lg px-2.5 text-xs font-semibold transition-colors',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                cardDraft().trim().length > 0 && !isCreatingCard()
+                  ? 'bg-accent text-accent-contrast hover:opacity-90'
+                  : 'bg-surface-subtle text-text-muted disabled:cursor-not-allowed disabled:opacity-55',
+              ]}
+            >
+              {isCreatingCard() ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+          <Show when={cardError()}>
+            {(error) => (
+              <p role="alert" class="mt-1.5 px-1 text-xs font-medium text-rose-700 dark:text-rose-300">
+                {error()}
+              </p>
+            )}
           </Show>
         </div>
       </Show>
 
       <Show when={props.isLocked}>
-        <p data-print-hide="true" class="hidden rounded-lg bg-surface-subtle px-3 py-2 text-sm text-text-muted sm:block">
+        <p data-print-hide="true" class="mx-3 mt-3 hidden rounded-xl bg-surface/75 px-3 py-2 text-xs text-text-muted sm:block">
           This Board is Locked. You can still read and search Cards.
         </p>
       </Show>
 
-      {/* Column Card stream body */}
-      <div class="flex flex-1 flex-col gap-3">
+      {/* Column Card stream body — must stay :scope > div:last-child */}
+      <div class="flex flex-1 flex-col gap-3 px-1 pt-0.5 pb-3 sm:px-3 sm:pt-3">
         <Show
           when={props.streamItems.length > 0}
           fallback={
             <Show
               when={props.hasActiveFilter && props.cards.length > 0}
               fallback={
-                <p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-text-muted">
+                <p class="rounded-xl border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
                   No Cards yet
                 </p>
               }
             >
-              <div class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-text-muted">
+              <div class="rounded-xl border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
                 <p>No matching Cards in this Column</p>
                 <button
                   type="button"
                   onClick={() => props.onResetFilters()}
                   class={[
-                    'mt-2 inline-flex min-h-11 cursor-pointer items-center rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text sm:min-h-8',
+                    'spring-press mt-2.5 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
                     'transition-colors hover:bg-surface-subtle',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}

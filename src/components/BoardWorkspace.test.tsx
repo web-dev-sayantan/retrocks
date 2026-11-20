@@ -1,5 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
+import { createAgent } from '@ui-sdk/solid/agent';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -678,10 +679,12 @@ describe('<BoardWorkspace />', () => {
 
     openBoardSettings({ getByRole });
     flush();
-    fireEvent.click(settings.getByRole('button', { name: 'Reset All Votes' }));
+    const destructiveActions = within(settings.getByRole('region', { name: 'Destructive actions' }));
+    expect(destructiveActions.getByRole('button', { name: 'Delete Board' })).toBeVisible();
+    fireEvent.click(destructiveActions.getByRole('button', { name: 'Reset All Votes' }));
     flush();
     expect(spies.resetVotes).not.toHaveBeenCalled();
-    fireEvent.click(settings.getByRole('button', { name: 'Confirm Reset' }));
+    fireEvent.click(destructiveActions.getByRole('button', { name: 'Confirm Reset' }));
     await flushPromises();
 
     expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id });
@@ -955,6 +958,31 @@ describe('<BoardWorkspace />', () => {
     expect(spies.updateActionItem).not.toHaveBeenCalled();
 
     fireEvent.keyDown(picker, { key: 'Escape' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('dismisses Card details when a press begins and ends on the backdrop', () => {
+    const board = makeBoardView({ cards: [makeCard()] });
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+    ));
+    flush();
+
+    const trigger = view.getByRole('button', { name: 'Open Card details' });
+    fireEvent.click(trigger);
+    flush();
+
+    const drawer = view.getByRole('dialog', { name: 'Card details' });
+    const close = within(drawer).getByRole('button', { name: 'Close Card details' });
+    fireEvent.pointerDown(close, { button: 0 });
+    fireEvent.click(drawer);
+    flush();
+    expect(drawer).toBeVisible();
+
+    fireEvent.pointerDown(drawer, { button: 0 });
+    fireEvent.click(drawer);
     flush();
     expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -1238,7 +1266,8 @@ describe('<BoardWorkspace />', () => {
     ));
     flush();
 
-    expect(getByRole('link', { name: /Retrocks/i })).toHaveAttribute('href', '/');
+    expect(within(getByRole('banner').querySelector('.board-masthead-island')!)
+      .getByRole('link', { name: 'Retrocks home' })).toHaveAttribute('href', '/');
     expect(
       getByRole('heading', { level: 1, name: 'Sprint 42 Retro' }),
     ).toBeInTheDocument();
@@ -1378,23 +1407,28 @@ describe('<BoardWorkspace />', () => {
       'Add card to Went Well',
     ) as HTMLTextAreaElement;
     const untouchedComposer = getByLabelText('Add card to To Improve');
+    const column = within(getByRole('region', { name: 'Went Well' }));
     expect(composer).toHaveAttribute('rows', '1');
+    expect(column.getByRole('button', { name: 'Add' })).toBeDisabled();
     composer.focus();
     flush();
-    expect(composer).toHaveAttribute('rows', '2');
+    // Zero-shift composer stays single-row on focus without latching open
+    expect(composer).toHaveAttribute('rows', '1');
+    expect(untouchedComposer).toHaveAttribute('rows', '1');
     fireEvent.input(composer, {
       target: {
         value: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
       },
     });
     flush();
+    expect(column.getByRole('button', { name: 'Add' })).toBeEnabled();
 
     // Shift+Enter does NOT submit
     fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true });
     await flushPromises();
     expect(spies.createCard).not.toHaveBeenCalled();
 
-    // Enter submits the Card
+    // Enter submits the Card and clears draft with zero residual newline
     fireEvent.keyDown(composer, { key: 'Enter' });
     await flushPromises();
 
@@ -1405,12 +1439,12 @@ describe('<BoardWorkspace />', () => {
     });
     expect(composer).toHaveValue('');
     expect(composer).toHaveFocus();
+    expect(composer).toHaveAttribute('rows', '1');
 
-    const column = within(getByRole('region', { name: 'Went Well' }));
     const cardActions = column.getByRole('button', { name: 'Card actions' });
     cardActions.focus();
     flush();
-    expect(composer).toHaveAttribute('rows', '2');
+    expect(composer).toHaveAttribute('rows', '1');
     expect(column.getByRole('button', { name: 'Add' })).toBeDisabled();
     expect(untouchedComposer).toHaveAttribute('rows', '1');
 
@@ -1757,7 +1791,7 @@ describe('<BoardWorkspace />', () => {
     );
     flush();
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Accent Amber' }),
+      within(col2Region).getByRole('menuitemradio', { name: 'Accent Amber' }),
     );
     await flushPromises();
     expect(spies.updateColumn).toHaveBeenCalledWith({
@@ -1774,7 +1808,7 @@ describe('<BoardWorkspace />', () => {
     );
     flush();
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Move left' }),
+      within(col2Region).getByRole('menuitem', { name: 'Move left' }),
     );
     await flushPromises();
     expect(spies.reorderColumns).toHaveBeenCalledWith({
@@ -1790,14 +1824,14 @@ describe('<BoardWorkspace />', () => {
     );
     flush();
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Delete column' }),
+      within(col2Region).getByRole('menuitem', { name: 'Delete column' }),
     );
     flush();
     expect(spies.deleteColumn).not.toHaveBeenCalled();
     expect(within(col2Region).getByText(/1 card/i)).toBeInTheDocument();
 
     fireEvent.click(
-      within(col2Region).getByRole('button', { name: 'Confirm delete' }),
+      within(col2Region).getByRole('menuitem', { name: 'Confirm delete' }),
     );
     await flushPromises();
 
@@ -2368,6 +2402,75 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
+  it('shows completed Action Items with one status and announces updates off-layout', async () => {
+    const actionCard = makeCard({
+      id: 'card_action',
+      content: 'Document the rollout',
+      isActionItem: true,
+      actionDone: true,
+      actionOwner: 'Platform',
+    });
+    const board = makeBoardView({ cards: [actionCard] });
+    const { actions, spies } = createFakeActions(board);
+    const update = Promise.withResolvers<BoardMutationResponse>();
+    spies.updateActionItem.mockReturnValueOnce(update.promise);
+
+    const { artifact } = await captureArtifact(async () => {
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      flush();
+      const card = within(view.getByText(actionCard.content).closest('article')!);
+      expect(card.getByText(actionCard.content).closest('.line-through')).toBeInTheDocument();
+      expect(card.queryByText('Action Item')).not.toBeInTheDocument();
+      expect(card.getByText('Done')).toBeVisible();
+      expect(card.getByText('Platform')).toBeVisible();
+      const status = card.getByRole('checkbox');
+      expect(status).toBeChecked();
+      fireEvent.click(status);
+      flush();
+      const pending = card.getByText('Updating Action Item…');
+      expect(pending).toHaveAttribute('aria-live', 'polite');
+      expect(pending).toHaveClass('sr-only');
+      update.resolve({ ok: false, code: 'VALIDATION_ERROR', message: 'Try again.' });
+      await waitFor(() => expect(status).toBeChecked());
+    }, { scenario: 'card-action-status' });
+
+    expectNoDiagnostics(artifact);
+  });
+
+  it('opens Card actions off-layout and returns keyboard focus to the trigger', async () => {
+    const ownCard = makeCard({ id: 'card_menu', content: 'Review the release checklist' });
+    const board = makeBoardView({ cards: [ownCard], isFacilitator: true });
+    const { actions } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      flush();
+      const card = within(view.getByText(ownCard.content).closest('article')!);
+      const trigger = card.getByRole('button', { name: 'Card actions' });
+      trigger.focus();
+      fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+      flush();
+
+      const popup = card.getByRole('menu', { name: 'Card actions' });
+      expect(popup).toHaveAttribute('popover');
+      expect(popup).toHaveAttribute('data-board-overlay', 'true');
+      const edit = within(popup).getByRole('menuitem', { name: 'Edit Card' });
+      expect(edit).toHaveFocus();
+      fireEvent.keyDown(edit, { key: 'Escape' });
+      flush();
+      expect(card.queryByRole('menu')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+
+      fireEvent.click(trigger);
+      flush();
+      fireEvent.pointerDown(view.getByRole('region', { name: 'Went Well' }));
+      flush();
+      expect(card.queryByRole('menu')).not.toBeInTheDocument();
+    }, { scenario: 'card-actions-popup' });
+
+    expectNoDiagnostics(artifact);
+  });
+
   it('groups Cards from the "Group with..." menu and votes only on the Card Group header', async () => {
     const first = makeCard({
       id: 'card_1',
@@ -2553,6 +2656,9 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(within(wentWell).getByRole('menuitem', { name: /To Improve/i }));
     flush();
     expect(moveGroup).toBeDisabled();
+    const pendingMove = within(wentWell).getByRole('status');
+    expect(pendingMove).toHaveTextContent('Moving Card Group…');
+    expect(pendingMove).toHaveClass('sr-only');
     rejectMove({ ok: false, code: 'VALIDATION_ERROR', message: 'Move was rejected.' });
     await flushPromises();
     expect(within(wentWell).getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
@@ -2584,6 +2690,59 @@ describe('<BoardWorkspace />', () => {
       groupId: 'group_1',
     });
     expect(queryByText('CI reliability')).not.toBeInTheDocument();
+  });
+
+  it('navigates the floating Card Group move menu with the keyboard and restores focus on Escape', async () => {
+    const board = makeBoardView({
+      cards: [
+        makeCard({ id: 'card_1', groupId: 'group_1' }),
+        makeCard({ id: 'card_2', groupId: 'group_1' }),
+      ],
+      groups: [{
+        id: 'group_1',
+        columnId: 'col_1',
+        title: 'CI stability',
+        cardIds: ['card_1', 'card_2'],
+        votes: 0,
+        myVotes: 0,
+        createdAt: Date.now(),
+      }],
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(async () => {
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      try {
+        flush();
+        const trigger = view.getByRole('button', { name: 'Move Card Group to...' });
+        trigger.focus();
+        fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+        flush();
+
+        const menu = view.getByRole('menu', { name: 'Move Card Group to Column' });
+        expect(menu).toHaveAttribute('popover');
+        expect(menu).toHaveAttribute('data-board-overlay', 'true');
+        const first = within(menu).getByRole('menuitem', { name: 'To Improve' });
+        const last = within(menu).getByRole('menuitem', { name: 'Action Items' });
+        await waitFor(() => expect(first).toHaveFocus());
+
+        fireEvent.keyDown(first, { key: 'ArrowDown' });
+        expect(last).toHaveFocus();
+        fireEvent.keyDown(last, { key: 'ArrowUp' });
+        expect(first).toHaveFocus();
+        fireEvent.keyDown(first, { key: 'Escape' });
+        flush();
+
+        expect(trigger).toHaveFocus();
+        expect(trigger).toHaveAttribute('aria-expanded', 'false');
+        expect(view.queryByRole('menu', { name: 'Move Card Group to Column' })).not.toBeInTheDocument();
+        expect(spies.moveCardGroup).not.toHaveBeenCalled();
+      } finally {
+        view.unmount();
+      }
+    }, { scenario: 'card-group-move-menu-keyboard' });
+
+    expectNoDiagnostics(artifact);
   });
 
   it('opens the Export menu, copies Markdown, exposes download links, prints, and closes on Escape/outside click', async () => {
@@ -2977,7 +3136,8 @@ describe('<BoardWorkspace />', () => {
       fireEvent.click(view.getByRole('button', { name: 'Mine' }));
       flush();
       expect(view.queryByText('Kudos for the fast deployment')).not.toBeInTheDocument();
-      expect(view.getByText('No Cards match your current search or filter.')).toBeInTheDocument();
+      expect(within(view.getByRole('region', { name: 'Search, filter, and sort Board' }))
+        .getByText('No Cards match your current search or filter.')).toBeInTheDocument();
       expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
     }, { scenario: 'board-workspace-secret-search-card-match' });
     expectNoDiagnostics(artifact);
@@ -3692,6 +3852,115 @@ describe('<BoardWorkspace />', () => {
     }
   });
 
+  it('keeps the primary Board controls together while the Board title and status can scroll away', async () => {
+    const board = makeBoardView({ isFacilitator: true, voteLimit: 5, remainingVotes: 2 });
+    const { artifact } = await captureArtifact(() => {
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      ));
+      try {
+        flush();
+        const controls = within(view.getByRole('group', { name: 'Board controls' }));
+        expect(controls.getByRole('link', { name: 'Retrocks home' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Countdown Timer' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Private Mode' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+        expect(controls.getByRole('button', { name: 'More board actions' })).toBeInTheDocument();
+        expect(controls.queryByRole('heading', { level: 1 })).toBeNull();
+        expect(controls.queryByRole('group', { name: 'Board status' })).toBeNull();
+        expect(within(view.getByRole('group', { name: 'Board status' })).getByText('2 / 5 votes left')).toBeInTheDocument();
+      } finally {
+        view.unmount();
+      }
+    }, { scenario: 'compact-mobile-board-controls' });
+    expectNoDiagnostics(artifact);
+  });
+
+  it('lets an agent find the Column choices and select a mounted Column', async () => {
+    const board = makeBoardView();
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+    ));
+    flush();
+
+    const agent = createAgent();
+    const tabs = agent.snapshot().find((entry) => entry.component === 'tabs');
+    expect(tabs?.label).toBe('Select Column');
+    const choice = tabs?.items?.find((item) => item.label.startsWith('To Improve'));
+    expect(choice?.label).toBeTruthy();
+
+    const result = await agent.act({
+      steps: [{ ref: 'Select Column', action: 'select', args: [choice?.label] }],
+    });
+    flush();
+
+    expect(result.ok, result.error?.message).toBe(true);
+    const selected = view.getByRole('tab', { name: /To Improve/, selected: true });
+    const controlledPanel = document.getElementById(selected.getAttribute('aria-controls') ?? '');
+    expect(controlledPanel).toHaveAttribute('data-column-id', 'col_2');
+  });
+
+  it('fades the Column rail only on edges with more tabs to scroll to', () => {
+    const board = makeBoardView();
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+    ));
+    flush();
+    const tabs = view.getByRole('tablist', { name: 'Select Column' });
+    Object.defineProperties(tabs, {
+      clientWidth: { value: 300 },
+      scrollWidth: { value: 500 },
+    });
+
+    fireEvent.scroll(tabs);
+    expect(tabs).not.toHaveAttribute('data-fade-start');
+    expect(tabs).toHaveAttribute('data-fade-end');
+
+    tabs.scrollLeft = 100;
+    fireEvent.scroll(tabs);
+    expect(tabs).toHaveAttribute('data-fade-start');
+    expect(tabs).toHaveAttribute('data-fade-end');
+
+    tabs.scrollLeft = 200;
+    fireEvent.scroll(tabs);
+    expect(tabs).toHaveAttribute('data-fade-start');
+    expect(tabs).not.toHaveAttribute('data-fade-end');
+  });
+
+  it('offers the mobile-only Board actions in More and labels the active Column panel', () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query === '(width < 40rem)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    try {
+      const board = makeBoardView();
+      const view = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      ));
+      flush();
+      const firstTab = view.getByRole('tab', { name: /Went Well/ });
+      const secondTab = view.getByRole('tab', { name: /To Improve/ });
+      firstTab.focus();
+      fireEvent.keyDown(firstTab, { key: 'ArrowRight' });
+      flush();
+      expect(secondTab).toHaveFocus();
+      expect(secondTab).toHaveAttribute('aria-selected', 'true');
+      expect(view.getByRole('tabpanel', { name: /To Improve/ })).toHaveAttribute(
+        'id', secondTab.getAttribute('aria-controls'),
+      );
+
+      fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
+      flush();
+      const menu = within(view.getByRole('menu', { name: 'More board actions' }));
+      expect(menu.getByRole('menuitem', { name: 'Rename Board' })).toBeInTheDocument();
+      expect(menu.getByRole('menuitem', { name: 'Add column' })).toBeInTheDocument();
+      expect(menu.getByRole('menuitem', { name: /Action Items/ })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('opens More for secondary controls and restores focus on Escape with zero diagnostics', async () => {
     const board = makeBoardView({
       isFacilitator: true,
@@ -3718,8 +3987,13 @@ describe('<BoardWorkspace />', () => {
           const withinMenu = within(menu);
           expect(withinMenu.getByRole('menuitem', { name: 'Board Settings' })).toBeInTheDocument();
           expect(withinMenu.getByRole('menuitem', { name: /Switch to (light|dark) theme/ })).toBeInTheDocument();
-          expect(withinMenu.getByRole('menuitem', { name: /Add column/i })).toBeInTheDocument();
-          expect(withinMenu.getByRole('menuitem', { name: /Action Items/i })).toBeInTheDocument();
+          expect(withinMenu.queryByRole('menuitem', { name: /Add column/i })).toBeNull();
+          expect(withinMenu.queryByRole('menuitem', { name: /Action Items/i })).toBeNull();
+          const settings = withinMenu.getByRole('menuitem', { name: 'Board Settings' });
+          settings.focus();
+          fireEvent.keyDown(settings, { key: 'ArrowDown' });
+          flush();
+          expect(withinMenu.getByRole('menuitem', { name: 'Copy Markdown' })).toHaveFocus();
           expect(withinMenu.getByRole('menuitem', { name: /Download Markdown/i })).toBeInTheDocument();
 
           fireEvent.keyDown(document, { key: 'Escape' });
@@ -4444,5 +4718,459 @@ describe('<BoardWorkspace />', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('frames Columns as architectural rails with 3px accent bars, 5% header tints, Flag cue, and stable stream container', async () => {
+    const board = makeBoardView({
+      cards: [makeCard({ id: 'card_1', columnId: 'col_1', content: 'Clean rail card' })],
+    });
+    const { actions } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          const wentWell = view.getByRole('region', { name: 'Went Well' });
+          const accentBar = wentWell.querySelector('[data-column-accent-bar="true"]') as HTMLElement;
+          expect(accentBar).toBeInTheDocument();
+          expect(accentBar.className).toContain('h-[3px]');
+          expect(accentBar.className).toContain('bg-col-sage');
+          expect(wentWell.querySelector('.bg-col-sage-tint')).toBeInTheDocument();
+
+          // Stream container stays :scope > div:last-child for top-level Cards/Groups
+          const stream = wentWell.querySelector(':scope > div:last-child')!;
+          expect(stream.querySelector('[data-card-id="card_1"]')).toBeInTheDocument();
+
+          // Action Column uses a clean Flag cue instead of the boxy "Actions" text pill
+          const actionCol = view.getByRole('region', { name: 'Action Items' });
+          expect(actionCol.querySelector('.bg-col-sky-tint')).toBeInTheDocument();
+          expect(within(actionCol).queryByText('Actions')).not.toBeInTheDocument();
+          expect(within(actionCol).getByTitle('Action Column')).toBeInTheDocument();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'column-architectural-rails' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('keeps 3 Columns balanced at 1024px and opens Add Column in a non-shifting overlay dialog with zero diagnostics', async () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          const columnsGrid = view.container.querySelector('[data-board-columns="true"]') as HTMLElement;
+          expect(columnsGrid).toBeInTheDocument();
+          // 3-Column Board does not squeeze columns with a 4th auto track at lg (1024px)
+          expect(columnsGrid.className).toContain('lg:grid-cols-3');
+          expect(columnsGrid.className).not.toContain('lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]');
+
+          // Inline "+ Add a Column" trigger sits inside the Column grid
+          const addColumnBtn = within(columnsGrid).getByRole('button', { name: 'Add a Column' });
+          expect(addColumnBtn).toBeInTheDocument();
+
+          // Opening Add Column does not mount a form above <main>
+          const main = view.getByRole('main');
+          const childrenBeforeMain = Array.from(main.parentElement!.children);
+          const mainIndexBefore = childrenBeforeMain.indexOf(main);
+
+          fireEvent.click(addColumnBtn);
+          flush();
+
+          const mainIndexAfter = Array.from(main.parentElement!.children).indexOf(main);
+          expect(mainIndexAfter).toBe(mainIndexBefore);
+
+          const dialog = view.getByRole('dialog', { name: 'Add a Column' });
+          expect(dialog).toHaveAttribute('data-board-overlay', 'true');
+          const titleInput = within(dialog).getByLabelText('New column title') as HTMLInputElement;
+          expect(titleInput).toHaveFocus();
+
+          // Pressing Escape closes the overlay cleanly
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
+
+          // Reopen, pick accent + Action Column, submit -> creates & selects Column
+          fireEvent.click(addColumnBtn);
+          flush();
+          const dialog2 = view.getByRole('dialog', { name: 'Add a Column' });
+          const titleInput2 = within(dialog2).getByLabelText('New column title') as HTMLInputElement;
+          fireEvent.input(titleInput2, { target: { value: 'Risks' } });
+          fireEvent.click(within(dialog2).getByRole('button', { name: 'New column accent Coral' }));
+          fireEvent.click(within(dialog2).getByLabelText('Action Items column'));
+          flush();
+          fireEvent.click(within(dialog2).getByRole('button', { name: 'Add column' }));
+          await flushPromises();
+
+          expect(spies.addColumn).toHaveBeenCalledWith({
+            boardId: board.id,
+            title: 'Risks',
+            accent: 'coral',
+            isActionColumn: true,
+          });
+          expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
+          expect(view.getByRole('tab', { name: /Risks/i })).toHaveAttribute('aria-selected', 'true');
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'add-column-overlay-and-1024-grid' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('clears desktop composer cleanly on Enter, handles Column options overlay with zero diagnostics', async () => {
+    const board = makeBoardView({ isFacilitator: true, cards: [] });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          const wentWell = view.getByRole('region', { name: 'Went Well' });
+          const composer = within(wentWell).getByRole('textbox', {
+            name: 'Add card to Went Well',
+          }) as HTMLTextAreaElement;
+
+          // Enter on empty/whitespace does not submit or leave a stray newline
+          fireEvent.keyDown(composer, { key: 'Enter' });
+          await flushPromises();
+          expect(spies.createCard).not.toHaveBeenCalled();
+          expect(composer.value).toBe('');
+
+          // Typing and pressing Enter submits and clears DOM value cleanly
+          composer.value = 'Direct DOM sync card';
+          fireEvent.input(composer, { target: { value: 'Direct DOM sync card' } });
+          flush();
+          fireEvent.keyDown(composer, { key: 'Enter' });
+          await flushPromises();
+          expect(spies.createCard).toHaveBeenCalledWith({
+            boardId: board.id,
+            columnId: 'col_1',
+            content: 'Direct DOM sync card',
+          });
+          expect(composer.value).toBe('');
+
+          // Column options menu renders with data-board-overlay and closes on Escape
+          const optionsBtn = within(wentWell).getByRole('button', {
+            name: 'Column options for Went Well',
+          });
+          fireEvent.click(optionsBtn);
+          flush();
+          const menu = within(wentWell).getByRole('menu', { name: 'Options for Went Well' });
+          expect(menu).toHaveAttribute('data-board-overlay', 'true');
+          expect(menu.className).toContain('board-popover');
+          const renameItem = within(menu).getByRole('menuitem', { name: 'Rename column' });
+          renameItem.focus();
+          fireEvent.keyDown(renameItem, { key: 'ArrowDown' });
+          flush();
+          const moveLeft = within(menu).getByRole('menuitem', { name: 'Move left' });
+          expect(moveLeft).toHaveFocus();
+          expect(moveLeft).toHaveAttribute('aria-disabled', 'true');
+          fireEvent.keyDown(moveLeft, { key: 'ArrowDown' });
+          flush();
+          const moveRight = within(menu).getByRole('menuitem', { name: 'Move right' });
+          expect(moveRight).toHaveFocus();
+          fireEvent.keyDown(moveRight, { key: 'ArrowDown' });
+          flush();
+          expect(within(menu).getByRole('menuitemradio', { name: 'Accent Slate' })).toHaveFocus();
+
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(within(wentWell).queryByRole('menu', { name: 'Options for Went Well' })).not.toBeInTheDocument();
+
+          // Reopen and choose Rename column -> focuses inline Column title input & saves on Enter
+          fireEvent.click(optionsBtn);
+          flush();
+          fireEvent.click(
+            within(wentWell).getByRole('menuitem', { name: 'Rename column' }),
+          );
+          flush();
+          const renameInput = within(wentWell).getByRole('textbox', { name: 'Column title' }) as HTMLInputElement;
+          expect(renameInput).toHaveFocus();
+          expect(renameInput).toHaveValue('Went Well');
+          fireEvent.input(renameInput, { target: { value: 'Highlights' } });
+          flush();
+          fireEvent.keyDown(renameInput, { key: 'Enter' });
+          await flushPromises();
+          expect(spies.updateColumn).toHaveBeenCalledWith({
+            boardId: board.id,
+            columnId: 'col_1',
+            title: 'Highlights',
+          });
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'column-composer-and-options-menu' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('renders a Home-style floating Dynamic Island header with synced theme toggle and supports double-click / double-tap Board title rename for Facilitators', async () => {
+    const board = makeBoardView({
+      title: 'Sprint 42 Retro',
+      isFacilitator: true,
+      isLocked: false,
+    });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace
+            board={board}
+            boardId={board.id}
+            homeHref="/"
+            actions={actions}
+          />
+        ));
+        try {
+          flush();
+
+          // The island holds the brand link, centered title, and theme toggle.
+          const banner = view.getByRole('banner');
+          const island = banner.querySelector('.board-island');
+          expect(island).not.toBeNull();
+          const withinIsland = within(island as HTMLElement);
+          expect(withinIsland.getByRole('link', { name: /Retrocks/i })).toHaveAttribute('href', '/');
+          const heading = withinIsland.getByRole('heading', { level: 1, name: 'Sprint 42 Retro' });
+          expect(heading).toBeVisible();
+          const islandThemeToggle = withinIsland.getByRole('button', { name: /Switch to (light|dark) theme/ });
+          expect(islandThemeToggle).toHaveAttribute('aria-pressed');
+
+          // Island ThemeToggle and More menu theme item stay synced and toggle cleanly once
+          fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
+          flush();
+          const moreMenu = view.getByRole('menu', { name: 'More board actions' });
+          expect(moreMenu).toHaveAttribute('data-slot', 'menu-content');
+          expect(moreMenu).toHaveAttribute('data-board-overlay', 'true');
+          expect(moreMenu).toHaveClass('board-popover');
+          const menuThemeItem = within(moreMenu).getByRole('menuitem', { name: /Switch to (light|dark) theme/ });
+          const initialTheme = document.documentElement.dataset.theme ?? 'light';
+          fireEvent.click(menuThemeItem);
+          flush();
+          const toggledTheme = initialTheme === 'dark' ? 'light' : 'dark';
+          expect(document.documentElement.dataset.theme).toBe(toggledTheme);
+          expect(islandThemeToggle).toHaveAttribute('aria-pressed', toggledTheme === 'dark' ? 'true' : 'false');
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+
+          // Double-clicking the Board title enters inline rename, focuses input, and saves on Enter
+          fireEvent.dblClick(heading);
+          flush();
+          const titleInput = withinIsland.getByRole('textbox', { name: 'Board title' });
+          expect(titleInput).toHaveFocus();
+          expect(titleInput).toHaveValue('Sprint 42 Retro');
+          fireEvent.input(titleInput, { target: { value: 'Q4 Platform Retro' } });
+          flush();
+          fireEvent.keyDown(titleInput, { key: 'Enter' });
+          await flushPromises();
+
+          expect(spies.renameBoard).toHaveBeenCalledWith({
+            boardId: board.id,
+            title: 'Q4 Platform Retro',
+          });
+          expect(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' })).toBeVisible();
+
+          // Escape cancels rename and keeps the current title
+          fireEvent.dblClick(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' }));
+          flush();
+          const cancelInput = withinIsland.getByRole('textbox', { name: 'Board title' });
+          expect(cancelInput).toHaveFocus();
+          fireEvent.input(cancelInput, { target: { value: 'Unsaved Draft' } });
+          flush();
+          fireEvent.keyDown(cancelInput, { key: 'Escape' });
+          flush();
+          expect(withinIsland.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+          expect(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' })).toBeVisible();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'board-island-header-and-title-rename' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('guards Board title double-tap/double-click against slow taps, drags, Participants, and Locked Boards', () => {
+    vi.useFakeTimers();
+    try {
+      // 1. Participant cannot double-click or double-tap to rename
+      const participantBoard = makeBoardView({
+        title: 'Participant View',
+        isFacilitator: false,
+      });
+      const participantView = render(() => (
+        <BoardWorkspace
+          board={participantBoard}
+          boardId={participantBoard.id}
+          homeHref="/"
+          actions={createFakeActions(participantBoard).actions}
+        />
+      ));
+      flush();
+      fireEvent.dblClick(participantView.getByRole('heading', { level: 1, name: 'Participant View' }));
+      flush();
+      expect(participantView.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+      participantView.unmount();
+
+      // 2. Facilitator on a Locked Board cannot double-click to rename
+      const lockedBoard = makeBoardView({
+        title: 'Locked Retro',
+        isFacilitator: true,
+        isLocked: true,
+      });
+      const lockedView = render(() => (
+        <BoardWorkspace
+          board={lockedBoard}
+          boardId={lockedBoard.id}
+          homeHref="/"
+          actions={createFakeActions(lockedBoard).actions}
+        />
+      ));
+      flush();
+      fireEvent.dblClick(lockedView.getByRole('heading', { level: 1, name: 'Locked Retro' }));
+      flush();
+      expect(lockedView.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+      lockedView.unmount();
+
+      // 3. Facilitator on unlocked Board: touch double-tap gesture guards
+      const facilitatorBoard = makeBoardView({
+        title: 'Touch Rename Retro',
+        isFacilitator: true,
+        isLocked: false,
+      });
+      const view = render(() => (
+        <BoardWorkspace
+          board={facilitatorBoard}
+          boardId={facilitatorBoard.id}
+          homeHref="/"
+          actions={createFakeActions(facilitatorBoard).actions}
+        />
+      ));
+      try {
+        flush();
+        const heading = view.getByRole('heading', { level: 1, name: 'Touch Rename Retro' });
+        const tapAt = (target: Element, x: number, y: number, pointerId: number) => {
+          fireEvent.pointerDown(target, { pointerType: 'touch', isPrimary: true, pointerId, clientX: x, clientY: y });
+          vi.advanceTimersByTime(40);
+          fireEvent.pointerUp(target, { pointerType: 'touch', isPrimary: true, pointerId, clientX: x, clientY: y });
+          flush();
+        };
+
+        // Slow taps (500ms apart) do not open rename
+        tapAt(heading, 120, 30, 1);
+        vi.advanceTimersByTime(500);
+        tapAt(heading, 120, 30, 2);
+        expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+
+        // Touch drag (> 16px) does not count as a tap
+        vi.advanceTimersByTime(100);
+        fireEvent.pointerDown(heading, { pointerType: 'touch', isPrimary: true, pointerId: 3, clientX: 120, clientY: 30 });
+        vi.advanceTimersByTime(40);
+        fireEvent.pointerUp(heading, { pointerType: 'touch', isPrimary: true, pointerId: 3, clientX: 120, clientY: 70 });
+        flush();
+        expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+
+        // Two quick taps within threshold enter inline rename
+        tapAt(heading, 120, 30, 4);
+        vi.advanceTimersByTime(120);
+        tapAt(heading, 124, 32, 5);
+        const titleInput = view.getByRole('textbox', { name: 'Board title' });
+        expect(titleInput).toHaveFocus();
+        expect(titleInput).toHaveValue('Touch Rename Retro');
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rations primary accent between Share and Reveal All and keeps Private Mode inline without bloating the header bar', async () => {
+    const board = makeBoardView({
+      isFacilitator: true,
+      isBlurred: false,
+      isLocked: false,
+      cards: [makeCard({ isActionItem: true, actionDone: false })],
+    });
+    const { actions, spies } = createFakeActions(board);
+    spies.setPrivateMode.mockImplementation(async (input) => ({
+      ok: true,
+      version: input.isBlurred ? 2 : 3,
+      events: [{
+        type: 'board:snapshot',
+        version: input.isBlurred ? 2 : 3,
+        serverNow: Date.now(),
+        board: { ...board, version: input.isBlurred ? 2 : 3, isBlurred: input.isBlurred },
+      }],
+    }));
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace
+            board={board}
+            boardId={board.id}
+            homeHref="/"
+            actions={actions}
+          />
+        ));
+        try {
+          flush();
+          const share = view.getByRole('button', { name: 'Share' });
+          const privateToggle = view.getByRole('button', { name: 'Private Mode' });
+          const actionItems = view.getByRole('button', { name: 'Action Items 1 open' });
+          const more = view.getByRole('button', { name: 'More board actions' });
+
+          // Unified pill geometry, tactile spring-press, and primary accent rationed strictly to Share
+          for (const control of [share, privateToggle, actionItems, more]) {
+            expect(control).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9');
+          }
+          expect(share).toHaveAttribute('data-cta-emphasis', 'primary');
+          expect(share).toHaveClass('bg-accent');
+          expect(privateToggle).not.toHaveClass('bg-accent');
+
+          // Toggling Private Mode ON shifts primary accent strictly to Reveal All and yields Share
+          fireEvent.click(privateToggle);
+          await flushPromises();
+
+          const revealAll = view.getByRole('button', { name: 'Reveal All' });
+          expect(revealAll).toHaveAttribute('data-cta-emphasis', 'primary');
+          expect(revealAll).toHaveClass('bg-accent');
+          expect(share).toHaveAttribute('data-cta-emphasis', 'secondary');
+          expect(share).not.toHaveClass('bg-accent');
+
+          // Private Mode status stays inline without appending a wrapping basis-full paragraph
+          const statusGroup = view.getByRole('group', { name: 'Board status' });
+          expect(within(statusGroup).getByText('Private Mode')).toBeVisible();
+          expect(statusGroup.querySelector('p.basis-full')).toBeNull();
+          expect(
+            within(statusGroup).getByText('Private Mode').closest('[title]'),
+          ).toHaveAttribute('title', 'Only you can read your Cards until they’re revealed.');
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'header-accent-rationing-and-zero-cls-private-mode' },
+    );
+    expectNoDiagnostics(artifact);
   });
 });
