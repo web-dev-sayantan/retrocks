@@ -210,12 +210,3 @@ export function parseBoardView(input: unknown): BoardViewDTO {
 export function parseBoardLiveMessage(frame: string): BoardLiveMessage {
   return v.parse(BoardLiveMessageSchema, JSON.parse(frame));
 }
-
-export type WireColumnDTO = v.InferOutput<typeof ColumnDTOSchema>;
-export type WireCommentViewDTO = v.InferOutput<typeof CommentViewDTOSchema>;
-export type WireCardViewDTO = v.InferOutput<typeof CardViewDTOSchema>;
-export type WireCardGroupDTO = v.InferOutput<typeof CardGroupDTOSchema>;
-export type WireTimerStateDTO = v.InferOutput<typeof TimerStateDTOSchema>;
-export type WireBoardViewDTO = v.InferOutput<typeof BoardViewDTOSchema>;
-export type WireBoardEvent = v.InferOutput<typeof BoardEventSchema>;
-export type WireBoardLiveMessage = v.InferOutput<typeof BoardLiveMessageSchema>;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type * as v from 'valibot';
 
 import type { BoardLiveMessage } from './board-live-protocol';
+import type { BoardExportJson } from './board-export';
 import type {
   BoardEvent,
   BoardViewDTO,
@@ -197,6 +198,12 @@ type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y 
   : false;
 type Expect<T extends true> = T;
 
+/** Shared fields must mirror the DTO exactly (DTO optionality may differ: the export always emits a value). */
+type MirrorsDto<Section, Dto> = {
+  [K in keyof Section & keyof Dto]: Equal<Section[K], Exclude<Dto[K], undefined>>;
+};
+type AllTrue<T> = T[keyof T] extends true ? true : false;
+
 type _ColumnDTOMatches = Expect<Equal<v.InferOutput<typeof ColumnDTOSchema>, ColumnDTO>>;
 type _CommentViewDTOMatches = Expect<
   Equal<v.InferOutput<typeof CommentViewDTOSchema>, CommentViewDTO>
@@ -212,6 +219,24 @@ type _BoardLiveMessageMatches = Expect<
   Equal<v.InferOutput<typeof BoardLiveMessageSchema>, BoardLiveMessage>
 >;
 
+// The export JSON mirrors the wire DTOs; these fail typecheck when either drifts.
+type _ExportBoardMirrorsDto = Expect<
+  AllTrue<MirrorsDto<BoardExportJson['board'], BoardViewDTO>>
+>;
+type _ExportColumnsMirrorDto = Expect<
+  AllTrue<MirrorsDto<BoardExportJson['columns'][number], ColumnDTO>>
+>;
+type _ExportGroupsMirrorDto = Expect<
+  AllTrue<MirrorsDto<BoardExportJson['groups'][number], CardGroupDTO>>
+>;
+// The export comment shape is an intentional subset; every shared field still mirrors.
+type _ExportCardsMirrorDto = Expect<
+  AllTrue<MirrorsDto<Omit<BoardExportJson['cards'][number], 'comments'>, CardViewDTO>>
+>;
+type _ExportCardCommentsMirrorDto = Expect<
+  AllTrue<MirrorsDto<BoardExportJson['cards'][number]['comments'][number], CommentViewDTO>>
+>;
+
 export type CompileTimeContracts = [
   _ColumnDTOMatches,
   _CommentViewDTOMatches,
@@ -221,4 +246,9 @@ export type CompileTimeContracts = [
   _BoardViewDTOMatches,
   _BoardEventMatches,
   _BoardLiveMessageMatches,
+  _ExportBoardMirrorsDto,
+  _ExportColumnsMirrorDto,
+  _ExportGroupsMirrorDto,
+  _ExportCardsMirrorDto,
+  _ExportCardCommentsMirrorDto,
 ];
