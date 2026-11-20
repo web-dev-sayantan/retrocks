@@ -14,6 +14,7 @@ import {
 } from '@ui-sdk/solid/menu';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
   Check,
   Columns3,
@@ -37,45 +38,33 @@ import {
   createStore,
   flush,
   onSettled,
-  reconcile,
-  untrack,
 } from 'solid-js';
 
 import {
   defaultBoardWorkspaceActions,
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
-import { createBoardLive, type BoardLive } from '../lib/board-live';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
-  canContribute,
   canControlFacilitation,
-  canEditActionItem,
   canFacilitate,
-  canInteractWithCard,
   canManageCard,
   canManageGroup,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { applyBoardEvents } from '../lib/board-store';
+import { createBoardSession } from '../lib/board-session';
 import {
   COLUMN_ACCENTS,
   MAX_BOARD_TITLE_LENGTH,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
-  type ActionItemPatch,
-  type BoardEvent,
-  type BoardMutationResponse,
   type BoardViewDTO,
   type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
-  type ReactionEmoji,
 } from '../lib/board-types';
 import {
-  hasOpenBoardOverlay,
-  isTypingInEditableElement,
   projectBoardView,
   type BoardQuickFilter,
   type BoardSortMode,
@@ -87,17 +76,14 @@ import {
   matchSecretSearch,
 } from '../lib/easter-eggs';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
-import { isOptimisticId, makeOptimisticCardId } from '../lib/optimistic-ids';
-import type { TimerChange } from '../lib/schemas';
+import { isOptimisticId } from '../lib/optimistic-ids';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { toggleTheme } from '../lib/theme';
-import type { ServerClockSample } from '../lib/timer';
 import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
 import { createDoubleTap } from '../lib/double-tap';
-import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
-import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
+import BoardVotingSettings from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
@@ -108,7 +94,6 @@ import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
 import ShareBoard from './ShareBoard';
 import ThemeToggle from './ThemeToggle';
-import type { WorkspaceVoting } from './VoteControls';
 
 export interface BoardWorkspaceProps {
   board: BoardViewDTO | null;
@@ -135,22 +120,6 @@ function BoardHomeLink(props: { href: string; class: string }) {
       <span class="hidden sm:inline">Retrocks</span>
     </a>
   );
-}
-
-function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
-  if (!board) return null;
-  return {
-    ...board,
-    timer: { ...board.timer },
-    columns: board.columns.map((c) => ({ ...c })),
-    groups: board.groups.map((g) => ({ ...g, cardIds: [...g.cardIds] })),
-    cards: board.cards.map((card) => ({
-      ...card,
-      reactions: { ...card.reactions },
-      myReactions: [...card.myReactions],
-      comments: card.comments.map((cm) => ({ ...cm })),
-    })),
-  };
 }
 
 const EMPTY_CARDS: readonly CardViewDTO[] = [];
@@ -184,60 +153,18 @@ function getAddColumnSlotClass(columnCount: number): string {
 }
 
 export default function BoardWorkspace(props: BoardWorkspaceProps) {
-  const [workspace, setWorkspace] = createStore<{
-    board: BoardViewDTO | null;
-  }>({
-    board: untrack(() => cloneBoardView(props.board)),
+  // The Board session controller owns the store, live stream, server clock,
+  // mutation handlers, and pending state; this component keeps layout and UI state.
+  const session = createBoardSession({
+    board: () => props.board,
+    actions: () => props.actions ?? defaultBoardWorkspaceActions,
+    onDramaticReveal: runDramaticReveal,
   });
 
-  const [nowMs, setNowMs] = createSignal(Date.now());
-  const [liveSession, setLiveSession] = createSignal<{ boardId: string; live: BoardLive } | null>(null);
-  const isLive = createMemo(() => liveSession()?.live.status() === 'live');
-  const onlineCount = createMemo(() => liveSession()?.live.onlineCount() ?? null);
-  const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
-  const timerClock = createMemo(() => {
-    const clock = serverClock();
-    return clock?.boardId === workspace.board?.id ? clock : null;
-  });
-  let serverTimeOffsetMs = 0;
-  let reconnectLive: (() => void) | undefined;
-  const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
-
-  type PendingVote = ChangeVoteInput & { baseVersion: number };
-  const [pendingVote, setPendingVote] = createSignal<PendingVote | null>(null);
-  let voteInFlight = false;
-
-  const voting = createMemo<WorkspaceVoting>(() => {
-    const board = workspace.board;
-    const request = pendingVote();
-    const optimisticVote = request && board?.id === request.boardId &&
-      board.version === request.baseVersion ? request : null;
-    let remainingVotes = board?.remainingVotes ?? null;
-
-    if (board && optimisticVote && board.voteLimit !== null) {
-      const spentOnCards = board.cards.reduce(
-        (sum, card) => sum + (card.groupId === null ? card.myVotes : 0),
-        0,
-      );
-      const spentOnGroups = board.groups.reduce((sum, group) => sum + group.myVotes, 0);
-      remainingVotes = Math.max(0, board.voteLimit - spentOnCards - spentOnGroups - optimisticVote.delta);
-    }
-
-    return {
-      remainingVotes,
-      maxVotesPerCard: board?.maxVotesPerCard ?? null,
-      pending: request !== null && request.boardId === board?.id,
-      optimisticVote,
-      onChange: handleChangeVote,
-    };
-  });
-
-  const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
   const [isDramaticReveal, setIsDramaticReveal] = createSignal(false);
   const [modeAnnouncement, setModeAnnouncement] = createSignal('');
   const revealChime = createTimerChime();
   let dramaticRevealTimer: ReturnType<typeof setTimeout> | undefined;
-  let optimisticCardSeq = 0;
 
   function clearDramaticReveal(): void {
     if (dramaticRevealTimer !== undefined) {
@@ -245,6 +172,18 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       dramaticRevealTimer = undefined;
     }
     setIsDramaticReveal(false);
+  }
+
+  function runDramaticReveal(): void {
+    clearDramaticReveal();
+    setIsDramaticReveal(true);
+    dramaticRevealTimer = setTimeout(() => {
+      dramaticRevealTimer = undefined;
+      setIsDramaticReveal(false);
+    }, 950);
+    if (!isTimerAudioMuted()) {
+      revealChime.playRevealShimmer();
+    }
   }
 
   onSettled(() => () => {
@@ -290,10 +229,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // Board title inline editing: createInlineEdit owns the session, input, and keyboard contract.
   const boardTitleField = usePrimitive(inlineEdit, () => ({
-    value: () => workspace.board?.title ?? '',
+    value: () => session.board()?.title ?? '',
     commit: (text: string) => boardTitleSave.commit(text),
     disabled: () => {
-      const board = workspace.board;
+      const board = session.board();
       return !board || !canControlFacilitation(board);
     },
   }));
@@ -324,9 +263,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const [newColumnAccent, setNewColumnAccent] =
     createSignal<ColumnAccent>('slate');
   const [newColumnIsAction, setNewColumnIsAction] = createSignal(false);
-  const [isSavingColumn, setIsSavingColumn] = createSignal(false);
   const canAddColumn = createMemo(() => {
-    const board = workspace.board;
+    const board = session.board();
     return !!board && canAddBoardColumn(board);
   });
   let newColumnTitleEl: HTMLInputElement | undefined;
@@ -388,7 +326,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   const openActionItemCount = createMemo(
     () =>
-      workspace.board?.cards.filter(
+      session.board()?.cards.filter(
         (card) => card.isActionItem && !card.actionDone,
       ).length ?? 0,
   );
@@ -417,9 +355,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
-    if (nextBoard === null) {
-      setErrorMessage(null);
+  // Mirror the controller's Board lifecycle into workspace UI state: when the
+  // session board is removed, close every overlay and hand focus to the
+  // not-found heading.
+  createEffect(
+    () => session.board()?.id ?? null,
+    (boardId, previousBoardId) => {
+      if (boardId) return;
+      if (previousBoardId) unavailableHeading?.focus();
       boardTitleSave.resetError();
       boardTitleEdit.cancel();
       setIsAddingColumn(false);
@@ -428,74 +371,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       setIsActionItemsOpen(false);
       setBoardMenuOpen(false);
       setIsBoardSettingsOpen(false);
-      }
-    untrack(() => {
-      setWorkspace((draft) => {
-        const current = draft.board;
-        if (nextBoard && current?.id === nextBoard.id) {
-          if (nextBoard.version < current.version) return;
-          if (!fromLive && nextBoard.version === current.version &&
-              nextBoard.isFacilitator === current.isFacilitator) return;
-        }
-        reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
-      });
-    });
-  }
-
-  function syncServerClock(boardId: string, serverNow: number): void {
-    setServerClock({ boardId, serverNow, receivedAt: performance.now() });
-    serverTimeOffsetMs = serverNow - Date.now();
-    setNowMs(serverNow);
-  }
-
-  function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
-    // Point-in-time guard: judge the snapshot against the board as of this event, not a tracked dependency.
-    const stale = untrack(() => {
-      const current = workspace.board;
-      return !current || current.id !== nextBoard.id || nextBoard.version < current.version;
-    });
-    if (stale) return;
-    syncServerClock(nextBoard.id, serverNow);
-    applySnapshot(nextBoard, true);
-  }
-
-  function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
-    if (events.some((event) => event.type === 'board:deleted')) {
-      if (untrack(() => workspace.board?.id) === boardId) {
-        applySnapshot(null);
-      }
-      return;
-    }
-    const snapshot = events.find((event) => event.type === 'board:snapshot');
-    if (snapshot) {
-      applyServerSnapshot(snapshot.board, snapshot.serverNow);
-      return;
-    }
-    let needsResync = false;
-    let serverNow: number | undefined;
-    untrack(() => {
-      setWorkspace((draft) => {
-        const board = draft.board;
-        if (!board || board.id !== boardId || version <= board.version) return;
-        if (version > board.version + 1) {
-          needsResync = true;
-          return;
-        }
-        applyBoardEvents(board, events);
-        board.version = version;
-        for (const event of events) {
-          if (event.type === 'timer:updated') serverNow = event.serverNow;
-        }
-      });
-    });
-    if (serverNow !== undefined) syncServerClock(boardId, serverNow);
-    if (needsResync) reconnectLive?.();
-  }
-
-  createEffect(() => props.board, (nextBoard) => applySnapshot(nextBoard));
+    },
+  );
 
   createEffect(
-    () => workspace.board?.isLocked ?? false,
+    () => session.board()?.isLocked ?? false,
     (locked) => {
       if (locked) {
         boardTitleEdit.cancel();
@@ -521,7 +401,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   createEffect(
     () => {
-      const board = workspace.board;
+      const board = session.board();
       return board && {
         id: board.id,
         isBlurred: board.isBlurred,
@@ -549,68 +429,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   );
 
   let unavailableHeading: HTMLHeadingElement | undefined;
-  const liveBoardId = createMemo(() => workspace.board?.id);
-  createEffect(liveBoardId, (boardId, previousBoardId) => {
-    if (!boardId) {
-      if (previousBoardId) unavailableHeading?.focus();
-      return;
-    }
-    if (typeof window === 'undefined') return;
-    const live = createBoardLive(boardId);
-    setLiveSession({ boardId, live });
-    reconnectLive = live.reconnect;
-    return () => {
-      reconnectLive = undefined;
-      setLiveSession(null);
-      live.dispose();
-    };
-  });
 
   createEffect(
-    () => {
-      const session = liveSession();
-      return session && { boardId: session.boardId, message: session.live.lastEvent() };
-    },
-    (event, previous) => {
-      const message = event?.message;
-      if (!event || !message || message === previous?.message) return;
-      const { boardId } = event;
-      switch (message.type) {
-        case 'board:snapshot':
-          if (message.board.id !== boardId) break;
-          applyServerSnapshot(message.board, message.serverNow);
-          break;
-        case 'board:mutation':
-          applyVersionedEvents(boardId, message.version, message.events);
-          break;
-        case 'board:deleted':
-          applySnapshot(null);
-          break;
-      }
-    },
-  );
-
-  // Keep relative timestamps fresh on the client
-  onSettled(() => {
-    const intervalId = setInterval(() => {
-      setNowMs(Date.now() + serverTimeOffsetMs);
-    }, 30_000);
-    return () => clearInterval(intervalId);
-  });
-
-  createEffect(
-    () => workspace.board !== null,
+    () => session.board() !== null,
     (hasBoard) => {
       if (hasBoard) logPrivacyColophon();
     },
   );
-
-  onSettled(() => {
-    document.addEventListener('keydown', handleGlobalKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
-    };
-  });
 
   onSettled(() => {
     const viewport = window.visualViewport;
@@ -629,16 +454,19 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // Record / scrub localStorage Recent Boards cleanly (including after Board rename)
   createEffect(
-    () => ({
-      boardId: props.boardId,
-      board: workspace.board
-        ? {
-            id: workspace.board.id,
-            title: workspace.board.title,
-            isFacilitator: workspace.board.isFacilitator,
-          }
-        : null,
-    }),
+    () => {
+      const board = session.board();
+      return {
+        boardId: props.boardId,
+        board: board
+          ? {
+              id: board.id,
+              title: board.title,
+              isFacilitator: board.isFacilitator,
+            }
+          : null,
+      };
+    },
     ({ boardId, board }) => {
       if (board) {
         recordRecentBoard(board);
@@ -648,12 +476,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     },
   );
 
-  const actions = createMemo(
-    () => props.actions ?? defaultBoardWorkspaceActions,
-  );
-
   const resolvedActiveColumnIndex = createMemo(() => {
-    const cols = workspace.board?.columns ?? [];
+    const cols = session.board()?.columns ?? [];
     if (cols.length === 0) return 0;
     const currentId = activeColumnId();
     if (currentId) {
@@ -664,13 +488,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const activeMobileColumn = createMemo(() => {
-    const cols = workspace.board?.columns ?? [];
+    const cols = session.board()?.columns ?? [];
     return cols[resolvedActiveColumnIndex()] ?? null;
   });
 
   const cardsByColumn = createMemo(() => {
     const grouped = new Map<string, CardViewDTO[]>();
-    const board = workspace.board;
+    const board = session.board();
     if (!board) return grouped;
     for (const card of board.cards) {
       let list = grouped.get(card.columnId);
@@ -685,7 +509,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   const groupsByColumn = createMemo(() => {
     const grouped = new Map<string, CardGroupDTO[]>();
-    const board = workspace.board;
+    const board = session.board();
     if (!board) return grouped;
     for (const group of board.groups) {
       let list = grouped.get(group.columnId);
@@ -699,7 +523,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const boardView = createMemo(() => {
-    const board = workspace.board;
+    const board = session.board();
     if (!board) return null;
     return projectBoardView(board, {
       query: searchQuery(),
@@ -716,13 +540,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const isHorizontalSnap = createMemo(
-    () => (workspace.board?.columns.length ?? 0) >= 5,
+    () => (session.board()?.columns.length ?? 0) >= 5,
   );
 
   const openDetailCard = createMemo(() => {
     const id = openCardDetailId();
     if (!id) return null;
-    const card = workspace.board?.cards.find((item) => item.id === id) ?? null;
+    const card = session.board()?.cards.find((item) => item.id === id) ?? null;
     if (!card || card.redacted) return null;
     return card;
   });
@@ -731,7 +555,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const card = openDetailCard();
     if (!card) return null;
     return (
-      workspace.board?.columns.find((col) => col.id === card.columnId) ?? null
+      session.board()?.columns.find((col) => col.id === card.columnId) ?? null
     );
   });
 
@@ -745,74 +569,28 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     },
   );
 
-  function applyMutationResponse(boardId: string, response: BoardMutationResponse): boolean {
-    if (workspace.board?.id !== boardId) return false;
-    if (!response.ok) {
-      setErrorMessage(response.message);
-      return false;
-    }
-    setErrorMessage(null);
-    applyVersionedEvents(boardId, response.version, response.events);
-    return true;
-  }
-
-  async function changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse> {
-    const response = await actions().updateTimer({ boardId, change });
-    if (response.ok) applyVersionedEvents(boardId, response.version, response.events);
-    return response;
-  }
-
-  function handleGlobalKeyDown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || event.isComposing) return;
-
-    if (event.key === 'Escape') {
-      if (isCardDetailOpen()) {
-        // Events inside the drawer are handled there after its nested controls.
-        if (event.target instanceof Element && event.target.closest('[data-board-overlay]')) return;
-        event.preventDefault();
-        setIsCardDetailOpen(false);
-        return;
-      }
-      if (isActionItemsOpen()) {
-        event.preventDefault();
-        setIsActionItemsOpen(false);
-        return;
-      }
-      if (boardMenuOpen()) {
-        event.preventDefault();
-        closeBoardMenu(true);
-        return;
-      }
-      if (isAddingColumn()) {
-        event.preventDefault();
-        setIsAddingColumn(false);
-      }
-      return;
-    }
-
-    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (isTypingInEditableElement(event)) return;
-
-    const board = workspace.board;
-    if (!board) return;
-
-    if (event.key === '/') {
-      if (hasOpenBoardOverlay()) return;
+  // Global Board shortcuts. useShortcut pauses them while someone types and
+  // while a modal layer is open; shortcuts.list() feeds the help surface.
+  useShortcut(
+    () => (session.board() ? '/' : null),
+    () => {
       if (searchInputEl?.isConnected) {
-        event.preventDefault();
         searchInputEl.focus();
         searchInputEl.select();
       }
-      return;
-    }
+    },
+    { description: 'Search cards' },
+  );
 
-    const key = event.key.toLowerCase();
-    if (key === 'n') {
-      if (board.isLocked || hasOpenBoardOverlay()) return;
+  useShortcut(
+    () => {
+      const board = session.board();
+      return board && !board.isLocked ? 'n' : null;
+    },
+    () => {
       const targetCol = activeMobileColumn();
       const composer = targetCol ? columnComposers.get(targetCol.id) : undefined;
       if (composer?.isConnected) {
-        event.preventDefault();
         composer.focus();
         if (document.activeElement === composer) {
           composer.scrollIntoView?.({ block: 'nearest' });
@@ -820,35 +598,35 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
         }
       }
       if (mobileComposerEl?.isConnected) {
-        event.preventDefault();
         mobileComposerEl.focus();
       }
-      return;
-    }
+    },
+    { description: 'Add a card' },
+  );
 
-    if (key === 'a') {
-      if (isActionItemsOpen()) {
-        event.preventDefault();
-        setIsActionItemsOpen(false);
-        return;
-      }
-      if (hasOpenBoardOverlay()) return;
-      event.preventDefault();
+  useShortcut(
+    () => (session.board() ? 'a' : null),
+    () => {
       setIsActionItemsOpen(true);
-      return;
-    }
+    },
+    { description: 'Toggle Action Items' },
+  );
 
-    if (key === 'b') {
-      if (hasOpenBoardOverlay() || !canControlFacilitation(board)) return;
-      event.preventDefault();
+  useShortcut(
+    () => {
+      const board = session.board();
+      return board && canControlFacilitation(board) ? 'b' : null;
+    },
+    () => {
       void togglePrivateMode();
-    }
-  }
+    },
+    { description: 'Toggle Private Mode' },
+  );
 
   async function togglePrivateMode(options?: { dramatic?: boolean }): Promise<void> {
-    const board = workspace.board;
-    if (!board || !canControlFacilitation(board) || isChangingPrivateMode()) return;
-    const { id: boardId, isBlurred } = board;
+    const board = session.board();
+    if (!board || !canControlFacilitation(board) || session.isChangingPrivateMode()) return;
+    const { isBlurred } = board;
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
@@ -859,28 +637,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     } else if (!isBlurred) {
       clearDramaticReveal();
     }
-    setIsChangingPrivateMode(true);
-    try {
-      const response = await actions().setPrivateMode({ boardId, isBlurred: !isBlurred });
-      if (dramatic && response.ok && workspace.board?.id === boardId) {
-        clearDramaticReveal();
-        setIsDramaticReveal(true);
-        dramaticRevealTimer = setTimeout(() => {
-          dramaticRevealTimer = undefined;
-          setIsDramaticReveal(false);
-        }, 950);
-        if (!isTimerAudioMuted()) {
-          revealChime.playRevealShimmer();
-        }
-      }
-      applyMutationResponse(boardId, response);
-    } finally {
-      setIsChangingPrivateMode(false);
-    }
+    // The session runs the mutation and invokes onDramaticReveal before applying.
+    await session.togglePrivateMode(dramatic);
   }
 
   function isBoardTitleEditTarget(target: EventTarget | null): boolean {
-    const board = workspace.board;
+    const board = session.board();
     if (!board || !canControlFacilitation(board)) return false;
     return !(target instanceof Element && target.closest('button'));
   }
@@ -893,7 +655,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   function startBoardRename(): void {
     boardTitleTap.reset();
-    const board = workspace.board;
+    const board = session.board();
     if (!board) return;
     setHasBoardTitleText(board.title.trim().length > 0);
     boardTitleEdit.start(board.id);
@@ -906,340 +668,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   async function saveBoardTitleText(text: string): Promise<InlineEditOutcome> {
-    const board = workspace.board;
+    const board = session.board();
     const trimmed = text.trim();
     if (!board || trimmed.length === 0) return false;
-    const response = await actions().renameBoard({
-      boardId: board.id,
-      title: trimmed,
-    });
-    return applyMutationResponse(board.id, response) ? true : false;
-  }
-
-  function removeOptimisticCard(boardId: string, tempId: string): void {
-    setWorkspace((draft) => {
-      const current = draft.board;
-      if (!current || current.id !== boardId) return;
-      const idx = current.cards.findIndex((item) => item.id === tempId);
-      if (idx === -1) return;
-      const [removed] = current.cards.splice(idx, 1);
-      const col = current.columns.find((c) => c.id === removed.columnId);
-      if (col) col.cardCount = Math.max(0, col.cardCount - 1);
-    });
-  }
-
-  async function handleCreateCard(
-    columnId: string,
-    content: string,
-  ): Promise<string | null> {
-    const board = workspace.board;
-    const trimmed = content.trim();
-    if (!board || board.isLocked) return 'This Board is not accepting new Cards.';
-    const column = board.columns.find((col) => col.id === columnId);
-    if (!column) return 'This Column is no longer available.';
-
-    const boardId = board.id;
-    optimisticCardSeq += 1;
-    const tempId = makeOptimisticCardId(optimisticCardSeq);
-    const createdAt = Date.now() + serverTimeOffsetMs;
-    const optimisticCard: CardViewDTO = {
-      id: tempId,
-      columnId,
-      groupId: null,
-      content: trimmed,
-      redacted: false,
-      isMine: true,
-      isActionItem: column.isActionColumn,
-      actionDone: false,
-      actionOwner: '',
-      votes: board.blindVoting ? null : 0,
-      myVotes: 0,
-      reactions: {},
-      myReactions: [],
-      commentCount: 0,
-      comments: [],
-      createdAt,
-      updatedAt: createdAt,
-    };
-
-    setWorkspace((draft) => {
-      const current = draft.board;
-      if (!current || current.id !== boardId) return;
-      current.cards.push(optimisticCard);
-      const col = current.columns.find((c) => c.id === columnId);
-      if (col) col.cardCount += 1;
-    });
-    setNowMs(createdAt);
-
-    try {
-      const response = await actions().createCard({
-        boardId,
-        columnId,
-        content,
-      });
-      if (response.ok) {
-        const upserted = response.events.find(
-          (ev) => ev.type === 'card:upserted',
-        );
-        if (upserted && upserted.type === 'card:upserted') {
-          setWorkspace((draft) => {
-            const current = draft.board;
-            if (!current || current.id !== boardId) return;
-            if (current.cards.some((item) => item.id === upserted.card.id)) {
-              const idx = current.cards.findIndex((item) => item.id === tempId);
-              if (idx !== -1) {
-                const [removed] = current.cards.splice(idx, 1);
-                const col = current.columns.find((c) => c.id === removed.columnId);
-                if (col) col.cardCount = Math.max(0, col.cardCount - 1);
-              }
-              return;
-            }
-            const placeholder = current.cards.find((item) => item.id === tempId);
-            if (placeholder) {
-              placeholder.id = upserted.card.id;
-            }
-          });
-        } else {
-          removeOptimisticCard(boardId, tempId);
-        }
-      } else {
-        removeOptimisticCard(boardId, tempId);
-      }
-      if (!response.ok) return response.message;
-      if (workspace.board?.id === boardId) {
-        applyVersionedEvents(boardId, response.version, response.events);
-        setNowMs(Date.now() + serverTimeOffsetMs);
-      }
-      return null;
-    } catch {
-      removeOptimisticCard(boardId, tempId);
-      return 'Could not create Card. Try again.';
-    }
-  }
-
-  async function handleUpdateCard(
-    cardId: string,
-    content: string,
-  ): Promise<string | null> {
-    const board = workspace.board;
-    if (!board || !canManageCard(board, cardId)) return 'This Card can no longer be edited.';
-    try {
-      const response = await actions().updateCard({ boardId: board.id, cardId, content });
-      if (!response.ok) return response.message;
-      return applyMutationResponse(board.id, response) ? null : 'This Card can no longer be edited.';
-    } catch {
-      return 'Could not save the Card. Try again.';
-    }
-  }
-
-  async function handleUpdateActionItem(
-    cardId: string,
-    patch: ActionItemPatch,
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || !canEditActionItem(board, card, patch)) return false;
-    const response = await actions().updateActionItem({
-      boardId: board.id,
-      cardId,
-      ...patch,
-    });
-    return response.ok && applyMutationResponse(board.id, response);
-  }
-
-  async function handleMoveCard(
-    cardId: string,
-    targetColumnId: string,
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageCard(board, cardId)) return false;
-    const response = await actions().moveCard({
-      boardId: board.id,
-      cardId,
-      targetColumnId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleDeleteCard(cardId: string): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageCard(board, cardId)) return false;
-    const response = await actions().deleteCard({
-      boardId: board.id,
-      cardId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleGroupCard(
-    cardId: string,
-    targetType: 'card' | 'group',
-    targetId: string,
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await actions().groupCards({
-      boardId: board.id,
-      cardId,
-      targetType,
-      targetId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleRenameCardGroup(
-    groupId: string,
-    title: string,
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await actions().renameCardGroup({
-      boardId: board.id,
-      groupId,
-      title,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleUngroupCard(cardId: string): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await actions().ungroupCard({
-      boardId: board.id,
-      cardId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleDissolveCardGroup(groupId: string): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await actions().dissolveCardGroup({
-      boardId: board.id,
-      groupId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleMoveCardGroup(
-    groupId: string,
-    targetColumnId: string,
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await actions().moveCardGroup({
-      boardId: board.id,
-      groupId,
-      targetColumnId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  function applyOptimisticReactionDelta(
-    boardId: string,
-    cardId: string,
-    emoji: ReactionEmoji,
-    adding: boolean,
-  ): void {
-    setWorkspace((draft) => {
-      const current = draft.board;
-      if (!current || current.id !== boardId) return;
-      const target = current.cards.find((item) => item.id === cardId);
-      if (!target) return;
-      const existingIdx = target.myReactions.indexOf(emoji);
-      const currentCount = target.reactions[emoji] ?? 0;
-      if (adding) {
-        if (existingIdx === -1) target.myReactions.push(emoji);
-        target.reactions[emoji] = currentCount + 1;
-      } else {
-        if (existingIdx !== -1) target.myReactions.splice(existingIdx, 1);
-        if (currentCount <= 1) {
-          delete target.reactions[emoji];
-        } else {
-          target.reactions[emoji] = currentCount - 1;
-        }
-      }
-    });
-  }
-
-  async function handleToggleReaction(
-    cardId: string,
-    emoji: ReactionEmoji,
-  ): Promise<string | null> {
-    const board = workspace.board;
-    if (!board || isOptimisticId(cardId)) {
-      return 'This Card can no longer receive reactions.';
-    }
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || !canInteractWithCard(board, card)) {
-      return 'This Card can no longer receive reactions.';
-    }
-
-    const boardId = board.id;
-    const hadReaction = card.myReactions.includes(emoji);
-    applyOptimisticReactionDelta(boardId, cardId, emoji, !hadReaction);
-
-    try {
-      const response = await actions().toggleReaction({
-        boardId,
-        cardId,
-        emoji,
-      });
-      if (!response.ok) {
-        applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
-        return response.message;
-      }
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
-      return 'Could not update reaction. Try again.';
-    }
-  }
-
-  async function handleCreateComment(
-    cardId: string,
-    content: string,
-  ): Promise<string | null> {
-    const board = workspace.board;
-    const card = board?.cards.find((item) => item.id === cardId);
-    if (!board || !card || !canInteractWithCard(board, card)) {
-      return 'This Card can no longer receive comments.';
-    }
-    try {
-      const response = await actions().createComment({ boardId: board.id, cardId, content });
-      if (!response.ok) return response.message;
-      if (applyMutationResponse(board.id, response)) {
-        setNowMs(Date.now() + serverTimeOffsetMs);
-      }
-      return null;
-    } catch {
-      return 'Could not post comment. Try again.';
-    }
-  }
-
-  async function handleDeleteComment(
-    cardId: string,
-    commentId: string,
-  ): Promise<string | null> {
-    const board = workspace.board;
-    const card = board?.cards.find((item) => item.id === cardId);
-    if (!board || !card || !canInteractWithCard(board, card)) {
-      return 'This comment can no longer be deleted.';
-    }
-    try {
-      const response = await actions().deleteComment({ boardId: board.id, cardId, commentId });
-      if (!response.ok) return response.message;
-      applyMutationResponse(board.id, response);
-      return null;
-    } catch {
-      return 'Could not delete comment. Try again.';
-    }
+    return (await session.renameBoard(trimmed)) ? true : false;
   }
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
-    const board = workspace.board;
+    const board = session.board();
     if (!board || isOptimisticId(cardId)) return;
     const card = board.cards.find((item) => item.id === cardId);
     if (!card || card.redacted) return;
@@ -1258,155 +694,20 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
     event.preventDefault();
-    const board = workspace.board;
+    const board = session.board();
     const trimmed = newColumnTitle().trim();
-    if (!board || trimmed.length === 0 || isSavingColumn()) return;
-    setIsSavingColumn(true);
-    try {
-      const response = await actions().addColumn({
-        boardId: board.id,
-        title: trimmed,
-        accent: newColumnAccent(),
-        isActionColumn: newColumnIsAction(),
-      });
-      if (applyMutationResponse(board.id, response)) {
-        const upserted = response.ok
-          ? response.events.find((ev) => ev.type === 'column:upserted')
-          : undefined;
-        if (upserted && upserted.type === 'column:upserted') {
-          setActiveColumnId(upserted.column.id);
-        }
-        setNewColumnTitle('');
-        setNewColumnAccent('slate');
-        setNewColumnIsAction(false);
-        setIsAddingColumn(false);
-      }
-    } finally {
-      setIsSavingColumn(false);
-    }
-  }
-
-  async function handleUpdateColumn(
-    columnId: string,
-    patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board) return false;
-    const response = await actions().updateColumn({
-      boardId: board.id,
-      columnId,
-      ...patch,
+    if (!board || trimmed.length === 0 || session.isSavingColumn()) return;
+    const column = await session.addColumn({
+      title: trimmed,
+      accent: newColumnAccent(),
+      isActionColumn: newColumnIsAction(),
     });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleMoveColumn(
-    columnId: string,
-    direction: -1 | 1,
-  ): Promise<boolean> {
-    const board = workspace.board;
-    if (!board) return false;
-    const ids = board.columns.map((c) => c.id);
-    const currentIndex = ids.indexOf(columnId);
-    const nextIndex = currentIndex + direction;
-    if (currentIndex === -1 || nextIndex < 0 || nextIndex >= ids.length) {
-      return false;
-    }
-    const reordered = [...ids];
-    const [moved] = reordered.splice(currentIndex, 1);
-    reordered.splice(nextIndex, 0, moved);
-    const response = await actions().reorderColumns({
-      boardId: board.id,
-      columnIds: reordered,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleDeleteColumn(columnId: string): Promise<boolean> {
-    const board = workspace.board;
-    if (!board) return false;
-    const response = await actions().deleteColumn({
-      boardId: board.id,
-      columnId,
-    });
-    return applyMutationResponse(board.id, response);
-  }
-
-  async function handleChangeVote(
-    targetType: 'card' | 'group',
-    targetId: string,
-    delta: ChangeVoteInput['delta'],
-  ): Promise<void> {
-    const board = workspace.board;
-    if (!board || !canContribute(board) || voteInFlight || isOptimisticId(targetId)) return;
-
-    const boardId = board.id;
-    const input = { boardId, targetType, targetId, delta } as const;
-    voteInFlight = true;
-    setPendingVote({ ...input, baseVersion: board.version });
-    try {
-      const response = await actions().changeVote(input);
-      applyMutationResponse(boardId, response);
-    } catch {
-      if (workspace.board?.id === boardId) setErrorMessage('Could not update your Vote. Try again.');
-    } finally {
-      voteInFlight = false;
-      setPendingVote(null);
-    }
-  }
-
-  async function runVotingSettingsMutation(
-    mutate: (boardId: string) => Promise<BoardMutationResponse>,
-  ): Promise<string | null> {
-    const board = workspace.board;
-    if (!board || !canControlFacilitation(board)) return 'Voting settings are unavailable.';
-    const boardId = board.id;
-
-    try {
-      const response = await mutate(boardId);
-      if (!response.ok) return response.message;
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      return 'Could not update Voting. Try again.';
-    }
-  }
-
-  function saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null> {
-    const update = actions().updateVotingSettings;
-    return runVotingSettingsMutation((boardId) => update({ boardId, ...patch }));
-  }
-
-  function resetAllVotes(): Promise<string | null> {
-    const reset = actions().resetVotes;
-    return runVotingSettingsMutation((boardId) => reset({ boardId }));
-  }
-
-  async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
-    const board = workspace.board;
-    if (!board || !canFacilitate(board)) return 'Only a Facilitator can Lock or Unlock the Board.';
-    const boardId = board.id;
-    try {
-      const response = await actions().setBoardLock({ boardId, isLocked });
-      if (!response.ok) return response.message;
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      return 'Could not update Board lock state. Try again.';
-    }
-  }
-
-  async function deleteCurrentBoard(): Promise<string | null> {
-    const board = workspace.board;
-    if (!board || !canFacilitate(board)) return 'Only a Facilitator can delete this Board.';
-    const boardId = board.id;
-    try {
-      const response = await actions().deleteBoard({ boardId });
-      if (!response.ok) return response.message;
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      return 'Could not delete this Board. Try again.';
+    if (column) {
+      setActiveColumnId(column.id);
+      setNewColumnTitle('');
+      setNewColumnAccent('slate');
+      setNewColumnIsAction(false);
+      setIsAddingColumn(false);
     }
   }
 
@@ -1425,7 +726,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setIsSubmittingMobileCard(true);
     updateMobileDraft(id, draft);
     try {
-      const error = await handleCreateCard(id, draft.trim());
+      const error = await session.createCard(id, draft.trim());
       setMobileDrafts((drafts) => {
         const current = drafts[id];
         if (current?.content === draft) {
@@ -1450,7 +751,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     list.toggleAttribute('data-fade-end', offset < list.scrollWidth - list.clientWidth - 1);
   }
 
-  createEffect(() => workspace.board?.id, () => {
+  createEffect(() => session.board()?.id, () => {
     const list = columnTabListEl;
     const track = list?.firstElementChild;
     if (!list || !track) return;
@@ -1493,14 +794,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const dy = touch.clientY - start.y;
     if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
 
-    const cols = workspace.board?.columns ?? [];
+    const cols = session.board()?.columns ?? [];
     const current = resolvedActiveColumnIndex();
     const next = cols[current + (dx < 0 ? 1 : -1)];
     if (next) setActiveColumnId(next.id);
   }
 
   function handleDragStartCard(cardId: string, sourceColumnId: string): void {
-    const board = workspace.board;
+    const board = session.board();
     if (!board || !canManageCard(board, cardId)) return;
     setDraggingCardId(cardId);
     setDraggingGroupId(null);
@@ -1508,7 +809,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   }
 
   function handleDragStartGroup(groupId: string, sourceColumnId: string): void {
-    const board = workspace.board;
+    const board = session.board();
     if (!board) return;
     const group = board.groups.find((item) => item.id === groupId);
     if (!group || !canManageGroup(board, group, board.cards)) return;
@@ -1525,7 +826,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   return (
     <Show
-      when={workspace.board}
+      when={session.board()}
       fallback={
         <div class="flex min-h-dvh flex-col">
           <header class="pointer-events-none sticky top-0 z-30 px-4 pt-3 pb-1 sm:px-6 sm:pt-4">
@@ -1677,9 +978,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       {(boardId) => (
                         <CountdownTimer
                           timer={board().timer}
-                          clock={timerClock()}
+                          clock={session.timerClock()}
                           canControl={canControlFacilitation(board())}
-                          onChange={(change) => changeCountdown(boardId, change)}
+                          onChange={(change) => session.changeCountdown(boardId, change)}
                         />
                       )}
                     </Show>
@@ -1692,7 +993,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       data-cta-emphasis={board().isBlurred ? 'primary' : 'secondary'}
                       aria-keyshortcuts="B"
                       title={board().isBlurred ? 'Reveal All (B)' : 'Enable Private Mode (B)'}
-                      disabled={isChangingPrivateMode()}
+                      disabled={session.isChangingPrivateMode()}
                       onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
                       class={[
                         'spring-press hidden min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9 sm:min-h-9',
@@ -1851,12 +1152,12 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <span role="status" class="inline-flex items-center gap-1.5 font-medium text-text">
                     <span
                       aria-hidden="true"
-                      class={['size-1.5 shrink-0 rounded-full', isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
+                      class={['size-1.5 shrink-0 rounded-full', session.isLive() ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-text-muted']}
                     />
-                    {isLive() ? 'Live' : 'Reconnecting…'}
+                    {session.isLive() ? 'Live' : 'Reconnecting…'}
                   </span>
-                  <Show when={isLive() && onlineCount() !== null}>
-                    <span class="border-l border-border/80 pl-2 tabular-nums">{onlineCount()} online</span>
+                  <Show when={session.isLive() && session.onlineCount() !== null}>
+                    <span class="border-l border-border/80 pl-2 tabular-nums">{session.onlineCount()} online</span>
                   </Show>
                 </div>
                 <span aria-hidden="true" data-print-hide="true" class="hidden h-4 w-px bg-border/75 sm:block" />
@@ -1880,7 +1181,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     class="inline-flex max-sm:border-l max-sm:border-border/80 max-sm:pl-2 items-center gap-1 text-text-muted tabular-nums sm:min-h-9 sm:gap-1.5 sm:rounded-full sm:bg-surface-subtle/75 sm:px-3 sm:text-[13px] sm:font-medium sm:text-text"
                   >
                     <LucideIcon icon={Vote} class="hidden size-3.5 shrink-0 text-text-muted sm:block" strokeWidth={1.85} />
-                    <span class="tabular-nums">{voting().remainingVotes} / {board().voteLimit} votes left</span>
+                    <span class="tabular-nums">{session.voting().remainingVotes} / {board().voteLimit} votes left</span>
                   </span>
                 </Show>
                 <Show when={board().isBlurred}>
@@ -1913,10 +1214,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 setIsBoardSettingsOpen(false);
                 boardMenuTriggerEl?.focus();
               }}
-              onUpdate={saveVotingSettings}
-              onReset={resetAllVotes}
-              onToggleLock={toggleBoardLock}
-              onDeleteBoard={deleteCurrentBoard}
+              onUpdate={session.saveVotingSettings}
+              onReset={session.resetAllVotes}
+              onToggleLock={session.toggleBoardLock}
+              onDeleteBoard={session.deleteCurrentBoard}
             />
           </Show>
 
@@ -1946,7 +1247,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </Show>
 
           {/* Inline dismissible error feedback */}
-          <Show when={errorMessage()}>
+          <Show when={session.errorMessage()}>
             {(message) => (
               <div
                 role="alert"
@@ -1957,7 +1258,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <button
                     type="button"
                     aria-label="Dismiss error"
-                    onClick={() => setErrorMessage(null)}
+                    onClick={() => session.clearError()}
                     class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-md text-text-muted hover:text-text"
                   >
                     <CloseIcon />
@@ -2133,36 +1434,23 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           boardView()?.columns.get(column.id)?.visibleCardCount ?? 0
                         }
                         hasActiveFilter={boardView()?.hasActiveFilter ?? false}
-                        voting={voting()}
+                        voting={session.voting()}
                         isFacilitator={board().isFacilitator}
                         isLocked={board().isLocked}
                         isBlurred={board().isBlurred}
                         canGroupCards={canManageGrouping(board())}
-                        nowMs={nowMs()}
+                        nowMs={session.nowMs()}
                         isMobile={isMobileBoard()}
                         isMobileActive={resolvedActiveColumnIndex() === index()}
                         isHorizontalSnap={isHorizontalSnap()}
                         draggingCardId={draggingCardId()}
                         draggingGroupId={draggingGroupId()}
                         draggingSourceColumnId={draggingSourceColumnId()}
+                        actions={session}
                         onResetFilters={resetFilters}
                         onRegisterComposer={registerColumnComposer}
                         onActivateColumn={(colId) => setActiveColumnId(colId)}
-                        onCreateCard={handleCreateCard}
-                        onUpdateCard={handleUpdateCard}
-                        onUpdateActionItem={handleUpdateActionItem}
-                        onMoveCard={handleMoveCard}
-                        onDeleteCard={handleDeleteCard}
-                        onToggleReaction={handleToggleReaction}
                         onOpenCardDetail={handleOpenCardDetail}
-                        onUpdateColumn={handleUpdateColumn}
-                        onMoveColumn={handleMoveColumn}
-                        onDeleteColumn={handleDeleteColumn}
-                        onGroupCard={handleGroupCard}
-                        onUngroupCard={handleUngroupCard}
-                        onRenameCardGroup={handleRenameCardGroup}
-                        onDissolveCardGroup={handleDissolveCardGroup}
-                        onMoveCardGroup={handleMoveCardGroup}
                         onDragStartCard={handleDragStartCard}
                         onDragStartGroup={handleDragStartGroup}
                         onDragEndCard={handleDragEndCard}
@@ -2317,11 +1605,11 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <button
                     type="submit"
                     disabled={
-                      isSavingColumn() || newColumnTitle().trim().length === 0
+                      session.isSavingColumn() || newColumnTitle().trim().length === 0
                     }
                     class="spring-press min-h-11 cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   >
-                    {isSavingColumn() ? 'Adding…' : 'Add column'}
+                    {session.isSavingColumn() ? 'Adding…' : 'Add column'}
                   </button>
                 </div>
               </form>
@@ -2337,16 +1625,16 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 isFacilitator={board().isFacilitator}
                 isLocked={board().isLocked}
                 isBlurred={board().isBlurred}
-                nowMs={nowMs()}
+                nowMs={session.nowMs()}
                 isOpen={isCardDetailOpen()}
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocus={restoreCardDetailFocus}
-                onUpdateActionItem={handleUpdateActionItem}
-                onToggleReaction={handleToggleReaction}
-                onCreateComment={handleCreateComment}
-                onDeleteComment={handleDeleteComment}
+                onUpdateActionItem={session.updateActionItem}
+                onToggleReaction={session.toggleReaction}
+                onCreateComment={session.createComment}
+                onDeleteComment={session.deleteComment}
               />
             )}
           </Show>
@@ -2359,7 +1647,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             isLocked={board().isLocked}
             onClose={() => setIsActionItemsOpen(false)}
             onRestoreFocus={restoreActionItemsFocus}
-            onUpdateActionItem={handleUpdateActionItem}
+            onUpdateActionItem={session.updateActionItem}
           />
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}

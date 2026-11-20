@@ -16,13 +16,12 @@ import {
   COLUMN_ACCENTS,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
-  type ActionItemPatch,
   type CardGroupDTO,
   type CardViewDTO,
   type ColumnAccent,
   type ColumnDTO,
-  type ReactionEmoji,
 } from '../lib/board-types';
+import type { BoardMutations } from '../lib/board-session';
 import type { ColumnStreamItem } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { inlineEdit, createInlineEditSave, type InlineEditOutcome } from '../lib/inline-edit';
@@ -38,7 +37,7 @@ import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from './VoteControls';
+import type { WorkspaceVoting } from '../lib/board-session';
 
 export interface ColumnPanelProps {
   column: ColumnDTO;
@@ -62,40 +61,15 @@ export interface ColumnPanelProps {
   draggingCardId: string | null;
   draggingGroupId: string | null;
   draggingSourceColumnId: string | null;
+  /** Controller-shaped Board mutations (the workspace passes its session). */
+  actions: BoardMutations;
   onResetFilters: () => void;
   onRegisterComposer?: (
     columnId: string,
     el: HTMLTextAreaElement | null,
   ) => void;
   onActivateColumn?: (columnId: string) => void;
-  onCreateCard: (columnId: string, content: string) => Promise<string | null>;
-  onUpdateCard: (cardId: string, content: string) => Promise<string | null>;
-  onUpdateActionItem: (
-    cardId: string,
-    patch: ActionItemPatch,
-  ) => Promise<boolean>;
-  onMoveCard: (cardId: string, targetColumnId: string) => Promise<boolean>;
-  onDeleteCard: (cardId: string) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
-  onUpdateColumn: (
-    columnId: string,
-    patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
-  ) => Promise<boolean>;
-  onMoveColumn: (columnId: string, direction: -1 | 1) => Promise<boolean>;
-  onDeleteColumn: (columnId: string) => Promise<boolean>;
-  onGroupCard: (
-    cardId: string,
-    targetType: 'card' | 'group',
-    targetId: string,
-  ) => Promise<boolean>;
-  onUngroupCard: (cardId: string) => Promise<boolean>;
-  onRenameCardGroup: (groupId: string, title: string) => Promise<boolean>;
-  onDissolveCardGroup: (groupId: string) => Promise<boolean>;
-  onMoveCardGroup: (
-    groupId: string,
-    targetColumnId: string,
-  ) => Promise<boolean>;
   onDragStartCard: (cardId: string, sourceColumnId: string) => void;
   onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
   onDragEndCard: () => void;
@@ -225,7 +199,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     setIsCreatingCard(true);
     setCardError(null);
     try {
-      const error = await props.onCreateCard(props.column.id, trimmed);
+      const error = await props.actions.createCard(props.column.id, trimmed);
       const currentDraft = composerEl ? composerEl.value : cardDraft();
       if (currentDraft === draft) {
         setCardError(error);
@@ -263,18 +237,18 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   async function saveColumnTitle(text: string): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return (await props.onUpdateColumn(props.column.id, { title: trimmed }))
+    return (await props.actions.updateColumn(props.column.id, { title: trimmed }))
       ? true
       : false;
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
     if (accent === props.column.accent) return;
-    await props.onUpdateColumn(props.column.id, { accent });
+    await props.actions.updateColumn(props.column.id, { accent });
   }
 
   async function handleReorder(direction: -1 | 1): Promise<void> {
-    await props.onMoveColumn(props.column.id, direction);
+    await props.actions.moveColumn(props.column.id, direction);
   }
 
   async function requestDeleteColumn(): Promise<void> {
@@ -290,7 +264,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (!confirmed) return;
     setIsDeletingColumn(true);
     try {
-      await props.onDeleteColumn(props.column.id);
+      await props.actions.deleteColumn(props.column.id);
     } finally {
       setIsDeletingColumn(false);
     }
@@ -341,7 +315,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (groupId) {
       if (props.draggingSourceColumnId === props.column.id) return;
       props.onDragEndCard();
-      void props.onMoveCardGroup(groupId, props.column.id);
+      void props.actions.moveCardGroup(groupId, props.column.id);
       return;
     }
     const cardId =
@@ -352,7 +326,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (!cardId) return;
     if (props.draggingSourceColumnId === props.column.id) return;
     props.onDragEndCard();
-    void props.onMoveCard(cardId, props.column.id);
+    void props.actions.moveCard(cardId, props.column.id);
   }
 
   return (
@@ -760,16 +734,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         nowMs={props.nowMs}
                         draggingCardId={props.draggingCardId}
                         draggingSourceColumnId={props.draggingSourceColumnId}
-                        onRename={props.onRenameCardGroup}
-                        onDissolve={props.onDissolveCardGroup}
-                        onMoveGroup={props.onMoveCardGroup}
-                        onGroupCard={props.onGroupCard}
-                        onUngroupCard={props.onUngroupCard}
-                        onUpdateActionItem={props.onUpdateActionItem}
-                        onUpdateCard={props.onUpdateCard}
-                        onMoveCard={props.onMoveCard}
-                        onDeleteCard={props.onDeleteCard}
-                        onToggleReaction={props.onToggleReaction}
+                        actions={props.actions}
                         onOpenCardDetail={props.onOpenCardDetail}
                         onDragStartCard={props.onDragStartCard}
                         onDragEndCard={props.onDragEndCard}
@@ -803,13 +768,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       nowMs={props.nowMs}
                       draggingCardId={props.draggingCardId}
                       draggingSourceColumnId={props.draggingSourceColumnId}
-                      onGroupCard={props.onGroupCard}
-                      onUngroupCard={props.onUngroupCard}
-                      onUpdateCard={props.onUpdateCard}
-                      onUpdateActionItem={props.onUpdateActionItem}
-                      onMoveCard={props.onMoveCard}
-                      onDeleteCard={props.onDeleteCard}
-                      onToggleReaction={props.onToggleReaction}
+                      actions={props.actions}
                       onOpenCardDetail={props.onOpenCardDetail}
                       onDragStartCard={props.onDragStartCard}
                       onDragEndCard={props.onDragEndCard}

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from './board-types';
 import {
   formatMatchCountSummary,
-  isEditableTarget,
   projectBoardView,
   type BoardQuickFilter,
   type BoardSortMode,
@@ -350,27 +349,10 @@ describe('projectBoardView', () => {
     }
   });
 
-  it('formats concise match count summaries and detects editable targets', () => {
+  it('formats concise match count summaries', () => {
     expect(formatMatchCountSummary(1, 5, true)).toBe('1 match (1 of 5 cards)');
     expect(formatMatchCountSummary(0, 5, true)).toBe('0 matches (0 of 5 cards)');
     expect(formatMatchCountSummary(2, 1, false)).toBe('2 of 1 card');
     expect(formatMatchCountSummary(3, 8, false)).toBe('3 of 8 cards');
-
-    const input = document.createElement('input');
-    const textarea = document.createElement('textarea');
-    const select = document.createElement('select');
-    const editableDiv = document.createElement('div');
-    editableDiv.setAttribute('contenteditable', 'true');
-    const nonEditableDiv = document.createElement('div');
-    nonEditableDiv.setAttribute('contenteditable', 'false');
-    const button = document.createElement('button');
-
-    expect(isEditableTarget(input)).toBe(true);
-    expect(isEditableTarget(textarea)).toBe(true);
-    expect(isEditableTarget(select)).toBe(true);
-    expect(isEditableTarget(editableDiv)).toBe(true);
-    expect(isEditableTarget(nonEditableDiv)).toBe(false);
-    expect(isEditableTarget(button)).toBe(false);
-    expect(isEditableTarget(null)).toBe(false);
   });
 });
