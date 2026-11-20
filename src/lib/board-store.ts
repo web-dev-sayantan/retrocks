@@ -1,11 +1,7 @@
-import type {
-  BoardEvent,
-  BoardViewDTO,
-  CardGroupDTO,
-  CardViewDTO,
-  ReactionEmoji,
-} from './board-types';
-import { REACTION_EMOJIS } from './board-types';
+import { reconcile } from 'solid-js';
+
+import type { BoardEvent, BoardViewDTO } from './board-types';
+import { cloneCardGroup, cloneCardView } from './board-types';
 
 function adjustColumnCardCount(
   draft: BoardViewDTO,
@@ -18,107 +14,13 @@ function adjustColumnCardCount(
   }
 }
 
-function patchStringArray(target: string[], next: readonly string[]): void {
-  let i = 0;
-  for (; i < next.length; i += 1) {
-    if (i >= target.length) {
-      target.push(next[i]);
-    } else if (target[i] !== next[i]) {
-      target[i] = next[i];
-    }
-  }
-  if (target.length > next.length) {
-    target.splice(next.length);
-  }
-}
-
-function patchReactionsRecord(
-  target: Partial<Record<ReactionEmoji, number>>,
-  next: Partial<Record<ReactionEmoji, number>>,
-): void {
-  for (const emoji of REACTION_EMOJIS) {
-    if (target[emoji] !== undefined && next[emoji] === undefined) {
-      delete target[emoji];
-    }
-    const value = next[emoji];
-    if (value !== undefined && target[emoji] !== value) {
-      target[emoji] = value;
-    }
-  }
-}
-
-function patchCardDraft(target: CardViewDTO, next: CardViewDTO): void {
-  if (target.columnId !== next.columnId) target.columnId = next.columnId;
-  if (target.groupId !== next.groupId) target.groupId = next.groupId;
-  if (target.content !== next.content) target.content = next.content;
-  if (target.redacted !== next.redacted) target.redacted = next.redacted;
-  if (target.placeholderLines !== next.placeholderLines) {
-    target.placeholderLines = next.placeholderLines;
-  }
-  if (target.isMine !== next.isMine) target.isMine = next.isMine;
-  if (target.isActionItem !== next.isActionItem) {
-    target.isActionItem = next.isActionItem;
-  }
-  if (target.actionDone !== next.actionDone) target.actionDone = next.actionDone;
-  if (target.actionOwner !== next.actionOwner) {
-    target.actionOwner = next.actionOwner;
-  }
-  if (target.votes !== next.votes) target.votes = next.votes;
-  if (target.myVotes !== next.myVotes) target.myVotes = next.myVotes;
-  if (target.commentCount !== next.commentCount) {
-    target.commentCount = next.commentCount;
-  }
-  if (target.createdAt !== next.createdAt) target.createdAt = next.createdAt;
-  if (target.updatedAt !== next.updatedAt) target.updatedAt = next.updatedAt;
-
-  patchReactionsRecord(target.reactions, next.reactions);
-  patchStringArray(target.myReactions, next.myReactions);
-
-  const nextIds = new Set(next.comments.map((c) => c.id));
-  for (let i = target.comments.length - 1; i >= 0; i -= 1) {
-    if (!nextIds.has(target.comments[i].id)) {
-      target.comments.splice(i, 1);
-    }
-  }
-  for (let i = 0; i < next.comments.length; i += 1) {
-    const incoming = next.comments[i];
-    const existing = target.comments[i];
-    if (existing && existing.id === incoming.id) {
-      if (existing.content !== incoming.content) {
-        existing.content = incoming.content;
-      }
-      if (existing.isMine !== incoming.isMine) {
-        existing.isMine = incoming.isMine;
-      }
-      if (existing.createdAt !== incoming.createdAt) {
-        existing.createdAt = incoming.createdAt;
-      }
-    } else {
-      const movedIdx = target.comments.findIndex((c) => c.id === incoming.id);
-      if (movedIdx !== -1) {
-        const [moved] = target.comments.splice(movedIdx, 1);
-        target.comments.splice(i, 0, moved);
-      } else {
-        target.comments.splice(i, 0, { ...incoming });
-      }
-    }
-  }
-}
-
-function patchGroupDraft(target: CardGroupDTO, next: CardGroupDTO): void {
-  if (target.columnId !== next.columnId) target.columnId = next.columnId;
-  if (target.title !== next.title) target.title = next.title;
-  if (target.redacted !== next.redacted) target.redacted = next.redacted;
-  if (target.votes !== next.votes) target.votes = next.votes;
-  if (target.myVotes !== next.myVotes) target.myVotes = next.myVotes;
-  if (target.createdAt !== next.createdAt) target.createdAt = next.createdAt;
-  patchStringArray(target.cardIds, next.cardIds);
-}
-
 /**
  * Pure, idempotent draft patcher for Solid 2.0 `createStore` Board state.
  * Shared by client mutation responses (Issue #3) and incoming live WebSocket/SSE
  * `BoardEvent`s (Issue #4) so optimistic/HTTP and realtime updates stay unified.
+ * Card and Card Group upserts hand the whole cloned item to the store's keyed
+ * adoption channel (`reconcile`, Issue #51) instead of field-diffing by hand;
+ * downstream item identity is owned by the keyed projection.
  */
 export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
   if ('version' in event && event.version > draft.version) {
@@ -214,14 +116,9 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
           adjustColumnCardCount(draft, previousColumnId, -1);
           adjustColumnCardCount(draft, event.card.columnId, 1);
         }
-        patchCardDraft(draft.cards[existingIndex], event.card);
+        reconcile(cloneCardView(event.card), 'id')(draft.cards[existingIndex]);
       } else {
-        draft.cards.push({
-          ...event.card,
-          reactions: { ...event.card.reactions },
-          myReactions: [...event.card.myReactions],
-          comments: event.card.comments.map((comment) => ({ ...comment })),
-        });
+        draft.cards.push(cloneCardView(event.card));
         adjustColumnCardCount(draft, event.card.columnId, 1);
       }
       break;
@@ -247,12 +144,9 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
         (g) => g.id === event.group.id,
       );
       if (existingIndex !== -1) {
-        patchGroupDraft(draft.groups[existingIndex], event.group);
+        reconcile(cloneCardGroup(event.group), 'id')(draft.groups[existingIndex]);
       } else {
-        draft.groups.push({
-          ...event.group,
-          cardIds: [...event.group.cardIds],
-        });
+        draft.groups.push(cloneCardGroup(event.group));
       }
       break;
     }
@@ -288,8 +182,8 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
     case 'reaction:updated': {
       const card = draft.cards.find((c) => c.id === event.cardId);
       if (card) {
-        patchReactionsRecord(card.reactions, event.counts);
-        patchStringArray(card.myReactions, event.myReactions);
+        card.reactions = { ...event.counts };
+        card.myReactions = [...event.myReactions];
       }
       break;
     }

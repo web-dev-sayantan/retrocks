@@ -134,6 +134,22 @@ export interface CardGroupDTO {
   createdAt: number;
 }
 
+// Store adoption discipline: a pushed object becomes the backing as-is, so
+// callers hand over defensive copies — never a wire payload or another
+// store's raw, whose in-place mutation would go unnotified.
+export function cloneCardView(card: CardViewDTO): CardViewDTO {
+  return {
+    ...card,
+    reactions: { ...card.reactions },
+    myReactions: [...card.myReactions],
+    comments: card.comments.map((comment) => ({ ...comment })),
+  };
+}
+
+export function cloneCardGroup(group: CardGroupDTO): CardGroupDTO {
+  return { ...group, cardIds: [...group.cardIds] };
+}
+
 export interface TimerStateDTO {
   endsAt: number | null;
   remainingMs: number | null;

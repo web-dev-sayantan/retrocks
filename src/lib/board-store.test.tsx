@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { createStore, flush, snapshot } from 'solid-js';
+import { createStore, flush, snapshot, untrack } from 'solid-js';
 import { describe, expect, it } from 'vitest';
 
 import { applyBoardEvents } from './board-store';
@@ -123,6 +123,84 @@ describe('applyBoardEvents (reactive store patcher)', () => {
     expect(afterDelete.columns[1].cardCount).toBe(0);
   });
 
+  it('adopts whole Card and Card Group items while unaffected items keep their identity', () => {
+    const [board, setBoard] = createStore<BoardViewDTO>({
+      ...makeInitialBoard(),
+      columns: makeInitialBoard().columns.map((column) => ({
+        ...column,
+        cardCount: column.id === 'col_1' ? 2 : 0,
+      })),
+      cards: [makeCard({ id: 'card_a' }), makeCard({ id: 'card_b' })],
+    });
+    const cardSlotBefore = untrack(() => board.cards[0]);
+    const otherSlotBefore = untrack(() => board.cards[1]);
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        {
+          type: 'card:upserted',
+          version: 2,
+          card: makeCard({ id: 'card_a', content: 'Edited in place', updatedAt: 1_760_000_002_000 }),
+        },
+      ]);
+    });
+    flush();
+
+    const afterCardEdit = snapshot(board);
+    expect(afterCardEdit.cards.map((card) => card.content)).toEqual([
+      'Edited in place',
+      'Fast builds',
+    ]);
+    // Whole-item adoption: the upsert hands the complete cloned Card to the
+    // store's keyed channel — no field-by-field diff helpers — so the slot
+    // keeps its proxy and unaffected items keep theirs.
+    expect(untrack(() => board.cards[0])).toBe(cardSlotBefore);
+    expect(untrack(() => board.cards[1])).toBe(otherSlotBefore);
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        {
+          type: 'group:upserted',
+          version: 3,
+          group: {
+            id: 'group_1',
+            columnId: 'col_1',
+            title: 'Merged theme',
+            cardIds: ['card_a', 'card_b'],
+            votes: 0,
+            myVotes: 0,
+            createdAt: 1_760_000_003_000,
+          },
+        },
+      ]);
+    });
+    flush();
+    expect(snapshot(board).groups[0].cardIds).toEqual(['card_a', 'card_b']);
+    const groupSlotAfterCreate = untrack(() => board.groups[0]);
+    expect(untrack(() => board.cards[1])).toBe(otherSlotBefore);
+
+    setBoard((draft) => {
+      applyBoardEvents(draft, [
+        {
+          type: 'group:upserted',
+          version: 4,
+          group: {
+            id: 'group_1',
+            columnId: 'col_1',
+            title: 'Renamed theme',
+            cardIds: ['card_a', 'card_b'],
+            votes: 0,
+            myVotes: 0,
+            createdAt: 1_760_000_003_000,
+          },
+        },
+      ]);
+    });
+    flush();
+    expect(snapshot(board).groups[0].title).toBe('Renamed theme');
+    expect(untrack(() => board.groups[0])).toBe(groupSlotAfterCreate);
+    expect(untrack(() => board.cards[1])).toBe(otherSlotBefore);
+  });
   it('patches viewer reactions and keeps the anonymous comment thread chronological and idempotent', () => {
     const [board, setBoard] = createStore<BoardViewDTO>({
       ...makeInitialBoard(),
