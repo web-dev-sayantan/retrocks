@@ -422,9 +422,105 @@
   }
 }
 
+/* Architectural Column rail surface & depth separation from opaque Cards */
+.board-column-rail {
+  background: color-mix(in srgb, var(--retrocks-surface-subtle) 58%, var(--retrocks-canvas));
+  border-color: color-mix(in srgb, var(--retrocks-border) 78%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 55%, transparent),
+    0 1px 2px rgb(0 0 0 / 0.03);
+}
+
+:is([data-theme='dark'], [data-theme='retro']) .board-column-rail {
+  background: color-mix(in srgb, var(--retrocks-surface) 44%, var(--retrocks-canvas));
+  border-color: color-mix(in srgb, var(--retrocks-border) 72%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.03),
+    0 1px 3px rgb(0 0 0 / 0.22);
+}
+
+/* Single-row zero-shift desktop Card composer that grows only on multi-line input */
+.board-composer-textarea {
+  field-sizing: content;
+}
+
+/* Anchored top-layer popovers & menus with critically damped spring reveal */
+.board-popover {
+  transform-origin: var(--transform-origin, top right);
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+  transition:
+    opacity 150ms ease-out,
+    scale 260ms ease-out,
+    translate 260ms ease-out;
+  transition:
+    opacity 150ms ease-out,
+    scale 260ms linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1),
+    translate 260ms linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1);
+}
+
+.board-popover[data-starting-style],
+.board-popover[data-ending-style] {
+  opacity: 0;
+  scale: 0.96;
+  translate: 0 -4px;
+}
+
+/* Compact top-layer dialog backdrop & surface (e.g., Add a Column) */
+.board-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.36);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 1;
+  transition: opacity 180ms ease-out;
+}
+
+:is([data-theme='dark'], [data-theme='retro']) .board-dialog-backdrop {
+  background: rgb(0 0 0 / 0.56);
+}
+
+.board-dialog-backdrop[data-starting-style],
+.board-dialog-backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.board-dialog-surface {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  max-height: calc(100dvh - 2rem);
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+  transition:
+    opacity 160ms ease-out,
+    scale 280ms ease-out,
+    translate 280ms ease-out;
+  transition:
+    opacity 160ms ease-out,
+    scale 280ms linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1),
+    translate 280ms linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1);
+}
+
+.board-dialog-surface[data-starting-style],
+.board-dialog-surface[data-ending-style] {
+  opacity: 0;
+  scale: 0.96;
+  translate: 0 6px;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .home-island {
     background: var(--retrocks-surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .board-dialog-backdrop {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -437,7 +533,11 @@
 
   .disclosure-reveal,
   .preview-column-item,
-  .preview-pill-enter {
+  .preview-pill-enter,
+  .board-popover[data-starting-style],
+  .board-popover[data-ending-style],
+  .board-dialog-surface[data-starting-style],
+  .board-dialog-surface[data-ending-style] {
     translate: none;
     scale: 1;
   }
@@ -521,6 +621,10 @@
 
   [data-theme='parchment'] {
     --retrocks-border: #806748;
+  }
+
+  .board-column-rail {
+    border-color: var(--retrocks-border);
   }
 }
 

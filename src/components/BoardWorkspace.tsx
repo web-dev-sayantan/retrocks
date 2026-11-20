@@ -1,4 +1,12 @@
 import {
+  Dialog,
+  DialogBackdrop,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from '@ui-sdk/solid/dialog';
+import { Flag, Plus, X } from 'lucide';
+import {
   For,
   Repeat,
   Show,
@@ -61,6 +69,7 @@ import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import ExportBoardMenu, { type ExportFeedback } from './ExportBoardMenu';
+import LucideIcon from './LucideIcon';
 import {
   CheckIcon,
   CloseIcon,
@@ -110,12 +119,22 @@ function getResponsiveGridClass(columnCount: number, showAddColumn: boolean): st
     ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(2,minmax(0,1fr))_auto]'
     : 'sm:grid sm:grid-cols-2';
   if (columnCount === 3) return showAddColumn
-    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]'
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(3,minmax(0,1fr))_auto]'
     : 'sm:grid sm:grid-cols-2 lg:grid-cols-3';
   if (columnCount === 4) return showAddColumn
-    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]'
+    ? 'sm:grid sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-[repeat(4,minmax(0,1fr))_auto]'
     : 'sm:grid sm:grid-cols-2 lg:grid-cols-4';
   return 'sm:flex sm:overflow-x-auto sm:snap-x sm:snap-mandatory sm:pb-4';
+}
+
+function getAddColumnSlotClass(columnCount: number): string {
+  if (columnCount === 3) {
+    return 'lg:col-span-3 lg:justify-self-end xl:col-span-1 xl:justify-self-start';
+  }
+  if (columnCount === 4) {
+    return 'lg:col-span-4 lg:justify-self-end 2xl:col-span-1 2xl:justify-self-start';
+  }
+  return '';
 }
 
 export default function BoardWorkspace(props: BoardWorkspaceProps) {
@@ -1933,106 +1952,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             )}
           </Show>
 
-          {/* Facilitator Add Column inline form */}
-          <Show when={isAddingColumn() && board().isFacilitator && !board().isLocked}>
-            <div data-print-hide="true" class="mx-auto mt-4 w-full max-w-[1600px] px-4 sm:px-6">
-              <form
-                onSubmit={(e) => void handleAddColumn(e)}
-                class="rounded-xl border border-border bg-surface p-4 shadow-2xs"
-              >
-                <div class="flex flex-wrap items-end gap-3">
-                  <div class="w-full min-w-0 flex-1 basis-52">
-                    <label
-                      for="new-column-title"
-                      class="block text-xs font-medium text-text-muted"
-                    >
-                      New column title
-                    </label>
-                    <input
-                      ref={newColumnTitleEl}
-                      id="new-column-title"
-                      type="text"
-                      aria-label="New column title"
-                      placeholder="e.g. Kudos, Questions, Risks"
-                      value={newColumnTitle()}
-                      maxlength={MAX_COLUMN_TITLE_LENGTH}
-                      onInput={(e) => setNewColumnTitle(e.currentTarget.value)}
-                      class="mt-1.5 min-h-11 w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-focus focus:outline-none sm:min-h-9"
-                    />
-                  </div>
-
-                  <div>
-                    <span class="block text-xs font-medium text-text-muted">
-                      Accent
-                    </span>
-                    <div class="mt-1.5 grid w-fit grid-cols-4 gap-1.5 sm:grid-cols-8">
-                      <For each={COLUMN_ACCENTS}>
-                        {(accent) => (
-                          <button
-                            type="button"
-                            aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                            aria-pressed={
-                              newColumnAccent() === accent ? 'true' : 'false'
-                            }
-                            onClick={() => setNewColumnAccent(accent)}
-                            class={[
-                              'inline-flex size-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:size-9',
-                              {
-                                'border-focus bg-surface-subtle':
-                                  newColumnAccent() === accent,
-                                'border-border bg-surface hover:bg-surface-subtle':
-                                  newColumnAccent() !== accent,
-                              },
-                            ]}
-                          >
-                            <span
-                              aria-hidden="true"
-                              class={[
-                                'h-3.5 w-3.5 rounded-full',
-                                COLUMN_ACCENT_STYLES[accent].swatch,
-                              ]}
-                            />
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-
-                  <label class="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm text-text-muted sm:min-h-9">
-                    <input
-                      type="checkbox"
-                      checked={newColumnIsAction()}
-                      onChange={(e) =>
-                        setNewColumnIsAction(e.currentTarget.checked)
-                      }
-                      class="h-4 w-4 rounded border-border accent-accent"
-                    />
-                    <span>Action Items column</span>
-                  </label>
-
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="submit"
-                      disabled={
-                        isSavingColumn() || newColumnTitle().trim().length === 0
-                      }
-                      class="min-h-11 cursor-pointer rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
-                    >
-                      {isSavingColumn() ? 'Adding...' : 'Add column'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingColumn(false)}
-                      class="min-h-11 cursor-pointer rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium text-text-muted hover:text-text sm:min-h-9"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </Show>
-
           {/* Responsive Columns workspace (single-column + swipe on mobile, grid/snap on tablet & desktop) */}
           <main
             ref={boardMain}
@@ -2196,14 +2115,157 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   type="button"
                   data-print-hide="true"
                   onClick={openAddColumn}
-                  class="hidden w-fit shrink-0 items-center gap-1.5 self-start rounded-lg border border-dashed border-border px-3 py-2 text-sm font-medium text-text-muted hover:bg-surface active:bg-surface-subtle sm:inline-flex sm:min-h-11"
+                  class={[
+                    'spring-press hidden w-fit shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-2xl border border-dashed border-border/85 bg-surface-subtle/25 px-3.5 py-2.5 text-[13px] font-medium text-text-muted',
+                    'transition-colors hover:border-control/80 hover:bg-surface hover:text-text active:bg-surface-subtle sm:inline-flex sm:min-h-11',
+                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    getAddColumnSlotClass(board().columns.length),
+                  ]}
                 >
-                  <PlusIcon />
+                  <LucideIcon icon={Plus} class="size-4" strokeWidth={2} />
                   <span>Add a Column</span>
                 </button>
               </Show>
             </div>
           </main>
+
+          <Dialog
+            open={isAddingColumn() && board().isFacilitator && !board().isLocked}
+            onOpenChange={(next) => setIsAddingColumn(next)}
+          >
+            <DialogBackdrop
+              data-print-hide="true"
+              class="board-dialog-backdrop z-40"
+            />
+            <DialogContent
+              data-board-overlay="true"
+              data-print-hide="true"
+              initialFocus={() => newColumnTitleEl ?? null}
+              class="board-dialog-surface z-50 w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
+            >
+              <div
+                aria-hidden="true"
+                class={['h-[3px] w-full transition-colors duration-200', COLUMN_ACCENT_STYLES[newColumnAccent()].bar]}
+              />
+              <div
+                class={[
+                  'flex items-center justify-between gap-3 border-b border-border/70 px-5 py-3.5 transition-colors duration-200',
+                  COLUMN_ACCENT_STYLES[newColumnAccent()].tint,
+                ]}
+              >
+                <div class="flex min-w-0 items-center gap-2">
+                  <DialogTitle class="truncate text-base font-semibold tracking-[-0.015em] text-text">
+                    Add a Column
+                  </DialogTitle>
+                  <Show when={newColumnIsAction()}>
+                    <span class="inline-flex shrink-0 items-center text-col-sky">
+                      <LucideIcon icon={Flag} class="size-3.5" strokeWidth={2} />
+                    </span>
+                  </Show>
+                </div>
+                <DialogClose
+                  aria-label="Close Add Column"
+                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
+                >
+                  <LucideIcon icon={X} class="size-4" strokeWidth={2} />
+                </DialogClose>
+              </div>
+
+              <form onSubmit={(e) => void handleAddColumn(e)} class="space-y-4 p-5">
+                <div>
+                  <label
+                    for="new-column-title"
+                    class="block text-xs font-medium text-text-muted"
+                  >
+                    New column title
+                  </label>
+                  <input
+                    ref={newColumnTitleEl}
+                    id="new-column-title"
+                    type="text"
+                    aria-label="New column title"
+                    placeholder="e.g. Kudos, Questions, Risks"
+                    value={newColumnTitle()}
+                    maxlength={MAX_COLUMN_TITLE_LENGTH}
+                    onInput={(e) => setNewColumnTitle(e.currentTarget.value)}
+                    class="mt-1.5 min-h-11 w-full rounded-xl border border-border/85 bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none sm:min-h-10"
+                  />
+                </div>
+
+                <div>
+                  <span class="block text-xs font-medium text-text-muted">
+                    Accent color
+                  </span>
+                  <div class="mt-1.5 grid grid-cols-8 gap-1">
+                    <For each={COLUMN_ACCENTS}>
+                      {(accent) => (
+                        <button
+                          type="button"
+                          aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
+                          aria-pressed={
+                            newColumnAccent() === accent ? 'true' : 'false'
+                          }
+                          onClick={() => setNewColumnAccent(accent)}
+                          class={[
+                            'spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-9',
+                            {
+                              'border-border bg-surface-subtle':
+                                newColumnAccent() === accent,
+                              'border-transparent hover:bg-surface-subtle':
+                                newColumnAccent() !== accent,
+                            },
+                          ]}
+                        >
+                          <span
+                            aria-hidden="true"
+                            class={[
+                              'size-4 rounded-full',
+                              COLUMN_ACCENT_STYLES[accent].swatch,
+                              {
+                                'ring-2 ring-text ring-offset-2 ring-offset-surface':
+                                  newColumnAccent() === accent,
+                              },
+                            ]}
+                          />
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+
+                <label class="inline-flex min-h-11 cursor-pointer items-center gap-2.5 text-sm text-text-muted sm:min-h-9">
+                  <input
+                    type="checkbox"
+                    checked={newColumnIsAction()}
+                    onChange={(e) =>
+                      setNewColumnIsAction(e.currentTarget.checked)
+                    }
+                    class="size-4 rounded border-border accent-accent"
+                  />
+                  <span>Action Items column</span>
+                </label>
+
+                <div class="flex items-center justify-end gap-2 border-t border-border/70 pt-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingColumn(false)}
+                    class="spring-press min-h-11 cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text sm:min-h-9"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isSavingColumn() || newColumnTitle().trim().length === 0
+                    }
+                    class="spring-press min-h-11 cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                  >
+                    {isSavingColumn() ? 'Adding…' : 'Add column'}
+                  </button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
 
           {/* Card Detail Drawer / Bottom Sheet */}
           <Show when={openDetailCard() && openCardDetailId()} keyed>

@@ -1378,23 +1378,28 @@ describe('<BoardWorkspace />', () => {
       'Add card to Went Well',
     ) as HTMLTextAreaElement;
     const untouchedComposer = getByLabelText('Add card to To Improve');
+    const column = within(getByRole('region', { name: 'Went Well' }));
     expect(composer).toHaveAttribute('rows', '1');
+    expect(column.getByRole('button', { name: 'Add' })).toBeDisabled();
     composer.focus();
     flush();
-    expect(composer).toHaveAttribute('rows', '2');
+    // Zero-shift composer stays single-row on focus without latching open
+    expect(composer).toHaveAttribute('rows', '1');
+    expect(untouchedComposer).toHaveAttribute('rows', '1');
     fireEvent.input(composer, {
       target: {
         value: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
       },
     });
     flush();
+    expect(column.getByRole('button', { name: 'Add' })).toBeEnabled();
 
     // Shift+Enter does NOT submit
     fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true });
     await flushPromises();
     expect(spies.createCard).not.toHaveBeenCalled();
 
-    // Enter submits the Card
+    // Enter submits the Card and clears draft with zero residual newline
     fireEvent.keyDown(composer, { key: 'Enter' });
     await flushPromises();
 
@@ -1405,12 +1410,12 @@ describe('<BoardWorkspace />', () => {
     });
     expect(composer).toHaveValue('');
     expect(composer).toHaveFocus();
+    expect(composer).toHaveAttribute('rows', '1');
 
-    const column = within(getByRole('region', { name: 'Went Well' }));
     const cardActions = column.getByRole('button', { name: 'Card actions' });
     cardActions.focus();
     flush();
-    expect(composer).toHaveAttribute('rows', '2');
+    expect(composer).toHaveAttribute('rows', '1');
     expect(column.getByRole('button', { name: 'Add' })).toBeDisabled();
     expect(untouchedComposer).toHaveAttribute('rows', '1');
 
@@ -4444,5 +4449,196 @@ describe('<BoardWorkspace />', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('frames Columns as architectural rails with 3px accent bars, 5% header tints, Flag cue, and stable stream container', async () => {
+    const board = makeBoardView({
+      cards: [makeCard({ id: 'card_1', columnId: 'col_1', content: 'Clean rail card' })],
+    });
+    const { actions } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          const wentWell = view.getByRole('region', { name: 'Went Well' });
+          const accentBar = wentWell.querySelector('[data-column-accent-bar="true"]') as HTMLElement;
+          expect(accentBar).toBeInTheDocument();
+          expect(accentBar.className).toContain('h-[3px]');
+          expect(accentBar.className).toContain('bg-col-sage');
+          expect(wentWell.querySelector('.bg-col-sage-tint')).toBeInTheDocument();
+
+          // Stream container stays :scope > div:last-child for top-level Cards/Groups
+          const stream = wentWell.querySelector(':scope > div:last-child')!;
+          expect(stream.querySelector('[data-card-id="card_1"]')).toBeInTheDocument();
+
+          // Action Column uses a clean Flag cue instead of the boxy "Actions" text pill
+          const actionCol = view.getByRole('region', { name: 'Action Items' });
+          expect(actionCol.querySelector('.bg-col-sky-tint')).toBeInTheDocument();
+          expect(within(actionCol).queryByText('Actions')).not.toBeInTheDocument();
+          expect(within(actionCol).getByTitle('Action Column')).toBeInTheDocument();
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'column-architectural-rails' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('keeps 3 Columns balanced at 1024px and opens Add Column in a non-shifting overlay dialog with zero diagnostics', async () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          const columnsGrid = view.container.querySelector('[data-board-columns="true"]') as HTMLElement;
+          expect(columnsGrid).toBeInTheDocument();
+          // 3-Column Board does not squeeze columns with a 4th auto track at lg (1024px)
+          expect(columnsGrid.className).toContain('lg:grid-cols-3');
+          expect(columnsGrid.className).not.toContain('lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]');
+
+          // Inline "+ Add a Column" trigger sits inside the Column grid
+          const addColumnBtn = within(columnsGrid).getByRole('button', { name: 'Add a Column' });
+          expect(addColumnBtn).toBeInTheDocument();
+
+          // Opening Add Column does not mount a form above <main>
+          const main = view.getByRole('main');
+          const childrenBeforeMain = Array.from(main.parentElement!.children);
+          const mainIndexBefore = childrenBeforeMain.indexOf(main);
+
+          fireEvent.click(addColumnBtn);
+          flush();
+
+          const mainIndexAfter = Array.from(main.parentElement!.children).indexOf(main);
+          expect(mainIndexAfter).toBe(mainIndexBefore);
+
+          const dialog = view.getByRole('dialog', { name: 'Add a Column' });
+          expect(dialog).toHaveAttribute('data-board-overlay', 'true');
+          const titleInput = within(dialog).getByLabelText('New column title') as HTMLInputElement;
+          expect(titleInput).toHaveFocus();
+
+          // Pressing Escape closes the overlay cleanly
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
+
+          // Reopen, pick accent + Action Column, submit -> creates & selects Column
+          fireEvent.click(addColumnBtn);
+          flush();
+          const dialog2 = view.getByRole('dialog', { name: 'Add a Column' });
+          const titleInput2 = within(dialog2).getByLabelText('New column title') as HTMLInputElement;
+          fireEvent.input(titleInput2, { target: { value: 'Risks' } });
+          fireEvent.click(within(dialog2).getByRole('button', { name: 'New column accent Coral' }));
+          fireEvent.click(within(dialog2).getByLabelText('Action Items column'));
+          flush();
+          fireEvent.click(within(dialog2).getByRole('button', { name: 'Add column' }));
+          await flushPromises();
+
+          expect(spies.addColumn).toHaveBeenCalledWith({
+            boardId: board.id,
+            title: 'Risks',
+            accent: 'coral',
+            isActionColumn: true,
+          });
+          expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
+          expect(view.getByRole('tab', { name: /Risks/i })).toHaveAttribute('aria-selected', 'true');
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'add-column-overlay-and-1024-grid' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('clears desktop composer cleanly on Enter, handles Column options overlay with zero diagnostics', async () => {
+    const board = makeBoardView({ isFacilitator: true, cards: [] });
+    const { actions, spies } = createFakeActions(board);
+
+    const { artifact } = await captureArtifact(
+      async () => {
+        const view = render(() => (
+          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        ));
+        try {
+          flush();
+
+          const wentWell = view.getByRole('region', { name: 'Went Well' });
+          const composer = within(wentWell).getByRole('textbox', {
+            name: 'Add card to Went Well',
+          }) as HTMLTextAreaElement;
+
+          // Enter on empty/whitespace does not submit or leave a stray newline
+          fireEvent.keyDown(composer, { key: 'Enter' });
+          await flushPromises();
+          expect(spies.createCard).not.toHaveBeenCalled();
+          expect(composer.value).toBe('');
+
+          // Typing and pressing Enter submits and clears DOM value cleanly
+          composer.value = 'Direct DOM sync card';
+          fireEvent.input(composer, { target: { value: 'Direct DOM sync card' } });
+          flush();
+          fireEvent.keyDown(composer, { key: 'Enter' });
+          await flushPromises();
+          expect(spies.createCard).toHaveBeenCalledWith({
+            boardId: board.id,
+            columnId: 'col_1',
+            content: 'Direct DOM sync card',
+          });
+          expect(composer.value).toBe('');
+
+          // Column options menu renders with data-board-overlay and closes on Escape
+          const optionsBtn = within(wentWell).getByRole('button', {
+            name: 'Column options for Went Well',
+          });
+          fireEvent.click(optionsBtn);
+          flush();
+          const menu = within(wentWell).getByRole('menu', { name: 'Options for Went Well' });
+          expect(menu).toHaveAttribute('data-board-overlay', 'true');
+          expect(menu.className).toContain('board-popover');
+          const renameItem = within(menu).getByRole('menuitem', { name: 'Rename column' });
+          expect(renameItem).toBeInTheDocument();
+
+          fireEvent.keyDown(document, { key: 'Escape' });
+          flush();
+          expect(within(wentWell).queryByRole('menu', { name: 'Options for Went Well' })).not.toBeInTheDocument();
+
+          // Reopen and choose Rename column -> focuses inline Column title input & saves on Enter
+          fireEvent.click(optionsBtn);
+          flush();
+          fireEvent.click(
+            within(wentWell).getByRole('menuitem', { name: 'Rename column' }),
+          );
+          flush();
+          const renameInput = within(wentWell).getByRole('textbox', { name: 'Column title' }) as HTMLInputElement;
+          expect(renameInput).toHaveFocus();
+          expect(renameInput).toHaveValue('Went Well');
+          fireEvent.input(renameInput, { target: { value: 'Highlights' } });
+          flush();
+          fireEvent.keyDown(renameInput, { key: 'Enter' });
+          await flushPromises();
+          expect(spies.updateColumn).toHaveBeenCalledWith({
+            boardId: board.id,
+            columnId: 'col_1',
+            title: 'Highlights',
+          });
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'column-composer-and-options-menu' },
+    );
+    expectNoDiagnostics(artifact);
   });
 });
