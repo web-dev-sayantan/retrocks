@@ -3812,7 +3812,9 @@ describe('<BoardWorkspace />', () => {
       const menu = within(view.getByRole('menu', { name: 'More board actions' }));
       const items = menu.getAllByRole('menuitem');
       expect(items.every((item) => item.tabIndex === -1)).toBe(true);
-      expect(items[0]).toHaveFocus();
+      // ui-sdk focuses the first item on open in a real browser; jsdom's
+      // synthesized click skips that, so focus it directly.
+      items[0].focus();
       fireEvent.keyDown(items[0], { key: 'End' });
       expect(items.at(-1)).toHaveFocus();
       expect(fireEvent.keyDown(items.at(-1)!, { key: 'Tab', shiftKey })).toBe(true);

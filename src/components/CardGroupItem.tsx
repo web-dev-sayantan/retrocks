@@ -1,4 +1,4 @@
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
@@ -13,6 +13,7 @@ import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
 import { canContribute, isGroupRedacted } from '../lib/board-permissions';
 import { DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
+import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
 import VoteControls, { type WorkspaceVoting } from './VoteControls';
@@ -351,19 +352,8 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                     >
                       <LucideIcon icon={ArrowRightLeft} />
                     </MenuTrigger>
-                    <MenuContent
-                      side="bottom"
-                      align="end"
-                      sideOffset={6}
-                      collisionPadding={12}
-                      render={(contentProps) => (
-                        <div
-                          {...contentProps}
-                          aria-labelledby={undefined}
-                          aria-label="Move Card Group to Column"
-                          data-board-overlay={moveMenuOpen() ? 'true' : undefined}
-                        />
-                      )}
+                    <BoardMenuContent
+                      aria-label="Move Card Group to Column"
                       class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
                     >
                       <For each={otherColumns()}>
@@ -384,7 +374,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                           </MenuItem>
                         )}
                       </For>
-                    </MenuContent>
+                    </BoardMenuContent>
                   </Menu>
                 </Show>
 

@@ -1,4 +1,4 @@
-import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
 import {
   Check,
   ChevronLeft,
@@ -34,6 +34,7 @@ import {
 import { CARD_DRAG_MIME, DRAG_FALLBACK_MIME, GROUP_DRAG_MIME } from '../lib/drag-constants';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
+import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from './VoteControls';
@@ -512,21 +513,9 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     <LucideIcon icon={Ellipsis} class="size-4" strokeWidth={1.9} />
                   </MenuTrigger>
 
-                  <MenuContent
-                    side="bottom"
-                    align="end"
-                    sideOffset={6}
-                    collisionPadding={12}
+                  <BoardMenuContent
                     finalFocus={isRenaming() ? 'none' : undefined}
-                    render={(contentProps) => (
-                      <div
-                        {...contentProps}
-                        aria-labelledby={undefined}
-                        aria-label={`Options for ${props.column.title}`}
-                        data-board-overlay="true"
-                        data-print-hide="true"
-                      />
-                    )}
+                    aria-label={`Options for ${props.column.title}`}
                     class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg"
                   >
                     <MenuItem
@@ -614,7 +603,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
                       <span>Delete column</span>
                     </MenuItem>
-                  </MenuContent>
+                  </BoardMenuContent>
                 </Menu>
               </div>
             </Show>

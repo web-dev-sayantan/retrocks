@@ -7,7 +7,6 @@ import {
 } from '@ui-sdk/solid/dialog';
 import {
   Menu,
-  MenuContent,
   MenuItem,
   MenuSeparator,
   MenuTrigger,
@@ -95,6 +94,7 @@ import { createDoubleTap } from '../lib/double-tap';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
+import BoardMenuContent from './BoardMenuContent';
 import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSettings';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
@@ -271,13 +271,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
   const [isBoardSettingsOpen, setIsBoardSettingsOpen] = createSignal(false);
   let boardMenuTriggerEl: HTMLButtonElement | undefined;
-  let boardMenuEl: HTMLDivElement | undefined;
-
-  createEffect(boardMenuOpen, (isOpen) => {
-    if (isOpen && boardMenuEl && !boardMenuEl.contains(document.activeElement)) {
-      boardMenuEl.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
-    }
-  });
 
   function closeBoardMenu(restoreFocus: boolean): void {
     setBoardMenuOpen(false);
@@ -1768,15 +1761,10 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         <span class="hidden sm:inline">More</span>
                       </MenuTrigger>
 
-                      <MenuContent
-                        ref={boardMenuEl}
-                        finalFocus={isRenamingBoard() ? 'none' : undefined}
-                        side="bottom"
-                        align="end"
+                      <BoardMenuContent
                         sideOffset={8}
-                        collisionPadding={12}
+                        finalFocus={isRenamingBoard() ? 'none' : undefined}
                         aria-label="More board actions"
-                        data-board-overlay="true"
                         class="board-popover max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl p-1.5"
                       >
                         <MenuItem
@@ -1851,7 +1839,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           onClose={() => closeBoardMenu(true)}
                           onFeedback={setExportFeedback}
                         />
-                      </MenuContent>
+                      </BoardMenuContent>
                     </Menu>
                   </div>
                 </div>
