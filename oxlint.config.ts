@@ -9,7 +9,7 @@ export default defineConfig({
     { name: 'retrocks', specifier: './oxlint/plugins-dev/index.js' },
   ],
   plugins: ['typescript', 'unicorn', 'oxc', 'import', 'jsx-a11y'],
-  ignorePatterns: ['**/*.gen.*', 'dist'],
+  ignorePatterns: ['**/*.gen.*', 'file-routes.d.ts', 'dist'],
   settings: solidV2Strict.settings,
   rules: {
     ...solidV2Strict.rules,

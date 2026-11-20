@@ -1,0 +1,101 @@
+.poker-entry,
+.poker-workspace {
+  --poker-accent: #304977;
+  --poker-accent-contrast: #ffffff;
+  --poker-pale: #e5ecf9;
+  --poker-highlight: #304977;
+  --poker-error: #9f302d;
+}
+
+:is([data-theme='dark'], [data-theme='retro']) :is(.poker-entry, .poker-workspace) {
+  --poker-accent: #c4d5fb;
+  --poker-accent-contrast: #202b47;
+  --poker-pale: #283550;
+  --poker-highlight: #d3dfff;
+  --poker-error: #ffaca9;
+}
+
+.poker-entry {
+  max-inline-size: 38rem;
+  margin-inline: auto;
+  padding: clamp(3rem, 9vb, 6rem) 1.25rem 4rem;
+}
+
+.poker-workspace {
+  container-type: inline-size;
+  max-inline-size: 72rem;
+  margin-inline: auto;
+  padding: clamp(2rem, 6vb, 4rem) 1.25rem 4rem;
+}
+
+.poker-title {
+  font-size: clamp(2rem, 5vi, 3rem);
+  font-weight: 660;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.poker-input {
+  min-inline-size: 0;
+  min-block-size: 3rem;
+  inline-size: 100%;
+  padding-inline: 0.875rem;
+  border: 1px solid var(--color-control);
+  border-radius: 0.625rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: max(1rem, 1em);
+}
+
+.poker-input:user-invalid {
+  border-color: var(--poker-error);
+}
+
+.poker-primary,
+.poker-secondary {
+  min-block-size: 3rem;
+  border-radius: 0.625rem;
+  padding: 0.625rem 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.poker-primary {
+  background-color: var(--poker-accent);
+  color: var(--poker-accent-contrast);
+}
+
+.poker-secondary {
+  border: 1px solid var(--color-control);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.poker-primary:hover {
+  background-color: color-mix(in srgb, var(--poker-accent), var(--poker-accent-contrast) 8%);
+}
+
+.poker-secondary:hover {
+  background-color: var(--color-surface-subtle);
+}
+
+.poker-form[aria-busy="true"] .poker-primary {
+  opacity: 0.65;
+  cursor: wait;
+  pointer-events: none;
+}
+
+.poker-layout {
+  display: grid;
+  align-items: start;
+  gap: 1.25rem;
+}
+
+@container (min-width: 45rem) {
+  .poker-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 22rem);
+  }
+}
