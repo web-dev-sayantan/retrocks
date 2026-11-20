@@ -23,6 +23,13 @@ import {
   type ReactionEmoji,
 } from '../lib/board-types';
 import type { ColumnStreamItem } from '../lib/board-view';
+import {
+  areAllGroupCardsMine,
+  canContribute,
+  canControlFacilitation,
+  canDeleteColumn as canDeleteColumnPermission,
+  passesPrivateMode,
+} from '../lib/board-permissions';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
@@ -116,7 +123,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   const canManageColumn = createMemo(
-    () => props.isFacilitator && !props.isLocked,
+    () => canControlFacilitation(props),
   );
   const canMoveLeft = createMemo(() => props.columnIndex > 0);
   const canMoveRight = createMemo(
@@ -124,7 +131,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
   const hasHiddenCards = createMemo(() => props.cards.some((card) => card.redacted));
   const canDeleteColumn = createMemo(() =>
-    canManageColumn() && props.totalColumns > 1 && !hasHiddenCards(),
+    canDeleteColumnPermission(props, props.totalColumns, props.cards),
   );
 
   const streamKeys = createMemo(
@@ -184,16 +191,12 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   function canManageGroup(group: CardGroupDTO): boolean {
-    if (!props.canGroupCards) return false;
-    if (!props.isBlurred) return true;
-    return group.cardIds.every(
-      (id) => props.cards.find((card) => card.id === id)?.isMine === true,
-    );
+    return props.canGroupCards && areAllGroupCardsMine(props, group, props.cards);
   }
 
   const isEligibleDropTarget = createMemo(
     () =>
-      !props.isLocked &&
+      canContribute(props) &&
       (props.draggingCardId !== null || props.draggingGroupId !== null) &&
       props.draggingSourceColumnId !== props.column.id,
   );
@@ -679,7 +682,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </div>
 
-      <Show when={!props.isLocked}>
+      <Show when={canContribute(props)}>
         <div data-print-hide="true" class="hidden px-3 pt-3 sm:block">
           <div
             class={[
@@ -857,7 +860,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       columnGroups={props.groups}
                       canGroupCards={props.canGroupCards}
                       canUngroup={
-                        props.canGroupCards && (!props.isBlurred || card().isMine)
+                        props.canGroupCards && passesPrivateMode(props, card())
                       }
                       isFacilitator={props.isFacilitator}
                       isLocked={props.isLocked}

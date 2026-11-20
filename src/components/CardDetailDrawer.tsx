@@ -19,6 +19,12 @@ import {
   type ColumnDTO,
   type ReactionEmoji,
 } from '../lib/board-types';
+import {
+  canContribute,
+  canDeleteComment,
+  canEditActionItem,
+  canEditActionItemFollowUp,
+} from '../lib/board-permissions';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { closeBoardDrawer, createDrawerBackdropDismiss, showBoardDrawer } from './board-drawer';
@@ -125,10 +131,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
-  const canEditActionItemFollowUp = createMemo(
-    () =>
-      props.card.isActionItem && (!props.isLocked || props.isFacilitator),
-  );
 
   createEffect(
     () => props.card.actionOwner,
@@ -139,15 +141,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
-    if (props.isLocked) {
-      if (
-        !props.isFacilitator ||
-        !props.card.isActionItem ||
-        patch.isActionItem !== undefined
-      ) {
-        return false;
-      }
-    }
+    if (!canEditActionItem(props, props.card, patch)) return false;
     setIsSavingAction(true);
     setActionError(null);
     try {
@@ -163,7 +157,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   }
 
   async function saveActionOwner(value: string): Promise<void> {
-    if (!canEditActionItemFollowUp() || isSavingAction()) return;
+    if (!canEditActionItemFollowUp(props, props.card) || isSavingAction()) return;
     const trimmed = value.trim();
     if (trimmed === props.card.actionOwner) {
       setOwnerDraft(props.card.actionOwner);
@@ -217,12 +211,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     } finally {
       setDeletingCommentId(null);
     }
-  }
-
-  function canDeleteComment(isMine: boolean): boolean {
-    if (props.isLocked) return false;
-    if (isMine) return true;
-    return props.isFacilitator && !props.isBlurred;
   }
 
   return (
@@ -313,7 +301,11 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   <input
                     type="checkbox"
                     checked={props.card.isActionItem}
-                    disabled={props.isLocked || isSavingAction()}
+                    disabled={
+                      !canEditActionItem(props, props.card, {
+                        isActionItem: !props.card.isActionItem,
+                      }) || isSavingAction()
+                    }
                     onChange={async (event) => {
                       const checkbox = event.currentTarget;
                       const ok = await updateAction({ isActionItem: checkbox.checked });
@@ -332,7 +324,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   <input
                     type="checkbox"
                     checked={props.card.actionDone}
-                    disabled={!canEditActionItemFollowUp() || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
                     onChange={async (event) => {
                       const checkbox = event.currentTarget;
                       const ok = await updateAction({ actionDone: checkbox.checked });
@@ -357,7 +349,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     placeholder={'e.g. "Platform"'}
                     value={ownerDraft()}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
-                    disabled={!canEditActionItemFollowUp() || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
                     onInput={(event) => setOwnerDraft(event.currentTarget.value)}
                     onBlur={(event) => void saveActionOwner(event.currentTarget.value)}
                     onKeyDown={(event) => {
@@ -431,7 +423,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                           </time>
                         </div>
 
-                        <Show when={canDeleteComment(comment.isMine)}>
+                        <Show when={canDeleteComment(props, comment)}>
                           <Show
                             when={confirmingCommentId() !== comment.id}
                             fallback={
@@ -498,7 +490,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         </div>
 
         {/* Comment composer footer */}
-        <Show when={!props.isLocked}>
+        <Show when={canContribute(props)}>
           <div class="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
             <Show
               when={!isAtCommentLimit()}

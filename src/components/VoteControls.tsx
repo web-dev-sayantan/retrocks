@@ -2,6 +2,7 @@ import { Minus, Plus } from 'lucide';
 import { Show, createMemo } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
+import { canCastVote, canContribute } from '../lib/board-permissions';
 import type { ChangeVoteInput } from '../lib/voting-schemas';
 import LucideIcon from './LucideIcon';
 
@@ -37,10 +38,7 @@ export default function VoteControls(props: {
   });
   const myVotes = createMemo(() => props.target.myVotes + delta());
   const votes = createMemo(() => props.target.votes === null ? null : props.target.votes + delta());
-  const canCast = createMemo(() =>
-    (props.voting.remainingVotes === null || props.voting.remainingVotes > 0) &&
-    (props.voting.maxVotesPerCard === null || myVotes() < props.voting.maxVotesPerCard),
-  );
+  const canCast = createMemo(() => canCastVote(props.voting, myVotes()));
 
   return (
     <div
@@ -51,7 +49,7 @@ export default function VoteControls(props: {
         myVotes() > 0 ? 'border-accent/30 bg-accent/10' : 'border-border/75 bg-surface-subtle/75',
       ]}
     >
-      <Show when={!props.isLocked}>
+      <Show when={canContribute(props)}>
         <button
           type="button"
           data-print-hide="true"
@@ -69,7 +67,7 @@ export default function VoteControls(props: {
       >
         {votes() === null ? `${myVotes()} yours` : votes()}
       </span>
-      <Show when={!props.isLocked}>
+      <Show when={canContribute(props)}>
         <button
           type="button"
           data-print-hide="true"
