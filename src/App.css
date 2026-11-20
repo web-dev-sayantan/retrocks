@@ -176,6 +176,17 @@
 }
 
 @layer components {
+  /* Shared control tokens (#49): one focus ring, one 44px→compact touch target.
+     The press token is `.spring-press` below. Reference these instead of
+     repeating the utility strings. */
+  .board-focus-ring {
+    @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+  }
+
+  .board-touch-target {
+    @apply min-h-11 sm:min-h-9;
+  }
+
   .page-message-action {
     @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
   }

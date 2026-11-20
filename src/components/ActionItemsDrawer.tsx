@@ -124,7 +124,7 @@ function ActionItemRow(props: {
             disabled={!props.canEdit || pendingDone() !== null}
             aria-label={`Mark ${props.card.content} as Done`}
             onChange={(event) => void changeDone(event.currentTarget.checked)}
-            class="size-5 cursor-inherit rounded border-border accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50"
+            class="size-5 cursor-inherit rounded border-border accent-accent board-focus-ring disabled:opacity-50"
           />
         </label>
         <div class="min-w-0 flex-1 space-y-1.5">
@@ -298,7 +298,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
                   value={option.value}
                   class={[
                     'spring-press relative min-h-11 cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-pressed:text-text sm:min-h-8 sm:text-[13px]',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   {option.label} ({counts[option.value]()})
@@ -340,7 +340,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
             class={[
               'inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-9',
               'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+              'board-focus-ring',
             ]}
           >
             Copy as Markdown Checklist

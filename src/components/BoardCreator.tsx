@@ -56,7 +56,7 @@ export interface BoardCreatorProps {
   secondary?: JSX.Element;
 }
 
-const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
+const focusClass = 'board-focus-ring';
 const inputClass = `h-11 w-full rounded-xl border border-control/75 bg-surface px-3.5 text-base text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:border-accent ${focusClass}`;
 const compactInputClass = `h-10 w-full rounded-lg border border-border bg-canvas/55 px-3 text-sm font-medium text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:border-accent focus-visible:bg-surface ${focusClass}`;
 const columnCommandClass = `spring-press inline-flex size-10 cursor-pointer items-center justify-center bg-surface text-text-muted hover:bg-surface-subtle hover:text-text active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-35 ${focusClass}`;

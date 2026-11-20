@@ -56,7 +56,7 @@ export default function RecentBoardsList() {
                   class={[
                     'spring-press group flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-xl px-2.5 py-2 [overflow-wrap:anywhere]',
                     'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   <span class="flex min-w-0 flex-col">
@@ -91,7 +91,7 @@ export default function RecentBoardsList() {
                   class={[
                     'spring-press min-h-10 min-w-10 shrink-0 cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-muted',
                     'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   Remove

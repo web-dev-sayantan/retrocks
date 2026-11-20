@@ -56,7 +56,7 @@ export interface CardGroupItemProps {
   onDragStartGroup: (groupId: string, sourceColumnId: string) => void;
 }
 
-const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7';
+const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface board-focus-ring disabled:opacity-50 sm:size-7';
 const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibold text-ellipsis text-text';
 
 export default function CardGroupItem(props: CardGroupItemProps) {
@@ -278,7 +278,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   aria-label="Save Card Group title"
                   disabled={isSaving() || renameDraft().trim().length === 0}
                   onClick={() => void saveRename()}
-                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-50 sm:size-7"
+                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 board-focus-ring disabled:opacity-50 sm:size-7"
                 >
                   <LucideIcon icon={Check} />
                 </button>
@@ -314,7 +314,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   aria-label={`${groupTitle()} — Edit Card Group title`}
                   title={groupTitle()}
                   onClick={startRename}
-                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:py-1"
+                  class="min-w-0 cursor-pointer rounded-sm py-3 text-left hover:underline board-focus-ring sm:py-1"
                 >
                   <span class={titleTextClass}>{groupTitle()}</span>
                 </button>

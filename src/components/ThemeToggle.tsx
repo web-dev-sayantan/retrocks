@@ -33,14 +33,14 @@ export default function ThemeToggle(props: {
         'spring-press inline-flex size-10 cursor-pointer items-center justify-center rounded-full',
         'border border-transparent bg-surface-subtle/75 text-text-muted',
         'hover:border-border/80 hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+        'board-focus-ring',
       ];
     }
     return [
       'spring-press inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg',
       'border border-border bg-surface text-text-muted',
       'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
-      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+      'board-focus-ring',
     ];
   };
 

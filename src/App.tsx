@@ -30,7 +30,7 @@ function AppShell(props: ParentProps) {
                 class={[
                   'spring-press inline-flex min-h-10 items-center gap-2 rounded-full pl-2 pr-3 text-sm font-semibold tracking-tight text-text',
                   'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'board-focus-ring',
                 ]}
               >
                 <span

@@ -5115,7 +5115,7 @@ describe('<BoardWorkspace />', () => {
 
           // Unified pill geometry, tactile spring-press, and primary accent rationed strictly to Share
           for (const control of [share, privateToggle, actionItems, more]) {
-            expect(control).toHaveClass('rounded-full', 'spring-press', 'min-h-11', 'sm:min-h-9');
+            expect(control).toHaveClass('rounded-full', 'spring-press', 'board-touch-target');
           }
           expect(share).toHaveAttribute('data-cta-emphasis', 'primary');
           expect(share).toHaveClass('bg-accent');

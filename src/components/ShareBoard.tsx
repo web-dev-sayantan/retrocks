@@ -16,7 +16,7 @@ import LucideIcon from './LucideIcon';
 
 const buttonClass = [
   'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium',
-  'transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus aria-disabled:cursor-wait aria-disabled:opacity-60',
+  'transition-colors board-focus-ring aria-disabled:cursor-wait aria-disabled:opacity-60',
 ];
 const secondaryButtonClass = [buttonClass, 'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle'];
 
@@ -153,7 +153,7 @@ function FacilitatorSharing(props: { boardId: string }) {
   return (
     <section class="space-y-3 border-t border-border pt-4" aria-labelledby={titleId}>
       <div class="space-y-1">
-        <h3 ref={heading} id={titleId} tabindex={-1} class="text-base font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">
+        <h3 ref={heading} id={titleId} tabindex={-1} class="text-base font-semibold board-focus-ring">
           Co-Facilitator Link
         </h3>
         <p class="text-sm text-text-muted">
@@ -208,8 +208,8 @@ export default function ShareBoard(props: {
       <DialogTrigger
         data-cta-emphasis={emphasis()}
         class={[
-          'spring-press inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium max-[30rem]:px-2 sm:h-9 sm:min-h-9',
-          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+          'spring-press inline-flex board-touch-target min-w-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-3.5 text-[13px] leading-none font-medium max-[30rem]:px-2 sm:h-9',
+          'board-focus-ring',
           emphasis() === 'primary'
             ? 'border-transparent bg-accent text-accent-contrast shadow-xs hover:opacity-92 active:opacity-85'
             : 'border-border/80 bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle',

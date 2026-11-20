@@ -30,7 +30,7 @@ export interface BoardFilterBarProps {
 }
 
 const focusRingClass =
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
+  'board-focus-ring';
 
 export default function BoardFilterBar(props: BoardFilterBarProps) {
   const searchId = createUniqueId();

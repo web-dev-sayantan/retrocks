@@ -123,7 +123,7 @@ function BoardHomeLink(props: { href: string; class: string }) {
       class={[
         'spring-press min-h-11 min-w-11 w-fit items-center justify-center gap-2 rounded-full px-2 text-sm font-semibold tracking-tight text-text sm:min-h-10 sm:min-w-10 sm:pr-3',
         'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+        'board-focus-ring',
         props.class,
       ]}
     >
@@ -1543,7 +1543,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   class={[
                     'spring-press inline-flex min-h-10 items-center gap-2 rounded-full pl-2 pr-3 text-sm font-semibold tracking-tight text-text',
                     'hover:bg-surface-subtle/80 active:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   <span
@@ -1661,7 +1661,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         class={[
                           'spring-press hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-muted sm:inline-flex',
                           'transition-colors hover:bg-surface-subtle/90 hover:text-text',
-                          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                          'board-focus-ring',
                         ]}
                       >
                         <LucideIcon icon={Pencil} class="size-3.5" strokeWidth={1.85} />
@@ -1705,8 +1705,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       disabled={isChangingPrivateMode()}
                       onClick={(event) => void togglePrivateMode({ dramatic: event.shiftKey })}
                       class={[
-                        'spring-press hidden min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9 sm:min-h-9',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+                        'spring-press hidden board-touch-target min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border px-2 text-[13px] sm:px-3 leading-none font-medium active:opacity-85 sm:inline-flex sm:h-9',
+                        'board-focus-ring disabled:cursor-not-allowed disabled:opacity-50',
                         board().isBlurred
                           ? 'border-transparent bg-accent sm:px-3.5 text-accent-contrast shadow-xs hover:opacity-92'
                           : 'border-border/80 bg-surface text-text hover:bg-surface-subtle',
@@ -1735,9 +1735,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         setIsActionItemsOpen(true);
                       }}
                       class={[
-                        'spring-press hidden min-h-11 min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9 sm:min-h-9',
+                        'spring-press hidden board-touch-target min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9',
                         'hover:bg-surface-subtle active:bg-surface-subtle',
-                        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                        'board-focus-ring',
                       ]}
                     >
                       <LucideIcon icon={Flag} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />
@@ -1762,7 +1762,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       <MenuTrigger
                         ref={boardMenuTriggerEl}
                         aria-label="More board actions"
-                        class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle sm:h-9 sm:min-h-9"
+                        class="spring-press board-focus-ring inline-flex board-touch-target min-w-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text hover:bg-surface-subtle active:bg-surface-subtle sm:h-9"
                       >
                         <LucideIcon icon={Ellipsis} class="size-4 shrink-0" strokeWidth={1.9} />
                         <span class="hidden sm:inline">More</span>
@@ -2188,7 +2188,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     class={[
                       'spring-press hidden w-fit shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-2xl border border-dashed border-border/85 bg-surface-subtle/25 px-3.5 py-2.5 text-[13px] font-medium text-text-muted',
                       'transition-colors hover:border-control/80 hover:bg-surface hover:text-text active:bg-surface-subtle sm:inline-flex sm:min-h-11',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                       getAddColumnSlotClass(board().columns.length),
                     ]}
                   >
@@ -2236,7 +2236,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 </div>
                 <DialogClose
                   aria-label="Close Add Column"
-                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-8 sm:min-w-8"
+                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text board-focus-ring sm:min-h-8 sm:min-w-8"
                 >
                   <LucideIcon icon={X} class="size-4" strokeWidth={2} />
                 </DialogClose>
@@ -2320,7 +2320,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   <button
                     type="button"
                     onClick={() => setIsAddingColumn(false)}
-                    class="spring-press min-h-11 cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text sm:min-h-9"
+                    class="spring-press board-touch-target cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text"
                   >
                     Cancel
                   </button>
@@ -2329,7 +2329,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     disabled={
                       isSavingColumn() || newColumnTitle().trim().length === 0
                     }
-                    class="spring-press min-h-11 cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                    class="spring-press board-touch-target cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isSavingColumn() ? 'Adding…' : 'Add column'}
                   </button>
@@ -2419,7 +2419,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     class={[
                       'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent px-4 text-xs font-medium text-accent-contrast',
                       'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {isSubmittingMobileCard() ? '...' : 'Add'}

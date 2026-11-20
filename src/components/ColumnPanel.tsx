@@ -459,7 +459,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     title="Click to rename Column"
                     class={[
                       'min-h-11 w-full cursor-pointer rounded-sm text-left wrap-anywhere hover:underline sm:min-h-7',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {props.column.title}
@@ -506,7 +506,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     class={[
                       'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-lg sm:border-transparent sm:bg-transparent',
                       'transition-colors hover:bg-surface/80 hover:text-text data-open:bg-surface data-open:text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" strokeWidth={1.9} />
@@ -665,7 +665,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
               onClick={() => void submitNewCard()}
               class={[
                 'spring-press mb-0.5 inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-lg px-2.5 text-xs font-semibold transition-colors',
-                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                'board-focus-ring',
                 cardDraft().trim().length > 0 && !isCreatingCard()
                   ? 'bg-accent text-accent-contrast hover:opacity-90'
                   : 'bg-surface-subtle text-text-muted disabled:cursor-not-allowed disabled:opacity-55',
@@ -711,7 +711,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   class={[
                     'spring-press mt-2.5 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
                     'transition-colors hover:bg-surface-subtle',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   Reset filters

@@ -401,7 +401,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                             class={[
                               'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
                               'transition-colors hover:bg-surface-subtle hover:text-rose-700 dark:hover:text-rose-300',
-                              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                              'board-focus-ring',
                               'disabled:cursor-not-allowed disabled:opacity-50',
                             ]}
                           >
@@ -463,7 +463,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     class={[
                       'min-h-11 rounded-lg bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-8',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {isPosting() ? 'Posting…' : 'Post comment'}

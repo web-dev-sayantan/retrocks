@@ -524,7 +524,7 @@ export default function CardItem(props: CardItemProps) {
                     class={[
                       'min-h-11 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-muted sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-colors hover:bg-surface-subtle hover:text-text',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     Cancel
@@ -536,7 +536,7 @@ export default function CardItem(props: CardItemProps) {
                     class={[
                       'min-h-11 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-7 sm:px-2.5 sm:py-1',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
-                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                      'board-focus-ring',
                     ]}
                   >
                     {isSaving() ? 'Saving…' : 'Save'}
@@ -634,7 +634,7 @@ export default function CardItem(props: CardItemProps) {
                   class={[
                     'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 text-[11px] font-medium text-text sm:min-h-7 sm:min-w-0',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
-                    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                    'board-focus-ring',
                   ]}
                 >
                   <LucideIcon icon={MessageSquare} class="size-3.5" />
@@ -649,7 +649,7 @@ export default function CardItem(props: CardItemProps) {
                 class={[
                   'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'board-focus-ring',
                 ]}
               >
                 <LucideIcon icon={PanelRightOpen} />
@@ -665,7 +665,7 @@ export default function CardItem(props: CardItemProps) {
                     ref={menuTrigger}
                     aria-label="Card actions"
                     title="Card actions"
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" />
                   </MenuTrigger>

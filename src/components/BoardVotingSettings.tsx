@@ -17,8 +17,8 @@ import LucideIcon from './LucideIcon';
 export type VotingSettingsPatch = Omit<UpdateVotingSettingsInput, 'boardId'>;
 
 const buttonClass = [
-  'inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium sm:min-h-9',
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50',
+  'inline-flex board-touch-target cursor-pointer items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium',
+  'board-focus-ring disabled:cursor-not-allowed disabled:opacity-50',
 ];
 
 const fieldClass = 'board-modal-field min-h-11 w-full px-3 py-2 text-base sm:min-h-9 sm:text-sm';
@@ -238,7 +238,7 @@ export default function BoardVotingSettings(props: {
               <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium sm:min-h-9">
                 <input
                   type="checkbox"
-                  class="size-4 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  class="size-4 accent-accent board-focus-ring"
                   checked={blindVoting()}
                   onChange={(event) => setBlindVoting(event.currentTarget.checked)}
                 />
@@ -247,7 +247,7 @@ export default function BoardVotingSettings(props: {
               <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium sm:min-h-9">
                 <input
                   type="checkbox"
-                  class="size-4 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  class="size-4 accent-accent board-focus-ring"
                   checked={allowParticipantGroup()}
                   onChange={(event) =>
                     setAllowParticipantGroup(event.currentTarget.checked)
