@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render } from '@solidjs/testing-library';
+import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
+import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +27,34 @@ function renderPicker(onOutsideClick = vi.fn()) {
 }
 
 describe('<CardReactions /> picker dismissal', () => {
+  it('opens a floating picker and announces pending updates without adding a text row', async () => {
+    const { artifact } = await captureArtifact(() => {
+      const onToggleReaction = vi.fn(() => new Promise<string | null>(() => {}));
+      const view = render(() => (
+        <CardReactions
+          cardId="card_1"
+          reactions={{}}
+          myReactions={[]}
+          disabled={false}
+          onToggleReaction={onToggleReaction}
+        />
+      ));
+      fireEvent.click(view.getByRole('button', { name: 'Add reaction' }));
+      flush();
+
+      const picker = view.getByRole('group', { name: 'Choose a reaction' });
+      expect(picker.closest('[popover]')).toBeInTheDocument();
+      expect(within(picker).getAllByRole('button')).toHaveLength(6);
+      fireEvent.click(within(picker).getByRole('button', { name: '🎉' }));
+      flush();
+      expect(onToggleReaction).toHaveBeenCalledExactlyOnceWith('card_1', '🎉');
+      const pending = view.getByText('Updating reaction…');
+      expect(pending).toHaveAttribute('aria-live', 'polite');
+      expect(pending).toHaveClass('sr-only');
+    }, { scenario: 'card-reactions-popup' });
+    expectNoDiagnostics(artifact);
+  });
+
   it('clears the Board overlay when focus moves to another Card', () => {
     const view = renderPicker();
     const trigger = view.getByRole('button', { name: 'Add reaction' });

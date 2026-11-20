@@ -1,4 +1,6 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId } from 'solid-js';
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
+import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
 import {
   MAX_CARD_CONTENT_LENGTH,
@@ -12,16 +14,15 @@ import {
   REDACTED_CARD_WHISPERS,
   REDACTED_WHISPER_DURATION_MS,
 } from '../lib/easter-eggs';
-import { getEnabledMenuItems, handleMenuNavigation } from '../lib/menu-keyboard';
+import { getEnabledMenuItems } from '../lib/menu-keyboard';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
+import LucideIcon from './LucideIcon';
 import {
   ArrowRightLeftIcon,
   FlagIcon,
-  MessageSquareIcon,
-  MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
   TrashIcon,
@@ -62,7 +63,7 @@ export interface CardItemProps {
   onDragEndCard: () => void;
 }
 
-const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-8';
+const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
 const PLACEHOLDER_LINES_1 = ['w-3/4'] as const;
 const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
 const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
@@ -83,11 +84,11 @@ export default function CardItem(props: CardItemProps) {
   const [isUngrouping, setIsUngrouping] = createSignal(false);
   const [isGroupDropActive, setIsGroupDropActive] = createSignal(false);
   const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
+  const [actionDoneDraft, setActionDoneDraft] = createSignal<boolean | null>(null);
+  const actionDone = () => actionDoneDraft() ?? props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
 
-  const menuId = createUniqueId();
   const [menuPage, setMenuPage] = createSignal<'actions' | 'move' | 'group' | null>(null);
-  let article: HTMLElement | undefined;
   let menuTrigger: HTMLButtonElement | undefined;
   let menu: HTMLDivElement | undefined;
   let editor: HTMLTextAreaElement | undefined;
@@ -174,38 +175,12 @@ export default function CardItem(props: CardItemProps) {
   });
 
   createEffect(menuPage, (page) => {
-    if (page) getEnabledMenuItems(menu)[0]?.focus();
-  });
-
-  createEffect(() => menuPage() !== null, (isOpen) => {
-    if (!isOpen) return;
-    function dismissOutside(event: PointerEvent): void {
-      if (event.target instanceof Node && !article?.contains(event.target)) {
-        setMenuPage(null);
-      }
-    }
-    document.addEventListener('pointerdown', dismissOutside);
-    return () => document.removeEventListener('pointerdown', dismissOutside);
+    if (page) getEnabledMenuItems(menu)[0]?.focus({ preventScroll: true });
   });
 
   function closeMenu(): void {
     setMenuPage(null);
     menuTrigger?.focus();
-  }
-
-  function handleMenuKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' || (event.key === 'ArrowLeft' && menuPage() !== 'actions')) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (menuPage() === 'actions') closeMenu();
-      else setMenuPage('actions');
-      return;
-    }
-    if (event.key === 'Tab') {
-      closeMenu();
-      return;
-    }
-    handleMenuNavigation(event);
   }
 
   const canManage = createMemo(() => {
@@ -524,7 +499,6 @@ export default function CardItem(props: CardItemProps) {
 
   return (
     <article
-      ref={article}
       data-card-id={props.card.id}
       data-private-mode={props.card.redacted ? 'server-redacted-nice-try' : undefined}
       style={
@@ -539,9 +513,9 @@ export default function CardItem(props: CardItemProps) {
       onDragLeave={handleGroupDragLeave}
       onDrop={handleGroupDrop}
       class={[
-        'relative min-w-0 rounded-lg border border-border bg-surface p-3 transition-colors',
+        'relative min-w-0 rounded-xl border border-border/80 bg-surface p-3.5 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70',
         {
-          'cursor-grab active:cursor-grabbing hover:border-text-muted/40':
+          'cursor-grab active:cursor-grabbing':
             canDrag(),
           'bg-surface-subtle': props.card.redacted,
           'card-revealed': wasRevealed(),
@@ -639,222 +613,227 @@ export default function CardItem(props: CardItemProps) {
             onPointerDown={handleTextPointerDown}
             onPointerUp={handleTextPointerUp}
             onPointerCancel={handleTextPointerCancel}
-            class="text-base leading-relaxed text-text sm:touch-manipulation"
+            class={[
+              'text-base leading-relaxed sm:touch-manipulation',
+              props.card.isActionItem && actionDone()
+                ? 'text-text-muted line-through'
+                : 'text-text',
+            ]}
           >
             <CardText text={props.card.content} />
           </div>
 
-          <div class="mt-2">
-            <CardReactions
-              cardId={props.card.id}
-              reactions={props.card.reactions}
-              myReactions={props.card.myReactions}
-              disabled={props.isLocked}
-              onToggleReaction={props.onToggleReaction}
-            />
-          </div>
-
           <Show when={props.card.isActionItem}>
-            <div class="mt-2 flex flex-wrap items-center gap-x-2 rounded-md border border-border bg-surface-subtle/60 px-2 py-1.5">
-              <label class="inline-flex min-h-11 min-w-11 cursor-pointer items-center gap-2 sm:min-h-8 sm:min-w-0">
+            <div class="mt-2.5 flex items-center justify-between gap-2 rounded-lg bg-surface-subtle/65 px-2.5 py-1.5">
+              <label class="inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-2 sm:min-h-6">
                 <input
                   type="checkbox"
-                  checked={props.card.actionDone}
+                  checked={actionDone()}
                   disabled={
                     (props.isLocked && !props.isFacilitator) || isUpdatingAction()
                   }
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {
-                    const checkbox = event.currentTarget;
-                    const ok = await updateAction({ actionDone: checkbox.checked });
-                    if (!ok && checkbox.isConnected) checkbox.checked = props.card.actionDone;
+                    const done = event.currentTarget.checked;
+                    setActionDoneDraft(done);
+                    try {
+                      await updateAction({ actionDone: done });
+                    } finally {
+                      setActionDoneDraft(null);
+                    }
                   }}
                   class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
                 />
-                <span class="text-[11px] font-medium text-text-muted">
-                  {props.card.actionDone ? 'Done' : 'Open'}
+                <span class="text-xs font-medium text-text-muted">
+                  {actionDone() ? 'Done' : 'Open'}
                 </span>
               </label>
-              <Show when={props.card.actionOwner}>
-                <span class="ml-auto wrap-anywhere rounded-full border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+              <Show
+                when={props.card.actionOwner}
+                fallback={<LucideIcon icon={Flag} class="size-3.5 shrink-0 text-col-sky" />}
+              >
+                <span class="min-w-0 wrap-anywhere rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-text-muted">
                   {props.card.actionOwner}
                 </span>
               </Show>
             </div>
           </Show>
 
-          <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
+          <footer class="mt-2.5 grid grid-flow-row-dense grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-1.5 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+            <CardReactions
+              inCardFooter
+              cardId={props.card.id}
+              reactions={props.card.reactions}
+              myReactions={props.card.myReactions}
+              disabled={props.isLocked}
+              onToggleReaction={props.onToggleReaction}
+            />
+
+            <div class="order-first col-span-full flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-none sm:col-span-1 sm:col-start-1">
               <Show when={props.card.isMine}>
-                <span class="rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text">
+                <span class="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] font-medium">
                   You
                 </span>
               </Show>
-              <Show when={props.card.isActionItem}>
-                <span class="rounded-full border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text">
-                  Action Item
-                </span>
-              </Show>
+              <time class="max-w-full truncate tabular-nums">{relativeTimestamp()}</time>
+            </div>
+
+            <Show when={props.card.groupId === null}>
+              <div class="col-start-2 flex sm:col-start-3">
+                <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
+              </div>
+            </Show>
+
+            <div data-print-hide="true" class="col-start-3 flex items-center gap-1 sm:col-start-4">
               <Show when={props.card.commentCount > 0}>
                 <button
                   type="button"
                   aria-label={`${props.card.commentCount} ${props.card.commentCount === 1 ? 'comment' : 'comments'}`}
                   onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
                   class={[
-                    'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text sm:min-h-6 sm:min-w-0',
+                    'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 text-[11px] font-medium text-text sm:min-h-7 sm:min-w-0',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
                     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                   ]}
                 >
-                  <MessageSquareIcon class="h-3 w-3" />
+                  <LucideIcon icon={MessageSquare} class="size-3.5" />
                   <span class="tabular-nums">{props.card.commentCount}</span>
                 </button>
               </Show>
-              <time class="tabular-nums">{relativeTimestamp()}</time>
-            </div>
-
-            <Show when={props.card.groupId === null}>
-              <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
-            </Show>
-
-            <div data-print-hide="true" class="flex items-center gap-1">
               <button
                 type="button"
                 aria-label="Open Card details"
                 title="Open Card details"
                 onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
                 class={[
-                  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
+                  'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
                   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
                 ]}
               >
-                <MessageSquareIcon />
+                <LucideIcon icon={PanelRightOpen} />
               </button>
 
               <Show when={!props.isLocked}>
-                <button
-                  ref={menuTrigger}
-                  type="button"
-                  aria-label="Card actions"
-                  title="Card actions"
-                  aria-haspopup="menu"
-                  aria-expanded={menuPage() ? 'true' : 'false'}
-                  aria-controls={menuPage() ? menuId : undefined}
-                  onClick={() => {
-                    setConfirmingDelete(false);
-                    setMenuPage(menuPage() ? null : 'actions');
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                      event.preventDefault();
-                      setConfirmingDelete(false);
-                      setMenuPage('actions');
-                      if (menuPage()) getEnabledMenuItems(menu)[0]?.focus();
-                    }
-                  }}
-                  class="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
-                >
-                  <MoreHorizontalIcon />
-                </button>
-              </Show>
-            </div>
-          </div>
-          <Show when={!props.isLocked && menuPage()}>
-            <div
-              ref={menu}
-              id={menuId}
-              role="menu"
-              aria-label={menuPage() === 'move' ? 'Move Card to Column' : menuPage() === 'group' ? 'Group Card with' : 'Card actions'}
-              data-board-overlay="true"
-              data-print-hide="true"
-              onKeyDown={handleMenuKeyDown}
-              class="relative z-10 mt-1 ml-auto max-h-[50dvh] w-56 max-w-full overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-md"
-            >
-              <Show when={menuPage() === 'actions'}>
-                <Show when={canManage()}>
-                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} onClick={startEdit}>
-                    <PencilIcon /> Edit Card
-                  </button>
-                </Show>
-                <Show when={canMove()}>
-                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} disabled={isMoving()} onClick={() => setMenuPage('move')}>
-                    <ArrowRightLeftIcon /> Move to…
-                  </button>
-                </Show>
-                <Show when={canGroup()}>
-                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} disabled={isGrouping()} onClick={() => setMenuPage('group')}>
-                    <PlusIcon /> Group with…
-                  </button>
-                </Show>
-                <Show when={props.card.groupId !== null && props.canUngroup}>
-                  <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} disabled={isUngrouping()} onClick={() => { closeMenu(); void handleUngroup(); }}>
-                    Ungroup Card
-                  </button>
-                </Show>
-                <button
-                  type="button"
-                  role="menuitem"
-                  tabindex={-1}
-                  class={menuItemClass}
-                  disabled={isUpdatingAction()}
-                  onClick={() => {
-                    closeMenu();
-                    void updateAction({ isActionItem: !props.card.isActionItem });
+                <Menu
+                  open={menuPage() !== null}
+                  modal={false}
+                  onOpenChange={(open) => {
+                    if (open) setConfirmingDelete(false);
+                    setMenuPage(open ? 'actions' : null);
                   }}
                 >
-                  <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
-                </button>
-                <Show when={canManage()}>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    tabindex={-1}
-                    class={menuItemClass}
-                    disabled={isDeleting()}
-                    onClick={() => {
-                      setActionError('');
-                      setMenuPage(null);
-                      setConfirmingDelete(true);
-                    }}
+                  <MenuTrigger
+                    ref={menuTrigger}
+                    aria-label="Card actions"
+                    title="Card actions"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-7 sm:min-w-7"
                   >
-                    <TrashIcon /> Delete Card
-                  </button>
-                </Show>
-              </Show>
-              <Show when={menuPage() === 'move'}>
-                <For each={otherColumns()}>
-                  {(target) => (
-                    <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} onClick={() => void handleSelectMoveTarget(target.id)}>
-                      <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
-                      <span class="min-w-0 wrap-anywhere">{target.title}</span>
-                    </button>
-                  )}
-                </For>
-              </Show>
-              <Show when={menuPage() === 'group'}>
-                <For each={groupTargets().cards}>
-                  {(target) => (
-                    <button type="button" role="menuitem" tabindex={-1} class={[menuItemClass, 'wrap-anywhere']} onClick={() => void groupWith(props.card.id, 'card', target.id)}>
-                      {target.content}
-                    </button>
-                  )}
-                </For>
-                <For each={groupTargets().groups}>
-                  {(target) => (
-                    <button type="button" role="menuitem" tabindex={-1} class={[menuItemClass, 'wrap-anywhere']} onClick={() => void groupWith(props.card.id, 'group', target.id)}>
-                      {target.title || 'Card Group'}
-                    </button>
-                  )}
-                </For>
-              </Show>
-              <Show when={menuPage() !== 'actions'}>
-                <button type="button" role="menuitem" tabindex={-1} class={menuItemClass} onClick={() => setMenuPage('actions')}>
-                  Back to Card actions
-                </button>
+                    <LucideIcon icon={Ellipsis} class="size-4" />
+                  </MenuTrigger>
+                  <MenuContent
+                    ref={menu}
+                    side="bottom"
+                    align="end"
+                    sideOffset={6}
+                    collisionPadding={12}
+                    finalFocus={isEditing() || confirmingDelete() ? 'none' : undefined}
+                    render={(contentProps) => (
+                      <div
+                        {...contentProps}
+                        aria-labelledby={undefined}
+                        aria-label={menuPage() === 'move' ? 'Move Card to Column' : menuPage() === 'group' ? 'Group Card with' : 'Card actions'}
+                        data-board-overlay={menuPage() ? 'true' : undefined}
+                        data-print-hide="true"
+                      />
+                    )}
+                    onKeyDown={(event) => {
+                      if (event.key === 'ArrowLeft' && menuPage() !== 'actions') {
+                        event.preventDefault();
+                        setMenuPage('actions');
+                      }
+                    }}
+                    class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                  >
+                    <Show when={menuPage() === 'actions'}>
+                      <Show when={canManage()}>
+                        <MenuItem value="edit" class={menuItemClass} onSelect={startEdit}>
+                          <PencilIcon /> Edit Card
+                        </MenuItem>
+                      </Show>
+                      <Show when={canMove()}>
+                        <MenuItem value="move" class={menuItemClass} disabled={isMoving()} closeOnSelect={false} onSelect={() => setMenuPage('move')}>
+                          <ArrowRightLeftIcon /> Move to…
+                        </MenuItem>
+                      </Show>
+                      <Show when={canGroup()}>
+                        <MenuItem value="group" class={menuItemClass} disabled={isGrouping()} closeOnSelect={false} onSelect={() => setMenuPage('group')}>
+                          <PlusIcon /> Group with…
+                        </MenuItem>
+                      </Show>
+                      <Show when={props.card.groupId !== null && props.canUngroup}>
+                        <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
+                          Ungroup Card
+                        </MenuItem>
+                      </Show>
+                      <MenuItem
+                        value="flag"
+                        class={menuItemClass}
+                        disabled={isUpdatingAction()}
+                        onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
+                      >
+                        <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
+                      </MenuItem>
+                      <Show when={canManage()}>
+                        <MenuItem
+                          value="delete"
+                          class={menuItemClass}
+                          disabled={isDeleting()}
+                          onSelect={() => {
+                            setActionError('');
+                            setConfirmingDelete(true);
+                          }}
+                        >
+                          <TrashIcon /> Delete Card
+                        </MenuItem>
+                      </Show>
+                    </Show>
+                    <Show when={menuPage() === 'move'}>
+                      <For each={otherColumns()}>
+                        {(target) => (
+                          <MenuItem value={target.id} class={menuItemClass} onSelect={() => { void handleSelectMoveTarget(target.id); }}>
+                            <span aria-hidden="true" class={['h-2 w-2 shrink-0 rounded-full', COLUMN_ACCENT_STYLES[target.accent].swatch]} />
+                            <span class="min-w-0 wrap-anywhere">{target.title}</span>
+                          </MenuItem>
+                        )}
+                      </For>
+                    </Show>
+                    <Show when={menuPage() === 'group'}>
+                      <For each={groupTargets().cards}>
+                        {(target) => (
+                          <MenuItem value={`card:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'card', target.id); }}>
+                            <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.content}</span>
+                          </MenuItem>
+                        )}
+                      </For>
+                      <For each={groupTargets().groups}>
+                        {(target) => (
+                          <MenuItem value={`group:${target.id}`} class={menuItemClass} onSelect={() => { void groupWith(props.card.id, 'group', target.id); }}>
+                            <span class="line-clamp-2 min-w-0 wrap-anywhere">{target.title || 'Card Group'}</span>
+                          </MenuItem>
+                        )}
+                      </For>
+                    </Show>
+                    <Show when={menuPage() === 'move' || menuPage() === 'group'}>
+                      <MenuItem value="back" class={menuItemClass} closeOnSelect={false} onSelect={() => setMenuPage('actions')}>
+                        Back to Card actions
+                      </MenuItem>
+                    </Show>
+                  </MenuContent>
+                </Menu>
               </Show>
             </div>
-          </Show>
+          </footer>
           <Show when={canManage() && confirmingDelete()}>
             <div class="mt-2 flex flex-wrap items-center justify-end gap-1.5" data-print-hide="true">
               <span class="mr-auto text-sm text-text">Delete this Card?</span>
@@ -877,9 +856,7 @@ export default function CardItem(props: CardItemProps) {
               </button>
             </div>
           </Show>
-          <Show when={pendingAction()}>
-            <p role="status" class="mt-1 text-xs text-text-muted">{pendingAction()}</p>
-          </Show>
+          <p class="sr-only" aria-live="polite" aria-atomic="true">{pendingAction()}</p>
           <Show when={actionError()}>
             <p role="alert" data-print-hide="true" class="mt-1 text-xs text-rose-700 dark:text-rose-300">{actionError()}</p>
           </Show>
