@@ -1,8 +1,14 @@
 import {
+  action,
+  affects,
   createEffect,
   createMemo,
+  createOptimistic,
+  createOptimisticStore,
   createSignal,
   createStore,
+  flush,
+  isPending,
   onSettled,
   reconcile,
   untrack,
@@ -11,8 +17,11 @@ import {
 import type { BoardWorkspaceActions } from './board-actions';
 import { createBoardLive, type BoardLive, type BoardLiveTransport } from './board-live';
 import {
+  canAddColumn,
   canContribute,
   canControlFacilitation,
+  canDeleteColumn,
+  canDeleteComment,
   canEditActionItem,
   canFacilitate,
   canInteractWithCard,
@@ -22,15 +31,16 @@ import {
 import { applyBoardEvents } from './board-store';
 import type {
   ActionItemPatch,
+  ActionError,
   BoardEvent,
   BoardMutationResponse,
+  BoardMutationSuccess,
   BoardViewDTO,
   CardViewDTO,
   ColumnAccent,
   ColumnDTO,
   ReactionEmoji,
 } from './board-types';
-import { isOptimisticId, makeOptimisticCardId } from './optimistic-ids';
 import type { ServerClockSample } from './timer';
 import type { AddColumnInput, TimerChange } from './schemas';
 import type { ChangeVoteInput, UpdateVotingSettingsInput } from './voting-schemas';
@@ -39,13 +49,12 @@ type VoteDelta = ChangeVoteInput['delta'];
 
 /**
  * Optimistic voting view state consumed by VoteControls; the session derives
- * it from the store plus the in-flight `changeVote` request.
+ * it from the optimistic Board store and its in-flight vote flag.
  */
 export interface WorkspaceVoting {
   remainingVotes: number | null;
   maxVotesPerCard: number | null;
   pending: boolean;
-  optimisticVote: { targetId: string; delta: VoteDelta } | null;
   onChange: (targetType: 'card' | 'group', targetId: string, delta: VoteDelta) => void;
 }
 
@@ -70,6 +79,8 @@ export interface BoardMutations {
   ): Promise<boolean>;
   moveColumn(columnId: string, direction: -1 | 1): Promise<boolean>;
   deleteColumn(columnId: string): Promise<boolean>;
+  /** True while this Card's Action Item patch is in flight (`isPending`). */
+  isActionItemPending(cardId: string): boolean;
 }
 
 /** Result of a Private Mode toggle; 'revealed' requests the reveal theater. */
@@ -126,19 +137,160 @@ function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
   };
 }
 
+/** Which permission/lock rule the mutation seam checks before dispatching. */
+type MutationGate =
+  | { kind: 'create-card'; columnId: string }
+  | { kind: 'update-card'; cardId: string }
+  | { kind: 'update-action-item'; cardId: string; patch: ActionItemPatch }
+  | { kind: 'move-card'; cardId: string }
+  | { kind: 'delete-card'; cardId: string }
+  | { kind: 'toggle-reaction'; cardId: string }
+  | { kind: 'create-comment'; cardId: string }
+  | { kind: 'delete-comment'; cardId: string; commentId: string }
+  | { kind: 'grouping'; cardIds?: readonly string[] }
+  | { kind: 'vote'; targetType: 'card' | 'group'; targetId: string }
+  | { kind: 'add-column' }
+  | { kind: 'update-column' }
+  | { kind: 'move-column' }
+  | { kind: 'delete-column'; columnId: string }
+  | { kind: 'facilitate' }
+  | { kind: 'control-facilitation' };
+
+interface MutationDenial {
+  allowed: false;
+  message?: string;
+}
+
+/**
+ * The single permission/lock guard at the mutation seam. Every session
+ * mutation routes through here and board-permissions.ts predicates; no
+ * handler re-derives the rules.
+ */
+function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDenial | null {
+  const deny = (message?: string): MutationDenial => ({ allowed: false, message });
+  switch (gate.kind) {
+    case 'create-card':
+      return canContribute(board) ? null : deny('This Board is not accepting new Cards.');
+    case 'update-card':
+      return canManageCard(board, gate.cardId) ? null : deny('This Card can no longer be edited.');
+    case 'move-card':
+    case 'delete-card':
+      return canManageCard(board, gate.cardId) ? null : deny();
+    case 'update-action-item': {
+      const card = board.cards.find((item) => item.id === gate.cardId);
+      return card && canEditActionItem(board, card, gate.patch) ? null : deny();
+    }
+    case 'toggle-reaction': {
+      const card = board.cards.find((item) => item.id === gate.cardId);
+      return card && canInteractWithCard(board, card)
+        ? null
+        : deny('This Card can no longer receive reactions.');
+    }
+    case 'create-comment': {
+      const card = board.cards.find((item) => item.id === gate.cardId);
+      return card && canInteractWithCard(board, card)
+        ? null
+        : deny('This Card can no longer receive comments.');
+    }
+    case 'delete-comment': {
+      const card = board.cards.find((item) => item.id === gate.cardId);
+      const comment = card?.comments.find((item) => item.id === gate.commentId);
+      return card && comment &&
+        canInteractWithCard(board, card) &&
+        canDeleteComment(board, comment)
+        ? null
+        : deny('This comment can no longer be deleted.');
+    }
+    case 'grouping': {
+      if (!canManageGrouping(board)) return deny();
+      const pending = gate.cardIds?.some(
+        (cardId) => board.cards.find((card) => card.id === cardId)?.pending,
+      );
+      return pending ? deny() : null;
+    }
+    case 'vote': {
+      if (!canContribute(board)) return deny();
+      const card = gate.targetType === 'card'
+        ? board.cards.find((item) => item.id === gate.targetId)
+        : undefined;
+      return gate.targetType === 'group' || (card && !card.pending) ? null : deny();
+    }
+    case 'add-column':
+      return canAddColumn(board) ? null : deny();
+    case 'update-column':
+    case 'move-column':
+      return canControlFacilitation(board) ? null : deny();
+    case 'delete-column': {
+      const cards = board.cards.filter((card) => card.columnId === gate.columnId);
+      return canDeleteColumn(board, board.columns.length, cards) ? null : deny();
+    }
+    case 'facilitate':
+      return canFacilitate(board) ? null : deny();
+    case 'control-facilitation':
+      return canControlFacilitation(board) ? null : deny();
+  }
+}
+
+/** A server rejection or stale-board answer; aborts the action so its guesses revert. */
+class MutationRejected extends Error {
+  constructor(readonly response: ActionError) {
+    super(response.message);
+  }
+}
+
+interface MutationRequest {
+  boardId: string;
+  /** Process affordances written inside the action (show now, clear on settle). */
+  begin?: () => void;
+  /** Optimistic store write; automatically reverted when the action fails. */
+  optimistic?: (board: BoardViewDTO) => void;
+  /** Declares the slots the in-flight server write will change, for `isPending`. */
+  pending?: (board: BoardViewDTO) => void;
+  /** Runs after a successful response is known, before its events apply. */
+  beforeCommit?: (response: BoardMutationSuccess) => void;
+  send: () => Promise<BoardMutationResponse>;
+}
+
+interface GuardedMutation extends Omit<MutationRequest, 'boardId'> {
+  gate: MutationGate;
+  failureMessage: string;
+  /** Surface server/network rejections through the global error banner. */
+  reportFailure?: boolean;
+}
+
+type MutationOutcome<T> =
+  | { ok: true; response: BoardMutationSuccess; value?: T }
+  | { ok: false; message?: string; reason: 'guard' | 'rejection' | 'network' };
+
+const GENERIC_FAILURE = 'Could not update the Board. Try again.';
+
 /**
  * Reactive Board client controller: owns the Board store, the live stream
- * application (version-gap resync included), the server clock, every mutation
- * handler, and the per-mutation pending/optimistic state. Components consume
- * it through the narrow `BoardSession` interface; `applyBoardEvent` stays the
- * single reducer seam for both mutation responses and live events.
+ * application (version-gap resync included), the server clock, and every
+ * mutation. All mutations share one Solid 2.0 `action` over an optimistic
+ * store: handlers write the expected value inside the action, the server
+ * response commits through `applyVersionedEvents`, and any rejection reverts
+ * the guesses automatically. Permission/lock checks happen once, in
+ * `authorizeMutation`, before an action opens.
  */
 export function createBoardSession(options: BoardSessionOptions): BoardSession {
   const getActions = options.actions;
 
-  const [store, setStore] = createStore<{ board: BoardViewDTO | null }>({
+  // Authoritative server state: the route snapshot, live events, and mutation
+  // responses land here. The optimistic view derives from it, tracking one
+  // revision signal instead of every field in the Board.
+  const [serverStore, setServerStore] = createStore<{ board: BoardViewDTO | null }>({
     board: untrack(() => cloneBoardView(options.board())),
   });
+  const [serverRevision, setServerRevision] = createSignal(0);
+  const [store, setStore] = createOptimisticStore<{ board: BoardViewDTO | null }>(
+    () => {
+      serverRevision();
+      return { board: untrack(() => cloneBoardView(serverStore.board)) };
+    },
+    { board: untrack(() => cloneBoardView(options.board())) },
+    { key: 'id' },
+  );
 
   const [nowMs, setNowMs] = createSignal(Date.now());
   const [liveSession, setLiveSession] = createSignal<{ boardId: string; live: BoardLive } | null>(null);
@@ -152,45 +304,20 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
   let serverTimeOffsetMs = 0;
   let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
-
-  type PendingVote = ChangeVoteInput & { baseVersion: number };
-  const [pendingVote, setPendingVote] = createSignal<PendingVote | null>(null);
-  let voteInFlight = false;
-
-  const voting = createMemo<WorkspaceVoting>(() => {
-    const board = store.board;
-    const request = pendingVote();
-    const optimisticVote = request && board?.id === request.boardId &&
-      board.version === request.baseVersion ? request : null;
-    let remainingVotes = board?.remainingVotes ?? null;
-
-    if (board && optimisticVote && board.voteLimit !== null) {
-      const spentOnCards = board.cards.reduce(
-        (sum, card) => sum + (card.groupId === null ? card.myVotes : 0),
-        0,
-      );
-      const spentOnGroups = board.groups.reduce((sum, group) => sum + group.myVotes, 0);
-      remainingVotes = Math.max(0, board.voteLimit - spentOnCards - spentOnGroups - optimisticVote.delta);
-    }
-
-    return {
-      remainingVotes,
-      maxVotesPerCard: board?.maxVotesPerCard ?? null,
-      pending: request !== null && request.boardId === board?.id,
-      optimisticVote,
-      onChange: changeVote,
-    };
-  });
+  // Process affordances: optimistic flags show immediately and clear when the
+  // action settles, without needing isPending on an optimistically-writable slot.
+  const [savingVotes, setSavingVotes] = createOptimistic(false);
+  const [pendingActionItems, setPendingActionItems] = createOptimistic<readonly string[]>([]);
 
   const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
-  let optimisticCardSeq = 0;
   const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
   const [isSavingColumn, setIsSavingColumn] = createSignal(false);
 
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     if (nextBoard === null) setErrorMessage(null);
+    let applied = false;
     untrack(() => {
-      setStore((draft) => {
+      setServerStore((draft) => {
         const current = draft.board;
         if (nextBoard && current?.id === nextBoard.id) {
           if (nextBoard.version < current.version) return;
@@ -198,8 +325,10 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
               nextBoard.isFacilitator === current.isFacilitator) return;
         }
         reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
+        applied = true;
       });
     });
+    if (applied) setServerRevision((revision) => revision + 1);
   }
 
   function syncServerClock(boardId: string, serverNow: number): void {
@@ -211,7 +340,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
   function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
     // Point-in-time guard: judge the snapshot against the board as of this event, not a tracked dependency.
     const stale = untrack(() => {
-      const current = store.board;
+      const current = serverStore.board;
       return !current || current.id !== nextBoard.id || nextBoard.version < current.version;
     });
     if (stale) return;
@@ -221,7 +350,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
 
   function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
     if (events.some((event) => event.type === 'board:deleted')) {
-      if (untrack(() => store.board?.id) === boardId) {
+      if (untrack(() => serverStore.board?.id) === boardId) {
         applySnapshot(null);
       }
       return;
@@ -232,9 +361,10 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
       return;
     }
     let needsResync = false;
+    let applied = false;
     let serverNow: number | undefined;
     untrack(() => {
-      setStore((draft) => {
+      setServerStore((draft) => {
         const board = draft.board;
         if (!board || board.id !== boardId || version <= board.version) return;
         if (version > board.version + 1) {
@@ -243,18 +373,20 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
         }
         applyBoardEvents(board, events);
         board.version = version;
+        applied = true;
         for (const event of events) {
           if (event.type === 'timer:updated') serverNow = event.serverNow;
         }
       });
     });
+    if (applied) setServerRevision((revision) => revision + 1);
     if (serverNow !== undefined) syncServerClock(boardId, serverNow);
     if (needsResync) reconnectLive?.();
   }
 
   createEffect(() => options.board(), (nextBoard) => applySnapshot(nextBoard));
 
-  const liveBoardId = createMemo(() => store.board?.id);
+  const liveBoardId = createMemo(() => serverStore.board?.id);
   createEffect(liveBoardId, (boardId) => {
     if (!boardId) return;
     if (typeof window === 'undefined') return;
@@ -300,34 +432,125 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     return () => clearInterval(intervalId);
   });
 
-  function applyMutationResponse(boardId: string, response: BoardMutationResponse): boolean {
-    if (store.board?.id !== boardId) return false;
-    if (!response.ok) {
-      setErrorMessage(response.message);
-      return false;
+  /**
+   * The one mutation transaction: optimistic writes first, then the server
+   * round-trip, then the versioned commit. Rejections throw so Solid reverts
+   * the guesses and no server write leaks.
+   */
+  const performMutation = action(function* (request: MutationRequest) {
+    request.begin?.();
+    setStore((draft) => {
+      if (draft.board) request.optimistic?.(draft.board);
+    });
+    if (request.pending) {
+      const board = store.board;
+      if (board) request.pending(board);
     }
+    const response: BoardMutationResponse = yield request.send();
+    if (!response.ok) throw new MutationRejected(response);
+    if (serverStore.board?.id !== request.boardId) {
+      throw new MutationRejected({
+        ok: false,
+        code: 'BOARD_NOT_FOUND',
+        message: 'This Board is no longer available.',
+      });
+    }
+    request.beforeCommit?.(response);
     setErrorMessage(null);
-    applyVersionedEvents(boardId, response.version, response.events);
-    return true;
+    applyVersionedEvents(request.boardId, response.version, response.events);
+    return response;
+  });
+
+  async function runGuardedMutation<T>(
+    mutation: GuardedMutation,
+    select?: (response: BoardMutationSuccess) => T,
+  ): Promise<MutationOutcome<T>> {
+    // Commit caller-owned process flags written in this tick before the action
+    // opens; the action's transaction would otherwise hold them until it settles.
+    flush();
+    const board = store.board;
+    if (!board) {
+      return { ok: false, reason: 'guard', message: 'This Board is no longer available.' };
+    }
+    const denial = authorizeMutation(board, mutation.gate);
+    if (denial) {
+      return { ok: false, reason: 'guard', message: denial.message };
+    }
+    const boardId = board.id;
+    try {
+      const response = await performMutation({
+        boardId,
+        begin: mutation.begin,
+        optimistic: mutation.optimistic,
+        pending: mutation.pending,
+        beforeCommit: mutation.beforeCommit,
+        send: mutation.send,
+      });
+      return { ok: true, response, value: select?.(response) };
+    } catch (error) {
+      const rejection = error instanceof MutationRejected ? error : undefined;
+      const message = rejection?.message ?? mutation.failureMessage ?? GENERIC_FAILURE;
+      if (mutation.reportFailure) setErrorMessage(message);
+      return {
+        ok: false,
+        reason: rejection ? 'rejection' : 'network',
+        message,
+      };
+    }
   }
 
-  async function changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse> {
-    const response = await getActions().updateTimer({ boardId, change });
-    if (response.ok) applyVersionedEvents(boardId, response.version, response.events);
-    return response;
+  function voting(): WorkspaceVoting {
+    const board = store.board;
+    return {
+      remainingVotes: board?.remainingVotes ?? null,
+      maxVotesPerCard: board?.maxVotesPerCard ?? null,
+      pending: savingVotes() || isPending(() => store.board?.remainingVotes),
+      onChange: changeVote,
+    };
+  }
+
+  function isActionItemPending(cardId: string): boolean {
+    return pendingActionItems().includes(cardId) || isPending(() => {
+      const card = store.board?.cards.find((item) => item.id === cardId);
+      return card ? [card.isActionItem, card.actionDone, card.actionOwner] : undefined;
+    });
+  }
+
+  async function changeCountdown(
+    boardId: string,
+    change: TimerChange,
+  ): Promise<BoardMutationResponse> {
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'control-facilitation' },
+      send: () => getActions().updateTimer({ boardId, change }),
+      failureMessage: 'Could not update the Timer. Try again.',
+    });
+    return outcome.ok
+      ? outcome.response
+      : {
+          ok: false,
+          code: 'INTERNAL_ERROR',
+          message: outcome.message ?? 'Could not update the Timer. Try again.',
+        };
   }
 
   async function togglePrivateMode(dramaticRequested: boolean): Promise<PrivateModeOutcome> {
     const board = store.board;
-    if (!board || !canControlFacilitation(board) || isChangingPrivateMode()) return 'ignored';
-    const { id: boardId, isBlurred } = board;
+    if (!board || isChangingPrivateMode()) return 'ignored';
+    const revealed = dramaticRequested;
     setIsChangingPrivateMode(true);
     try {
-      const response = await getActions().setPrivateMode({ boardId, isBlurred: !isBlurred });
-      const revealed = dramaticRequested && response.ok && store.board?.id === boardId;
-      if (revealed) options.onDramaticReveal?.();
-      applyMutationResponse(boardId, response);
-      return revealed ? 'revealed' : response.ok ? 'applied' : 'rejected';
+      const outcome = await runGuardedMutation({
+        gate: { kind: 'control-facilitation' },
+        send: () => getActions().setPrivateMode({ boardId: board.id, isBlurred: !board.isBlurred }),
+        beforeCommit: () => {
+          if (revealed) options.onDramaticReveal?.();
+        },
+        failureMessage: 'Could not update Private Mode. Try again.',
+        reportFailure: true,
+      });
+      if (!outcome.ok) return outcome.reason === 'guard' ? 'ignored' : 'rejected';
+      return revealed ? 'revealed' : 'applied';
     } finally {
       setIsChangingPrivateMode(false);
     }
@@ -339,45 +562,33 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     if (!board || trimmed.length === 0 || isSavingBoardTitle()) return false;
     setIsSavingBoardTitle(true);
     try {
-      const response = await getActions().renameBoard({ boardId: board.id, title: trimmed });
-      return applyMutationResponse(board.id, response);
+      const outcome = await runGuardedMutation({
+        gate: { kind: 'control-facilitation' },
+        send: () => getActions().renameBoard({ boardId: board.id, title: trimmed }),
+        failureMessage: 'Could not rename the Board. Try again.',
+        reportFailure: true,
+      });
+      return outcome.ok;
     } finally {
       setIsSavingBoardTitle(false);
     }
   }
 
-  function removeOptimisticCard(boardId: string, tempId: string): void {
-    setStore((draft) => {
-      const current = draft.board;
-      if (!current || current.id !== boardId) return;
-      const idx = current.cards.findIndex((item) => item.id === tempId);
-      if (idx === -1) return;
-      const [removed] = current.cards.splice(idx, 1);
-      const col = current.columns.find((c) => c.id === removed.columnId);
-      if (col) col.cardCount = Math.max(0, col.cardCount - 1);
-    });
-  }
-
-  async function createCard(
-    columnId: string,
-    content: string,
-  ): Promise<string | null> {
+  async function createCard(columnId: string, content: string): Promise<string | null> {
     const board = store.board;
     const trimmed = content.trim();
-    if (!board || board.isLocked) return 'This Board is not accepting new Cards.';
+    if (!board) return 'This Board is not accepting new Cards.';
     const column = board.columns.find((col) => col.id === columnId);
     if (!column) return 'This Column is no longer available.';
 
-    const boardId = board.id;
-    optimisticCardSeq += 1;
-    const tempId = makeOptimisticCardId(optimisticCardSeq);
     const createdAt = Date.now() + serverTimeOffsetMs;
     const optimisticCard: CardViewDTO = {
-      id: tempId,
+      id: crypto.randomUUID(),
       columnId,
       groupId: null,
       content: trimmed,
       redacted: false,
+      pending: true,
       isMine: true,
       isActionItem: column.isActionColumn,
       actionDone: false,
@@ -392,74 +603,30 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
       updatedAt: createdAt,
     };
 
-    setStore((draft) => {
-      const current = draft.board;
-      if (!current || current.id !== boardId) return;
-      current.cards.push(optimisticCard);
-      const col = current.columns.find((c) => c.id === columnId);
-      if (col) col.cardCount += 1;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'create-card', columnId },
+      optimistic: (draft) => {
+        draft.cards.push({ ...optimisticCard });
+        const col = draft.columns.find((item) => item.id === columnId);
+        if (col) col.cardCount += 1;
+      },
+      send: () => getActions().createCard({ boardId: board.id, columnId, content }),
+      failureMessage: 'Could not create Card. Try again.',
     });
-    setNowMs(createdAt);
-
-    try {
-      const response = await getActions().createCard({
-        boardId,
-        columnId,
-        content,
-      });
-      if (response.ok) {
-        const upserted = response.events.find(
-          (ev) => ev.type === 'card:upserted',
-        );
-        if (upserted && upserted.type === 'card:upserted') {
-          setStore((draft) => {
-            const current = draft.board;
-            if (!current || current.id !== boardId) return;
-            if (current.cards.some((item) => item.id === upserted.card.id)) {
-              const idx = current.cards.findIndex((item) => item.id === tempId);
-              if (idx !== -1) {
-                const [removed] = current.cards.splice(idx, 1);
-                const col = current.columns.find((c) => c.id === removed.columnId);
-                if (col) col.cardCount = Math.max(0, col.cardCount - 1);
-              }
-              return;
-            }
-            const placeholder = current.cards.find((item) => item.id === tempId);
-            if (placeholder) {
-              placeholder.id = upserted.card.id;
-            }
-          });
-        } else {
-          removeOptimisticCard(boardId, tempId);
-        }
-      } else {
-        removeOptimisticCard(boardId, tempId);
-      }
-      if (!response.ok) return response.message;
-      if (store.board?.id === boardId) {
-        applyVersionedEvents(boardId, response.version, response.events);
-        setNowMs(Date.now() + serverTimeOffsetMs);
-      }
-      return null;
-    } catch {
-      removeOptimisticCard(boardId, tempId);
-      return 'Could not create Card. Try again.';
-    }
+    if (!outcome.ok) return outcome.message ?? 'Could not create Card. Try again.';
+    setNowMs(Date.now() + serverTimeOffsetMs);
+    return null;
   }
 
-  async function updateCard(
-    cardId: string,
-    content: string,
-  ): Promise<string | null> {
+  async function updateCard(cardId: string, content: string): Promise<string | null> {
     const board = store.board;
-    if (!board || !canManageCard(board, cardId)) return 'This Card can no longer be edited.';
-    try {
-      const response = await getActions().updateCard({ boardId: board.id, cardId, content });
-      if (!response.ok) return response.message;
-      return applyMutationResponse(board.id, response) ? null : 'This Card can no longer be edited.';
-    } catch {
-      return 'Could not save the Card. Try again.';
-    }
+    if (!board) return 'This Card can no longer be edited.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'update-card', cardId },
+      send: () => getActions().updateCard({ boardId: board.id, cardId, content }),
+      failureMessage: 'Could not save the Card. Try again.',
+    });
+    return outcome.ok ? null : outcome.message ?? 'Could not save the Card. Try again.';
   }
 
   async function updateActionItem(
@@ -467,39 +634,59 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     patch: ActionItemPatch,
   ): Promise<boolean> {
     const board = store.board;
-    if (!board) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || !canEditActionItem(board, card, patch)) return false;
-    const response = await getActions().updateActionItem({
-      boardId: board.id,
-      cardId,
-      ...patch,
+    if (!board || isActionItemPending(cardId)) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'update-action-item', cardId, patch },
+      begin: () => setPendingActionItems((ids) => [...ids, cardId]),
+      optimistic: (draft) => {
+        const card = draft.cards.find((item) => item.id === cardId);
+        if (!card) return;
+        if (patch.isActionItem !== undefined) {
+          card.isActionItem = patch.isActionItem;
+          if (!patch.isActionItem) {
+            card.actionDone = false;
+            card.actionOwner = '';
+          }
+        }
+        if (patch.actionDone !== undefined) card.actionDone = patch.actionDone;
+        if (patch.actionOwner !== undefined) card.actionOwner = patch.actionOwner;
+        card.updatedAt = Date.now() + serverTimeOffsetMs;
+      },
+      pending: (draft) => {
+        const card = draft.cards.find((item) => item.id === cardId);
+        if (!card) return;
+        if (patch.isActionItem !== undefined) affects(card, 'isActionItem');
+        if (patch.actionDone !== undefined) affects(card, 'actionDone');
+        if (patch.actionOwner !== undefined) affects(card, 'actionOwner');
+      },
+      send: () => getActions().updateActionItem({ boardId: board.id, cardId, ...patch }),
+      failureMessage: 'Could not update the Action Item. Try again.',
     });
-    return response.ok && applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
-  async function moveCard(
-    cardId: string,
-    targetColumnId: string,
-  ): Promise<boolean> {
+  async function moveCard(cardId: string, targetColumnId: string): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageCard(board, cardId)) return false;
-    const response = await getActions().moveCard({
-      boardId: board.id,
-      cardId,
-      targetColumnId,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'move-card', cardId },
+      send: () => getActions().moveCard({ boardId: board.id, cardId, targetColumnId }),
+      failureMessage: 'Could not move the Card. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
   async function deleteCard(cardId: string): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageCard(board, cardId)) return false;
-    const response = await getActions().deleteCard({
-      boardId: board.id,
-      cardId,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'delete-card', cardId },
+      send: () => getActions().deleteCard({ boardId: board.id, cardId }),
+      failureMessage: 'Could not delete the Card. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
   async function groupCard(
@@ -508,164 +695,120 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     targetId: string,
   ): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await getActions().groupCards({
-      boardId: board.id,
-      cardId,
-      targetType,
-      targetId,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: {
+        kind: 'grouping',
+        cardIds: targetType === 'card' ? [cardId, targetId] : [cardId],
+      },
+      send: () => getActions().groupCards({ boardId: board.id, cardId, targetType, targetId }),
+      failureMessage: 'Could not group the Card. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
-  async function renameCardGroup(
-    groupId: string,
-    title: string,
-  ): Promise<boolean> {
+  async function renameCardGroup(groupId: string, title: string): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await getActions().renameCardGroup({
-      boardId: board.id,
-      groupId,
-      title,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'grouping' },
+      send: () => getActions().renameCardGroup({ boardId: board.id, groupId, title }),
+      failureMessage: 'Could not rename the Card Group. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
   async function ungroupCard(cardId: string): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await getActions().ungroupCard({
-      boardId: board.id,
-      cardId,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'grouping', cardIds: [cardId] },
+      send: () => getActions().ungroupCard({ boardId: board.id, cardId }),
+      failureMessage: 'Could not ungroup the Card. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
   async function dissolveCardGroup(groupId: string): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await getActions().dissolveCardGroup({
-      boardId: board.id,
-      groupId,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'grouping' },
+      send: () => getActions().dissolveCardGroup({ boardId: board.id, groupId }),
+      failureMessage: 'Could not dissolve the Card Group. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
-  async function moveCardGroup(
-    groupId: string,
-    targetColumnId: string,
-  ): Promise<boolean> {
+  async function moveCardGroup(groupId: string, targetColumnId: string): Promise<boolean> {
     const board = store.board;
-    if (!board || !canManageGrouping(board)) return false;
-    const response = await getActions().moveCardGroup({
-      boardId: board.id,
-      groupId,
-      targetColumnId,
+    if (!board) return false;
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'grouping' },
+      send: () => getActions().moveCardGroup({ boardId: board.id, groupId, targetColumnId }),
+      failureMessage: 'Could not move the Card Group. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
-  function applyOptimisticReactionDelta(
-    boardId: string,
-    cardId: string,
-    emoji: ReactionEmoji,
-    adding: boolean,
-  ): void {
-    setStore((draft) => {
-      const current = draft.board;
-      if (!current || current.id !== boardId) return;
-      const target = current.cards.find((item) => item.id === cardId);
-      if (!target) return;
-      const existingIdx = target.myReactions.indexOf(emoji);
-      const currentCount = target.reactions[emoji] ?? 0;
-      if (adding) {
-        if (existingIdx === -1) target.myReactions.push(emoji);
-        target.reactions[emoji] = currentCount + 1;
-      } else {
-        if (existingIdx !== -1) target.myReactions.splice(existingIdx, 1);
-        if (currentCount <= 1) {
-          delete target.reactions[emoji];
+  async function toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<string | null> {
+    const board = store.board;
+    if (!board) return 'This Card can no longer receive reactions.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'toggle-reaction', cardId },
+      optimistic: (draft) => {
+        const card = draft.cards.find((item) => item.id === cardId);
+        if (!card) return;
+        const adding = !card.myReactions.includes(emoji);
+        const count = card.reactions[emoji] ?? 0;
+        if (adding) {
+          card.myReactions.push(emoji);
+          card.reactions[emoji] = count + 1;
         } else {
-          target.reactions[emoji] = currentCount - 1;
+          card.myReactions = card.myReactions.filter((item) => item !== emoji);
+          if (count <= 1) delete card.reactions[emoji];
+          else card.reactions[emoji] = count - 1;
         }
-      }
+      },
+      pending: (draft) => {
+        const card = draft.cards.find((item) => item.id === cardId);
+        if (!card) return;
+        affects(card, 'reactions');
+        affects(card, 'myReactions');
+      },
+      send: () => getActions().toggleReaction({ boardId: board.id, cardId, emoji }),
+      failureMessage: 'Could not update reaction. Try again.',
     });
+    return outcome.ok ? null : outcome.message ?? 'Could not update reaction. Try again.';
   }
 
-  async function toggleReaction(
-    cardId: string,
-    emoji: ReactionEmoji,
-  ): Promise<string | null> {
+  async function createComment(cardId: string, content: string): Promise<string | null> {
     const board = store.board;
-    if (!board || isOptimisticId(cardId)) {
-      return 'This Card can no longer receive reactions.';
-    }
-    const card = board.cards.find((item) => item.id === cardId);
-    if (!card || !canInteractWithCard(board, card)) {
-      return 'This Card can no longer receive reactions.';
-    }
-
-    const boardId = board.id;
-    const hadReaction = card.myReactions.includes(emoji);
-    applyOptimisticReactionDelta(boardId, cardId, emoji, !hadReaction);
-
-    try {
-      const response = await getActions().toggleReaction({
-        boardId,
-        cardId,
-        emoji,
-      });
-      if (!response.ok) {
-        applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
-        return response.message;
-      }
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      applyOptimisticReactionDelta(boardId, cardId, emoji, hadReaction);
-      return 'Could not update reaction. Try again.';
-    }
+    if (!board) return 'This Card can no longer receive comments.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'create-comment', cardId },
+      send: () => getActions().createComment({ boardId: board.id, cardId, content }),
+      failureMessage: 'Could not post comment. Try again.',
+    });
+    if (!outcome.ok) return outcome.message ?? 'Could not post comment. Try again.';
+    setNowMs(Date.now() + serverTimeOffsetMs);
+    return null;
   }
 
-  async function createComment(
-    cardId: string,
-    content: string,
-  ): Promise<string | null> {
+  async function deleteComment(cardId: string, commentId: string): Promise<string | null> {
     const board = store.board;
-    const card = board?.cards.find((item) => item.id === cardId);
-    if (!board || !card || !canInteractWithCard(board, card)) {
-      return 'This Card can no longer receive comments.';
-    }
-    try {
-      const response = await getActions().createComment({ boardId: board.id, cardId, content });
-      if (!response.ok) return response.message;
-      if (applyMutationResponse(board.id, response)) {
-        setNowMs(Date.now() + serverTimeOffsetMs);
-      }
-      return null;
-    } catch {
-      return 'Could not post comment. Try again.';
-    }
-  }
-
-  async function deleteComment(
-    cardId: string,
-    commentId: string,
-  ): Promise<string | null> {
-    const board = store.board;
-    const card = board?.cards.find((item) => item.id === cardId);
-    if (!board || !card || !canInteractWithCard(board, card)) {
-      return 'This comment can no longer be deleted.';
-    }
-    try {
-      const response = await getActions().deleteComment({ boardId: board.id, cardId, commentId });
-      if (!response.ok) return response.message;
-      applyMutationResponse(board.id, response);
-      return null;
-    } catch {
-      return 'Could not delete comment. Try again.';
-    }
+    if (!board) return 'This comment can no longer be deleted.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'delete-comment', cardId, commentId },
+      send: () => getActions().deleteComment({ boardId: board.id, cardId, commentId }),
+      failureMessage: 'Could not delete comment. Try again.',
+    });
+    return outcome.ok ? null : outcome.message ?? 'Could not delete comment. Try again.';
   }
 
   async function addColumn(input: Omit<AddColumnInput, 'boardId'>): Promise<ColumnDTO | null> {
@@ -673,17 +816,24 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     if (!board || input.title.trim().length === 0 || isSavingColumn()) return null;
     setIsSavingColumn(true);
     try {
-      const response = await getActions().addColumn({
-        boardId: board.id,
-        title: input.title,
-        accent: input.accent,
-        isActionColumn: input.isActionColumn,
-      });
-      if (!applyMutationResponse(board.id, response)) return null;
-      const upserted = response.ok
-        ? response.events.find((ev) => ev.type === 'column:upserted')
-        : undefined;
-      return upserted && upserted.type === 'column:upserted' ? upserted.column : null;
+      const outcome = await runGuardedMutation(
+        {
+          gate: { kind: 'add-column' },
+          send: () => getActions().addColumn({
+            boardId: board.id,
+            title: input.title,
+            accent: input.accent,
+            isActionColumn: input.isActionColumn,
+          }),
+          failureMessage: 'Could not add the Column. Try again.',
+          reportFailure: true,
+        },
+        (response) => {
+          const upserted = response.events.find((event) => event.type === 'column:upserted');
+          return upserted?.type === 'column:upserted' ? upserted.column : null;
+        },
+      );
+      return outcome.ok ? outcome.value ?? null : null;
     } finally {
       setIsSavingColumn(false);
     }
@@ -695,21 +845,19 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
   ): Promise<boolean> {
     const board = store.board;
     if (!board) return false;
-    const response = await getActions().updateColumn({
-      boardId: board.id,
-      columnId,
-      ...patch,
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'update-column' },
+      send: () => getActions().updateColumn({ boardId: board.id, columnId, ...patch }),
+      failureMessage: 'Could not update the Column. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
-  async function moveColumn(
-    columnId: string,
-    direction: -1 | 1,
-  ): Promise<boolean> {
+  async function moveColumn(columnId: string, direction: -1 | 1): Promise<boolean> {
     const board = store.board;
     if (!board) return false;
-    const ids = board.columns.map((c) => c.id);
+    const ids = board.columns.map((column) => column.id);
     const currentIndex = ids.indexOf(columnId);
     const nextIndex = currentIndex + direction;
     if (currentIndex === -1 || nextIndex < 0 || nextIndex >= ids.length) {
@@ -718,21 +866,25 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     const reordered = [...ids];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const response = await getActions().reorderColumns({
-      boardId: board.id,
-      columnIds: reordered,
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'move-column' },
+      send: () => getActions().reorderColumns({ boardId: board.id, columnIds: reordered }),
+      failureMessage: 'Could not move the Column. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
   async function deleteColumn(columnId: string): Promise<boolean> {
     const board = store.board;
     if (!board) return false;
-    const response = await getActions().deleteColumn({
-      boardId: board.id,
-      columnId,
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'delete-column', columnId },
+      send: () => getActions().deleteColumn({ boardId: board.id, columnId }),
+      failureMessage: 'Could not delete the Column. Try again.',
+      reportFailure: true,
     });
-    return applyMutationResponse(board.id, response);
+    return outcome.ok;
   }
 
   async function changeVote(
@@ -740,39 +892,52 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     targetId: string,
     delta: VoteDelta,
   ): Promise<void> {
+    // A cast already in flight drops the next one.
+    if (savingVotes() || isPending(() => store.board?.remainingVotes)) return;
     const board = store.board;
-    if (!board || !canContribute(board) || voteInFlight || isOptimisticId(targetId)) return;
-
-    const boardId = board.id;
-    const input = { boardId, targetType, targetId, delta } as const;
-    voteInFlight = true;
-    setPendingVote({ ...input, baseVersion: board.version });
-    try {
-      const response = await getActions().changeVote(input);
-      applyMutationResponse(boardId, response);
-    } catch {
-      if (store.board?.id === boardId) setErrorMessage('Could not update your Vote. Try again.');
-    } finally {
-      voteInFlight = false;
-      setPendingVote(null);
-    }
+    if (!board) return;
+    await runGuardedMutation({
+      gate: { kind: 'vote', targetType, targetId },
+      begin: () => setSavingVotes(true),
+      optimistic: (draft) => {
+        const targets = targetType === 'card' ? draft.cards : draft.groups;
+        const target = targets.find((item) => item.id === targetId);
+        if (!target) return;
+        target.myVotes = Math.max(0, target.myVotes + delta);
+        if (target.votes !== null) target.votes = Math.max(0, target.votes + delta);
+        if (draft.remainingVotes !== null) {
+          draft.remainingVotes = Math.max(0, draft.remainingVotes - delta);
+        }
+      },
+      pending: (draft) => {
+        const targets = targetType === 'card' ? draft.cards : draft.groups;
+        const target = targets.find((item) => item.id === targetId);
+        if (target) {
+          affects(target, 'myVotes');
+          affects(target, 'votes');
+        }
+        if (draft.remainingVotes !== null) affects(draft, 'remainingVotes');
+      },
+      send: () => getActions().changeVote({ boardId: board.id, targetType, targetId, delta }),
+      failureMessage: 'Could not update your Vote. Try again.',
+      reportFailure: true,
+    });
   }
 
   async function runVotingSettingsMutation(
     mutate: (boardId: string) => Promise<BoardMutationResponse>,
   ): Promise<string | null> {
     const board = store.board;
-    if (!board || !canControlFacilitation(board)) return 'Voting settings are unavailable.';
-    const boardId = board.id;
-
-    try {
-      const response = await mutate(boardId);
-      if (!response.ok) return response.message;
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      return 'Could not update Voting. Try again.';
-    }
+    if (!board) return 'Voting settings are unavailable.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'control-facilitation' },
+      send: () => mutate(board.id),
+      failureMessage: 'Could not update Voting. Try again.',
+    });
+    if (outcome.ok) return null;
+    return outcome.reason === 'guard'
+      ? 'Voting settings are unavailable.'
+      : outcome.message ?? 'Could not update Voting. Try again.';
   }
 
   function saveVotingSettings(patch: Omit<UpdateVotingSettingsInput, 'boardId'>): Promise<string | null> {
@@ -787,30 +952,30 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
 
   async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
     const board = store.board;
-    if (!board || !canFacilitate(board)) return 'Only a Facilitator can Lock or Unlock the Board.';
-    const boardId = board.id;
-    try {
-      const response = await getActions().setBoardLock({ boardId, isLocked });
-      if (!response.ok) return response.message;
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      return 'Could not update Board lock state. Try again.';
-    }
+    if (!board) return 'Only a Facilitator can Lock or Unlock the Board.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'facilitate' },
+      send: () => getActions().setBoardLock({ boardId: board.id, isLocked }),
+      failureMessage: 'Could not update Board lock state. Try again.',
+    });
+    if (outcome.ok) return null;
+    return outcome.reason === 'guard'
+      ? 'Only a Facilitator can Lock or Unlock the Board.'
+      : outcome.message ?? 'Could not update Board lock state. Try again.';
   }
 
   async function deleteCurrentBoard(): Promise<string | null> {
     const board = store.board;
-    if (!board || !canFacilitate(board)) return 'Only a Facilitator can delete this Board.';
-    const boardId = board.id;
-    try {
-      const response = await getActions().deleteBoard({ boardId });
-      if (!response.ok) return response.message;
-      applyMutationResponse(boardId, response);
-      return null;
-    } catch {
-      return 'Could not delete this Board. Try again.';
-    }
+    if (!board) return 'Only a Facilitator can delete this Board.';
+    const outcome = await runGuardedMutation({
+      gate: { kind: 'facilitate' },
+      send: () => getActions().deleteBoard({ boardId: board.id }),
+      failureMessage: 'Could not delete this Board. Try again.',
+    });
+    if (outcome.ok) return null;
+    return outcome.reason === 'guard'
+      ? 'Only a Facilitator can delete this Board.'
+      : outcome.message ?? 'Could not delete this Board. Try again.';
   }
 
   return {
@@ -831,6 +996,7 @@ export function createBoardSession(options: BoardSessionOptions): BoardSession {
     createCard,
     updateCard,
     updateActionItem,
+    isActionItemPending,
     moveCard,
     deleteCard,
     toggleReaction,

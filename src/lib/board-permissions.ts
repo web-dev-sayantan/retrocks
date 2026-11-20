@@ -13,7 +13,6 @@ import {
   type CardViewDTO,
   type CommentViewDTO,
 } from './board-types';
-import { isOptimisticId } from './optimistic-ids';
 
 // ── Facilitation gates ──────────────────────────────────────────────────────────
 
@@ -50,16 +49,17 @@ export function canAddColumn(
 // ── Card gates ──────────────────────────────────────────────────────────────────
 
 // checkPrivateCardPermission (card-permissions.ts:5–18) plus the Locked gate:
-// reactions, comments and Votes need only a revealed Card on an unlocked Board.
+// reactions, comments and Votes need only a revealed, server-confirmed Card on
+// an unlocked Board; client-only optimistic rows stay untouchable.
 export function canInteractWithCard(
   board: Pick<BoardViewDTO, 'isLocked'>,
-  card: Pick<CardViewDTO, 'redacted'>,
+  card: Pick<CardViewDTO, 'redacted' | 'pending'>,
 ): boolean {
-  return !board.isLocked && !card.redacted;
+  return !board.isLocked && !card.redacted && !card.pending;
 }
 
 type CardManageBoard = Pick<BoardViewDTO, 'isLocked' | 'isFacilitator' | 'isBlurred'>;
-type CardManageState = Pick<CardViewDTO, 'redacted' | 'isMine'>;
+type CardManageState = Pick<CardViewDTO, 'redacted' | 'isMine' | 'pending'>;
 
 // checkCardManagePermission (sql-board-operations.ts:547–563) on projected state:
 // own Card, or any revealed Card as Facilitator — Private Mode blinds Facilitators
@@ -74,11 +74,11 @@ export function canManageCard(
   cardOrId: CardManageState | string,
 ): boolean {
   const card = typeof cardOrId === 'string'
-    // Optimistic placeholder Cards are client-only and never manageable.
-    ? (isOptimisticId(cardOrId) ? undefined : board.cards?.find((item) => item.id === cardOrId))
+    ? board.cards?.find((item) => item.id === cardOrId)
     : cardOrId;
   return (
     !!card &&
+    !card.pending &&
     canInteractWithCard(board, card) &&
     (card.isMine || (board.isFacilitator && !board.isBlurred))
   );
@@ -144,9 +144,9 @@ export function canEditActionItems(
 
 export function canEditActionItemFollowUp(
   board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'>,
-  card: Pick<CardViewDTO, 'isActionItem'>,
+  card: Pick<CardViewDTO, 'isActionItem' | 'pending'>,
 ): boolean {
-  return card.isActionItem && canEditActionItems(board);
+  return card.isActionItem && !card.pending && canEditActionItems(board);
 }
 
 // card:set-action (sql-board-operations.ts:1387–1457) behind the global Locked
@@ -155,10 +155,10 @@ export function canEditActionItemFollowUp(
 // undefined so the is_action_item !== 1 check in 1410 passes.
 export function canEditActionItem(
   board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'>,
-  card: Pick<CardViewDTO, 'redacted' | 'isActionItem'>,
+  card: Pick<CardViewDTO, 'redacted' | 'isActionItem' | 'pending'>,
   patch: ActionItemPatch,
 ): boolean {
-  if (card.redacted) return false;
+  if (card.redacted || card.pending) return false;
   if (!board.isLocked) return true;
   return board.isFacilitator && card.isActionItem && patch.isActionItem === undefined;
 }

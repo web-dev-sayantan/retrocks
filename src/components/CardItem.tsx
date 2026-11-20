@@ -22,7 +22,6 @@ import {
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
-import { isOptimisticId } from '../lib/optimistic-ids';
 import { formatRelativeTime } from '../lib/recent-boards';
 import type { BoardMutations } from '../lib/board-session';
 import type { BoardTransferHandle } from '../lib/board-transfer';
@@ -66,6 +65,7 @@ export interface CardItemProps {
     | 'toggleReaction'
     | 'groupCard'
     | 'ungroupCard'
+    | 'isActionItemPending'
   >;
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }
@@ -80,9 +80,9 @@ export default function CardItem(props: CardItemProps) {
   const [isMoving, setIsMoving] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
   const [isUngrouping, setIsUngrouping] = createSignal(false);
-  const [isUpdatingAction, setIsUpdatingAction] = createSignal(false);
-  const [actionDoneDraft, setActionDoneDraft] = createSignal<boolean | null>(null);
-  const actionDone = () => actionDoneDraft() ?? props.card.actionDone;
+  const isUpdatingAction = createMemo(() => props.actions.isActionItemPending(props.card.id));
+  // The optimistic store is the draft: the pending value is the checkbox value.
+  const actionDone = () => props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
 
   const [menuOpen, setMenuOpen] = createSignal(false);
@@ -162,7 +162,7 @@ export default function CardItem(props: CardItemProps) {
   const textField = usePrimitive(inlineEdit, () => ({
     value: () => props.card.content,
     commit: (text) => textSave.commit(text),
-    disabled: () => !canManage() || isOptimisticId(props.card.id),
+    disabled: () => !canManage(),
   }));
   const cardEdit = textField.api.edit;
   const textSave = createInlineEditSave(saveCardText, () => cardEdit.cancel());
@@ -195,6 +195,7 @@ export default function CardItem(props: CardItemProps) {
         (other) =>
           other.id !== props.card.id &&
           !other.redacted &&
+          !other.pending &&
           other.groupId === null,
       ),
       groups: props.columnGroups.filter(
@@ -226,7 +227,7 @@ export default function CardItem(props: CardItemProps) {
   const textTap = createDoubleTap(isTextEditTarget, startEdit);
 
   function isTextEditTarget(target: EventTarget | null): boolean {
-    if (!canManage() || isOptimisticId(props.card.id)) return false;
+    if (!canManage()) return false;
     return !(target instanceof Element && target.closest('a'));
   }
 
@@ -262,16 +263,16 @@ export default function CardItem(props: CardItemProps) {
   async function runCardAction(
     request: () => Promise<boolean>,
     failureMessage: string,
-    setPending: (pending: boolean) => void,
+    setPending?: (pending: boolean) => void,
   ): Promise<boolean> {
-    setPending(true);
+    setPending?.(true);
     setActionError('');
     try {
       if (await request()) return true;
     } catch {
       // Report rejected requests alongside unsuccessful mutation responses.
     } finally {
-      setPending(false);
+      setPending?.(false);
     }
     if (!props.card.redacted) setActionError(failureMessage);
     return false;
@@ -292,12 +293,11 @@ export default function CardItem(props: CardItemProps) {
     );
   }
 
-  async function updateAction(patch: ActionItemPatch): Promise<boolean> {
-    if (isUpdatingAction()) return false;
+  function updateAction(patch: ActionItemPatch): Promise<boolean> {
     return runCardAction(
+      // eslint-disable-next-line solid/reactivity -- invoked from event handlers only
       () => props.actions.updateActionItem(props.card.id, patch),
       'Could not update the Action Item. Try again.',
-      setIsUpdatingAction,
     );
   }
 
@@ -468,17 +468,12 @@ export default function CardItem(props: CardItemProps) {
                 <input
                   type="checkbox"
                   checked={actionDone()}
-                  disabled={
-                    (!canEditActionItemFollowUp(props, props.card)) || isUpdatingAction()
-                  }
+                  disabled={!canEditActionItemFollowUp(props, props.card)}
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {
-                    const done = event.currentTarget.checked;
-                    setActionDoneDraft(done);
-                    try {
-                      await updateAction({ actionDone: done });
-                    } finally {
-                      setActionDoneDraft(null);
+                    const checkbox = event.currentTarget;
+                    if (!await updateAction({ actionDone: checkbox.checked }) && checkbox.isConnected) {
+                      checkbox.checked = props.card.actionDone;
                     }
                   }}
                   class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"

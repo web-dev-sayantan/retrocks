@@ -220,7 +220,7 @@ describe('createBoardSession', () => {
     flush();
     const optimistic = session.board()?.cards ?? [];
     expect(optimistic).toHaveLength(1);
-    expect(optimistic[0].id.startsWith('optimistic:')).toBe(true);
+    expect(optimistic[0].pending).toBe(true);
     expect(optimistic[0].isMine).toBe(true);
     expect(session.board()?.columns[0]?.cardCount).toBe(1);
     expect(spies.createCard).toHaveBeenCalledWith({
@@ -284,7 +284,7 @@ describe('createBoardSession', () => {
     expect(session.board()?.cards[0]?.myReactions).toEqual(['👍']);
   });
 
-  it('serializes Votes through pendingVote and surfaces optimistic balances', async () => {
+  it('derives Vote pending state with isPending and surfaces optimistic balances', async () => {
     const card = makeCard({ id: 'card_v', votes: 0, myVotes: 0 });
     const board = makeBoardView({ cards: [card], isFacilitator: false, voteLimit: 5, remainingVotes: 5 });
     const { session, spies } = mountSession(board);
@@ -296,8 +296,8 @@ describe('createBoardSession', () => {
     flush();
     const voting = session.voting();
     expect(voting.pending).toBe(true);
-    expect(voting.optimisticVote).toMatchObject({ targetId: card.id, delta: 1 });
     expect(voting.remainingVotes).toBe(4);
+    expect(session.board()?.cards[0]?.myVotes).toBe(1);
 
     // A second cast while one is in flight is dropped, not queued.
     void session.changeVote('card', card.id, 1);
@@ -322,6 +322,121 @@ describe('createBoardSession', () => {
     session.clearError();
     flush();
     expect(session.errorMessage()).toBeNull();
+  });
+
+  it('applies Action Item patches optimistically, exposes isPending, and reverts on rejection', async () => {
+    const card = makeCard({
+      id: 'card_action',
+      isActionItem: true,
+      actionDone: false,
+      actionOwner: '',
+    });
+    const board = makeBoardView({ cards: [card] });
+    const { session, spies } = mountSession(board);
+
+    const pending = Promise.withResolvers<BoardMutationResponse>();
+    spies.updateActionItem.mockReturnValueOnce(pending.promise);
+    const update = session.updateActionItem(card.id, {
+      actionDone: true,
+      actionOwner: 'Platform',
+    });
+    flush();
+    expect(session.board()?.cards[0]?.actionDone).toBe(true);
+    expect(session.board()?.cards[0]?.actionOwner).toBe('Platform');
+    expect(session.isActionItemPending(card.id)).toBe(true);
+
+    pending.resolve({
+      ok: true,
+      version: 2,
+      events: [{
+        type: 'card:upserted',
+        version: 2,
+        card: { ...card, actionDone: true, actionOwner: 'Platform' },
+      }],
+    });
+    expect(await update).toBe(true);
+    flush();
+    expect(session.isActionItemPending(card.id)).toBe(false);
+    expect(session.board()?.cards[0]?.actionDone).toBe(true);
+    expect(session.board()?.cards[0]?.actionOwner).toBe('Platform');
+
+    spies.updateActionItem.mockResolvedValueOnce({
+      ok: false,
+      code: 'RATE_LIMITED',
+      message: 'Slow down.',
+    });
+    expect(await session.updateActionItem(card.id, { actionDone: false })).toBe(false);
+    flush();
+    // The optimistic guess reverted to the last committed server value.
+    expect(session.board()?.cards[0]?.actionDone).toBe(true);
+    expect(session.isActionItemPending(card.id)).toBe(false);
+  });
+
+  it('checks permissions once at the mutation seam before dispatching', async () => {
+    const card = makeCard({ id: 'card_guard' });
+    const participant = makeBoardView({ cards: [card], isFacilitator: false });
+    const harness = mountSession(participant);
+    const { session, spies } = harness;
+
+    expect(await session.renameBoard('Nope')).toBe(false);
+    expect(spies.renameBoard).not.toHaveBeenCalled();
+    expect(await session.saveVotingSettings({ voteLimit: 3 })).toBe(
+      'Voting settings are unavailable.',
+    );
+    expect(spies.updateVotingSettings).not.toHaveBeenCalled();
+    expect(await session.toggleBoardLock(true)).toBe(
+      'Only a Facilitator can Lock or Unlock the Board.',
+    );
+    expect(spies.setBoardLock).not.toHaveBeenCalled();
+    expect(await session.deleteColumn('col_1')).toBe(false);
+    expect(spies.deleteColumn).not.toHaveBeenCalled();
+
+    const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
+    const lockedHarness = mountSession(locked);
+    expect(await lockedHarness.session.updateCard(card.id, 'Nope')).toBe(
+      'This Card can no longer be edited.',
+    );
+    expect(await lockedHarness.session.createCard('col_1', 'Nope')).toBe(
+      'This Board is not accepting new Cards.',
+    );
+    expect(lockedHarness.spies.updateCard).not.toHaveBeenCalled();
+    expect(lockedHarness.spies.createCard).not.toHaveBeenCalled();
+  });
+
+  it('drops stale mutation responses and resyncs on a version gap', async () => {
+    const card = makeCard({ id: 'card_version', columnId: 'col_1' });
+    const board = makeBoardView({ cards: [card], version: 3 });
+    const { session, spies, connections } = mountSession(board);
+
+    spies.moveCard.mockResolvedValueOnce({
+      ok: true,
+      version: 3,
+      events: [{
+        type: 'card:upserted',
+        version: 3,
+        card: { ...card, columnId: 'col_2' },
+      }],
+    });
+    expect(await session.moveCard(card.id, 'col_2')).toBe(true);
+    flush();
+    expect(session.board()?.version).toBe(3);
+    expect(session.board()?.cards[0]?.columnId).toBe('col_1');
+
+    spies.moveCard.mockResolvedValueOnce({
+      ok: true,
+      version: 9,
+      events: [{
+        type: 'card:upserted',
+        version: 9,
+        card: { ...card, columnId: 'col_2' },
+      }],
+    });
+    expect(await session.moveCard(card.id, 'col_2')).toBe(true);
+    flush();
+    expect(session.board()?.version).toBe(3);
+    expect(session.board()?.cards[0]?.columnId).toBe('col_1');
+    expect(connections[0].closed).toBe(true);
+    expect(connections).toHaveLength(2);
   });
 
   it('funnels mutation responses through the versioned-events seam', async () => {

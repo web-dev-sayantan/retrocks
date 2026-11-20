@@ -109,6 +109,8 @@ export interface CardViewDTO {
   content: string;
   redacted: boolean;
   placeholderLines?: 1 | 2 | 3;
+  /** Client-only optimistic row; never sent by the server nor accepted for mutations. */
+  pending?: boolean;
   isMine: boolean;
   isActionItem: boolean;
   actionDone: boolean;

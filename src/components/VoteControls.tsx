@@ -1,5 +1,5 @@
 import { Minus, Plus } from 'lucide';
-import { Show, createMemo } from 'solid-js';
+import { Show, createMemo, latest } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
 import { canCastVote, canContribute } from '../lib/board-permissions';
@@ -18,12 +18,8 @@ export default function VoteControls(props: {
   voting: WorkspaceVoting;
   isLocked: boolean;
 }) {
-  const delta = createMemo(() => {
-    const vote = props.voting.optimisticVote;
-    return vote?.targetId === props.target.id ? vote.delta : 0;
-  });
-  const myVotes = createMemo(() => props.target.myVotes + delta());
-  const votes = createMemo(() => props.target.votes === null ? null : props.target.votes + delta());
+  const myVotes = createMemo(() => latest(() => props.target.myVotes));
+  const votes = createMemo(() => latest(() => props.target.votes));
   const canCast = createMemo(() => canCastVote(props.voting, myVotes()));
 
   return (

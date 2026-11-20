@@ -149,6 +149,7 @@ describe('board-permissions', () => {
       expect(canInteractWithCard(makeBoard(), makeCard())).toBe(true);
       expect(canInteractWithCard(makeBoard({ isLocked: true }), makeCard())).toBe(false);
       expect(canInteractWithCard(makeBoard({ isBlurred: true }), makeCard({ redacted: true }))).toBe(false);
+      expect(canInteractWithCard(makeBoard(), makeCard({ pending: true }))).toBe(false);
     });
 
     // checkCardManagePermission (sql-board-operations.ts:547–563) on projected state:
@@ -166,11 +167,16 @@ describe('board-permissions', () => {
       expect(canManageCard(makeBoard({ isFacilitator: true, isBlurred: true }), makeCard({ isMine: false }))).toBe(false);
     });
 
-    it('canManageCard by id resolves the Card and rejects optimistic placeholders', () => {
-      const board = makeBoard({ cards: [makeCard({ id: 'real-1', isMine: true })] });
+    it('canManageCard by id resolves the Card and rejects client-only pending rows', () => {
+      const board = makeBoard({
+        cards: [
+          makeCard({ id: 'real-1', isMine: true }),
+          makeCard({ id: 'pending-1', isMine: true, pending: true }),
+        ],
+      });
       expect(canManageCard(board, 'real-1')).toBe(true);
       expect(canManageCard(board, 'missing-1')).toBe(false);
-      expect(canManageCard(board, 'optimistic:card:1')).toBe(false);
+      expect(canManageCard(board, 'pending-1')).toBe(false);
     });
   });
 
@@ -242,6 +248,7 @@ describe('board-permissions', () => {
       const actionItem = makeCard({ isActionItem: true });
       expect(canEditActionItemFollowUp(makeBoard(), actionItem)).toBe(true);
       expect(canEditActionItemFollowUp(makeBoard(), makeCard())).toBe(false);
+      expect(canEditActionItemFollowUp(makeBoard(), makeCard({ isActionItem: true, pending: true }))).toBe(false);
       expect(canEditActionItemFollowUp(makeBoard({ isLocked: true }), actionItem)).toBe(false);
       expect(
         canEditActionItemFollowUp(makeBoard({ isLocked: true, isFacilitator: true }), actionItem),
@@ -277,6 +284,9 @@ describe('board-permissions', () => {
     it('canEditActionItem never touches redacted Cards', () => {
       expect(
         canEditActionItem(makeBoard(), makeCard({ redacted: true, isActionItem: true }), { actionDone: true }),
+      ).toBe(false);
+      expect(
+        canEditActionItem(makeBoard(), makeCard({ pending: true, isActionItem: true }), { actionDone: true }),
       ).toBe(false);
     });
   });

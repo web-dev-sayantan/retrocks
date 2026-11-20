@@ -78,7 +78,6 @@ import {
   matchSecretSearch,
 } from '../lib/easter-eggs';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
-import { isOptimisticId } from '../lib/optimistic-ids';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { toggleTheme } from '../lib/theme';
 import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
@@ -648,9 +647,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
     const board = session.board();
-    if (!board || isOptimisticId(cardId)) return;
+    if (!board) return;
     const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return;
+    if (!card || card.redacted || card.pending) return;
     cardDetailTrigger = trigger;
     setOpenCardDetailId(cardId);
     setIsCardDetailOpen(true);
@@ -1481,6 +1480,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 onToggleReaction={session.toggleReaction}
                 onCreateComment={session.createComment}
                 onDeleteComment={session.deleteComment}
+                isActionItemPending={session.isActionItemPending}
               />
             )}
           </Show>
@@ -1495,6 +1495,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             onClose={() => setIsActionItemsOpen(false)}
             onRestoreFocus={restoreActionItemsFocus}
             onUpdateActionItem={session.updateActionItem}
+            isActionItemPending={session.isActionItemPending}
           />
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
