@@ -29,7 +29,7 @@ if (typeof Element !== 'undefined') {
 if (typeof document !== 'undefined') {
   document.elementFromPoint = () => null;
   document.elementsFromPoint = () => [];
-  document.head.append(
+  document.head.appendChild(
     Object.assign(document.createElement('style'), {
       textContent: '[popover]:not([hidden]) { display: block !important }',
     }),
