@@ -13,6 +13,7 @@ import {
   type CardViewDTO,
   type CommentViewDTO,
 } from './board-types';
+import { isOptimisticId } from './optimistic-ids';
 
 // ── Facilitation gates ──────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ export function canManageCard(
 ): boolean {
   const card = typeof cardOrId === 'string'
     // Optimistic placeholder Cards are client-only and never manageable.
-    ? (cardOrId.startsWith('optimistic:') ? undefined : board.cards?.find((item) => item.id === cardOrId))
+    ? (isOptimisticId(cardOrId) ? undefined : board.cards?.find((item) => item.id === cardOrId))
     : cardOrId;
   return (
     !!card &&
