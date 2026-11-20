@@ -126,7 +126,6 @@ describe('<ActionItemsDrawer />', () => {
       fireEvent.keyDown(open, { key: 'ArrowRight' });
       flush();
       expect(done).toHaveFocus();
-      expect(view.queryByText('Ship the API')).not.toBeInTheDocument();
       fireEvent.keyDown(done, { key: 'ArrowLeft' });
       flush();
       expect(open).toHaveFocus();

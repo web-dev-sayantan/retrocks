@@ -191,9 +191,10 @@
     @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
   }
 
-  .theme-unlock-toast {
-    @apply pointer-events-none fixed inset-x-4 z-70 mx-auto w-fit rounded-xl border border-border bg-surface px-4 py-3 text-center text-sm text-text shadow-lg;
-    bottom: max(1rem, env(safe-area-inset-bottom));
+  /* One toast surface, centered at the region's bottom stack; text stays
+     unselectable so pointer swipes dismiss instead of selecting. */
+  .board-toast {
+    @apply w-fit max-w-[calc(100vw-2rem)] select-none;
   }
 
   .board-menu-item {
@@ -406,8 +407,7 @@
     backdrop-filter: none;
   }
 
-  .board-masthead-subtitle,
-  .board-masthead-feedback:not(:empty) {
+  .board-masthead-subtitle {
     width: min(calc(100% - 3rem), 1552px);
     max-width: 1552px;
     margin-inline: auto;

@@ -1,5 +1,6 @@
-import { Portal, type JSX } from '@solidjs/web';
+import type { JSX } from '@solidjs/web';
 import { Moon, Sun } from 'lucide';
+import { toast } from '@ui-sdk/solid/toast';
 import { Show, createSignal, onSettled } from 'solid-js';
 
 import { getSecretTheme, subscribeTheme, toggleTheme, type ActiveTheme } from '../lib/theme';
@@ -12,11 +13,10 @@ export default function ThemeToggle(props: {
 }) {
   // Start with light to match SSR, then sync with the pre-painted document.
   const [theme, setTheme] = createSignal<ActiveTheme>('light');
-  const [announcement, setAnnouncement] = createSignal<string | null>(null);
 
   onSettled(() => subscribeTheme((active, message) => {
     setTheme(active);
-    setAnnouncement(message);
+    if (message) toast(message, { duration: 2_800 });
   }));
 
   const dark = () => theme() === 'dark' || getSecretTheme(theme())?.colorScheme === 'dark';
@@ -55,15 +55,6 @@ export default function ThemeToggle(props: {
 
   return (
     <>
-      <Show when={announcement() !== null}>
-        <Portal>
-          <div role="status" aria-live="polite" aria-atomic="true" data-print-hide="true">
-            <Show when={announcement()}>
-              <p class="theme-unlock-toast">{announcement()}</p>
-            </Show>
-          </div>
-        </Portal>
-      </Show>
       <button
         type="button"
         {...props.menuItemProps}

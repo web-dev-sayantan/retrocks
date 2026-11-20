@@ -101,7 +101,7 @@ import BoardVotingSettings, { type VotingSettingsPatch } from './BoardVotingSett
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
-import ExportBoardMenu, { type ExportFeedback } from './ExportBoardMenu';
+import ExportBoardMenu from './ExportBoardMenu';
 import { CloseIcon } from './Icons';
 import LucideIcon from './LucideIcon';
 import PageMessage from './PageMessage';
@@ -254,7 +254,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   // More disclosure and Board Settings
   const [boardMenuOpen, setBoardMenuOpen] = createSignal(false);
-  const [exportFeedback, setExportFeedback] = createSignal<ExportFeedback | null>(null);
   const [isPrinting, setIsPrinting] = createSignal(false);
   onSettled(() => {
     function preparePrint(): void {
@@ -1822,7 +1821,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         <ExportBoardMenu
                           board={board()}
                           onClose={() => closeBoardMenu(true)}
-                          onFeedback={setExportFeedback}
                         />
                       </BoardMenuContent>
                     </Menu>
@@ -1875,17 +1873,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <Show when={board().subtitle.length > 0}>
               <p class="board-masthead-subtitle mx-3 max-w-[65ch] sm:mx-0 wrap-anywhere text-sm leading-snug text-text-muted">{board().subtitle}</p>
             </Show>
-            <p
-              data-print-hide="true"
-              aria-live="polite"
-              aria-atomic="true"
-              class={[
-                'board-masthead-feedback mx-3 text-xs empty:sr-only sm:mx-0',
-                exportFeedback()?.error ? 'text-rose-700 dark:text-rose-300' : 'text-text-muted',
-              ]}
-            >
-              {exportFeedback()?.message}
-            </p>
           </header>
 
           <Show when={canFacilitate(board())}>

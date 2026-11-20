@@ -1,4 +1,5 @@
 import { OverlayHost } from '@ui-sdk/solid/overlays';
+import { Toast, ToastDescription, ToastTitle } from '@ui-sdk/solid/toast';
 import { Title } from '@solidjs/meta';
 import { useLocation } from '@solidjs/router';
 import { Clock, Columns3, ShieldCheck } from 'lucide';
@@ -84,7 +85,17 @@ function AppShell(props: ParentProps) {
           {props.children}
         </Loading>
       </Errored>
-      <OverlayHost />
+      <OverlayHost
+        toast={{
+          align: 'center',
+          children: () => (
+            <Toast class="board-toast rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text shadow-lg">
+              <ToastTitle />
+              <ToastDescription />
+            </Toast>
+          ),
+        }}
+      />
       <BoardConfirmDialog />
     </>
   );

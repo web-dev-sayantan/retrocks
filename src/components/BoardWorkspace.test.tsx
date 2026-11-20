@@ -1,6 +1,7 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
 import { createAgent } from '@ui-sdk/solid/agent';
+import { ToastRegion, toast } from '@ui-sdk/solid/toast';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -529,7 +530,10 @@ async function flushPromises(): Promise<void> {
 beforeEach(() => {
   localStorage.clear();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  toast.dismiss();
+});
 
 function openBoardSettings(view: Pick<ReturnType<typeof render>, 'getByRole'>) {
   fireEvent.click(view.getByRole('button', { name: 'More board actions' }));
@@ -1267,7 +1271,10 @@ describe('<BoardWorkspace />', () => {
     const board = makeBoardView({ isFacilitator: false });
     const { actions } = createFakeActions(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <ToastRegion />
+      </>
     ));
     flush();
 
@@ -1289,11 +1296,13 @@ describe('<BoardWorkspace />', () => {
     const copy = dialog.getByRole('button', { name: 'Copy Participant Link' });
     const writeText = vi.fn().mockRejectedValueOnce(new Error('Clipboard unavailable'));
     vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const toastTitle = (text: string) =>
+      view.getByText(text, { selector: '[data-slot="toast-region"] *' });
     try {
       copy.focus();
       fireEvent.click(copy);
       await flushPromises();
-      expect(dialog.getByRole('status')).toHaveTextContent('Copy the selected link manually.');
+      expect(toastTitle('Copy the selected link manually.')).toBeVisible();
       expect(link).toHaveFocus();
       expect(link.selectionStart).toBe(0);
       expect(link.selectionEnd).toBe(participantUrl.length);
@@ -1301,7 +1310,7 @@ describe('<BoardWorkspace />', () => {
       copy.focus();
       fireEvent.click(copy);
       await flushPromises();
-      expect(dialog.getByRole('status')).toHaveTextContent('Participant Link copied.');
+      expect(toastTitle('Participant Link copied.')).toBeVisible();
       expect(writeText).toHaveBeenLastCalledWith(participantUrl);
 
       fireEvent.keyDown(copy, { key: 'Escape' });
@@ -2857,7 +2866,10 @@ describe('<BoardWorkspace />', () => {
       const { artifact } = await captureArtifact(
         async () => {
           const { getByRole, queryByRole, getByText } = render(() => (
-            <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+            <>
+              <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+              <ToastRegion />
+            </>
           ));
           flush();
 
@@ -2908,7 +2920,10 @@ describe('<BoardWorkspace />', () => {
             '- [ ] Automate canary rollback (Owner: Platform)',
           );
 
-          expect(getByText('Markdown copied.')).toBeVisible();
+          // The copy feedback lands in the toast region.
+          expect(
+            getByText('Markdown copied.', { selector: '[data-slot="toast-region"] *' }),
+          ).toBeVisible();
           expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
 
           // Reopen and close on Escape
@@ -2958,7 +2973,10 @@ describe('<BoardWorkspace />', () => {
     try {
       const board = makeBoardView({ isFacilitator: false, isLocked: true });
       const { getByRole, queryByRole, getByText } = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+        <>
+          <BoardWorkspace board={board} boardId={board.id} homeHref="/" />
+          <ToastRegion />
+        </>
       ));
       flush();
 
@@ -2970,9 +2988,13 @@ describe('<BoardWorkspace />', () => {
 
       expect(queryByRole('menu', { name: 'More board actions' })).not.toBeInTheDocument();
       expect(more).toHaveFocus();
-      expect(getByText('Preparing CSV download…')).toBeVisible();
+      expect(
+        getByText('Preparing CSV download…', { selector: '[data-slot="toast-region"] *' }),
+      ).toBeVisible();
       await flushPromises();
-      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+      expect(
+        getByText('Could not download CSV. Try again.', { selector: '[data-slot="toast-region"] *' }),
+      ).toBeVisible();
       expect(request).toHaveBeenCalledWith(expect.stringMatching(`/api/boards/${board.id}/export\\?format=csv$`));
 
       fireEvent.click(more);
@@ -2981,7 +3003,10 @@ describe('<BoardWorkspace />', () => {
       fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }));
       await flushPromises();
       expect(request).toHaveBeenCalledTimes(2);
-      expect(getByText('Could not download CSV. Try again.')).toBeVisible();
+      // The retry updates the same toast instead of stacking a second one.
+      expect(
+        getByText('Could not download CSV. Try again.', { selector: '[data-slot="toast-region"] *' }),
+      ).toBeVisible();
     } finally {
       request.mockRestore();
     }

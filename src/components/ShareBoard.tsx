@@ -5,6 +5,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@ui-sdk/solid/dialog';
+import { toast } from '@ui-sdk/solid/toast';
 import { Share2 } from 'lucide';
 import { Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 import { encode } from 'uqr';
@@ -21,21 +22,19 @@ const buttonClass = [
 const secondaryButtonClass = [buttonClass, 'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle'];
 
 function CopyLink(props: { label: string; labelId: string; link: string; primary?: boolean }) {
-  const [status, setStatus] = createSignal('');
   let input!: HTMLInputElement;
 
   async function copyLink(button: HTMLButtonElement) {
     button.focus();
-    setStatus('');
     try {
       await navigator.clipboard.writeText(props.link);
-      setStatus(`${props.label} copied.`);
+      toast.success(`${props.label} copied.`);
     } catch {
       if (document.activeElement === button && input.isConnected) {
         input.focus();
-        setStatus('Copy the selected link manually.');
+        toast.info('Copy the selected link manually.');
       } else {
-        setStatus('Select the link to copy it manually.');
+        toast.info('Select the link to copy it manually.');
       }
     }
   }
@@ -66,9 +65,6 @@ function CopyLink(props: { label: string; labelId: string; link: string; primary
           Copy
         </button>
       </div>
-      <p role="status" class={status() ? 'mt-2 text-sm text-text-muted' : 'sr-only'}>
-        {status()}
-      </p>
     </div>
   );
 }
@@ -109,7 +105,6 @@ function FacilitatorSharing(props: { boardId: string }) {
   const titleId = createUniqueId();
   const [link, setLink] = createSignal('');
   const [pending, setPending] = createSignal<'show' | 'rotate' | null>(null);
-  const [status, setStatus] = createSignal('');
   const [error, setError] = createSignal('');
   let heading!: HTMLHeadingElement;
 
@@ -127,10 +122,11 @@ function FacilitatorSharing(props: { boardId: string }) {
     const failure = rotate
       ? 'Could not rotate the link. Try again.'
       : 'Could not retrieve the link. Try again.';
+    const toastId = `facilitator-link-${props.boardId}`;
     setPending(rotate ? 'rotate' : 'show');
-    setStatus('');
     setError('');
     if (rotate) setLink('');
+    toast.loading(rotate ? 'Rotating link…' : 'Retrieving link…', { id: toastId });
 
     try {
       const fetchLink = rotate ? rotateFacilitatorLink : getFacilitatorLink;
@@ -139,12 +135,17 @@ function FacilitatorSharing(props: { boardId: string }) {
         const nextLink = new URL(result.link, window.location.origin).href;
         if (!rotate && document.activeElement === button) heading.focus();
         setLink(nextLink);
-        setStatus(rotate ? 'Co-Facilitator Link rotated.' : 'Co-Facilitator Link ready to copy.');
+        toast.update(toastId, {
+          type: 'success',
+          title: rotate ? 'Co-Facilitator Link rotated.' : 'Co-Facilitator Link ready to copy.',
+        });
       } else {
         setError(result.message);
+        toast.dismiss(toastId);
       }
     } catch {
       setError(failure);
+      toast.update(toastId, { type: 'error', title: failure });
     } finally {
       setPending(null);
     }
@@ -183,9 +184,6 @@ function FacilitatorSharing(props: { boardId: string }) {
           Rotate Link
         </button>
       </div>
-      <p role="status" class={pending() || status() ? 'text-sm text-text-muted' : 'sr-only'}>
-        {pending() === 'rotate' ? 'Rotating link…' : pending() ? 'Retrieving link…' : status()}
-      </p>
       <p role="alert" class={error() ? 'rounded-lg border border-col-rose bg-col-rose-tint p-3 text-sm text-text' : 'sr-only'}>
         {error()}
       </p>
