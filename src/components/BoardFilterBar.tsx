@@ -1,3 +1,5 @@
+import { Toggle, ToggleGroup } from '@ui-sdk/solid/toggle';
+import { ArrowUpDown, ChevronDown, Search, SlidersHorizontal, X } from 'lucide';
 import { For, Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 
 import {
@@ -7,7 +9,7 @@ import {
   type BoardQuickFilter,
   type BoardSortMode,
 } from '../lib/board-view';
-import { ChevronRightIcon, CloseIcon, SearchIcon } from './Icons';
+import LucideIcon from './LucideIcon';
 
 export interface BoardFilterBarProps {
   query: string;
@@ -27,12 +29,21 @@ export interface BoardFilterBarProps {
   onSearchInputRef?: (el: HTMLInputElement) => void;
 }
 
+const focusRingClass =
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
+
 export default function BoardFilterBar(props: BoardFilterBarProps) {
   const searchId = createUniqueId();
   const sortSelectId = createUniqueId();
   const filterControlsId = createUniqueId();
   const [showFilters, setShowFilters] = createSignal(false);
   let searchInput: HTMLInputElement | undefined;
+
+  const activeFilterIndex = createMemo(() => {
+    const index = BOARD_QUICK_FILTERS.findIndex((option) => option.value === props.filter);
+    return index >= 0 ? index : 0;
+  });
+  const selectedFilterValue = createMemo((): BoardQuickFilter[] => [props.filter]);
 
   const filterLabel = createMemo(() => {
     const filter = props.filter;
@@ -49,6 +60,9 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
   const isMostVotedPausedByBlindVoting = createMemo(
     () => props.blindVoting && props.requestedSortMode === 'most-voted',
   );
+  const hasStatusContent = createMemo(
+    () => props.hasActiveFilter || isMostVotedPausedByBlindVoting(),
+  );
 
   function handleSearchKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
@@ -62,21 +76,25 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
     <section
       aria-label="Search, filter, and sort Board"
       data-print-hide="true"
-      class="border-b border-border"
+      class="border-b border-border/65"
     >
-      <div class="mx-auto max-w-[1600px] px-3 py-3 sm:px-6">
-        <div class="flex flex-wrap items-end gap-2 sm:items-center sm:gap-x-4">
+      <div class="mx-auto max-w-[1600px] px-3 py-2.5 sm:px-6">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 lg:flex-nowrap lg:gap-3">
           <div
             class={[
-              'secret-search-field min-w-[min(9rem,100%)] flex-1 sm:flex sm:max-w-72 sm:items-center sm:gap-2',
+              'secret-search-field group min-w-[min(10rem,100%)] flex-1 sm:max-w-52 lg:max-w-48 xl:max-w-64',
               { 'secret-search-wide': props.widenSearch },
             ]}
           >
-            <label for={searchId} class="mb-1 block text-sm font-medium text-text sm:mb-0">
+            <label for={searchId} class="sr-only">
               Search
             </label>
-            <div class="relative min-w-0 flex-1">
-              <SearchIcon class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-muted" />
+            <div class="relative min-w-0">
+              <LucideIcon
+                icon={Search}
+                class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-text-muted transition-colors group-focus-within:text-text"
+                strokeWidth={1.85}
+              />
               <input
                 id={searchId}
                 ref={(el) => {
@@ -84,14 +102,15 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                   props.onSearchInputRef?.(el);
                 }}
                 type="search"
+                placeholder="Search cards…"
                 aria-label="Search Cards, Card Groups, and comments"
                 aria-keyshortcuts="/"
                 value={props.query}
                 onInput={(event) => props.onQueryChange(event.currentTarget.value)}
                 onKeyDown={handleSearchKeyDown}
                 class={[
-                  'min-h-11 w-full rounded-lg border border-control bg-surface py-1.5 pr-12 pl-9 text-base text-text sm:min-h-9',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+                  'h-11 w-full rounded-xl border border-border/85 bg-surface py-1.5 pr-11 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 focus-visible:border-accent sm:h-9 sm:pr-9 sm:text-[13px]',
+                  focusRingClass,
                   '[&::-webkit-search-cancel-button]:appearance-none',
                 ]}
               />
@@ -100,7 +119,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                 fallback={
                   <kbd
                     aria-hidden="true"
-                    class="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border border-border bg-canvas px-1.5 py-0.5 font-mono text-xs text-text-muted sm:inline-flex"
+                    class="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 items-center justify-center rounded-md border border-border/80 bg-surface-subtle/80 px-1.5 py-0.5 font-mono text-[11px] font-medium leading-none text-text-muted sm:inline-flex"
                   >
                     /
                   </kbd>
@@ -113,9 +132,12 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                     props.onQueryChange('');
                     searchInput?.focus();
                   }}
-                  class="absolute top-1/2 right-px inline-flex min-h-11 min-w-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle sm:min-h-9 sm:min-w-9"
+                  class={[
+                    'spring-press absolute top-1/2 right-px inline-flex min-h-11 min-w-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle sm:right-1 sm:min-h-7 sm:min-w-7',
+                    focusRingClass,
+                  ]}
                 >
-                  <CloseIcon class="size-4" />
+                  <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />
                 </button>
               </Show>
             </div>
@@ -126,98 +148,157 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
             aria-expanded={showFilters() ? 'true' : 'false'}
             aria-controls={filterControlsId}
             onClick={() => setShowFilters((open) => !open)}
-            class="group inline-flex min-h-11 max-w-full cursor-pointer items-center gap-2 rounded-lg border border-control bg-surface px-3 py-2 text-left text-sm font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle sm:hidden"
+            class={[
+              'spring-press inline-flex min-h-11 max-w-full shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border border-border/85 bg-surface px-3 text-left text-sm font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle sm:hidden',
+              focusRingClass,
+            ]}
           >
-            Filter &amp; sort
-            <ChevronRightIcon class="size-4 shrink-0 group-aria-expanded:rotate-90" />
+            <LucideIcon
+              icon={SlidersHorizontal}
+              class="size-3.5 shrink-0 text-text-muted"
+              strokeWidth={1.85}
+            />
+            <span>Filter &amp; sort</span>
+            <LucideIcon
+              icon={ChevronDown}
+              class={[
+                'spring-chevron size-3.5 shrink-0 text-text-muted',
+                { 'rotate-180': showFilters() },
+              ]}
+              strokeWidth={2}
+            />
           </button>
 
           <div
             id={filterControlsId}
             class={[
-              'w-full min-w-0 flex-wrap items-center gap-2 sm:flex sm:w-auto sm:gap-x-4',
-              showFilters() ? 'flex' : 'hidden',
+              'w-full min-w-0 flex-wrap items-center gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-2.5 lg:gap-3',
+              showFilters() ? 'disclosure-reveal flex' : 'hidden',
             ]}
           >
-            <div role="group" aria-label="Filter cards" class="flex flex-wrap items-center gap-1">
+            <ToggleGroup<BoardQuickFilter>
+              aria-label="Filter cards"
+              value={selectedFilterValue()}
+              deselectable={false}
+              onValueChange={(next) => {
+                const selected = next[0];
+                if (selected) props.onFilterChange(selected);
+              }}
+              class="segmented-track relative grid w-full grid-cols-4 items-center rounded-xl border border-border/75 p-1 sm:h-9 sm:w-auto"
+            >
+              <span
+                aria-hidden="true"
+                class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
+                style={{
+                  '--seg-count': String(BOARD_QUICK_FILTERS.length),
+                  '--seg-index': String(activeFilterIndex()),
+                }}
+              />
               <For each={BOARD_QUICK_FILTERS}>
                 {(option) => (
-                  <button
-                    type="button"
-                    aria-pressed={props.filter === option.value ? 'true' : 'false'}
-                    onClick={() => props.onFilterChange(option.value)}
+                  <Toggle
+                    value={option.value}
+                    data-label={option.label}
                     class={[
-                      'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border px-2.5 py-1 text-sm font-medium transition-colors active:opacity-80 sm:min-h-9',
-                      props.filter === option.value
-                        ? 'border-accent bg-accent text-accent-contrast'
-                        : 'border-control bg-surface text-text hover:bg-surface-subtle',
+                      'spring-press relative z-10 inline-flex min-h-11 cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-lg px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-pressed:font-semibold data-pressed:text-text sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
+                      focusRingClass,
                     ]}
                   >
                     {option.label}
-                  </button>
+                  </Toggle>
                 )}
               </For>
-            </div>
+            </ToggleGroup>
 
-            <div class="flex max-w-full flex-wrap items-center gap-2">
-              <label for={sortSelectId} class="text-sm font-medium text-text">
+            <div class="flex w-full items-center sm:w-auto">
+              <label for={sortSelectId} class="sr-only">
                 Sort
               </label>
-              <select
-                id={sortSelectId}
-                aria-label="Sort cards"
-                value={props.effectiveSortMode}
-                onChange={(event) =>
-                  props.onSortChange(event.currentTarget.value as BoardSortMode)
-                }
-                class={[
-                  'min-h-11 min-w-11 max-w-full cursor-pointer rounded-lg border border-control bg-surface px-3 py-1 text-base text-text sm:min-h-9',
-                  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
-                ]}
-              >
-                <For each={BOARD_SORT_OPTIONS}>
-                  {(option) => (
-                    <option
-                      value={option.value}
-                      disabled={option.value === 'most-voted' && props.blindVoting}
-                    >
-                      {option.value === 'most-voted' && props.blindVoting
-                        ? `${option.label} (Blind Voting)`
-                        : option.label}
-                    </option>
-                  )}
-                </For>
-              </select>
+              <div class="relative inline-flex w-full items-center sm:w-auto">
+                <LucideIcon
+                  icon={ArrowUpDown}
+                  class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted"
+                  strokeWidth={1.85}
+                />
+                <select
+                  id={sortSelectId}
+                  aria-label="Sort cards"
+                  value={props.effectiveSortMode}
+                  onChange={(event) =>
+                    props.onSortChange(event.currentTarget.value as BoardSortMode)
+                  }
+                  class={[
+                    'h-11 w-full appearance-none cursor-pointer rounded-xl border border-border/85 bg-surface pr-8 pl-8 text-base font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle/50 focus-visible:border-accent sm:h-9 sm:w-auto sm:text-[13px]',
+                    focusRingClass,
+                  ]}
+                >
+                  <For each={BOARD_SORT_OPTIONS}>
+                    {(option) => (
+                      <option
+                        value={option.value}
+                        disabled={option.value === 'most-voted' && props.blindVoting}
+                      >
+                        {option.value === 'most-voted' && props.blindVoting
+                          ? `${option.label} (Blind Voting)`
+                          : option.label}
+                      </option>
+                    )}
+                  </For>
+                </select>
+                <LucideIcon
+                  icon={ChevronDown}
+                  class="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-text-muted"
+                  strokeWidth={2}
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted">
-          <div aria-live="polite" class="flex flex-wrap gap-x-2 tabular-nums">
+          <div
+            data-filter-status-slot=""
+            class={[
+              'flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted sm:ml-auto sm:min-w-0 sm:flex-nowrap sm:justify-end',
+              hasStatusContent() ? 'w-full sm:w-auto' : 'sr-only',
+            ]}
+          >
+            <div
+              aria-live="polite"
+              class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 tabular-nums sm:flex-nowrap"
+            >
+              <Show when={props.hasActiveFilter}>
+                <span class="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-surface-subtle/80 px-2.5 py-1 text-xs leading-none text-text-muted ring-1 ring-inset ring-border/70 sm:h-7">
+                  <Show when={props.filter !== 'all'}>
+                    <span class="shrink-0 font-semibold text-text">Filter: {filterLabel()}</span>
+                    <span aria-hidden="true" class="h-3 w-px shrink-0 bg-border/80" />
+                  </Show>
+                  <span class="truncate" title={matchSummary()}>
+                    {matchSummary()}
+                  </span>
+                </span>
+              </Show>
+              <Show when={isMostVotedPausedByBlindVoting()}>
+                <span class="inline-flex items-center rounded-full bg-surface-subtle/80 px-2.5 py-1 text-xs leading-none text-text-muted ring-1 ring-inset ring-border/70 sm:h-7 sm:whitespace-nowrap">
+                  Most Voted paused during Blind Voting
+                </span>
+              </Show>
+            </div>
             <Show when={props.hasActiveFilter}>
-              <span class="mt-2 flex flex-wrap items-center gap-x-2">
-                <Show when={props.filter !== 'all'}>
-                  <span class="font-medium text-text">Filter: {filterLabel()}</span>
-                </Show>
-                <span>{matchSummary()}</span>
-              </span>
-            </Show>
-            <Show when={isMostVotedPausedByBlindVoting()}>
-              <span class="mt-2">Most Voted paused during Blind Voting</span>
+              <button
+                type="button"
+                onClick={() => {
+                  props.onResetFilters();
+                  searchInput?.focus();
+                }}
+                class={[
+                  'spring-press inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-xl border border-border/85 bg-surface px-3 text-xs font-semibold text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle sm:h-9 sm:min-h-0 sm:px-2.5 sm:text-[13px]',
+                  focusRingClass,
+                ]}
+              >
+                <LucideIcon icon={X} class="size-3.5 text-text-muted" strokeWidth={2} />
+                <span>Clear filters</span>
+              </button>
             </Show>
           </div>
-          <Show when={props.hasActiveFilter}>
-            <button
-              type="button"
-              onClick={(event) => {
-                props.onResetFilters();
-                if (event.detail === 0) searchInput?.focus();
-              }}
-              class="mt-2 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-control bg-surface px-3 text-sm font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle sm:min-h-9"
-            >
-              Clear filters
-            </button>
-          </Show>
         </div>
       </div>
     </section>
