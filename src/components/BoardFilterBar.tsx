@@ -1,5 +1,5 @@
-import { Toggle, ToggleGroup } from '@ui-sdk/solid/toggle';
 import { ArrowUpDown, ChevronDown, Search, SlidersHorizontal, X } from 'lucide';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 import { For, Show, createMemo, createSignal, createUniqueId } from 'solid-js';
 
 import {
@@ -39,12 +39,6 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
   const filterStatusId = createUniqueId();
   const [showFilters, setShowFilters] = createSignal(false);
   let searchInput: HTMLInputElement | undefined;
-
-  const activeFilterIndex = createMemo(() => {
-    const index = BOARD_QUICK_FILTERS.findIndex((option) => option.value === props.filter);
-    return index >= 0 ? index : 0;
-  });
-  const selectedFilterValue = createMemo((): BoardQuickFilter[] => [props.filter]);
 
   const filterLabel = createMemo(() => {
     const filter = props.filter;
@@ -191,39 +185,33 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
               showFilters() ? 'disclosure-reveal flex' : 'hidden',
             ]}
           >
-            <ToggleGroup<BoardQuickFilter>
+            <SegmentedControl<BoardQuickFilter>
               aria-label="Filter cards"
-              value={selectedFilterValue()}
-              deselectable={false}
+              value={props.filter}
               onValueChange={(next) => {
-                const selected = next[0];
-                if (selected) props.onFilterChange(selected);
+                if (next) props.onFilterChange(next);
               }}
-              class="segmented-track relative grid w-full grid-cols-4 items-center rounded-xl border border-border/75 p-1 sm:h-9 sm:w-auto"
+              class="segmented-track relative isolate grid w-full grid-cols-4 items-center rounded-xl border border-border/75 p-1 sm:h-9 sm:w-auto"
             >
-              <span
+              <SegmentedControlIndicator
                 aria-hidden="true"
-                class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
-                style={{
-                  '--seg-count': String(BOARD_QUICK_FILTERS.length),
-                  '--seg-index': String(activeFilterIndex()),
-                }}
+                class="segmented-thumb pointer-events-none rounded-lg"
               />
               <For each={BOARD_QUICK_FILTERS}>
                 {(option) => (
-                  <Toggle
+                  <SegmentedControlItem
                     value={option.value}
                     data-label={option.label}
                     class={[
-                      'spring-press relative z-10 inline-flex min-h-11 cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-lg px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-pressed:font-semibold data-pressed:text-text max-[25rem]:px-0.5 sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
+                      'spring-press relative z-10 inline-flex board-touch-target cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-lg px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-checked:font-semibold data-checked:text-text max-[25rem]:px-0.5 sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
                       focusRingClass,
                     ]}
                   >
                     {option.label}
-                  </Toggle>
+                  </SegmentedControlItem>
                 )}
               </For>
-            </ToggleGroup>
+            </SegmentedControl>
 
             <div class="flex w-full items-center sm:w-auto">
               <label for={sortSelectId} class="sr-only">

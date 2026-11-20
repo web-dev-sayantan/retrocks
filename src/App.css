@@ -525,16 +525,26 @@
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.28);
 }
 
-/* Critically damped spring sliding thumb for segmented tracks */
+/* Critically damped spring sliding thumb for segmented tracks (ui-sdk
+   SegmentedControlIndicator vars; the control provides isolation + relative) */
 .segmented-thumb {
-  width: calc((100% - 0.5rem) / var(--seg-count, 2));
-  translate: calc(var(--seg-index, 0) * 100%) 0;
+  position: absolute;
+  z-index: -1;
+  top: var(--segmented-control-indicator-top);
+  left: var(--segmented-control-indicator-left);
+  width: var(--segmented-control-indicator-width);
+  height: var(--segmented-control-indicator-height);
   background: var(--retrocks-surface);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.07),
     0 0 0 1px color-mix(in srgb, var(--retrocks-border) 75%, transparent);
-  transition: translate 340ms ease-out;
-  transition: translate 340ms linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1);
+  transition-property: top, left, width, height;
+  transition-duration: 340ms;
+  transition-timing-function: linear(0, 0.012 1%, 0.045 2.5%, 0.165 6%, 0.44 13%, 0.715 22%, 0.885 32%, 0.968 43%, 1.003 55%, 1.006 67%, 1.001 82%, 1);
+}
+
+.segmented-thumb[data-activation-direction='none'] {
+  transition: none;
 }
 
 :is([data-theme='dark'], [data-theme='retro']) .segmented-thumb {

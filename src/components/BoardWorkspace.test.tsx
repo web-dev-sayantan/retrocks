@@ -1137,7 +1137,7 @@ describe('<BoardWorkspace />', () => {
       );
       expect(drawer.getByText('Pair on flaky tests')).toBeInTheDocument();
       expect(drawer.getByText('Ship canary')).toBeInTheDocument();
-      expect(drawer.getByRole('button', { name: 'Done (2)' })).toBeInTheDocument();
+      expect(drawer.getByRole('radio', { name: 'Done (2)' })).toBeInTheDocument();
 
       fireEvent.keyDown(document, { key: 'Escape' });
       flush();
@@ -3155,7 +3155,7 @@ describe('<BoardWorkspace />', () => {
       expect(view.container.querySelectorAll('.secret-search-dot')).toHaveLength(0);
 
       searchFor('meetings');
-      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      fireEvent.click(view.getByRole('radio', { name: 'Mine' }));
       flush();
       if (hasCards) {
         expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
@@ -3163,7 +3163,7 @@ describe('<BoardWorkspace />', () => {
         expect(view.getByText('No Cards matched — this search could have been an email.')).toBeInTheDocument();
       }
 
-      fireEvent.click(view.getByRole('button', { name: 'All' }));
+      fireEvent.click(view.getByRole('radio', { name: 'All' }));
       flush();
       searchFor('more meetings');
       expect(view.queryByText('No Cards matched — this search could have been an email.')).not.toBeInTheDocument();
@@ -3187,7 +3187,7 @@ describe('<BoardWorkspace />', () => {
       expect(view.getByText('Kudos for the fast deployment')).toBeInTheDocument();
       expect(view.queryByText('Kudos all around!')).not.toBeInTheDocument();
 
-      fireEvent.click(view.getByRole('button', { name: 'Mine' }));
+      fireEvent.click(view.getByRole('radio', { name: 'Mine' }));
       flush();
       expect(view.queryByText('Kudos for the fast deployment')).not.toBeInTheDocument();
       expect(within(view.getByRole('region', { name: 'Search, filter, and sort Board' }))
@@ -3477,7 +3477,7 @@ describe('<BoardWorkspace />', () => {
     flush();
     expect(disclosure).toHaveAttribute('aria-expanded', 'true');
 
-    fireEvent.click(within(view.getByRole('group', { name: 'Filter cards' })).getByRole('button', { name: 'Mine' }));
+    fireEvent.click(within(view.getByRole('radiogroup', { name: 'Filter cards' })).getByRole('radio', { name: 'Mine' }));
     fireEvent.change(view.getByRole('combobox', { name: 'Sort cards' }), { target: { value: 'oldest' } });
     fireEvent.click(disclosure);
     fireEvent.input(search, { target: { value: 'deployment' } });
@@ -3535,13 +3535,13 @@ describe('<BoardWorkspace />', () => {
     ));
     flush();
 
-    const filterGroup = within(view.getByRole('group', { name: 'Filter cards' }));
-    expect(filterGroup.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    const filterGroup = within(view.getByRole('radiogroup', { name: 'Filter cards' }));
+    expect(filterGroup.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
 
     // Filter: Mine -> shows my standalone card + group containing my card; col_2 shows distinct empty-filter state while empty col_3 still says "No Cards yet"
-    fireEvent.click(filterGroup.getByRole('button', { name: 'Mine' }));
+    fireEvent.click(filterGroup.getByRole('radio', { name: 'Mine' }));
     flush();
-    expect(filterGroup.getByRole('button', { name: 'Mine' })).toHaveAttribute('aria-pressed', 'true');
+    expect(filterGroup.getByRole('radio', { name: 'Mine' })).toHaveAttribute('aria-checked', 'true');
     expect(view.getByText('2 of 5 cards')).toBeInTheDocument();
     expect(view.getByText('My solo card')).toBeInTheDocument();
     expect(view.getByText('Automated changelog')).toBeInTheDocument();
@@ -3554,7 +3554,7 @@ describe('<BoardWorkspace />', () => {
     expect(within(actionItemsCol).getByText('No Cards yet')).toBeInTheDocument();
 
     // Filter: Voted -> shows standalone voted Card and Card Group with group.myVotes > 0
-    fireEvent.click(filterGroup.getByRole('button', { name: 'Voted' }));
+    fireEvent.click(filterGroup.getByRole('radio', { name: 'Voted' }));
     flush();
     expect(view.getByText('3 of 5 cards')).toBeInTheDocument();
     expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
@@ -3563,7 +3563,7 @@ describe('<BoardWorkspace />', () => {
     expect(view.queryByText('My solo card')).not.toBeInTheDocument();
 
     // Filter: Action Items composed with Search
-    fireEvent.click(filterGroup.getByRole('button', { name: 'Action Items' }));
+    fireEvent.click(filterGroup.getByRole('radio', { name: 'Action Items' }));
     flush();
     expect(view.getByText('2 of 5 cards')).toBeInTheDocument();
     expect(view.getByText('Document on-call playbook')).toBeInTheDocument();
@@ -3581,7 +3581,7 @@ describe('<BoardWorkspace />', () => {
     // Reset filters from per-Column empty-filter state restores everything
     fireEvent.click(within(toImprove).getByRole('button', { name: 'Reset filters' }));
     flush();
-    expect(filterGroup.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    expect(filterGroup.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
     expect(search).toHaveValue('');
     expect(view.getByText('Teammate note')).toBeInTheDocument();
 

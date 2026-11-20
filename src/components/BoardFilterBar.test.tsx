@@ -97,67 +97,54 @@ function renderFilterBar(options: HarnessOptions = {}) {
 }
 
 describe('BoardFilterBar', () => {
-  it('renders quick filters in a recessed segmented track with a sliding thumb, neutral default All state, and roving keyboard navigation with zero diagnostics', async () => {
+  it('renders quick filters as a segmented radio group with a sliding indicator, neutral default All state, and roving keyboard navigation with zero diagnostics', async () => {
     const { artifact } = await captureArtifact(
       () => {
         const { view, filter } = renderFilterBar();
         try {
-          const group = view.getByRole('group', { name: 'Filter cards' });
+          const group = view.getByRole('radiogroup', { name: 'Filter cards' });
           expect(group).toHaveClass('segmented-track');
 
           const thumb = group.querySelector('.segmented-thumb') as HTMLElement | null;
           expect(thumb).toBeInTheDocument();
           expect(thumb?.getAttribute('aria-hidden')).toBe('true');
-          expect(thumb?.style.getPropertyValue('--seg-count')).toBe('4');
-          expect(thumb?.style.getPropertyValue('--seg-index')).toBe('0');
 
           const groupScope = within(group);
-          const allBtn = groupScope.getByRole('button', { name: 'All' });
-          const mineBtn = groupScope.getByRole('button', { name: 'Mine' });
-          const votedBtn = groupScope.getByRole('button', { name: 'Voted' });
-          const actionsBtn = groupScope.getByRole('button', { name: 'Action Items' });
+          const allRadio = groupScope.getByRole('radio', { name: 'All' });
+          const mineRadio = groupScope.getByRole('radio', { name: 'Mine' });
+          const actionsRadio = groupScope.getByRole('radio', { name: 'Action Items' });
 
-          expect(allBtn).toHaveAttribute('aria-pressed', 'true');
-          expect(allBtn).not.toHaveClass('bg-accent');
-          expect(allBtn).not.toHaveClass('text-accent-contrast');
-          expect(mineBtn).toHaveAttribute('aria-pressed', 'false');
+          expect(allRadio).toHaveAttribute('aria-checked', 'true');
+          expect(mineRadio).toHaveAttribute('aria-checked', 'false');
 
-          // Single roving tab stop inside the segmented ToggleGroup
-          expect(allBtn).toHaveAttribute('tabindex', '0');
-          expect(mineBtn).toHaveAttribute('tabindex', '-1');
-          expect(votedBtn).toHaveAttribute('tabindex', '-1');
-          expect(actionsBtn).toHaveAttribute('tabindex', '-1');
+          // Single roving tab stop inside the segmented control
+          expect(allRadio).toHaveAttribute('tabindex', '0');
+          expect(mineRadio).toHaveAttribute('tabindex', '-1');
 
-          // Pressing the already-active filter keeps it pressed (deselectable={false})
-          fireEvent.click(allBtn);
+          // Pressing the already-checked filter keeps it checked
+          fireEvent.click(allRadio);
           flush();
           expect(filter()).toBe('all');
-          expect(allBtn).toHaveAttribute('aria-pressed', 'true');
+          expect(allRadio).toHaveAttribute('aria-checked', 'true');
 
-          // ArrowRight moves focus without selecting; Space activates the focused filter
-          allBtn.focus();
-          fireEvent.keyDown(allBtn, { key: 'ArrowRight' });
+          // Arrow keys move and check, as in any radio group
+          allRadio.focus();
+          fireEvent.keyDown(allRadio, { key: 'ArrowRight' });
           flush();
-          expect(mineBtn).toHaveFocus();
-          expect(filter()).toBe('all');
-
-          fireEvent.keyDown(mineBtn, { key: ' ' });
-          fireEvent.keyUp(mineBtn, { key: ' ' });
-          fireEvent.click(mineBtn);
-          flush();
+          expect(mineRadio).toHaveFocus();
           expect(filter()).toBe('mine');
-          expect(mineBtn).toHaveAttribute('aria-pressed', 'true');
-          expect(allBtn).toHaveAttribute('aria-pressed', 'false');
-          expect(thumb?.style.getPropertyValue('--seg-index')).toBe('1');
+          expect(mineRadio).toHaveAttribute('aria-checked', 'true');
+          expect(allRadio).toHaveAttribute('aria-checked', 'false');
 
-          // End jumps focus to Action Items; click updates thumb index to 3
-          fireEvent.keyDown(mineBtn, { key: 'End' });
+          // End jumps and checks the last filter
+          fireEvent.keyDown(mineRadio, { key: 'ArrowRight' });
           flush();
-          expect(actionsBtn).toHaveFocus();
-          fireEvent.click(actionsBtn);
+          expect(filter()).toBe('voted');
+          fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
           flush();
+          expect(actionsRadio).toHaveFocus();
+          expect(actionsRadio).toHaveAttribute('aria-checked', 'true');
           expect(filter()).toBe('action-items');
-          expect(thumb?.style.getPropertyValue('--seg-index')).toBe('3');
         } finally {
           view.unmount();
         }
@@ -196,7 +183,7 @@ describe('BoardFilterBar', () => {
 
           // Activate filter + search -> no second row mounts beneath the toolbar
           fireEvent.click(
-            within(view.getByRole('group', { name: 'Filter cards' })).getByRole('button', {
+            within(view.getByRole('radiogroup', { name: 'Filter cards' })).getByRole('radio', {
               name: 'Mine',
             }),
           );

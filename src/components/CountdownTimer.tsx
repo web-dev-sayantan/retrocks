@@ -6,6 +6,7 @@ import {
   PopoverTrigger,
   createPopoverController,
 } from '@ui-sdk/solid/popover';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 import { Clock, Pause, Volume2, VolumeX, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
@@ -317,24 +318,32 @@ export default function CountdownTimer(props: {
                 if (validMinutes()) void updateTimer({ action: 'start', minutes: Number(minutesDraft()) });
               }}
             >
-              <div class="segmented-track grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1">
+              <SegmentedControl<string>
+                aria-label="Timer presets"
+                value={presets.includes(Number(minutesDraft())) ? String(minutesDraft()) : null}
+                onValueChange={(next) => {
+                  if (next) setMinutesDraft(next);
+                }}
+                class="segmented-track relative isolate grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1"
+              >
+                <SegmentedControlIndicator
+                  aria-hidden="true"
+                  class="segmented-thumb pointer-events-none rounded-lg"
+                />
                 <For each={presets}>
                   {(minutes) => (
-                    <button
-                      type="button"
-                      aria-pressed={Number(minutesDraft()) === minutes ? 'true' : 'false'}
+                    <SegmentedControlItem
+                      value={String(minutes)}
                       class={[
-                        'spring-press min-h-11 min-w-11 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-h-8 sm:min-w-0',
-                        'hover:text-text board-focus-ring',
-                        'aria-pressed:bg-surface aria-pressed:font-semibold aria-pressed:text-text aria-pressed:shadow-xs',
+                        'spring-press board-touch-target min-w-11 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-w-0',
+                        'hover:text-text board-focus-ring data-checked:font-semibold data-checked:text-text',
                       ]}
-                      onClick={() => setMinutesDraft(String(minutes))}
                     >
                       {minutes}m
-                    </button>
+                    </SegmentedControlItem>
                   )}
                 </For>
-              </div>
+              </SegmentedControl>
               <div class="flex items-end gap-2">
                 <div class="min-w-0 flex-1">
                   <label for={durationId} class="block text-xs font-medium text-text-muted">Minutes</label>

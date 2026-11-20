@@ -1,4 +1,5 @@
 import type { JSX } from '@solidjs/web';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 import {
   ArrowDown,
   ArrowUp,
@@ -166,11 +167,13 @@ function DisclosureButton(props: {
 }
 
 interface SegmentedOption<T> {
+  /** The ui-sdk string key; segmented controls key their items by string. */
+  key: string;
   value: T;
   label: string;
 }
 
-function SegmentedControl<T>(props: {
+function SegmentedField<T>(props: {
   legend: string;
   icon: IconNode;
   options: readonly SegmentedOption<T>[];
@@ -178,17 +181,15 @@ function SegmentedControl<T>(props: {
   onChange: (value: T) => void;
   hint?: string;
 }) {
-  const activeIndex = createMemo(() => {
-    const idx = props.options.findIndex((option) => option.value === props.value);
-    return idx >= 0 ? idx : 0;
-  });
-
   const gridColsClass = () => {
     const count = props.options.length;
     if (count === 2) return 'grid-cols-2';
     if (count === 3) return 'grid-cols-3';
     return 'grid-cols-4';
   };
+
+  const selectedKey = () =>
+    props.options.find((option) => option.value === props.value)?.key ?? null;
 
   return (
     <fieldset class="min-w-0">
@@ -199,39 +200,36 @@ function SegmentedControl<T>(props: {
       <Show when={props.hint}>
         {(text) => <p class="mt-0.5 text-xs text-text-muted">{text()}</p>}
       </Show>
-      <div
+      <SegmentedControl<string>
+        value={selectedKey()}
+        onValueChange={(next) => {
+          const option = props.options.find((item) => item.key === next);
+          if (option) props.onChange(option.value);
+        }}
         class={[
-          'segmented-track relative mt-2 grid rounded-xl border border-border/75 p-1',
+          'segmented-track relative isolate mt-2 grid rounded-xl border border-border/75 p-1',
           gridColsClass(),
         ]}
       >
-        <span
+        <SegmentedControlIndicator
           aria-hidden="true"
-          class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
-          style={{
-            '--seg-count': String(props.options.length),
-            '--seg-index': String(activeIndex()),
-          }}
+          class="segmented-thumb pointer-events-none rounded-lg"
         />
         <For each={props.options}>
           {(option) => (
-            <button
-              type="button"
-              aria-pressed={props.value === option.value ? 'true' : 'false'}
-              onClick={() => props.onChange(option.value)}
+            <SegmentedControlItem
+              value={option.key}
               class={[
                 'relative z-10 min-h-10 cursor-pointer rounded-lg px-2 py-1.5 text-center text-xs font-medium leading-snug transition-colors sm:text-[13px]',
                 focusClass,
-                props.value === option.value
-                  ? 'font-semibold text-text'
-                  : 'text-text-muted hover:text-text',
+                'text-text-muted hover:text-text data-checked:font-semibold data-checked:text-text',
               ]}
             >
               {option.label}
-            </button>
+            </SegmentedControlItem>
           )}
         </For>
-      </div>
+      </SegmentedControl>
     </fieldset>
   );
 }
@@ -383,21 +381,23 @@ function BoardPreview(props: {
 }
 
 const VOTE_LIMIT_ITEMS: readonly SegmentedOption<VoteLimitOption>[] = VOTE_LIMIT_OPTIONS.map((opt) => ({
+  key: opt === null ? 'unlimited' : String(opt),
   value: opt,
   label: opt === null ? 'Unlimited' : String(opt),
 }));
 
 const MAX_VOTES_ITEMS: readonly SegmentedOption<MaxVotesPerCardOption>[] = [
-  { value: null, label: 'Unlimited (stackable)' },
-  { value: 1, label: '1 per Card or Card Group' },
+  { key: 'unlimited', value: null, label: 'Unlimited (stackable)' },
+  { key: '1', value: 1, label: '1 per Card or Card Group' },
 ];
 
 const PRIVATE_MODE_ITEMS: readonly SegmentedOption<boolean>[] = [
-  { value: false, label: 'Off' },
-  { value: true, label: 'On' },
+  { key: 'off', value: false, label: 'Off' },
+  { key: 'on', value: true, label: 'On' },
 ];
 
 const RETENTION_ITEMS: readonly SegmentedOption<RetentionDaysOption>[] = RETENTION_DAYS_OPTIONS.map((days) => ({
+  key: String(days),
   value: days,
   label: `${days} days`,
 }));
@@ -934,7 +934,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
 
           <Show when={advancedOpen()}>
             <div id="board-advanced" class="disclosure-reveal space-y-5 pt-3 pb-2">
-              <SegmentedControl
+              <SegmentedField
                 legend="Votes per Participant"
                 icon={Vote}
                 options={VOTE_LIMIT_ITEMS}
@@ -942,7 +942,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 onChange={setVoteLimit}
               />
 
-              <SegmentedControl
+              <SegmentedField
                 legend="Max Votes per Card or Card Group"
                 icon={Layers}
                 options={MAX_VOTES_ITEMS}
@@ -950,7 +950,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 onChange={setMaxVotesPerCard}
               />
 
-              <SegmentedControl
+              <SegmentedField
                 legend="Start in Private Mode"
                 icon={EyeOff}
                 options={PRIVATE_MODE_ITEMS}
@@ -959,7 +959,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 hint="Redacts other Participants' Cards until the Facilitator reveals them."
               />
 
-              <SegmentedControl
+              <SegmentedField
                 legend="Auto-expiry on inactivity"
                 icon={Clock}
                 options={RETENTION_ITEMS}

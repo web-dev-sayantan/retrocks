@@ -155,12 +155,12 @@ describe('<BoardCreator />', () => {
     flush();
     expect(advancedToggle).toHaveAttribute('aria-expanded', 'true');
 
-    fireEvent.click(getByRole('button', { name: '10' }));
+    fireEvent.click(getByRole('radio', { name: '10' }));
     fireEvent.click(
-      getByRole('button', { name: /1 per Card or Card Group/i }),
+      getByRole('radio', { name: /1 per Card or Card Group/i }),
     );
-    fireEvent.click(getByRole('button', { name: /^On$/i }));
-    fireEvent.click(getByRole('button', { name: '180 days' }));
+    fireEvent.click(getByRole('radio', { name: /^On$/i }));
+    fireEvent.click(getByRole('radio', { name: '180 days' }));
     flush();
 
     fireEvent.click(advancedToggle);

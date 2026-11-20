@@ -1,4 +1,3 @@
-import { Toggle, ToggleGroup } from '@ui-sdk/solid/toggle';
 import { Flag } from 'lucide';
 import {
   For,
@@ -8,6 +7,7 @@ import {
   createSignal,
   untrack,
 } from 'solid-js';
+import { SegmentedControl, SegmentedControlIndicator, SegmentedControlItem } from '@ui-sdk/solid/segmented-control';
 
 import {
   buildActionItemsMarkdown,
@@ -193,8 +193,6 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   let previousFocus: HTMLElement | null = null;
   const [filter, setFilter] = createSignal<ActionItemFilter>('all');
   const [copyStatus, setCopyStatus] = createSignal('');
-  const selectedFilter = createMemo(() => [filter()]);
-  const activeFilterIndex = createMemo(() => FILTERS.findIndex((option) => option.value === filter()));
 
   const allItems = createMemo(
     () => filterActionItems(props.board.cards, 'all'),
@@ -278,34 +276,32 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
         </BoardOverlayHeader>
 
         <div class="border-b border-border px-4 py-2 sm:px-5">
-          <ToggleGroup<ActionItemFilter>
+          <SegmentedControl<ActionItemFilter>
             aria-label="Filter Action Items"
-            value={selectedFilter()}
-            deselectable={false}
+            value={filter()}
             onValueChange={(next) => {
-              if (next[0]) setFilter(next[0]);
+              if (next) setFilter(next);
             }}
-            class="segmented-track relative grid w-full max-w-xs grid-cols-3 rounded-xl border border-border/75 p-1"
+            class="segmented-track relative isolate grid w-full max-w-xs grid-cols-3 rounded-xl border border-border/75 p-1"
           >
-            <span
+            <SegmentedControlIndicator
               aria-hidden="true"
-              class="segmented-thumb pointer-events-none absolute inset-y-1 left-1 rounded-lg"
-              style={{ '--seg-count': String(FILTERS.length), '--seg-index': String(activeFilterIndex()) }}
+              class="segmented-thumb pointer-events-none rounded-lg"
             />
             <For each={FILTERS}>
               {(option) => (
-                <Toggle
+                <SegmentedControlItem
                   value={option.value}
                   class={[
-                    'spring-press relative min-h-11 cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-pressed:text-text sm:min-h-8 sm:text-[13px]',
+                    'spring-press relative board-touch-target cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-checked:text-text sm:min-h-8 sm:text-[13px]',
                     'board-focus-ring',
                   ]}
                 >
                   {option.label} ({counts[option.value]()})
-                </Toggle>
+                </SegmentedControlItem>
               )}
             </For>
-          </ToggleGroup>
+          </SegmentedControl>
         </div>
 
         <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
