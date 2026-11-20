@@ -1,11 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "src/router.ts",
-    "src/server-config.ts",
-    // Loaded dynamically by oxlint via jsPlugins, invisible to the import graph (#53).
-    "oxlint/plugins-dev/index.js"
-  ],
+  "entry": ["src/router.ts", "src/server-config.ts"],
   "ignoreDependencies": ["server-only"],
   "ignoreExportsUsedInFile": true,
 }
