@@ -170,3 +170,13 @@ export async function decryptFacilitatorToken(
   }
   return null;
 }
+
+export function tokenHashesMatch(candidateHash: string, storedHash: string): boolean {
+  if (candidateHash.length !== storedHash.length) return false;
+
+  let difference = 0;
+  for (let index = 0; index < candidateHash.length; index += 1) {
+    difference |= candidateHash.charCodeAt(index) ^ storedHash.charCodeAt(index);
+  }
+  return difference === 0;
+}

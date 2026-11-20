@@ -13,6 +13,7 @@ export default function RoomNameForm(props: ParentProps<{
   submitLabel: string;
   action: JSX.SerializableAttributeValue;
   error?: string;
+  pending?: boolean;
 }>) {
   const headingId = createUniqueId();
 
@@ -38,7 +39,7 @@ export default function RoomNameForm(props: ParentProps<{
           />
         </Field>
         {props.children}
-        <Button type="submit" class="poker-primary board-focus-ring justify-self-start">
+        <Button type="submit" disabled={props.pending} class="poker-primary board-focus-ring justify-self-start disabled:opacity-65">
           {props.submitLabel}
         </Button>
         <p aria-live="polite" class="text-sm font-medium text-[var(--poker-error)]">{props.error}</p>
