@@ -21,7 +21,7 @@ import {
   type BoardViewDTO,
   type CardViewDTO,
 } from '../lib/board-types';
-import { closeBoardDrawer, showBoardDrawer } from './board-drawer';
+import { closeBoardDrawer, createDrawerBackdropDismiss, showBoardDrawer } from './board-drawer';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
@@ -188,7 +188,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
   let dialog!: HTMLDialogElement;
   let closeButton: HTMLButtonElement | undefined;
   let previousFocus: HTMLElement | null = null;
-  let backdropPressed = false;
+  const backdropDismiss = createDrawerBackdropDismiss(() => props.onClose());
   const [hasOpened, setHasOpened] = createSignal(false);
   const [filter, setFilter] = createSignal<ActionItemFilter>('all');
   const [copyStatus, setCopyStatus] = createSignal('');
@@ -232,7 +232,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
       setFilter('all');
       setCopyStatus('');
       setHasOpened(true);
-      backdropPressed = false;
+      backdropDismiss.reset();
       showBoardDrawer(dialog);
       closeButton?.focus();
     } else if (dialog.open) {
@@ -288,13 +288,9 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
         event.preventDefault();
         props.onClose();
       }}
-      onPointerDown={(event) => {
-        backdropPressed = event.target === dialog && event.button === 0;
-      }}
-      onClick={(event) => {
-        if (backdropPressed && event.target === dialog) props.onClose();
-        backdropPressed = false;
-      }}
+      onPointerDown={backdropDismiss.onPointerDown}
+      onPointerCancel={backdropDismiss.reset}
+      onClick={backdropDismiss.onClick}
     >
       <Show when={hasOpened()}>
         <div class="board-drawer-panel">

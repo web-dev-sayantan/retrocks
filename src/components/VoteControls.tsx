@@ -47,7 +47,7 @@ export default function VoteControls(props: {
       role="group"
       aria-label="Voting"
       class={[
-        'inline-flex h-11 w-fit shrink-0 items-center rounded-lg border transition-colors sm:h-7',
+        'inline-flex h-[calc(2.75rem+2px)] w-fit shrink-0 items-center rounded-lg border transition-colors sm:h-7',
         myVotes() > 0 ? 'border-accent/30 bg-accent/10' : 'border-border/75 bg-surface-subtle/75',
       ]}
     >

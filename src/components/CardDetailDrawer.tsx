@@ -21,7 +21,7 @@ import {
 } from '../lib/board-types';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
-import { closeBoardDrawer, showBoardDrawer } from './board-drawer';
+import { closeBoardDrawer, createDrawerBackdropDismiss, showBoardDrawer } from './board-drawer';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
@@ -68,7 +68,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   let dialog: HTMLDialogElement | undefined;
   let closeButton: HTMLButtonElement | undefined;
   let focusRestored = false;
-  let backdropPressed = false;
+  const backdropDismiss = createDrawerBackdropDismiss(() => props.onClose());
 
   createEffect(
     () => props.isOpen,
@@ -77,7 +77,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
       if (!element) return;
       if (open) {
         focusRestored = false;
-        backdropPressed = false;
+        backdropDismiss.reset();
         showBoardDrawer(element);
         closeButton?.focus({ preventScroll: true });
         return;
@@ -242,13 +242,9 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         props.onClose();
       }}
       class="board-drawer-dialog"
-      onPointerDown={(event) => {
-        backdropPressed = event.target === dialog && event.button === 0;
-      }}
-      onClick={(event) => {
-        if (backdropPressed && event.target === dialog) props.onClose();
-        backdropPressed = false;
-      }}
+      onPointerDown={backdropDismiss.onPointerDown}
+      onPointerCancel={backdropDismiss.reset}
+      onClick={backdropDismiss.onClick}
     >
       <div class="board-drawer-panel">
         <BoardOverlayHeader

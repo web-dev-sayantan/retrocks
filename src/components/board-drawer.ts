@@ -55,3 +55,23 @@ export function closeBoardDrawer(
   }
   return () => { interrupted = true; };
 }
+
+export function createDrawerBackdropDismiss(close: () => void) {
+  let pressed = false;
+
+  function reset() {
+    pressed = false;
+  }
+
+  return {
+    reset,
+    onPointerDown(event: PointerEvent) {
+      pressed = event.target === event.currentTarget && event.button === 0;
+    },
+    onClick(event: MouseEvent) {
+      const dismiss = pressed && event.target === event.currentTarget;
+      reset();
+      if (dismiss) close();
+    },
+  };
+}

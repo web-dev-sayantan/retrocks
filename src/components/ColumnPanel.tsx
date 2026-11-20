@@ -1,4 +1,4 @@
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
 import {
   Check,
   ChevronLeft,
@@ -45,6 +45,7 @@ export interface ColumnPanelProps {
   isBlurred: boolean;
   canGroupCards: boolean;
   nowMs: number;
+  isMobile: boolean;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
   draggingCardId: string | null;
@@ -144,6 +145,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   let renameInputEl: HTMLInputElement | undefined;
   let composerEl: HTMLTextAreaElement | undefined;
+  let deleteItemEl: HTMLDivElement | undefined;
+  let confirmDeleteItemEl: HTMLDivElement | undefined;
 
   createEffect(isRenaming, (renaming) => {
     if (renaming) {
@@ -274,14 +277,20 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
-    setMenuOpen(false);
     if (accent === props.column.accent) return;
     await props.onUpdateColumn(props.column.id, { accent });
   }
 
   async function handleReorder(direction: -1 | 1): Promise<void> {
-    setMenuOpen(false);
     await props.onMoveColumn(props.column.id, direction);
+  }
+
+  function showDeleteConfirmation(confirm: boolean): void {
+    setConfirmingDelete(confirm);
+    queueMicrotask(() => {
+      const item = confirm ? confirmDeleteItemEl : deleteItemEl;
+      if (item?.isConnected) item.focus();
+    });
   }
 
   async function handleConfirmDeleteColumn(): Promise<void> {
@@ -290,7 +299,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     try {
       const ok = await props.onDeleteColumn(props.column.id);
       if (!ok) {
-        setConfirmingDelete(false);
+        showDeleteConfirmation(false);
       }
     } finally {
       setIsDeletingColumn(false);
@@ -363,7 +372,11 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   return (
     <section
       id={`column-${props.column.id}`}
-      aria-label={props.column.title}
+      role={props.isMobile ? 'tabpanel' : undefined}
+      aria-hidden={props.isMobile && !props.isMobileActive ? 'true' : undefined}
+      aria-labelledby={props.isMobile ? `column-tab-${props.column.id}` : undefined}
+      aria-label={props.isMobile ? undefined : props.column.title}
+      tabindex={props.isMobile && props.isMobileActive ? 0 : undefined}
       data-column-id={props.column.id}
       onFocusIn={() => props.onActivateColumn?.(props.column.id)}
       onDragOver={handleDragOver}
@@ -521,7 +534,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         data-print-hide="true"
                       />
                     )}
-                    class="board-popover z-30 w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg"
+                    class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg"
                   >
                     <MenuItem
                       value="rename"
@@ -533,46 +546,49 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     </MenuItem>
 
                     <div class="mt-1 grid grid-cols-2 gap-1">
-                      <button
-                        type="button"
+                      <MenuItem
+                        value="move-left"
                         disabled={!canMoveLeft()}
-                        onClick={() => void handleReorder(-1)}
-                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9"
+                        onSelect={() => void handleReorder(-1)}
+                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
                       >
                         <LucideIcon icon={ChevronLeft} class="size-3.5" strokeWidth={2} />
                         <span>Move left</span>
-                      </button>
-                      <button
-                        type="button"
+                      </MenuItem>
+                      <MenuItem
+                        value="move-right"
                         disabled={!canMoveRight()}
-                        onClick={() => void handleReorder(1)}
-                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9"
+                        onSelect={() => void handleReorder(1)}
+                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
                       >
                         <span>Move right</span>
                         <LucideIcon icon={ChevronRight} class="size-3.5" strokeWidth={2} />
-                      </button>
+                      </MenuItem>
                     </div>
 
-                    <div class="mt-2 border-t border-border/80 pt-2">
+                    <MenuSeparator class="my-2 border-t border-border/80" />
+                    <div>
                       <p class="px-1 text-[11px] font-medium text-text-muted">
                         Accent color
                       </p>
-                      <div class="mt-1.5 grid grid-cols-4 gap-1 px-1">
+                      <MenuRadioGroup<ColumnAccent>
+                        aria-label="Accent color"
+                        value={props.column.accent}
+                        onValueChange={(accent) => { if (accent) void handleSelectAccent(accent); }}
+                        class="mt-1.5 grid grid-cols-4 gap-1 px-1"
+                      >
                         <For each={COLUMN_ACCENTS}>
                           {(accent) => (
-                            <button
-                              type="button"
+                            <MenuRadioItem
+                              value={accent}
                               aria-label={`Accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                              aria-pressed={
-                                props.column.accent === accent ? 'true' : 'false'
-                              }
-                              onClick={() => void handleSelectAccent(accent)}
+                              closeOnSelect
                               class={[
                                 'spring-press flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-8',
                                 {
                                   'border-border bg-surface-subtle':
                                     props.column.accent === accent,
-                                  'border-transparent hover:bg-surface-subtle':
+                                  'border-transparent hover:bg-surface-subtle data-highlighted:bg-surface-subtle':
                                     props.column.accent !== accent,
                                 },
                               ]}
@@ -588,13 +604,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                                   },
                                 ]}
                               />
-                            </button>
+                            </MenuRadioItem>
                           )}
                         </For>
-                      </div>
+                      </MenuRadioGroup>
                     </div>
 
-                    <div class="mt-2 border-t border-border/80 pt-2">
+                    <MenuSeparator class="my-2 border-t border-border/80" />
+                    <div>
                       <Show
                         when={!confirmingDelete()}
                         fallback={
@@ -615,38 +632,43 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                               </Show>
                             </p>
                             <div class="flex items-center gap-1.5">
-                              <button
-                                type="button"
+                              <MenuItem
+                                ref={confirmDeleteItemEl}
+                                value="confirm-delete"
+                                closeOnSelect={false}
                                 disabled={isDeletingColumn() || !canDeleteColumn()}
-                                onClick={() => void handleConfirmDeleteColumn()}
-                                class="spring-press min-h-11 min-w-11 flex-1 cursor-pointer rounded-lg bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50 sm:min-h-8"
+                                onSelect={() => void handleConfirmDeleteColumn()}
+                                class="spring-press min-h-11 min-w-11 flex flex-1 cursor-pointer items-center justify-center rounded-lg bg-col-rose px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 data-highlighted:opacity-90 data-disabled:opacity-50 sm:min-h-8"
                               >
                                 {isDeletingColumn()
                                   ? 'Deleting…'
                                   : 'Confirm delete'}
-                              </button>
-                              <button
-                                type="button"
+                              </MenuItem>
+                              <MenuItem
+                                value="cancel-delete"
+                                closeOnSelect={false}
                                 disabled={isDeletingColumn()}
-                                onClick={() => setConfirmingDelete(false)}
-                                class="spring-press min-h-11 min-w-11 cursor-pointer rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text sm:min-h-8"
+                                onSelect={() => showDeleteConfirmation(false)}
+                                class="spring-press min-h-11 min-w-11 flex cursor-pointer items-center justify-center rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text data-highlighted:text-text sm:min-h-8"
                               >
                                 Cancel
-                              </button>
+                              </MenuItem>
                             </div>
                           </div>
                         }
                       >
-                        <button
-                          type="button"
+                        <MenuItem
+                          ref={deleteItemEl}
+                          value="delete"
+                          closeOnSelect={false}
                           disabled={!canDeleteColumn()}
                           title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
-                          onClick={() => setConfirmingDelete(true)}
-                          class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
+                          onSelect={() => showDeleteConfirmation(true)}
+                          class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
                         >
                           <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
                           <span>Delete column</span>
-                        </button>
+                        </MenuItem>
                       </Show>
                     </div>
                   </MenuContent>
