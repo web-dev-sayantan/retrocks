@@ -9,6 +9,7 @@ import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import type { BoardEvent, BoardMutationResponse, BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from '../lib/board-types';
 import { logPrivacyColophon } from '../lib/easter-eggs';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
+import BoardConfirmDialog from './BoardConfirmDialog';
 import BoardWorkspace from './BoardWorkspace';
 
 function makeCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
@@ -649,13 +650,13 @@ describe('<BoardWorkspace />', () => {
       events: [{ type: 'board:snapshot', version: 4, serverNow: Date.now(), board: resetBoard }],
     });
 
-    const { getByRole, getByText, queryByTitle } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+    const { getByRole, getByText, queryByRole, queryByTitle } = render(() => (
+      <>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
-    const dialog = getByText('Board Settings', { selector: 'h2' }).closest('dialog')!;
-    dialog.showModal = () => { dialog.open = true; };
-    dialog.close = () => { dialog.open = false; };
     openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
@@ -679,17 +680,24 @@ describe('<BoardWorkspace />', () => {
 
     openBoardSettings({ getByRole });
     flush();
-    const destructiveActions = within(settings.getByRole('region', { name: 'Destructive actions' }));
+    const reopened = within(getByRole('dialog', { name: 'Board Settings' }));
+    const destructiveActions = within(reopened.getByRole('region', { name: 'Destructive actions' }));
     expect(destructiveActions.getByRole('button', { name: 'Delete Board' })).toBeVisible();
     fireEvent.click(destructiveActions.getByRole('button', { name: 'Reset All Votes' }));
-    flush();
-    expect(spies.resetVotes).not.toHaveBeenCalled();
-    fireEvent.click(destructiveActions.getByRole('button', { name: 'Confirm Reset' }));
     await flushPromises();
+    expect(spies.resetVotes).not.toHaveBeenCalled();
 
-    expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id });
-    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
-    expect(getByText('7 / 7 votes left')).toBeInTheDocument();
+    // The shared confirm asks before the destructive reset.
+    const resetConfirm = within(
+      getByRole('alertdialog', { name: 'Remove every Vote from this Board?' }),
+    );
+    fireEvent.click(resetConfirm.getByRole('button', { name: 'Reset All Votes' }));
+    await waitFor(() =>
+      expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id }),
+    );
+    expect(queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(reopened.getByRole('button', { name: 'Close Board Settings' }));
+    await waitFor(() => expect(getByText('7 / 7 votes left')).toBeInTheDocument());
     expect(getByText('0 yours')).toBeInTheDocument();
     expect(getByRole('button', { name: 'Cast Vote' })).toBeEnabled();
     expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
@@ -2052,16 +2060,6 @@ describe('<BoardWorkspace />', () => {
       ));
     flush();
 
-    const dialog = getByText('Board Settings', { selector: 'h2' }).closest(
-      'dialog',
-    )!;
-    dialog.showModal = () => {
-      dialog.open = true;
-    };
-    dialog.close = () => {
-      dialog.open = false;
-    };
-
     // Open Board Settings and Lock the Board
     openBoardSettings({ getByRole });
     flush();
@@ -2157,9 +2155,10 @@ describe('<BoardWorkspace />', () => {
     // Unlock the Board from Board Settings
     openBoardSettings({ getByRole });
     flush();
-    fireEvent.click(settings.getByRole('button', { name: 'Unlock Board' }));
+    const reopened = within(getByRole('dialog', { name: 'Board Settings' }));
+    fireEvent.click(reopened.getByRole('button', { name: 'Unlock Board' }));
     await flushPromises();
-    fireEvent.click(settings.getByRole('button', { name: 'Close Board Settings' }));
+    fireEvent.click(reopened.getByRole('button', { name: 'Close Board Settings' }));
     flush();
 
     expect(spies.setBoardLock).toHaveBeenLastCalledWith({
@@ -2257,50 +2256,58 @@ describe('<BoardWorkspace />', () => {
     });
     const { actions, spies } = createFakeActions(board);
 
-    const { getByRole, getByText } = render(() => (
-      <BoardWorkspace
-        board={board}
-        boardId={board.id}
-        homeHref="/"
-        actions={actions}
-      />
+    const { getByRole, queryByRole } = render(() => (
+      <>
+        <BoardWorkspace
+          board={board}
+          boardId={board.id}
+          homeHref="/"
+          actions={actions}
+        />
+        <BoardConfirmDialog />
+      </>
     ));
     flush();
-
-    const dialog = getByText('Board Settings', { selector: 'h2' }).closest(
-      'dialog',
-    )!;
-    dialog.showModal = () => {
-      dialog.open = true;
-    };
-    dialog.close = () => {
-      dialog.open = false;
-    };
 
     openBoardSettings({ getByRole });
     flush();
     const settings = within(getByRole('dialog', { name: 'Board Settings' }));
 
-    // Clicking Delete Board opens confirmation without deleting yet
+    // Clicking Delete Board opens the shared confirm without deleting yet
     fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
-    flush();
+    await flushPromises();
     expect(spies.deleteBoard).not.toHaveBeenCalled();
 
+    const confirmDialog = within(
+      getByRole('alertdialog', { name: 'Permanently delete this Board?' }),
+    );
+
+    // Escape restores the Board Settings without deleting
+    fireEvent.keyDown(confirmDialog.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+    await flushPromises();
+    expect(queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(spies.deleteBoard).not.toHaveBeenCalled();
+    expect(getByRole('dialog', { name: 'Board Settings' })).toBeInTheDocument();
+
     // Cancel aborts deletion
-    fireEvent.click(settings.getByRole('button', { name: 'Cancel Delete' }));
-    flush();
+    fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
+    await flushPromises();
+    fireEvent.click(within(getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
+      .getByRole('button', { name: 'Cancel' }));
+    await flushPromises();
     expect(spies.deleteBoard).not.toHaveBeenCalled();
 
     // Confirming deletes the Board, shows 404 empty state, and removes from Recent Boards
     fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
-    flush();
-    fireEvent.click(settings.getByRole('button', { name: 'Confirm Delete' }));
     await flushPromises();
-
-    expect(spies.deleteBoard).toHaveBeenCalledWith({ boardId: board.id });
-    expect(
-      getByRole('heading', { level: 1, name: 'Board not found or expired' }),
-    ).toBeInTheDocument();
+    fireEvent.click(within(getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
+      .getByRole('button', { name: 'Delete Board' }));
+    await waitFor(() => {
+      expect(spies.deleteBoard).toHaveBeenCalledWith({ boardId: board.id });
+      expect(
+        getByRole('heading', { level: 1, name: 'Board not found or expired' }),
+      ).toBeInTheDocument();
+    });
     expect(
       getByRole('link', { name: 'Create a new board' }),
     ).toBeInTheDocument();
@@ -2377,28 +2384,25 @@ describe('<BoardWorkspace />', () => {
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace
-            board={board}
-            boardId={board.id}
-            homeHref="/"
-            actions={actions}
-          />
+          <>
+            <BoardWorkspace
+              board={board}
+              boardId={board.id}
+              homeHref="/"
+              actions={actions}
+            />
+            <BoardConfirmDialog />
+          </>
         ));
         flush();
-        const dialog = view
-          .getByText('Board Settings', { selector: 'h2' })
-          .closest('dialog')!;
-        dialog.showModal = () => {
-          dialog.open = true;
-        };
-        dialog.close = () => {
-          dialog.open = false;
-        };
         openBoardSettings(view);
         flush();
         fireEvent.click(view.getByRole('button', { name: 'Delete Board' }));
-        flush();
-        fireEvent.click(view.getByRole('button', { name: 'Confirm Delete' }));
+        await flushPromises();
+        fireEvent.click(
+          within(view.getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
+            .getByRole('button', { name: 'Delete Board' }),
+        );
         await flushPromises();
       },
       { scenario: 'board-workspace-locked-delete' },
