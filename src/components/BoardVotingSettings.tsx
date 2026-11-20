@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
 
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
+import { canControlFacilitation } from '../lib/board-permissions';
 import type { UpdateVotingSettingsInput } from '../lib/voting-schemas';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import LucideIcon from './LucideIcon';
@@ -20,7 +21,7 @@ const mutedButtonClass = [buttonClass, 'border border-border bg-surface text-tex
 export default function BoardVotingSettings(props: {
   board: Pick<
     BoardViewDTO,
-    'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup' | 'isLocked'
+    'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup' | 'isLocked' | 'isFacilitator'
   >;
   open: boolean;
   onClose: () => void;
@@ -86,7 +87,7 @@ export default function BoardVotingSettings(props: {
 
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
-    if (pending() || !validLimit() || props.board.isLocked) return;
+    if (pending() || !validLimit() || !canControlFacilitation(props.board)) return;
 
     const patch: VotingSettingsPatch = {};
     const limit = voteLimit();
@@ -116,7 +117,7 @@ export default function BoardVotingSettings(props: {
   }
 
   async function resetVotes() {
-    if (pending() || props.board.isLocked) return;
+    if (pending() || !canControlFacilitation(props.board)) return;
     setPending('reset');
     setError(null);
     try {
@@ -180,7 +181,7 @@ export default function BoardVotingSettings(props: {
           </Show>
 
           <form onSubmit={(event) => void saveSettings(event)}>
-            <fieldset disabled={pending() !== null || props.board.isLocked} class="space-y-4">
+            <fieldset disabled={pending() !== null || !canControlFacilitation(props.board)} class="space-y-4">
               <label class="grid gap-1.5 text-sm font-medium">
                 Vote limit
                 <span class="relative grid">
@@ -255,7 +256,7 @@ export default function BoardVotingSettings(props: {
               <button
                 type="submit"
                 class={[buttonClass, 'bg-accent text-accent-contrast hover:opacity-90']}
-                disabled={!validLimit() || props.board.isLocked}
+                disabled={!validLimit() || !canControlFacilitation(props.board)}
               >
                 {pending() === 'save' ? 'Saving…' : 'Save Settings'}
               </button>
@@ -298,12 +299,12 @@ export default function BoardVotingSettings(props: {
             </h3>
             <div>
               <Show
-                when={confirmingReset() && !props.board.isLocked}
+                when={confirmingReset() && canControlFacilitation(props.board)}
                 fallback={
                   <button
                     type="button"
                     class={mutedButtonClass}
-                    disabled={pending() !== null || props.board.isLocked}
+                    disabled={pending() !== null || !canControlFacilitation(props.board)}
                     onClick={() => { setError(null); setConfirmingReset(true); }}
                   >
                     Reset All Votes

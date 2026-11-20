@@ -10,6 +10,7 @@ import type {
   ReactionEmoji,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
+import { canContribute, isGroupRedacted } from '../lib/board-permissions';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardItem from './CardItem';
 import LucideIcon from './LucideIcon';
@@ -96,14 +97,16 @@ export default function CardGroupItem(props: CardGroupItemProps) {
 
   const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
-  const canManageGroup = createMemo(() => props.canManage && !isRedacted());
+  const canManageGroup = createMemo(
+    () => props.canManage && !isGroupRedacted(props.group),
+  );
 
   const canAcceptDrop = createMemo(() => {
     const card = draggingCard();
     return (
       props.canGroupCards &&
-      !props.isLocked &&
-      !isRedacted() &&
+      canContribute(props) &&
+      !isGroupRedacted(props.group) &&
       card !== undefined &&
       !props.group.cardIds.includes(card.id)
     );
@@ -173,7 +176,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   }
 
   function handleDragStart(event: DragEvent): void {
-    if (!canManageGroup() || props.isLocked) {
+    if (!canManageGroup() || !canContribute(props)) {
       event.preventDefault();
       return;
     }

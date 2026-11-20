@@ -15,6 +15,11 @@ import {
   REDACTED_WHISPER_DURATION_MS,
 } from '../lib/easter-eggs';
 import { createDoubleTap } from '../lib/double-tap';
+import {
+  canEditActionItemFollowUp,
+  canInteractWithCard,
+  canManageCard,
+} from '../lib/board-permissions';
 import { getEnabledMenuItems } from '../lib/menu-keyboard';
 import { formatRelativeTime } from '../lib/recent-boards';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
@@ -180,11 +185,7 @@ export default function CardItem(props: CardItemProps) {
     menuTrigger?.focus();
   }
 
-  const canManage = createMemo(() => {
-    if (props.isLocked || props.card.redacted) return false;
-    if (props.card.isMine) return true;
-    return props.isFacilitator && !props.isBlurred;
-  });
+  const canManage = createMemo(() => canManageCard(props, props.card));
 
   const otherColumns = createMemo(
     () => props.columns.filter((col) => col.id !== props.card.columnId),
@@ -221,8 +222,7 @@ export default function CardItem(props: CardItemProps) {
   const canGroup = createMemo(
     () =>
       props.canGroupCards &&
-      !props.isLocked &&
-      !props.card.redacted &&
+      canInteractWithCard(props, props.card) &&
       (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
   );
 
@@ -244,8 +244,7 @@ export default function CardItem(props: CardItemProps) {
     const source = draggingCard();
     return (
       props.canGroupCards &&
-      !props.isLocked &&
-      !props.card.redacted &&
+      canInteractWithCard(props, props.card) &&
       source !== undefined &&
       source.id !== props.card.id &&
       (props.card.groupId === null || source.groupId !== props.card.groupId)
@@ -573,7 +572,7 @@ export default function CardItem(props: CardItemProps) {
                   type="checkbox"
                   checked={actionDone()}
                   disabled={
-                    (props.isLocked && !props.isFacilitator) || isUpdatingAction()
+                    (!canEditActionItemFollowUp(props, props.card)) || isUpdatingAction()
                   }
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {

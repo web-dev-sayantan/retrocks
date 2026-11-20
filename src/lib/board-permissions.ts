@@ -155,7 +155,7 @@ export function canEditActionItemFollowUp(
 export function canEditActionItem(
   board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'>,
   card: Pick<CardViewDTO, 'redacted' | 'isActionItem'>,
-  patch: Pick<ActionItemPatch, 'isActionItem'>,
+  patch: ActionItemPatch,
 ): boolean {
   if (card.redacted) return false;
   if (!board.isLocked) return true;

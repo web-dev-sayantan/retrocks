@@ -45,12 +45,22 @@ import {
   type BoardWorkspaceActions,
 } from '../lib/board-actions';
 import { connectBoardLive } from '../lib/board-live';
+import {
+  canAddColumn as canAddBoardColumn,
+  canContribute,
+  canControlFacilitation,
+  canEditActionItem,
+  canFacilitate,
+  canInteractWithCard,
+  canManageCard,
+  canManageGroup,
+  canManageGrouping,
+} from '../lib/board-permissions';
 import { applyBoardEvents } from '../lib/board-store';
 import {
   COLUMN_ACCENTS,
   MAX_BOARD_TITLE_LENGTH,
   MAX_CARD_CONTENT_LENGTH,
-  MAX_COLUMNS_PER_BOARD,
   MAX_COLUMN_TITLE_LENGTH,
   type ActionItemPatch,
   type BoardEvent,
@@ -300,7 +310,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const [isSavingColumn, setIsSavingColumn] = createSignal(false);
   const canAddColumn = createMemo(() => {
     const board = workspace.board;
-    return !!board?.isFacilitator && !board.isLocked && board.columns.length < MAX_COLUMNS_PER_BOARD;
+    return !!board && canAddBoardColumn(board);
   });
   let newColumnTitleEl: HTMLInputElement | undefined;
 
@@ -808,7 +818,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
 
     if (key === 'b') {
-      if (hasOpenBoardOverlay() || !board.isFacilitator || board.isLocked) return;
+      if (hasOpenBoardOverlay() || !canControlFacilitation(board)) return;
       event.preventDefault();
       void togglePrivateMode();
     }
@@ -816,7 +826,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   async function togglePrivateMode(options?: { dramatic?: boolean }): Promise<void> {
     const board = workspace.board;
-    if (!board?.isFacilitator || board.isLocked || isChangingPrivateMode()) return;
+    if (!board || !canControlFacilitation(board) || isChangingPrivateMode()) return;
     const { id: boardId, isBlurred } = board;
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
@@ -848,16 +858,9 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     }
   }
 
-  function canManageCard(board: BoardViewDTO, cardId: string): boolean {
-    if (cardId.startsWith('optimistic:')) return false;
-    const card = board.cards.find((item) => item.id === cardId);
-    return !board.isLocked && !!card && !card.redacted &&
-      (card.isMine || (board.isFacilitator && !board.isBlurred));
-  }
-
   function isBoardTitleEditTarget(target: EventTarget | null): boolean {
     const board = workspace.board;
-    if (!board || !board.isFacilitator || board.isLocked) return false;
+    if (!board || !canControlFacilitation(board)) return false;
     return !(target instanceof Element && target.closest('button'));
   }
 
@@ -870,7 +873,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   function startBoardRename(): void {
     boardTitleTap.reset();
     const board = workspace.board;
-    if (!board || !board.isFacilitator || board.isLocked) return;
+    if (!board || !canControlFacilitation(board)) return;
     setBoardTitleDraft(board.title);
     setIsRenamingBoard(true);
   }
@@ -1038,16 +1041,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const board = workspace.board;
     if (!board) return false;
     const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return false;
-    if (board.isLocked) {
-      if (
-        !board.isFacilitator ||
-        !card.isActionItem ||
-        patch.isActionItem !== undefined
-      ) {
-        return false;
-      }
-    }
+    if (!card || !canEditActionItem(board, card, patch)) return false;
     const response = await actions().updateActionItem({
       boardId: board.id,
       cardId,
@@ -1078,22 +1072,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
       cardId,
     });
     return applyMutationResponse(board.id, response);
-  }
-
-  function canManageGrouping(board: BoardViewDTO): boolean {
-    return !board.isLocked &&
-      (board.isFacilitator || board.allowParticipantGroup);
-  }
-
-  function canManageGroup(
-    board: BoardViewDTO,
-    group: CardGroupDTO,
-  ): boolean {
-    if (!canManageGrouping(board) || group.redacted) return false;
-    if (!board.isBlurred) return true;
-    return group.cardIds.every(
-      (id) => board.cards.find((card) => card.id === id)?.isMine === true,
-    );
   }
 
   async function handleGroupCard(
@@ -1192,11 +1170,13 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     emoji: ReactionEmoji,
   ): Promise<string | null> {
     const board = workspace.board;
-    if (!board || board.isLocked || cardId.startsWith('optimistic:')) {
+    if (!board || cardId.startsWith('optimistic:')) {
       return 'This Card can no longer receive reactions.';
     }
     const card = board.cards.find((item) => item.id === cardId);
-    if (!card || card.redacted) return 'This Card can no longer receive reactions.';
+    if (!card || !canInteractWithCard(board, card)) {
+      return 'This Card can no longer receive reactions.';
+    }
 
     const boardId = board.id;
     const hadReaction = card.myReactions.includes(emoji);
@@ -1226,7 +1206,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   ): Promise<string | null> {
     const board = workspace.board;
     const card = board?.cards.find((item) => item.id === cardId);
-    if (!board || board.isLocked || !card || card.redacted) {
+    if (!board || !card || !canInteractWithCard(board, card)) {
       return 'This Card can no longer receive comments.';
     }
     try {
@@ -1247,7 +1227,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   ): Promise<string | null> {
     const board = workspace.board;
     const card = board?.cards.find((item) => item.id === cardId);
-    if (!board || board.isLocked || !card || card.redacted) {
+    if (!board || !card || !canInteractWithCard(board, card)) {
       return 'This comment can no longer be deleted.';
     }
     try {
@@ -1360,7 +1340,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     delta: ChangeVoteInput['delta'],
   ): Promise<void> {
     const board = workspace.board;
-    if (!board || board.isLocked || voteInFlight || targetId.startsWith('optimistic:')) return;
+    if (!board || !canContribute(board) || voteInFlight || targetId.startsWith('optimistic:')) return;
 
     const boardId = board.id;
     const input = { boardId, targetType, targetId, delta } as const;
@@ -1381,7 +1361,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     mutate: (boardId: string) => Promise<BoardMutationResponse>,
   ): Promise<string | null> {
     const board = workspace.board;
-    if (!board?.isFacilitator || board.isLocked) return 'Voting settings are unavailable.';
+    if (!board || !canControlFacilitation(board)) return 'Voting settings are unavailable.';
     const boardId = board.id;
 
     try {
@@ -1406,7 +1386,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
     const board = workspace.board;
-    if (!board?.isFacilitator) return 'Only a Facilitator can Lock or Unlock the Board.';
+    if (!board || !canFacilitate(board)) return 'Only a Facilitator can Lock or Unlock the Board.';
     const boardId = board.id;
     try {
       const response = await actions().setBoardLock({ boardId, isLocked });
@@ -1420,7 +1400,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   async function deleteCurrentBoard(): Promise<string | null> {
     const board = workspace.board;
-    if (!board?.isFacilitator) return 'Only a Facilitator can delete this Board.';
+    if (!board || !canFacilitate(board)) return 'Only a Facilitator can delete this Board.';
     const boardId = board.id;
     try {
       const response = await actions().deleteBoard({ boardId });
@@ -1533,7 +1513,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     const board = workspace.board;
     if (!board) return;
     const group = board.groups.find((item) => item.id === groupId);
-    if (!group || !canManageGroup(board, group)) return;
+    if (!group || !canManageGroup(board, group, board.cards)) return;
     setDraggingCardId(null);
     setDraggingGroupId(groupId);
     setDraggingSourceColumnId(sourceColumnId);
@@ -1654,18 +1634,18 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   >
                     <h1
                       title={
-                        board().isFacilitator && !board().isLocked
+                        canControlFacilitation(board())
                           ? `${board().title} — Double-click to rename`
                           : board().title
                       }
                       class={[
                         'min-w-0 truncate text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:text-lg',
-                        board().isFacilitator && !board().isLocked && 'cursor-text touch-manipulation',
+                        canControlFacilitation(board()) && 'cursor-text touch-manipulation',
                       ]}
                     >
                       {board().title}
                     </h1>
-                    <Show when={board().isFacilitator && !board().isLocked}>
+                    <Show when={canControlFacilitation(board())}>
                       <button
                         ref={renameBoardButtonEl}
                         type="button"
@@ -1703,14 +1683,14 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         <CountdownTimer
                           timer={board().timer}
                           clock={timerClock()}
-                          canControl={board().isFacilitator && !board().isLocked}
+                          canControl={canControlFacilitation(board())}
                           onChange={(change) => changeCountdown(boardId, change)}
                         />
                       )}
                     </Show>
                   </div>
 
-                  <Show when={board().isFacilitator && !board().isLocked}>
+                  <Show when={canControlFacilitation(board())}>
                     <button
                       type="button"
                       data-print-hide="true"
@@ -1800,7 +1780,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           onSelect={toggleTheme}
                           render={(itemProps) => <ThemeToggle menuItem menuItemProps={itemProps} />}
                         />
-                        <Show when={board().isFacilitator}>
+                        <Show when={canFacilitate(board())}>
                           <MenuItem
                             value="board-settings"
                             aria-haspopup="dialog"
@@ -1814,7 +1794,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                           </MenuItem>
                         </Show>
                         <Show when={isMobileBoard()}>
-                          <Show when={board().isFacilitator && !board().isLocked}>
+                          <Show when={canControlFacilitation(board())}>
                             <MenuItem
                               value="toggle-private-mode"
                               aria-keyshortcuts="B"
@@ -1930,7 +1910,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             </p>
           </header>
 
-          <Show when={board().isFacilitator}>
+          <Show when={canFacilitate(board())}>
             <BoardVotingSettings
               board={board()}
               open={isBoardSettingsOpen()}
@@ -2046,7 +2026,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
               value={activeMobileColumn()?.id ?? null}
               onValueChange={setActiveColumnId}
               class="board-column-deck relative"
-              data-can-manage={board().isFacilitator && !board().isLocked ? "" : undefined}
+              data-can-manage={canControlFacilitation(board()) ? "" : undefined}
             >
               <nav
                 aria-label="Board Columns"
@@ -2216,7 +2196,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
           </main>
 
           <Dialog
-            open={isAddingColumn() && board().isFacilitator && !board().isLocked}
+            open={isAddingColumn() && canControlFacilitation(board())}
             onOpenChange={(next) => setIsAddingColumn(next)}
           >
             <DialogBackdrop
