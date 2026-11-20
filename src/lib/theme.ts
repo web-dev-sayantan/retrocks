@@ -128,7 +128,8 @@ export function toggleTheme(): void {
 
   if (recentClicks.length === BURST_LENGTH) {
     recentClicks.length = 0;
-    const secret = SECRET_THEMES[nextSecretThemeIndex]!;
+    // The index is kept in range by the modulo below; no assertion needed.
+    const secret = SECRET_THEMES[nextSecretThemeIndex];
     nextSecretThemeIndex = (nextSecretThemeIndex + 1) % SECRET_THEMES.length;
     announcement = `${secret.name} unlocked. Select the theme toggle again to exit.`;
     announcementTimer = setTimeout(() => {
