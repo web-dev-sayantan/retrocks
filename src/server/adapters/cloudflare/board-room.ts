@@ -15,7 +15,6 @@ import {
   computeBoardExpiryAt,
   isBoardExpired,
 } from '../../db/sql-board-operations';
-import type { SqlParam, SqlRunResult, SqlRunner } from '../../db/sql-runner';
 import {
   createBoardWriteRateLimiter,
   type BoardWriteRateLimiter,
@@ -25,38 +24,10 @@ import { projectLivePublication, projectLiveSnapshot } from '../../domain/live-p
 import type { BoardPublication, LiveViewerContext } from '../types';
 import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from './cloudflare-board-store';
 
+import { wrapDurableObjectSql } from './sqlite';
+
 interface LiveAttachment extends LiveViewerContext {
   lastSeenAt: number;
-}
-
-function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
-  const sql = storage.sql;
-
-  return {
-    exec(query: string): void {
-      sql.exec(query);
-    },
-    run(query: string, ...params: SqlParam[]): SqlRunResult {
-      const cursor = sql.exec(query, ...params);
-      return { changes: cursor.rowsWritten };
-    },
-    get<T extends Record<string, unknown>>(
-      query: string,
-      ...params: SqlParam[]
-    ): T | undefined {
-      const rows = sql.exec(query, ...params).toArray();
-      return rows[0] as T | undefined;
-    },
-    all<T extends Record<string, unknown>>(
-      query: string,
-      ...params: SqlParam[]
-    ): T[] {
-      return sql.exec(query, ...params).toArray() as T[];
-    },
-    transaction<T>(fn: () => T): T {
-      return storage.transactionSync(fn);
-    },
-  };
 }
 
 /**

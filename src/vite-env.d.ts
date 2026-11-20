@@ -19,6 +19,7 @@ declare namespace Cloudflare {
   interface Env {
     ASSETS: Fetcher;
     BOARD_ROOM: DurableObjectNamespace;
+    POINTING_POKER_ROOM: DurableObjectNamespace<import('./server/poker/durable-room').PointingPokerRoom>;
     BOARD_CREATE_LIMITER: RateLimit;
     SESSION_SECRET: string;
   }

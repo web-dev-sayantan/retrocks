@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { cleanup, fireEvent, render } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -363,10 +363,11 @@ describe('<RecentBoardsList /> & localStorage persistence', () => {
       now - 300_000,
     );
 
-    const { getAllByRole, getByRole, getByText, queryByRole } = render(() => <Home />);
+    const { getByRole, getByText, queryByRole } = render(() => <Home />);
     flush();
 
-    const links = getAllByRole('link');
+    expect(getByRole('link', { name: 'Pointing Poker' })).toHaveAttribute('href', '/pointing-poker');
+    const links = within(getByRole('region', { name: 'Recent Boards' })).getAllByRole('link');
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/b/board_0123456789abcdef',
       '/b/board_fedcba9876543210',

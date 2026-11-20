@@ -1,0 +1,40 @@
+import { formAction, query } from '@solidjs/router';
+import { httpStatus, redirect, respond } from '@solidjs/web';
+
+import { pokerRoomPath } from './poker-routes';
+import type { PokerResult, PokerRoomView } from './poker-types';
+
+export const getPokerRoom = query(async (id: string): Promise<PokerRoomView | null> => {
+  'use server';
+  const { readPokerRoomForRequest } = await import('../server/poker/service');
+  const room = await readPokerRoomForRequest(id);
+  if (!room) httpStatus(404);
+  return room;
+}, 'poker-room');
+
+export const createPokerRoom = formAction(async (form: FormData) => {
+  'use server';
+  const { createPokerRoomForRequest } = await import('../server/poker/service');
+  const result = await createPokerRoomForRequest(form.get('displayName'));
+  if (result.ok) return redirect(pokerRoomPath(result.room.id));
+  return pokerResponse(result);
+});
+
+export const joinPokerRoom = formAction(async (id: string, form: FormData) => {
+  'use server';
+  const { mutatePokerRoomForRequest } = await import('../server/poker/service');
+  const result = await mutatePokerRoomForRequest(id, {
+    type: 'join', displayName: form.get('displayName'),
+  });
+  if (result.ok) return redirect(pokerRoomPath(id));
+  return pokerResponse(result);
+});
+
+function pokerResponse<T extends PokerResult>(result: T) {
+  const status = result.ok ? 200 : {
+    ROOM_NOT_FOUND: 404,
+    INVALID_INPUT: 400,
+    RATE_LIMITED: 429,
+  }[result.code];
+  return respond(result, { status, revalidate: [] });
+}
