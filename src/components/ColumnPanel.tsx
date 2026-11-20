@@ -1,4 +1,5 @@
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
+import { Textarea } from '@ui-sdk/solid/textarea';
 import {
   Check,
   ChevronLeft,
@@ -171,24 +172,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     },
   );
 
-  createEffect(
-    () => cardDraft(),
-    (draft) => {
-      if (!composerEl) return;
-      if (draft.length === 0) {
-        composerEl.style.height = '';
-        return;
-      }
-      if (typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content')) {
-        return;
-      }
-      if (composerEl.scrollHeight > 0) {
-        composerEl.style.height = 'auto';
-        composerEl.style.height = `${Math.min(composerEl.scrollHeight, 144)}px`;
-      }
-    },
-  );
-
   function canManageGroup(group: CardGroupDTO): boolean {
     return props.canGroupCards && areAllGroupCardsMine(props, group, props.cards);
   }
@@ -216,10 +199,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         setCardError(error);
         if (error === null) {
           setCardDraft('');
-          if (composerEl) {
-            composerEl.value = '';
-            composerEl.style.height = '';
-          }
+          if (composerEl) composerEl.value = '';
         }
       }
     } finally {
@@ -622,16 +602,17 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                 : 'border-border/85',
             ]}
           >
-            <textarea
+            <Textarea
               ref={composerEl}
+              autoResize
               aria-label={`Add card to ${props.column.title}`}
               placeholder="+ Add Card"
               title="Enter to add · Shift+Enter for new line"
               value={cardDraft()}
               maxlength={MAX_CARD_CONTENT_LENGTH}
               rows={1}
-              onInput={(e) => {
-                setCardDraft(e.currentTarget.value);
+              onValueChange={(value) => {
+                setCardDraft(value);
                 setCardError(null);
               }}
               onKeyDown={handleComposerKeyDown}

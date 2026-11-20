@@ -12,6 +12,7 @@ import {
   MenuTrigger,
 } from '@ui-sdk/solid/menu';
 import { Tabs, TabsList, TabsTab } from '@ui-sdk/solid/tabs';
+import { Textarea } from '@ui-sdk/solid/textarea';
 import {
   Check,
   Columns3,
@@ -2381,19 +2382,20 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   {(error) => <p role="alert" class="mb-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
                 </Show>
                 <div class="flex items-end gap-2">
-                  <textarea
+                  <Textarea
                     ref={(el) => {
                       mobileComposerEl = el;
                     }}
+                    autoResize
                     aria-label={`Quick add card to ${targetCol().title}`}
                     placeholder={`Add to ${targetCol().title}…`}
                     value={mobileDrafts[targetCol().id]?.content ?? ''}
                     maxlength={MAX_CARD_CONTENT_LENGTH}
                     rows={1}
-                    onInput={(e) => updateMobileDraft(targetCol().id, e.currentTarget.value)}
+                    onValueChange={(value) => updateMobileDraft(targetCol().id, value)}
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
-                      'min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
+                      'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
                       'placeholder:text-text-muted focus:border-focus focus:outline-none',
                     ]}
                   />

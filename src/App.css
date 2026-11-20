@@ -269,11 +269,7 @@
   backdrop-filter: blur(18px) saturate(165%);
 }
 
-/* Quick-add grows with its draft like the desktop composer, so wrapped lines stay inside the field. */
-.board-mobile-composer textarea {
-  field-sizing: content;
-  max-height: 8rem;
-}
+/* Quick-add composer surface */
 
 .board-timer-progress {
   --timer-track: color-mix(in srgb, var(--retrocks-accent) 15%, transparent);
@@ -676,10 +672,8 @@
   }
 }
 
-/* Single-row zero-shift desktop Card composer that grows only on multi-line input */
-.board-composer-textarea {
-  field-sizing: content;
-}
+/* Single-row zero-shift desktop Card composer; height is bound by
+   min-h/max-h and grows through ui-sdk Textarea autoResize */
 
 /* Compact top-layer dialog backdrop & surface (e.g., Add a Column) */
 .board-dialog-backdrop {
