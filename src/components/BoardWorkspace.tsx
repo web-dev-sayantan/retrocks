@@ -78,6 +78,7 @@ import {
   matchSecretSearch,
 } from '../lib/easter-eggs';
 import { recordRecentBoard, removeRecentBoard } from '../lib/recent-boards';
+import { retroSetupPath } from '../lib/routes';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { toggleTheme } from '../lib/theme';
 import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
@@ -787,7 +788,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             message="This Board may have been deleted by a Facilitator or expired after inactivity."
             headingRef={(element) => { unavailableHeading = element; }}
           >
-            <a href={props.homeHref ?? '/'} class="page-message-action">
+            <a href={retroSetupPath} class="page-message-action">
               Create a new board
             </a>
           </PageMessage>
