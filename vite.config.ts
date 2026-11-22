@@ -35,7 +35,9 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
-    port: 3000,
+    host: "127.0.0.1",
+    port: 3002,
+    strictPort: true,
   },
   test: {
     globals: false,

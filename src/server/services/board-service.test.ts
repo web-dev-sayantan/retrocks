@@ -184,7 +184,7 @@ describe('BoardService (Board creation, lazy cookie minting & SSR reads)', () =>
 
     // Unauthenticated Participant visits /b/:id
     const visit = await runRequest(
-      new Request(`http://localhost:3000/b/${boardId}`),
+      new Request(`http://localhost:3002/b/${boardId}`),
       () => service.getBoardForRequest(boardId),
     );
     expect(visit.result?.id).toBe(boardId);

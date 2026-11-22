@@ -2,7 +2,7 @@
 
 > **Scope:** Visual hierarchy, spacing, sizing, zero-CLS interaction architecture, and Apple-inspired tactile polish for the individual Board workspace (`/b/:id`), aligning it directly with the redesigned Home page (`4a0fa69`) while preserving all 4 color themes (`light`, `dark`, `retro`, `parchment`), all 8 Column accents, all `SPEC.md` behavioral contracts, `GLOSSARY.md` terminology, `@media print` output, easter eggs, and the test suite.
 >
-> **Audit Basis:** Live visual & interactive inspection of `http://localhost:3001` (Home + newly created Standard Retro Board populated with standalone Cards, a Card Group, Votes, reactions, comments, and Action Items) across `1440×900` (Dark & Light), `1024×768` (Dark), and `375×812` (Mobile Dark), cross-referenced against the Home page commit `4a0fa69` and source components.
+> **Audit Basis:** Live visual & interactive inspection of `http://localhost:3002` (Home + newly created Standard Retro Board populated with standalone Cards, a Card Group, Votes, reactions, comments, and Action Items) across `1440×900` (Dark & Light), `1024×768` (Dark), and `375×812` (Mobile Dark), cross-referenced against the Home page commit `4a0fa69` and source components.
 
 ---
 
@@ -345,7 +345,7 @@ Before any code merges, every item below must pass:
 - [ ] **Exact ARIA & Test Contracts green:** `pnpm test` (`BoardWorkspace.test.tsx`, `ActionItemsDrawer.test.tsx`, `CountdownTimer.test.tsx`, `CardReactions.test.tsx`, `CardText.test.tsx`) passes with **zero** Solid 2.0 reactivity diagnostics (`expectNoDiagnostics`).
 - [ ] **Typecheck & Lint clean:** `pnpm typecheck` and `pnpm lint` (`oxlint src`) pass with zero warnings/errors.
 - [ ] **Print & Easter Eggs intact:** `@media print` (`PrintBoard`), `secret-search-*` (`scope-creep`, `rock`, `blame`, `kudos`, `pivot`), dramatic reveal (`Shift+Click Reveal All`), and redacted card whispers remain functional.
-- [ ] **Zero-CLS Visual Verification in Browser:** Re-run live browser checks on `http://localhost:3001/b/:id` across `1440×900` (Dark + Light), `1024×768` (Dark), and `375×812` (Mobile Dark + Light), measuring `0px` vertical shift for inline rename, filter switch, composer focus, reaction picker, and card/group menus.
+- [ ] **Zero-CLS Visual Verification in Browser:** Re-run live browser checks on `http://localhost:3002/b/:id` across `1440×900` (Dark + Light), `1024×768` (Dark), and `375×812` (Mobile Dark + Light), measuring `0px` vertical shift for inline rename, filter switch, composer focus, reaction picker, and card/group menus.
 - [ ] **Accessibility & Reduced Preferences:** Verify `prefers-reduced-motion: reduce`, `prefers-reduced-transparency: reduce`, `prefers-contrast: more`, WCAG AA contrast, keyboard shortcuts (`/`, `N`, `A`, `B`, `T`, `Esc`), and focus return after closing all drawers/menus/modals.
 
 ---

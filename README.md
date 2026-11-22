@@ -85,9 +85,9 @@ In the project directory, you can run:
 ### `npm run dev`
 
 Runs the app in the development mode with streaming SSR.<br>
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+Open [http://localhost:3002](http://localhost:3002) to view it in the browser.
 
-### `npm run build`
+### `pnpm build`
 
 Builds client assets to `dist/client`, and the request handler plus the Node server to `dist/server`.
 

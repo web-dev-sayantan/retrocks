@@ -56,7 +56,7 @@ describe('anonymous capability session (ADR-0001)', () => {
 
     // Local HTTP request omits Secure so http://localhost works seamlessly
     const httpCycle = await runRequest(
-      new Request('http://localhost:3000/b/board-1'),
+      new Request('http://localhost:3002/b/board-1'),
       () => session.ensureParticipantSession(),
     );
     const [httpCookie] = httpCycle.response.headers.getSetCookie();
