@@ -1,31 +1,55 @@
-import { Show, createEffect, createSignal } from 'solid-js';
+import { Show, createEffect, createSignal, untrack } from 'solid-js';
 
+import type { BoardViewDTO } from '../lib/board-types';
 import { claimFacilitatorLink } from '../lib/facilitator-link';
-import { claimFacilitatorRole } from '../lib/sharing-actions';
+import {
+  claimFacilitatorRole,
+  type FacilitatorClaimInput,
+  type FacilitatorClaimResponse,
+} from '../lib/sharing-actions';
 
-export default function FacilitatorLinkClaim(props: { boardId: string }) {
+export interface FacilitatorLinkClaimProps {
+  boardId: string;
+  claim?: (input: FacilitatorClaimInput) => Promise<FacilitatorClaimResponse>;
+  onClaimed?: (board: BoardViewDTO) => void;
+}
+
+export default function FacilitatorLinkClaim(props: FacilitatorLinkClaimProps) {
   const [error, setError] = createSignal('');
 
   createEffect(
     () => props.boardId,
     (boardId) => {
       let disposed = false;
+      let activeAttempt = 0;
       setError('');
 
       async function claim() {
         const { pathname } = window.location;
+        let currentAttempt = 0;
+        const isStale = () =>
+          disposed ||
+          currentAttempt !== activeAttempt ||
+          window.location.pathname !== pathname;
         try {
-          const result = await claimFacilitatorLink(boardId, claimFacilitatorRole);
-          if (!result || disposed || window.location.pathname !== pathname) return;
+          const runClaim = untrack(() => props.claim) ?? claimFacilitatorRole;
+          const result = await claimFacilitatorLink(boardId, (input) => {
+            currentAttempt = ++activeAttempt;
+            setError('');
+            return runClaim(input);
+          });
+          if (!result || isStale()) {
+            return;
+          }
 
           if (result.ok) {
-            // Refresh the viewer projection and reconnect live updates with the new cookie.
-            window.location.reload();
+            setError('');
+            untrack(() => props.onClaimed)?.(result.board);
           } else {
             setError(result.message);
           }
         } catch {
-          if (!disposed && window.location.pathname === pathname) {
+          if (!isStale()) {
             setError('Could not claim Facilitator access. Reopen the link to try again.');
           }
         }
