@@ -73,7 +73,8 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 
 ## 3. Feature Specification
 
-### 3.1 Home & Instant Board Creation (`/`)
+### 3.1 Board Setup (`/retro`)
+- Open `/retro` directly to use Board Creator. The document title is “Create a Board — Retrocks”.
 - Show **Create a board**, the optional Board title, the selected **Standard Retro** and its Column names, and one primary **Create board** action above the fold. The default flow targets creation in under five seconds.
 - The optional Board title defaults to `"Sprint Retrospective — <MMM D>"` and allows up to 120 characters.
 - **Customize board** opens the optional subtitle (up to 240 characters) and the Column editor. Selecting **Custom Board** opens the editor automatically. Add, remove, rename, reorder, choose an accent, or toggle Action Column behavior before creation. Draft values persist when disclosures close and when creation fails.
@@ -94,7 +95,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - Auto-expiry on inactivity: `30 days` / `90 days` *(default)* / `180 days`
 - **Recent Boards (Client-Side Only):**
   - Stored strictly in `localStorage` (never transmitted to or stored on the server; stores only Board ID, title, last visited timestamp, and a non-sensitive boolean display hint — never raw tokens).
-  - Appears when local history exists and lists Boards in last-visited order with a title link, relative visit time, Facilitator role where applicable, and a labeled **Remove** action. The page explains that the list is saved in this browser only.
+  - Appears in the setup page’s secondary area when local history exists and lists Boards in last-visited order with a title link, relative visit time, Facilitator role where applicable, and a labeled **Remove** action. The page explains that the list is saved in this browser only.
 
 ---
 
@@ -220,7 +221,7 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
   - On Cloudflare Durable Objects, this runs via a per-Board **DO Alarm** (`ctx.storage.setAlarm`). On Node, a lightweight daily scheduled sweep deletes expired rows.
 - **Immediate Deletion & Expired Board UX:**
   - Facilitator can permanently delete a Board at any time (with explicit confirmation), broadcasting a `board:deleted` notice to connected clients and wiping storage immediately.
-  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) shows **Board not found or expired**, explains deletion and inactivity expiry, and links to **Create a new board**. The screen follows the selected theme and removes that Board from Recent Boards. When an open Board becomes unavailable, dismiss its overlays and move focus to the unavailable screen heading.
+  - Visiting a deleted or expired `/b/:id` (or receiving live `board:deleted`) shows **Board not found or expired**, explains deletion and inactivity expiry, and links to Board setup (`/retro`) with **Create a new board**. The screen follows the selected theme and removes that Board from Recent Boards. When an open Board becomes unavailable, dismiss its overlays and move focus to the unavailable screen heading.
 
 ---
 
@@ -339,7 +340,8 @@ Two narrow server-only interfaces (`src/server/adapters/types.ts`) form the seam
 
 Strictly adheres to Solid 2.0 semantics (per [AGENTS.md](../AGENTS.md)):
 - **Routing (`filesystem-routing` + `@solidjs/router`):**
-  - `src/routes/index.tsx` — Home / Instant Board Creator + Recent Boards.
+  - `src/routes/index.tsx` — Home.
+  - `src/routes/retro.tsx` — Board Creator and Recent Boards.
   - `src/routes/b/[id].tsx` — Board Workspace (SSR preloaded with `query()`, mints anonymous cookie if absent, streams initial Board snapshot).
   - `src/routes/api/boards/[id]/live.ts` — Live WebSocket (CF) / SSE (Node) stream endpoint.
   - `src/routes/api/boards/[id]/export.ts` — Streaming export endpoint (`?format=md|csv|json`).
@@ -515,7 +517,7 @@ export type BoardEvent =
    - `BoardStore` + `BoardRealtime` interfaces; Cloudflare Workers + SQLite Durable Object (`BoardRoom` + `src/worker.ts` + `wrangler.jsonc` + `@cloudflare/vite-plugin` default `pnpm dev`) and Node SQLite + SSE adapter (Vitest `server` tests & self-hosted swap).
    - Anonymous Participant & Facilitator signed cookie + AES-256-GCM facilitator token crypto (`src/server/session.ts`, 90-day sliding TTL, lazy mint on `GET /b/:id`).
    - Tailwind CSS v4 `@theme` design tokens & zero-FOUC Light/Dark theme init in `src/Document.tsx`.
-   - Home page (`/`) with default creation, disclosed template selection, a Column editor, advanced options, and local Recent Boards.
+   - Board setup (`/retro`) with default creation, disclosed template selection, a Column editor, advanced options, and local Recent Boards.
 2. **Phase 2 — Core Retro Workspace & Live Sync**
    - Board route (`/b/:id`) with streaming SSR preload, responsive desktop Columns & mobile tabbed swipe view, and Deleted/Expired Board empty state.
    - Full Column & Card CRUD (hard delete with inline confirmation), desktop drag-and-drop (cross-Column moves), mobile Move menu, live WS/SSE delta patching, reconnect resync, and deduplicated presence count.

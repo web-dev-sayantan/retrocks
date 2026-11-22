@@ -860,7 +860,7 @@ describe('<BoardWorkspace />', () => {
 
     expect(getByText(/Board not found or expired/i)).toBeInTheDocument();
     const cta = getByRole('link', { name: /Create a new board/i });
-    expect(cta).toHaveAttribute('href', '/');
+    expect(cta).toHaveAttribute('href', '/retro');
 
     // Automatically scrubbed from localStorage Recent Boards
     const remaining = readRecentBoards();
@@ -2231,9 +2231,8 @@ describe('<BoardWorkspace />', () => {
         getByRole('heading', { level: 1, name: 'Board not found or expired' }),
       ).toBeInTheDocument();
     });
-    expect(
-      getByRole('link', { name: 'Create a new board' }),
-    ).toBeInTheDocument();
+    expect(getByRole('link', { name: 'Create a new board' }))
+      .toHaveAttribute('href', '/retro');
     expect(readRecentBoards().some((item) => item.id === board.id)).toBe(false);
   });
 

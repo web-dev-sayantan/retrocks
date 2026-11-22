@@ -86,6 +86,12 @@ declare module "virtual:file-routes" {
       page: true;
       $component: FileRouteLazyRef<Pick<typeof import("./src/routes/pointing-poker"), Extract<"default", keyof typeof import("./src/routes/pointing-poker")>>>;
       $$route?: undefined;
+    },
+    {
+      path: "/retro";
+      page: true;
+      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/retro"), Extract<"default", keyof typeof import("./src/routes/retro")>>>;
+      $$route?: undefined;
     }
   ];
   export default routes;
@@ -122,6 +128,14 @@ declare module "virtual:file-routes" {
       page: true;
       $component: FileRouteLazyRef<Pick<typeof import("./src/routes/p/[id]"), Extract<"default", keyof typeof import("./src/routes/p/[id]")>>>;
       $$route: FileRouteEagerRef<Pick<typeof import("./src/routes/p/[id]"), Extract<"route", keyof typeof import("./src/routes/p/[id]")>>>;
+      children?: undefined;
+    },
+    {
+      path: "/retro";
+      id: "/retro";
+      page: true;
+      $component: FileRouteLazyRef<Pick<typeof import("./src/routes/retro"), Extract<"default", keyof typeof import("./src/routes/retro")>>>;
+      $$route?: undefined;
       children?: undefined;
     },
     {
