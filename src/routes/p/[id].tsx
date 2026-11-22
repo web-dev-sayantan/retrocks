@@ -8,10 +8,10 @@ import PokerWorkspace from '../../components/poker/PokerWorkspace';
 import RoomNameForm from '../../components/poker/RoomNameForm';
 import { takeFacilitatorLinkToken } from '../../lib/facilitator-link';
 import { changePokerRoom, getPokerRoom, joinPokerRoom } from '../../lib/poker-actions';
-import { createPokerLive } from '../../lib/poker-live';
+import { createPokerRoomController } from '../../lib/poker-controller';
 import { pokerRoomPath, pokerSetupPath } from '../../lib/poker-routes';
 import { claimPokerFacilitatorLink } from '../../lib/poker-sharing-actions';
-import type { PokerLiveRoomView, PokerRoomView, PokerRoomChange } from '../../lib/poker-types';
+import type { PokerLiveRoomView, PokerRoomView } from '../../lib/poker-types';
 
 export const route = {
   preload: ({ params }) => {
@@ -45,50 +45,20 @@ function RoomUnavailable(props: { roomId?: string; focusHeading?: boolean }) {
 }
 
 function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; claimError: string; onUnavailable: () => void }) {
-  const [liveRoom, setLiveRoom] = createSignal<PokerRoomView | null>(null);
-  const [online, setOnline] = createSignal<string[]>([]);
-  const [live, setLive] = createSignal<ReturnType<typeof createPokerLive> | null>(null);
-  const room = () => {
-    const current = liveRoom();
-    return current && current.version >= props.room.version ? current : props.room;
-  };
+  const controller = createPokerRoomController({
+    room: () => props.room,
+    changeRoom: changePokerRoom,
+    onUnavailable: () => props.onUnavailable(),
+  });
 
   const closedRoom = () => {
-    const current = room();
+    const current = controller.room();
     return current.closed ? current : undefined;
   };
   const openRoom = () => {
-    const current = room();
+    const current = controller.room();
     return current.closed ? undefined : current;
   };
-
-  function acceptRoom(next: PokerRoomView) {
-    if (next.id === props.room.id) {
-      if (next.closed) live()?.dispose();
-      setLiveRoom((current) => !current || next.version >= current.version ? next : current);
-    }
-  }
-
-  async function onChange(command: PokerRoomChange) {
-    const result = await changePokerRoom(props.room.id, command);
-    if (result.ok) acceptRoom(result.room);
-    else if (result.code === 'ROOM_NOT_FOUND') props.onUnavailable();
-    return result;
-  }
-
-  onSettled(() => {
-    const stream = createPokerLive(untrack(() => props.room.id), (message) => {
-      if (message.type === 'room:snapshot') {
-        acceptRoom(message.room);
-      } else if (message.type === 'room:presence') {
-        setOnline(message.online);
-      } else if (message.type === 'room:missing') {
-        props.onUnavailable();
-      }
-    }, () => setOnline([]));
-    setLive(stream);
-    return stream.dispose;
-  });
 
   return (
     <Show when={openRoom()} fallback={
@@ -99,11 +69,11 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
       {(current) => (
         <PokerWorkspace
           room={current()}
-          online={online()}
-          status={live()?.status() ?? 'connecting'}
+          online={controller.online()}
+          status={controller.status()}
           focusHeading={props.focusHeading}
           claimError={props.claimError}
-          onChange={onChange}
+          onChange={controller.changeRoom}
           onUnavailable={props.onUnavailable}
         />
       )}
