@@ -40,6 +40,7 @@ import {
   createStore,
   flush,
   onSettled,
+  untrack,
 } from 'solid-js';
 
 import {
@@ -53,7 +54,7 @@ import {
   canFacilitate,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { createBoardController } from '../lib/board-controller';
+import { createBoardController, type BoardLiveTransport } from '../lib/board-controller';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -103,6 +104,8 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   actions?: BoardWorkspaceActions;
+  liveTransport?: BoardLiveTransport;
+  liveReconnectKey?: number;
 }
 
 function BoardHomeLink(props: { href: string; class: string }) {
@@ -157,6 +160,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const controller = createBoardController({
     board: () => props.board,
     actions: () => props.actions ?? defaultBoardWorkspaceActions,
+    liveTransport: untrack(() => props.liveTransport),
+    liveReconnectKey: () => props.liveReconnectKey ?? 0,
     onDramaticReveal: runDramaticReveal,
   });
 

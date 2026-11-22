@@ -2,6 +2,7 @@ import 'server-only';
 import { getRequestEvent } from '@solidjs/web';
 import * as v from 'valibot';
 
+import type { BoardViewDTO } from '../../lib/board-types';
 import { BoardIdSchema } from '../../lib/schemas';
 import { getBoardStore } from '../adapters/runtime';
 import {
@@ -11,6 +12,7 @@ import {
   hashTokenWithSalt,
   tokenHashesMatch,
 } from '../crypto';
+import { projectBoardForViewer } from '../domain/projection';
 import {
   getSession,
   getSessionSecrets,
@@ -86,7 +88,7 @@ function invalidLink(): BoardDomainError {
 
 export async function claimFacilitatorRoleForRequest(
   input: unknown,
-): Promise<void> {
+): Promise<BoardViewDTO> {
   getRequestEvent()?.response.headers.set('cache-control', 'no-store');
 
   const parsed = v.safeParse(ClaimFacilitatorRoleSchema, input);
@@ -107,7 +109,15 @@ export async function claimFacilitatorRoleForRequest(
     throw invalidLink();
   }
 
-  await grantFacilitatorSession(boardId);
+  const rawSnapshot = await store.getBoardSnapshot(boardId);
+  if (!rawSnapshot) throw invalidLink();
+
+  const session = await grantFacilitatorSession(boardId);
+  const viewerParticipantHash = await hashTokenWithSalt(
+    session.participantId,
+    rawSnapshot.board.tokenSalt,
+  );
+  return projectBoardForViewer(rawSnapshot, viewerParticipantHash, true);
 }
 
 export async function rotateFacilitatorLinkForRequest(

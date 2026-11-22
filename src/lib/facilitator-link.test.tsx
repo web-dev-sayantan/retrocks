@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { makeBoardView } from './board-fixtures';
 import { claimFacilitatorLink } from './facilitator-link';
 
 const boardId = 'board_0123456789abcdef';
@@ -9,13 +10,17 @@ const token = 'A'.repeat(43);
 afterEach(() => window.history.replaceState(null, '', '/'));
 
 it('scrubs the fragment before exchanging only the Board ID and token', async () => {
+  const claimedBoard = makeBoardView({ id: boardId, isFacilitator: true });
   window.history.replaceState({ key: 'keep' }, '', `${boardPath}?view=all#f=${token}`);
   const claim = vi.fn(async () => {
     expect(window.location.hash).toBe('');
-    return { ok: true } as const;
+    return { ok: true, board: claimedBoard } as const;
   });
 
-  await expect(claimFacilitatorLink(boardId, claim)).resolves.toEqual({ ok: true });
+  await expect(claimFacilitatorLink(boardId, claim)).resolves.toEqual({
+    ok: true,
+    board: claimedBoard,
+  });
   expect(claim).toHaveBeenCalledWith({ boardId, token });
   expect(window.location.pathname + window.location.search).toBe(`${boardPath}?view=all`);
   expect(window.history.state).toEqual({ key: 'keep' });

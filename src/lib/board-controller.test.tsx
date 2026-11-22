@@ -56,6 +56,7 @@ function createFakeLiveTransport(): {
 interface SessionHarness {
   controller: BoardController;
   setBoardProp: (board: BoardViewDTO | null) => void;
+  setLiveReconnectKey: (key: number) => void;
   connections: FakeConnection[];
   actions: BoardWorkspaceActions;
   spies: Record<keyof BoardWorkspaceActions, ReturnType<typeof vi.fn>>;
@@ -70,12 +71,22 @@ function mountSession(initialBoard: BoardViewDTO | null): SessionHarness {
   let harness!: SessionHarness;
   const dispose = createRoot((disposeRoot) => {
     const [boardProp, setBoardProp] = createSignal<BoardViewDTO | null>(initialBoard);
+    const [liveReconnectKey, setLiveReconnectKey] = createSignal(0);
     const controller = createBoardController({
       board: boardProp,
       actions: () => actions,
       liveTransport: transport,
+      liveReconnectKey,
     });
-    harness = { controller, setBoardProp, connections, actions, spies, dispose: disposeRoot };
+    harness = {
+      controller,
+      setBoardProp,
+      setLiveReconnectKey,
+      connections,
+      actions,
+      spies,
+      dispose: disposeRoot,
+    };
     return disposeRoot;
   });
   flush();
@@ -490,6 +501,62 @@ describe('createBoardController', () => {
     expect(response.ok).toBe(true);
     expect(controller.board()?.timer.remainingMs).toBe(60000);
     expect(controller.timerClock()?.serverNow).toBe(9090);
+  });
+
+  it('applies in-place Facilitator claims and reconnects the live stream without diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      async () => {
+        const board = makeBoardView({ version: 2, isFacilitator: false });
+        const { controller, setBoardProp, setLiveReconnectKey, connections } = mountSession(board);
+
+        expect(connections).toHaveLength(1);
+        expect(controller.board()?.isFacilitator).toBe(false);
+
+        connections[0].emit({
+          type: 'board:snapshot',
+          version: board.version,
+          board,
+          serverNow: 1_000,
+        });
+        flush();
+        expect(controller.isLive()).toBe(true);
+
+        // Claim succeeds at the same Board version: Facilitator state applies in place
+        // and the live stream reconnects so subsequent events use the new Facilitator cookie.
+        const claimed = { ...board, isFacilitator: true };
+        setBoardProp(claimed);
+        setLiveReconnectKey(1);
+        flush();
+
+        expect(controller.board()?.isFacilitator).toBe(true);
+        expect(connections[0].closed).toBe(true);
+        expect(connections).toHaveLength(2);
+
+        // Reconnected stream delivers a Facilitator-projected snapshot and restores live status.
+        connections[1].emit({
+          type: 'board:snapshot',
+          version: 3,
+          board: { ...claimed, version: 3 },
+          serverNow: 2_000,
+        });
+        flush();
+        expect(controller.isLive()).toBe(true);
+        expect(controller.board()?.version).toBe(3);
+        expect(controller.board()?.isFacilitator).toBe(true);
+
+        // Even if a live event advanced the client past a claimed snapshot's version,
+        // bumping liveReconnectKey still reconnects without regressing content.
+        setBoardProp({ ...claimed, version: 2, title: 'Older snapshot' });
+        setLiveReconnectKey(2);
+        flush();
+        expect(controller.board()?.version).toBe(3);
+        expect(controller.board()?.title).toBe(board.title);
+        expect(connections[1].closed).toBe(true);
+        expect(connections).toHaveLength(3);
+      },
+      { scenario: 'board-controller-facilitator-claim-reconnect' },
+    );
+    expectNoDiagnostics(artifact);
   });
 
   it('keeps live updates, snapshot reconciliation, and mutations free of Solid 2.0 diagnostics', async () => {

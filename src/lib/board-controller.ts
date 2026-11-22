@@ -16,6 +16,7 @@ import {
 
 import type { BoardWorkspaceActions } from './board-actions';
 import { createBoardLive, type BoardLive, type BoardLiveTransport } from './board-live';
+export type { BoardLiveTransport } from './board-live';
 import {
   canAddColumn,
   canContribute,
@@ -120,6 +121,8 @@ export interface BoardControllerOptions {
   actions: () => BoardWorkspaceActions;
   /** Injectable live transport; defaults to SSE/WebSocket. */
   liveTransport?: BoardLiveTransport;
+  /** Bumped when the viewer's session role changes (e.g. Co-Facilitator Link claim) to reconnect live updates. */
+  liveReconnectKey?: () => number;
   /** Private Mode reveal theater hook; invoked synchronously before the response applies. */
   onDramaticReveal?: () => void;
 }
@@ -414,6 +417,15 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       live.dispose();
     };
   });
+
+  createEffect(
+    () => options.liveReconnectKey?.() ?? 0,
+    (key, previous) => {
+      if (previous !== undefined && key !== previous) {
+        reconnectLive?.();
+      }
+    },
+  );
 
   createEffect(
     () => {
