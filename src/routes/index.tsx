@@ -4,6 +4,7 @@ import RecentBoardsList from '../components/RecentBoardsList';
 import PokerSnapshot from '../components/home/PokerSnapshot';
 import RetroSnapshot from '../components/home/RetroSnapshot';
 import '../components/home/home.css';
+import RecentPokerRoomsList from '../components/poker/RecentPokerRoomsList';
 import { pokerSetupPath } from '../lib/poker-routes';
 import { retroSetupPath } from '../lib/routes';
 
@@ -45,8 +46,9 @@ export default function Home() {
         </section>
       </div>
 
-      <div class="[&>section]:mt-14 sm:[&>section]:mt-16">
+      <div class="mt-14 grid gap-6 empty:hidden sm:mt-16 lg:has-[>section+section]:grid-cols-2">
         <RecentBoardsList />
+        <RecentPokerRoomsList />
       </div>
 
       <footer class="mt-12 border-t border-border/70 pt-5 text-[13px] leading-relaxed text-text-muted sm:mt-16">

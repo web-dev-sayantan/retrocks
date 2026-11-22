@@ -1,16 +1,19 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
+import { createAgent } from '@ui-sdk/solid/agent';
 import { flush } from 'solid-js';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import App from './App';
 import { makeBoardView } from './lib/board-fixtures';
 import { FIBONACCI_DECK, type PokerLiveRoomView } from './lib/poker-types';
+import { readRecentPokerRooms, recordRecentPokerRoom } from './lib/recent-poker-rooms';
 
 vi.mock('virtual:solid-env/client', () => ({ env: { VITE_APP_NAME: 'Retrocks' } }));
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.history.replaceState(null, '', '/');
@@ -97,6 +100,7 @@ it.each(['p', 'P'])(
 
     expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
       .toBeInTheDocument();
+    expect(readRecentPokerRooms()).toEqual([]);
     const header = within(screen.getByRole('banner'));
     const tools = within(header.getByRole('navigation', { name: 'Retrocks tools' }));
     expect(tools.getByRole('link', { name: 'Pointing Poker' })).toHaveAttribute('aria-current', 'page');
@@ -105,9 +109,11 @@ it.each(['p', 'P'])(
   },
 );
 
-it('keeps Pointing Poker current when a Participant creates a Room from Home', async () => {
+it('reopens a created Room from Home and Pointing Poker setup', async () => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
-  stubRouteResponse(room, 200, `/p/${room.id}`);
+  const viewer = { id: 'sam', displayName: 'Sam', isFacilitator: true };
+  vi.stubGlobal('EventSource', class extends EventTarget { close() {} });
+  stubRouteResponse({ ...room, viewer, participants: [viewer] }, 200, `/p/${room.id}`);
   render(() => <App />);
 
   const tools = within(screen.getByRole('navigation', { name: 'Retrocks tools' }));
@@ -120,9 +126,48 @@ it('keeps Pointing Poker current when a Participant creates a Room from Home', a
     target: { value: 'Sam' },
   });
   fireEvent.submit(setup);
-  expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
-    .toBeInTheDocument();
+  await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 });
+  await waitFor(() => expect(window.location.pathname).toBe(`/p/${room.id}`));
   expect(poker).toHaveAttribute('aria-current', 'page');
+
+  const home = screen.getByRole('link', { name: 'Retrocks' });
+  const label = 'Room · abcdefgh';
+  const openSavedRoom = async () => {
+    const list = await screen.findByRole('region', { name: 'Recent Rooms' });
+    const link = within(list).getByRole('link', { name: label });
+    expect(link).toHaveAttribute('href', `/p/${room.id}`);
+    fireEvent.click(link);
+    await waitFor(() => expect(window.location.pathname).toBe(`/p/${room.id}`));
+  };
+
+  fireEvent.click(home);
+  await openSavedRoom();
+  fireEvent.click(poker);
+  await openSavedRoom();
+  fireEvent.click(home);
+
+  const list = await screen.findByRole('region', { name: 'Recent Rooms' });
+  const remove = 'Remove Room · abcdefgh from Recent Rooms';
+  expect(within(list).getByRole('button', { name: remove })).toBeEnabled();
+  const agent = createAgent();
+  expect(agent.snapshot().some((control) => control.label === remove)).toBe(true);
+  expect((await agent.act({ steps: [{ ref: remove, action: 'press' }] })).ok).toBe(true);
+  await waitFor(() => expect(list).not.toBeInTheDocument());
+  expect(readRecentPokerRooms()).toEqual([]);
+});
+
+it.each([
+  ['closed', { id: 'c'.repeat(22), version: 2, closed: true, canDelete: false, stories: [] }, 'Room summary', true],
+  ['unavailable', null, 'Room unavailable', false],
+] as const)('handles a saved Room that is %s', async (_, response, heading, saved) => {
+  const id = response?.id ?? 'u'.repeat(22);
+  recordRecentPokerRoom(id);
+  stubRouteResponse(response);
+  window.history.replaceState(null, '', `/p/${id}`);
+  render(() => <App />);
+
+  await screen.findByRole('heading', { name: heading, level: 1 });
+  await waitFor(() => expect(readRecentPokerRooms().some((entry) => entry.id === id)).toBe(saved));
 });
 
 it('retains the Board masthead on a Board route', async () => {
