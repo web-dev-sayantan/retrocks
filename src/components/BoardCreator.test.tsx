@@ -9,7 +9,7 @@ import {
   recordRecentBoard,
 } from '../lib/recent-boards';
 import type { CreateBoardInput } from '../lib/schemas';
-import Home from '../routes/index';
+import RetroSetup from '../routes/retro';
 import BoardCreator from './BoardCreator';
 import RecentBoardsList from './RecentBoardsList';
 
@@ -348,7 +348,7 @@ describe('<BoardCreator />', () => {
 });
 
 describe('<RecentBoardsList /> & localStorage persistence', () => {
-  it('links to and removes Recent Boards from home in last-visited order', () => {
+  it('links to and removes Recent Boards from Board setup in last-visited order', () => {
     const now = Date.now();
     recordRecentBoard(
       {
@@ -363,10 +363,9 @@ describe('<RecentBoardsList /> & localStorage persistence', () => {
       now - 300_000,
     );
 
-    const { getByRole, getByText, queryByRole } = render(() => <Home />);
+    const { getByRole, getByText, queryByRole } = render(() => <RetroSetup />);
     flush();
 
-    expect(getByRole('link', { name: 'Pointing Poker' })).toHaveAttribute('href', '/pointing-poker');
     const links = within(getByRole('region', { name: 'Recent Boards' })).getAllByRole('link');
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/b/board_0123456789abcdef',

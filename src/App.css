@@ -224,6 +224,21 @@
     0 16px 34px -12px rgb(0 0 0 / 0.5);
 }
 
+.home-nav-link {
+  @apply inline-flex shrink-0 items-center whitespace-nowrap rounded-full text-text hover:bg-surface-subtle/80 active:bg-surface-subtle pointer-coarse:min-h-11;
+}
+
+.home-nav-link[aria-current='page'] {
+  background: var(--retrocks-surface-subtle);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+}
+
+.home-island > button {
+  @apply shrink-0 max-sm:size-11 pointer-coarse:size-11;
+}
+
 /* One set of Board controls occupies the island on mobile and the toolbar on desktop. */
 .board-masthead,
 .board-masthead-toolbar {
