@@ -1,0 +1,124 @@
+/* Route CSS can load before App.css during SSR. Keep Tailwind layers in the same order. */
+@layer ui-sdk, theme, base, components, utilities;
+
+@layer components {
+  html:has(.home-diptych) {
+    scrollbar-gutter: stable;
+  }
+
+  .home-tool-bay {
+    display: grid;
+    min-inline-size: 0;
+    container-type: inline-size;
+  }
+
+  .home-tool-bay > h2 {
+    margin-block-start: 1.25rem;
+  }
+
+  .home-tool-bay > p {
+    margin-block-start: 0.375rem;
+  }
+
+  .home-tool-bay > a {
+    margin-block-start: 1.25rem;
+  }
+
+  .home-snapshot {
+    font-size: 0.75rem;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .home-snapshot-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 999px;
+    background: var(--retrocks-surface-subtle);
+    color: var(--retrocks-text-muted);
+    font-size: 0.6875rem;
+    font-weight: 500;
+  }
+
+  .home-snapshot-column {
+    min-inline-size: 0;
+    border: 1px solid var(--retrocks-border);
+    border-block-start-width: 3px;
+    background: color-mix(in srgb, var(--retrocks-surface) 45%, var(--retrocks-canvas));
+  }
+
+  .home-snapshot-column-title {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.4375rem 0.5rem;
+    border-block-end: 1px solid var(--retrocks-border);
+    font-weight: 600;
+  }
+
+  .home-snapshot-card,
+  .home-story-row {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--retrocks-border);
+    border-radius: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    background: var(--retrocks-surface);
+  }
+
+  .home-snapshot-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .home-retro-columns,
+  .home-retro-action-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-retro-action-column {
+    grid-column: 1 / -1;
+  }
+
+  .home-story-row {
+    display: grid;
+    gap: 0.125rem;
+  }
+
+  @media (width >= 64rem) {
+    .home-diptych {
+      grid-template-rows: auto auto 1fr auto;
+    }
+
+    .home-tool-bay {
+      grid-template-rows: auto auto 1fr auto;
+      grid-template-rows: subgrid;
+      grid-row: 1 / span 4;
+    }
+
+    .home-snapshot {
+      min-block-size: 18.5rem;
+    }
+  }
+
+  @container (width >= 26rem) {
+    .home-retro-columns {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .home-retro-action-column {
+      grid-column: auto;
+    }
+
+    .home-retro-action-cards {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .home-poker-layout {
+      grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    }
+  }
+}

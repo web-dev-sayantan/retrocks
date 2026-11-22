@@ -27,7 +27,7 @@
 Because Retrocks collects no user accounts or personal data, ownership and facilitation rely entirely on **opaque, cryptographic anonymous tokens** (see [ADR-0001](./adr/0001-anonymous-capability-tokens.md)).
 
 ### 2.1 Anonymous Participant Identity (`participantId`)
-- Minted lazily on the first `GET /b/:id` visit (or Board creation `POST`) if absent — never on `/` unless creating a Board. Minting on initial Board `GET` guarantees the subsequent WebSocket/SSE handshake immediately carries `participantHash` (preventing Private Mode redaction races on a Participant's first Card).
+- Minted lazily on the first `GET /b/:id` visit (or Board creation `POST`) if absent. Visiting Home (`/`) or opening Board setup (`/retro`) does not mint it. Minting on initial Board `GET` guarantees the subsequent WebSocket/SSE handshake immediately carries `participantHash` (preventing Private Mode redaction races on a Participant's first Card).
 - Stored in a signed, `HttpOnly`, `SameSite=Lax` cookie (`@remix-run/cookie`, HMAC-SHA256 via WebCrypto) with `Secure` enabled whenever served over HTTPS (conditional for local HTTP development) and a **90-day `Max-Age` with sliding renewal** on writes / near-expiry.
 - The raw token is **never exposed to other Participants** and is persisted in the database only as a per-Board salted SHA-256 hash (`author_token_hash`, `voter_token_hash`, `reactor_token_hash`).
 - Enables:
@@ -73,7 +73,14 @@ Because Retrocks collects no user accounts or personal data, ownership and facil
 
 ## 3. Feature Specification
 
-### 3.1 Board Setup (`/retro`)
+### 3.1 Home and Board Setup
+
+#### Home (`/`)
+- Retrocks opens with **Sprint rituals, ready in a link.** and two equally prominent tool sections. **Create a Board** opens `/retro` for Sprint Retrospectives. **Create a Room** opens `/pointing-poker` for Pointing Poker.
+- The sections sit side by side from 1024 CSS px and stack in reading order on narrower screens. Each has a framed snapshot with fixed sample content. The Board shows Columns, Cards, Votes, Private Mode, and Action Items. The Room shows an active Story, a Fibonacci Deck, revealed ballots, and the Story queue. The snapshots make no live requests and stay outside the accessibility tree and tab order.
+- Recent Boards appears below both tools when this browser has saved entries. It uses the same data and actions as Board setup. Removing the last entry closes the list area. The privacy and expiry note closes the page.
+
+#### Board Setup (`/retro`)
 - Open `/retro` directly to use Board Creator. The document title is “Create a Board — Retrocks”.
 - Show **Create a board**, the optional Board title, the selected **Standard Retro** and its Column names, and one primary **Create board** action above the fold. The default flow targets creation in under five seconds.
 - The optional Board title defaults to `"Sprint Retrospective — <MMM D>"` and allows up to 120 characters.
@@ -340,7 +347,7 @@ Two narrow server-only interfaces (`src/server/adapters/types.ts`) form the seam
 
 Strictly adheres to Solid 2.0 semantics (per [AGENTS.md](../AGENTS.md)):
 - **Routing (`filesystem-routing` + `@solidjs/router`):**
-  - `src/routes/index.tsx` — Home.
+  - `src/routes/index.tsx` — Home with Sprint Retrospectives and Pointing Poker snapshots, setup links, and Recent Boards.
   - `src/routes/retro.tsx` — Board Creator and Recent Boards.
   - `src/routes/b/[id].tsx` — Board Workspace (SSR preloaded with `query()`, mints anonymous cookie if absent, streams initial Board snapshot).
   - `src/routes/api/boards/[id]/live.ts` — Live WebSocket (CF) / SSE (Node) stream endpoint.
