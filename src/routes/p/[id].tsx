@@ -12,6 +12,7 @@ import { createPokerRoomController } from '../../lib/poker-controller';
 import { pokerRoomPath, pokerSetupPath } from '../../lib/poker-routes';
 import { claimPokerFacilitatorLink } from '../../lib/poker-sharing-actions';
 import type { PokerLiveRoomView, PokerRoomView } from '../../lib/poker-types';
+import { recordRecentPokerRoom, removeRecentPokerRoom } from '../../lib/recent-poker-rooms';
 
 export const route = {
   preload: ({ params }) => {
@@ -24,6 +25,7 @@ function RoomUnavailable(props: { roomId?: string; focusHeading?: boolean }) {
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
+    if (props.roomId) removeRecentPokerRoom(props.roomId);
     function scrubFragment() {
       const id = untrack(() => props.roomId);
       if (id) takeFacilitatorLinkToken(pokerRoomPath(id));
@@ -50,6 +52,8 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
     changeRoom: changePokerRoom,
     onUnavailable: () => props.onUnavailable(),
   });
+
+  onSettled(() => recordRecentPokerRoom(props.room.id));
 
   const closedRoom = () => {
     const current = controller.room();
@@ -151,6 +155,10 @@ function LiveRoomPage(props: { initialRoom: PokerLiveRoomView; onUnavailable: ()
 function RoomPage(props: { initialRoom: PokerRoomView }) {
   const [unavailable, setUnavailable] = createSignal(false);
   const onUnavailable = () => setUnavailable(true);
+  onSettled(() => {
+    const room = props.initialRoom;
+    if (room.closed) recordRecentPokerRoom(room.id, { onlyIfSaved: true });
+  });
   const openRoom = () => {
     const current = props.initialRoom;
     return current.closed ? undefined : current;

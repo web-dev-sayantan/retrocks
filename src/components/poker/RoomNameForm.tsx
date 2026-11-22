@@ -14,6 +14,7 @@ export default function RoomNameForm(props: ParentProps<{
   action: JSX.SerializableAttributeValue;
   error?: string;
   pending?: boolean;
+  secondary?: JSX.Element;
 }>) {
   const headingId = createUniqueId();
 
@@ -44,6 +45,9 @@ export default function RoomNameForm(props: ParentProps<{
         </Button>
         <p aria-live="polite" class="text-sm font-medium text-[var(--poker-error)]">{props.error}</p>
       </form>
+      <Show when={props.secondary}>
+        {(secondary) => <div class="[&>section]:mt-6">{secondary()}</div>}
+      </Show>
     </main>
   );
 }
