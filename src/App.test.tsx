@@ -31,23 +31,23 @@ it('navigates between Home and both tool setup pages from the header', async () 
   expect(retro).toHaveAttribute('href', '/retro');
   expect(poker).toHaveAttribute('href', '/pointing-poker');
   expect(home).toHaveAttribute('aria-current', 'page');
-  expect(retro).not.toHaveAttribute('aria-current');
-  expect(poker).not.toHaveAttribute('aria-current');
+  expect(retro).not.toHaveAttribute('aria-current', 'page');
+  expect(poker).not.toHaveAttribute('aria-current', 'page');
 
   const { artifact } = await captureArtifact(async () => {
     fireEvent.click(retro);
     expect(await screen.findByRole('heading', { name: 'Create a board', level: 1 }))
       .toBeInTheDocument();
     expect(retro).toHaveAttribute('aria-current', 'page');
-    expect(home).not.toHaveAttribute('aria-current');
-    expect(poker).not.toHaveAttribute('aria-current');
+    expect(home).not.toHaveAttribute('aria-current', 'page');
+    expect(poker).not.toHaveAttribute('aria-current', 'page');
 
     fireEvent.click(poker);
     expect(await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 }))
       .toBeInTheDocument();
     expect(poker).toHaveAttribute('aria-current', 'page');
-    expect(home).not.toHaveAttribute('aria-current');
-    expect(retro).not.toHaveAttribute('aria-current');
+    expect(home).not.toHaveAttribute('aria-current', 'page');
+    expect(retro).not.toHaveAttribute('aria-current', 'page');
 
     fireEvent.click(home);
     await waitFor(() => expect(home).toHaveAttribute('aria-current', 'page'));
@@ -57,31 +57,72 @@ it('navigates between Home and both tool setup pages from the header', async () 
   expectNoDiagnostics(artifact);
 });
 
-it('marks Pointing Poker as current while a Participant opens a Room link', async () => {
-  const room: PokerLiveRoomView = {
-    id: 'abcdefghijklmnopqrstuv',
-    closed: false,
-    version: 1,
-    viewer: null,
-    participants: [],
-    stories: [],
-    activeStoryId: null,
-    deck: FIBONACCI_DECK,
-    deckType: 'fibonacci',
-    deckLocked: false,
-    round: null,
-  };
-  stubRouteResponse(room);
-  window.history.replaceState(null, '', `/p/${room.id}`);
+it.each([
+  ['/retro/?source=link', 'Create a board', 'Retrospectives'],
+  ['/pointing-poker/?source=link', 'Pointing Poker', 'Pointing Poker'],
+])('marks the active destination when opening %s directly', async (path, heading, activeTool) => {
+  window.history.replaceState(null, '', path);
   render(() => <App />);
 
-  expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
-    .toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
   const header = within(screen.getByRole('banner'));
   const tools = within(header.getByRole('navigation', { name: 'Retrocks tools' }));
-  expect(tools.getByRole('link', { name: 'Pointing Poker' })).toHaveAttribute('aria-current', 'page');
-  expect(tools.getByRole('link', { name: 'Retrospectives' })).not.toHaveAttribute('aria-current');
-  expect(header.getByRole('link', { name: 'Retrocks' })).not.toHaveAttribute('aria-current');
+  const activeLink = tools.getByRole('link', { name: activeTool });
+  expect(activeLink).toHaveAttribute('aria-current', 'page');
+  for (const link of header.getAllByRole('link').filter((link) => link !== activeLink)) {
+    expect(link).not.toHaveAttribute('aria-current', 'page');
+  }
+});
+
+const room: PokerLiveRoomView = {
+  id: 'abcdefghijklmnopqrstuv',
+  closed: false,
+  version: 1,
+  viewer: null,
+  participants: [],
+  stories: [],
+  activeStoryId: null,
+  deck: FIBONACCI_DECK,
+  deckType: 'fibonacci',
+  deckLocked: false,
+  round: null,
+};
+
+it.each(['p', 'P'])(
+  'marks Pointing Poker as current while a Participant opens a Room link under /%s',
+  async (segment) => {
+    stubRouteResponse(room);
+    window.history.replaceState(null, '', `/${segment}/${room.id}`);
+    render(() => <App />);
+
+    expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
+      .toBeInTheDocument();
+    const header = within(screen.getByRole('banner'));
+    const tools = within(header.getByRole('navigation', { name: 'Retrocks tools' }));
+    expect(tools.getByRole('link', { name: 'Pointing Poker' })).toHaveAttribute('aria-current', 'page');
+    expect(tools.getByRole('link', { name: 'Retrospectives' })).not.toHaveAttribute('aria-current', 'page');
+    expect(header.getByRole('link', { name: 'Retrocks' })).not.toHaveAttribute('aria-current', 'page');
+  },
+);
+
+it('keeps Pointing Poker current when a Participant creates a Room from Home', async () => {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+  stubRouteResponse(room, 200, `/p/${room.id}`);
+  render(() => <App />);
+
+  const tools = within(screen.getByRole('navigation', { name: 'Retrocks tools' }));
+  const poker = tools.getByRole('link', { name: 'Pointing Poker' });
+  fireEvent.click(poker);
+  const setup = await screen.findByRole('form', { name: 'Pointing Poker' });
+  expect(poker).toHaveAttribute('aria-current', 'page');
+
+  fireEvent.input(within(setup).getByRole('textbox', { name: 'Display Name' }), {
+    target: { value: 'Sam' },
+  });
+  fireEvent.submit(setup);
+  expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
+    .toBeInTheDocument();
+  expect(poker).toHaveAttribute('aria-current', 'page');
 });
 
 it('retains the Board masthead on a Board route', async () => {
@@ -95,18 +136,21 @@ it('retains the Board masthead on a Board route', async () => {
   expect(screen.queryByRole('navigation', { name: 'Retrocks tools' })).not.toBeInTheDocument();
 });
 
-it('offers tool navigation with no active destination on a 404', async () => {
-  window.history.replaceState(null, '', '/p/room/unknown');
-  render(() => <App />);
+it.each(['/p/room/unknown', '/b', '/b/board_expired_12345678/unknown'])(
+  'offers tool navigation with no active destination on a 404 at %s',
+  async (path) => {
+    window.history.replaceState(null, '', path);
+    render(() => <App />);
 
-  expect(await screen.findByRole('heading', { name: 'Page not found', level: 1 }))
-    .toBeInTheDocument();
-  const header = within(screen.getByRole('banner'));
-  expect(header.getByRole('navigation', { name: 'Retrocks tools' })).toBeInTheDocument();
-  for (const link of header.getAllByRole('link')) {
-    expect(link).not.toHaveAttribute('aria-current');
-  }
-});
+    expect(await screen.findByRole('heading', { name: 'Page not found', level: 1 }))
+      .toBeInTheDocument();
+    const header = within(screen.getByRole('banner'));
+    expect(header.getByRole('navigation', { name: 'Retrocks tools' })).toBeInTheDocument();
+    for (const link of header.getAllByRole('link')) {
+      expect(link).not.toHaveAttribute('aria-current', 'page');
+    }
+  },
+);
 
 it('opens the Board Creator directly at /retro', async () => {
   window.history.replaceState(null, '', '/retro');
@@ -124,6 +168,15 @@ it('opens the Board Creator directly at /retro', async () => {
   }, { scenario: 'board-setup-advanced-options' });
 
   expectNoDiagnostics(artifact);
+});
+
+it('opens Pointing Poker directly at /pointing-poker', async () => {
+  window.history.replaceState(null, '', '/pointing-poker');
+  render(() => <App />);
+
+  expect(await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Display Name' })).toBeInTheDocument();
 });
 
 it('opens Board setup from an unavailable Board', async () => {
@@ -145,10 +198,15 @@ it('opens Board setup from an unavailable Board', async () => {
   expect(window.location.pathname).toBe('/retro');
 });
 
-function stubRouteResponse(value: unknown, status = 200) {
-  vi.stubGlobal('fetch', async (resource: string) => {
+function stubRouteResponse(value: unknown, status = 200, redirect?: string) {
+  vi.stubGlobal('fetch', async (resource: string, init?: RequestInit) => {
     if (!new URL(resource, window.location.origin).pathname.startsWith('/_server')) {
       throw new Error(`Unexpected request: ${resource}`);
+    }
+    if (redirect && init?.method === 'POST') {
+      return new Response(null, {
+        headers: { 'X-Server-Function-Redirect': `302 ${new URL(redirect, window.location.origin)}` },
+      });
     }
     return Response.json(value, {
       status,

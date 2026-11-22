@@ -225,7 +225,7 @@
 }
 
 .home-nav-link {
-  @apply inline-flex shrink-0 items-center whitespace-nowrap rounded-full text-text hover:bg-surface-subtle/80 active:bg-surface-subtle;
+  @apply inline-flex shrink-0 items-center whitespace-nowrap rounded-full text-text hover:bg-surface-subtle/80 active:bg-surface-subtle pointer-coarse:min-h-11;
 }
 
 .home-nav-link[aria-current='page'] {
@@ -236,7 +236,7 @@
 }
 
 .home-island > button {
-  @apply shrink-0 max-sm:size-11;
+  @apply shrink-0 max-sm:size-11 pointer-coarse:size-11;
 }
 
 /* One set of Board controls occupies the island on mobile and the toolbar on desktop. */
