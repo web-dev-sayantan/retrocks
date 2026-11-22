@@ -102,7 +102,7 @@ it('grants a signed HttpOnly Facilitator cookie and returns the Facilitator Boar
       createCardForRequest({
         boardId,
         columnId: participantBoard!.columns[0].id,
-        content: 'Participant note before claim',
+        content: 'Participant Card before claim',
       }),
     participantCookie,
   );
@@ -120,7 +120,7 @@ it('grants a signed HttpOnly Facilitator cookie and returns the Facilitator Boar
   });
   expect(claimedBoard.cards).toHaveLength(1);
   expect(claimedBoard.cards[0]).toMatchObject({
-    content: 'Participant note before claim',
+    content: 'Participant Card before claim',
     isMine: true,
   });
   const { result: board } = await runRequest(

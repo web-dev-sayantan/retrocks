@@ -549,7 +549,6 @@ describe('createPokerRoomController', () => {
     liveMissing.connections[0].emit({ type: 'room:missing' });
     flush();
 
-    expect(liveMissing.controller.unavailable()).toBe(true);
     expect(liveMissing.controller.online()).toEqual([]);
     expect(liveMissing.onUnavailable).toHaveBeenCalledTimes(1);
     expect(liveMissing.connections[0].closed).toBe(true);
@@ -573,7 +572,6 @@ describe('createPokerRoomController', () => {
     flush();
 
     expect(result.ok).toBe(false);
-    expect(actionMissing.controller.unavailable()).toBe(true);
     expect(actionMissing.controller.online()).toEqual([]);
     expect(actionMissing.onUnavailable).toHaveBeenCalledTimes(1);
     expect(actionMissing.connections[0].closed).toBe(true);

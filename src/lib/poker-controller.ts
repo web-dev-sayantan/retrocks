@@ -133,7 +133,6 @@ export interface PokerRoomController {
   room(): PokerRoomView;
   online(): string[];
   status(): PokerLiveStatus;
-  unavailable(): boolean;
   changeRoom(command: PokerRoomChange): Promise<PokerResult>;
 }
 
@@ -236,7 +235,6 @@ export function createPokerRoomController(
     room: () => store.room,
     online,
     status,
-    unavailable,
     changeRoom,
   };
 }

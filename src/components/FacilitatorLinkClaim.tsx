@@ -27,6 +27,10 @@ export default function FacilitatorLinkClaim(props: FacilitatorLinkClaimProps) {
       async function claim() {
         const { pathname } = window.location;
         let currentAttempt = 0;
+        const isStale = () =>
+          disposed ||
+          currentAttempt !== activeAttempt ||
+          window.location.pathname !== pathname;
         try {
           const runClaim = untrack(() => props.claim) ?? claimFacilitatorRole;
           const result = await claimFacilitatorLink(boardId, (input) => {
@@ -34,12 +38,7 @@ export default function FacilitatorLinkClaim(props: FacilitatorLinkClaimProps) {
             setError('');
             return runClaim(input);
           });
-          if (
-            !result ||
-            disposed ||
-            currentAttempt !== activeAttempt ||
-            window.location.pathname !== pathname
-          ) {
+          if (!result || isStale()) {
             return;
           }
 
@@ -50,11 +49,7 @@ export default function FacilitatorLinkClaim(props: FacilitatorLinkClaimProps) {
             setError(result.message);
           }
         } catch {
-          if (
-            !disposed &&
-            currentAttempt === activeAttempt &&
-            window.location.pathname === pathname
-          ) {
+          if (!isStale()) {
             setError('Could not claim Facilitator access. Reopen the link to try again.');
           }
         }
