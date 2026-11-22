@@ -1,6 +1,7 @@
 import 'server-only';
 import type { StartMiddleware } from '@solidjs/vite-plugin';
 
+import { isPokerRoomPathname } from '../lib/poker-routes';
 import { isBoardPathname } from '../lib/routes';
 
 function generateNonce(): string {
@@ -49,14 +50,17 @@ export const securityHeadersMiddleware: StartMiddleware = async (
   headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=()');
 
   const { pathname } = new URL(event.request.url);
-  if (isBoardPathname(pathname)) {
+  const pokerRoom = isPokerRoomPathname(pathname);
+  if (isBoardPathname(pathname) || pokerRoom) {
     headers.set('x-robots-tag', 'noindex, nofollow');
-    if (event.request.method === 'GET' && /^\/b\/[^/]+\/?$/.test(pathname)) {
-      // The async Board read sets the Participant cookie and missing-Board status.
+    if (event.request.method === 'GET' && (pokerRoom || /^\/b\/[^/]+\/?$/.test(pathname))) {
+      // The workspace read sets the Participant cookie and may return a 404.
       // Wait for both before committing the initial page headers.
       event.renderMode = 'async';
     }
   }
+
+  if (pokerRoom || pathname.startsWith('/api/poker/')) headers.set('cache-control', 'no-store');
 
   return next();
 };
