@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { createRoot, createSignal, flush } from 'solid-js';
+import { createEffect, createRoot, createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardWorkspaceActions } from './board-actions';
@@ -590,5 +590,268 @@ describe('createBoardController', () => {
       { scenario: 'board-controller-live-and-mutations' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('isolates single-Card live events and mutations so unrelated Cards and Columns do not recompute', async () => {
+    const { artifact } = await captureArtifact(
+      async () => {
+        const cardA = makeCard({ id: 'card_a', columnId: 'col_1', content: 'Card A', votes: 0, myVotes: 0 });
+        const cardB = makeCard({
+          id: 'card_b',
+          columnId: 'col_2',
+          content: 'Card B',
+          votes: 2,
+          myVotes: 1,
+          reactions: { '👍': 2 },
+          myReactions: ['👍'],
+          commentCount: 1,
+          comments: [{ id: 'cm_1', cardId: 'card_b', content: 'Keep me stable', isMine: false, createdAt: 100 }],
+        });
+        const board = makeBoardView({
+          columns: [
+            { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 1 },
+            { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 1 },
+          ],
+          cards: [cardA, cardB],
+        });
+        const { controller, connections, spies } = mountSession(board);
+
+        let cardARuns = 0;
+        let cardBRuns = 0;
+        let col2Runs = 0;
+        let latestCardA = '';
+
+        const disposeObservers = createRoot((dispose) => {
+          const targetCard = controller.board()!.cards[0];
+          const unrelatedCard = controller.board()!.cards[1];
+          const unrelatedCol = controller.board()!.columns[1];
+
+          createEffect(
+            () => ({
+              content: targetCard.content,
+              votes: targetCard.votes,
+              myVotes: targetCard.myVotes,
+              reactions: Object.entries(targetCard.reactions).map(([k, v]) => `${k}:${v}`).join(','),
+              myReactions: targetCard.myReactions.join(','),
+            }),
+            (summary) => {
+              cardARuns += 1;
+              latestCardA = `${summary.content}|${summary.votes}|${summary.myVotes}|${summary.reactions}|${summary.myReactions}`;
+            },
+          );
+
+          createEffect(
+            () => ({
+              content: unrelatedCard.content,
+              votes: unrelatedCard.votes,
+              myVotes: unrelatedCard.myVotes,
+              reactions: Object.entries(unrelatedCard.reactions).map(([k, v]) => `${k}:${v}`).join(','),
+              myReactions: unrelatedCard.myReactions.join(','),
+              comments: unrelatedCard.comments.map((c) => c.content).join(','),
+            }),
+            () => {
+              cardBRuns += 1;
+            },
+          );
+
+          createEffect(
+            () => ({
+              title: unrelatedCol.title,
+              cardCount: unrelatedCol.cardCount,
+            }),
+            () => {
+              col2Runs += 1;
+            },
+          );
+
+          return dispose;
+        });
+
+        try {
+          flush();
+          expect(cardARuns).toBe(1);
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+
+          const cardBRefBefore = controller.board()?.cards[1];
+
+          // 1. Live vote:updated on card_a
+          connections[0].emit({
+            type: 'board:mutation',
+            version: 2,
+            events: [
+              {
+                type: 'vote:updated',
+                version: 2,
+                targetType: 'card',
+                targetId: 'card_a',
+                totalVotes: 1,
+                myVotes: 1,
+                remainingVotes: 4,
+              },
+            ],
+          });
+          flush();
+          expect(cardARuns).toBe(2);
+          expect(latestCardA).toBe('Card A|1|1||');
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+
+          // 2. Live reaction:updated on card_a
+          connections[0].emit({
+            type: 'board:mutation',
+            version: 3,
+            events: [
+              {
+                type: 'reaction:updated',
+                version: 3,
+                cardId: 'card_a',
+                counts: { '🎉': 1 },
+                myReactions: ['🎉'],
+              },
+            ],
+          });
+          flush();
+          expect(cardARuns).toBe(3);
+          expect(latestCardA).toBe('Card A|1|1|🎉:1|🎉');
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+
+          // 3. Live card:upserted on card_a
+          connections[0].emit({
+            type: 'board:mutation',
+            version: 4,
+            events: [
+              {
+                type: 'card:upserted',
+                version: 4,
+                card: { ...cardA, content: 'Card A edited', votes: 1, myVotes: 1, reactions: { '🎉': 1 }, myReactions: ['🎉'] },
+              },
+            ],
+          });
+          flush();
+          expect(cardARuns).toBe(4);
+          expect(latestCardA).toBe('Card A edited|1|1|🎉:1|🎉');
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+
+          // 4. Optimistic + committed mutation on card_a (add and then remove one of two reactions)
+          spies.toggleReaction.mockResolvedValueOnce({
+            ok: true,
+            version: 5,
+            events: [
+              {
+                type: 'reaction:updated',
+                version: 5,
+                cardId: 'card_a',
+                counts: { '🎉': 1, '👍': 1 },
+                myReactions: ['🎉', '👍'],
+              },
+            ],
+          });
+          await controller.toggleReaction('card_a', '👍');
+          flush();
+          expect(latestCardA).toBe('Card A edited|1|1|🎉:1,👍:1|🎉,👍');
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+
+          spies.toggleReaction.mockResolvedValueOnce({
+            ok: true,
+            version: 6,
+            events: [
+              {
+                type: 'reaction:updated',
+                version: 6,
+                cardId: 'card_a',
+                counts: { '🎉': 1 },
+                myReactions: ['🎉'],
+              },
+            ],
+          });
+          await controller.toggleReaction('card_a', '👍');
+          flush();
+          expect(latestCardA).toBe('Card A edited|1|1|🎉:1|🎉');
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+
+          // 5. Facilitation toggle (board:updated) leaves unrelated Card and Column readers untouched
+          spies.setBoardLock.mockResolvedValueOnce({
+            ok: true,
+            version: 7,
+            events: [{ type: 'board:updated', version: 7, patch: { isLocked: true } }],
+          });
+          expect(await controller.toggleBoardLock(true)).toBeNull();
+          flush();
+          expect(controller.board()?.isLocked).toBe(true);
+          expect(cardBRuns).toBe(1);
+          expect(col2Runs).toBe(1);
+          expect(controller.board()?.cards[1]).toBe(cardBRefBefore);
+        } finally {
+          disposeObservers();
+        }
+      },
+      { scenario: 'board-controller-reactive-isolation' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('preserves concurrent live events when an in-flight optimistic mutation rejects', async () => {
+    const { artifact } = await captureArtifact(
+      async () => {
+        const cardA = makeCard({ id: 'card_a', columnId: 'col_1', content: 'Card A', votes: 0, myVotes: 0 });
+        const cardB = makeCard({ id: 'card_b', columnId: 'col_2', content: 'Card B', votes: 0, myVotes: 0 });
+        const board = makeBoardView({
+          isFacilitator: false,
+          voteLimit: 5,
+          remainingVotes: 5,
+          cards: [cardA, cardB],
+        });
+        const { controller, connections, spies } = mountSession(board);
+
+        const pendingVote = Promise.withResolvers<BoardMutationResponse>();
+        spies.changeVote.mockReturnValueOnce(pendingVote.promise);
+
+        // Start optimistic vote on card_a
+        const votePromise = controller.changeVote('card', 'card_a', 1);
+        flush();
+        expect(controller.voting().pending).toBe(true);
+        expect(controller.voting().remainingVotes).toBe(4);
+        expect(controller.board()?.cards[0]?.myVotes).toBe(1);
+
+        // While card_a's vote is in flight, a live event updates card_b
+        connections[0].emit({
+          type: 'board:mutation',
+          version: 2,
+          events: [
+            {
+              type: 'card:upserted',
+              version: 2,
+              card: { ...cardB, content: 'Card B edited live' },
+            },
+          ],
+        });
+        flush();
+        expect(controller.board()?.cards[1]?.content).toBe('Card B edited live');
+        expect(controller.board()?.cards[0]?.myVotes).toBe(1);
+
+        // Server rejects card_a's vote: card_a reverts while card_b's live edit stays intact
+        pendingVote.resolve({
+          ok: false,
+          code: 'LIMIT_EXCEEDED',
+          message: 'No votes left.',
+        });
+        await votePromise;
+        flush();
+
+        expect(controller.voting().pending).toBe(false);
+        expect(controller.voting().remainingVotes).toBe(5);
+        expect(controller.board()?.cards[0]?.myVotes).toBe(0);
+        expect(controller.board()?.cards[1]?.content).toBe('Card B edited live');
+        expect(controller.board()?.version).toBe(2);
+        expect(controller.errorMessage()).toBe('No votes left.');
+      },
+      { scenario: 'board-controller-concurrent-live-and-rollback' },
+    );
+    expectNoDiagnostics(artifact, { allow: ['OPTIMISTIC_REVERTED'] });
   });
 });

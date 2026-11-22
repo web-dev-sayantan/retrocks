@@ -295,18 +295,15 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   const getActions = options.actions;
 
   // Authoritative server state: the route snapshot, live events, and mutation
-  // responses land here. The optimistic view derives from it, tracking one
-  // revision signal instead of every field in the Board.
+  // responses patch `serverStore` incrementally. `createOptimisticStore` chains
+  // directly to `serverStore` so optimistic writes overlay it without cloning
+  // the entire Board on every server revision.
   const [serverStore, setServerStore] = createStore<{ board: BoardViewDTO | null }>({
     board: untrack(() => cloneBoardView(options.board())),
   });
-  const [serverRevision, setServerRevision] = createSignal(0);
   const [store, setStore] = createOptimisticStore<{ board: BoardViewDTO | null }>(
-    () => {
-      serverRevision();
-      return { board: untrack(() => cloneBoardView(serverStore.board)) };
-    },
-    { board: untrack(() => cloneBoardView(options.board())) },
+    () => serverStore,
+    { board: null },
     { key: 'id' },
   );
 
@@ -333,7 +330,6 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
   function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
     if (nextBoard === null) setErrorMessage(null);
-    let applied = false;
     untrack(() => {
       setServerStore((draft) => {
         const current = draft.board;
@@ -343,10 +339,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
               nextBoard.isFacilitator === current.isFacilitator) return;
         }
         reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
-        applied = true;
       });
     });
-    if (applied) setServerRevision((revision) => revision + 1);
   }
 
   function syncServerClock(boardId: string, serverNow: number): void {
@@ -379,7 +373,6 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       return;
     }
     let needsResync = false;
-    let applied = false;
     let serverNow: number | undefined;
     untrack(() => {
       setServerStore((draft) => {
@@ -391,13 +384,11 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         }
         applyBoardEvents(board, events);
         board.version = version;
-        applied = true;
         for (const event of events) {
           if (event.type === 'timer:updated') serverNow = event.serverNow;
         }
       });
     });
-    if (applied) setServerRevision((revision) => revision + 1);
     if (serverNow !== undefined) syncServerClock(boardId, serverNow);
     if (needsResync) reconnectLive?.();
   }
@@ -798,7 +789,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
           card.myReactions.push(emoji);
           card.reactions[emoji] = count + 1;
         } else {
-          card.myReactions = card.myReactions.filter((item) => item !== emoji);
+          const idx = card.myReactions.indexOf(emoji);
+          if (idx !== -1) card.myReactions.splice(idx, 1);
           if (count <= 1) delete card.reactions[emoji];
           else card.reactions[emoji] = count - 1;
         }
