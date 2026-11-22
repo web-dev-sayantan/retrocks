@@ -2,16 +2,24 @@ import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  LIVE_CONNECTION_HEADER,
   LIVE_HEARTBEAT_MS,
   LIVE_HEARTBEAT_TIMEOUT_MS,
   type BoardLiveMessage,
 } from './board-live-protocol';
 import { createBoardLive, type BoardLive, type BoardLiveTransport } from './board-live';
 import type { BoardViewDTO } from './board-types';
+import {
+  createLiveStream,
+  createSseTransport,
+  createWebSocketTransport,
+} from './live-stream';
 
 interface FakeConnection {
   path: string;
+  open: boolean;
   closed: boolean;
+  failNextPing: boolean;
   pings: Array<string | undefined>;
   emit(data: string): void;
   fail(): void;
@@ -23,7 +31,9 @@ function createFakeTransport(): { transport: BoardLiveTransport; connections: Fa
     connect(path, handlers) {
       const connection: FakeConnection = {
         path,
+        open: true,
         closed: false,
+        failNextPing: false,
         pings: [],
         emit(data) {
           handlers.onMessage(data);
@@ -34,10 +44,18 @@ function createFakeTransport(): { transport: BoardLiveTransport; connections: Fa
       };
       connections.push(connection);
       return {
+        isOpen() {
+          return connection.open;
+        },
         ping(connectionId) {
           connection.pings.push(connectionId);
+          if (connection.failNextPing) {
+            connection.failNextPing = false;
+            handlers.onFailure();
+          }
         },
         close() {
+          connection.open = false;
           connection.closed = true;
         },
       };
@@ -92,12 +110,16 @@ function startLive(transport: BoardLiveTransport, boardId = 'board_1'): BoardLiv
 
 describe('createBoardLive', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
   });
 
   afterEach(() => {
     for (const live of sessions) live.dispose();
     sessions.length = 0;
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -355,5 +377,355 @@ describe('createBoardLive', () => {
     vi.advanceTimersByTime(60_000);
     flush();
     expect(connections).toHaveLength(3);
+  });
+
+  it('keeps a healthy, recently active connection open on visible tab return and sends a liveness ping', () => {
+    const { transport, connections } = createFakeTransport();
+    const live = startLive(transport);
+    flush();
+    emitMessage(connections[0], makeSnapshot(1, 'conn_1'));
+    flush();
+    expect(live.status()).toBe('live');
+
+    vi.advanceTimersByTime(10_000);
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+
+    expect(connections).toHaveLength(1);
+    expect(connections[0].closed).toBe(false);
+    expect(live.status()).toBe('live');
+    expect(connections[0].pings).toEqual(['conn_1']);
+
+    // The liveness probe reset the watchdog, so the stream stays live until a full timeout passes.
+    vi.advanceTimersByTime(LIVE_HEARTBEAT_TIMEOUT_MS - 1);
+    flush();
+    expect(connections).toHaveLength(1);
+    expect(live.status()).toBe('live');
+
+    emitMessage(connections[0], { type: 'heartbeat' });
+    flush();
+    expect(connections).toHaveLength(1);
+    expect(live.status()).toBe('live');
+  });
+
+  it('ignores visibilitychange when switching away to a hidden tab', () => {
+    const { transport, connections } = createFakeTransport();
+    const live = startLive(transport);
+    flush();
+    emitMessage(connections[0], makeSnapshot(1, 'conn_1'));
+    flush();
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+
+    expect(connections).toHaveLength(1);
+    expect(connections[0].closed).toBe(false);
+    expect(connections[0].pings).toEqual([]);
+    expect(live.status()).toBe('live');
+  });
+
+  it('immediately reconnects on visible tab return when reconnecting, closed, or stale past the heartbeat timeout', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const { transport, connections } = createFakeTransport();
+    const live = startLive(transport);
+    flush();
+    emitMessage(connections[0], makeSnapshot(1, 'conn_1'));
+    flush();
+
+    // Case 1: stream is in reconnecting state waiting for backoff retry.
+    connections[0].fail();
+    flush();
+    expect(live.status()).toBe('reconnecting');
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(connections).toHaveLength(2);
+    expect(live.status()).toBe('connecting');
+    emitMessage(connections[1], makeSnapshot(2, 'conn_2'));
+    flush();
+    expect(live.status()).toBe('live');
+    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 2 });
+
+    // Case 2: underlying transport is no longer open.
+    connections[1].open = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(connections[1].closed).toBe(true);
+    expect(connections).toHaveLength(3);
+    expect(live.status()).toBe('connecting');
+    emitMessage(connections[2], makeSnapshot(3, 'conn_3'));
+    flush();
+    expect(live.status()).toBe('live');
+    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 3 });
+
+    // Case 3: connection went silent beyond the heartbeat timeout (e.g. after laptop sleep).
+    vi.setSystemTime(Date.now() + LIVE_HEARTBEAT_TIMEOUT_MS);
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(connections[2].closed).toBe(true);
+    expect(connections[2].pings).toEqual([]);
+    expect(connections).toHaveLength(4);
+    expect(live.status()).toBe('connecting');
+    emitMessage(connections[3], makeSnapshot(4, 'conn_4'));
+    flush();
+    expect(live.status()).toBe('live');
+    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 4 });
+  });
+
+  it('transitions to reconnecting and recovers if the visible-return liveness ping fails or times out', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const { transport, connections } = createFakeTransport();
+    const live = startLive(transport);
+    flush();
+    emitMessage(connections[0], makeSnapshot(1, 'conn_1'));
+    flush();
+
+    // Case 1: liveness ping immediately reports a failure.
+    connections[0].failNextPing = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(connections[0].pings).toEqual(['conn_1']);
+    expect(connections[0].closed).toBe(true);
+    expect(live.status()).toBe('reconnecting');
+
+    vi.advanceTimersByTime(500);
+    flush();
+    expect(connections).toHaveLength(2);
+    emitMessage(connections[1], makeSnapshot(2, 'conn_2'));
+    flush();
+    expect(live.status()).toBe('live');
+
+    // Case 2: liveness ping silently times out without any response from the server.
+    vi.advanceTimersByTime(10_000);
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(connections[1].pings).toEqual(['conn_2']);
+    expect(live.status()).toBe('live');
+
+    vi.advanceTimersByTime(LIVE_HEARTBEAT_TIMEOUT_MS);
+    flush();
+    expect(connections[1].closed).toBe(true);
+    expect(live.status()).toBe('reconnecting');
+
+    vi.advanceTimersByTime(500);
+    flush();
+    expect(connections).toHaveLength(3);
+    emitMessage(connections[2], makeSnapshot(3, 'conn_3'));
+    flush();
+    expect(live.status()).toBe('live');
+  });
+
+  it('still reconnects on online even when the stream is live and recently active', () => {
+    const { transport, connections } = createFakeTransport();
+    const live = startLive(transport);
+    flush();
+    emitMessage(connections[0], makeSnapshot(1, 'conn_1'));
+    flush();
+    expect(live.status()).toBe('live');
+
+    window.dispatchEvent(new Event('online'));
+    flush();
+    expect(connections[0].closed).toBe(true);
+    expect(connections).toHaveLength(2);
+    expect(live.status()).toBe('connecting');
+
+    emitMessage(connections[1], makeSnapshot(2, 'conn_2'));
+    flush();
+    expect(live.status()).toBe('live');
+  });
+});
+
+describe('createLiveStream built-in transports', () => {
+  const activeStreams: Array<{ dispose(): void }> = [];
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  });
+
+  afterEach(() => {
+    for (const stream of activeStreams) stream.dispose();
+    activeStreams.length = 0;
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('handles healthy visibility recovery, closed-socket reconnect, online recovery, and terminal room disposal over WebSocket', () => {
+    const sockets: FakeWebSocket[] = [];
+    class FakeWebSocket extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readyState = FakeWebSocket.OPEN;
+      sent: string[] = [];
+      closed = false;
+      url: string;
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        sockets.push(this);
+      }
+      send(data: string): void {
+        this.sent.push(data);
+      }
+      close(): void {
+        this.readyState = FakeWebSocket.CLOSED;
+        this.closed = true;
+      }
+      emit(payload: unknown): void {
+        this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(payload) }));
+      }
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+
+    type RoomMsg =
+      | { type: 'room:snapshot'; room: { closed: boolean } }
+      | { type: 'room:missing' }
+      | { type: 'heartbeat' };
+    const received: RoomMsg[] = [];
+    const stream = createLiveStream<RoomMsg>(
+      '/api/poker/room-1/live',
+      {
+        parse: (raw) => JSON.parse(raw) as RoomMsg,
+        handshake: (msg) => (msg.type === 'room:snapshot' ? {} : undefined),
+        isTerminal: (msg) => msg.type === 'room:missing' || (msg.type === 'room:snapshot' && msg.room.closed),
+        onMessage: (msg) => received.push(msg),
+        onDisconnect: () => {},
+      },
+      createWebSocketTransport(),
+    );
+    activeStreams.push(stream);
+    flush();
+
+    expect(sockets).toHaveLength(1);
+    sockets[0].emit({ type: 'room:snapshot', room: { closed: false } });
+    flush();
+    expect(stream.status()).toBe('live');
+
+    // Healthy tab return keeps socket open and sends ping.
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].closed).toBe(false);
+    expect(sockets[0].sent).toEqual(['ping']);
+
+    // Closed underlying socket triggers immediate reconnect on visible return.
+    sockets[0].readyState = FakeWebSocket.CLOSED;
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(sockets).toHaveLength(2);
+    sockets[1].emit({ type: 'room:snapshot', room: { closed: false } });
+    flush();
+    expect(stream.status()).toBe('live');
+
+    // Online event still reconnects cleanly.
+    window.dispatchEvent(new Event('online'));
+    flush();
+    expect(sockets).toHaveLength(3);
+    sockets[2].emit({ type: 'room:snapshot', room: { closed: false } });
+    flush();
+    expect(stream.status()).toBe('live');
+
+    // Terminal closed-room snapshot disposes the stream and stops further recovery.
+    sockets[2].emit({ type: 'room:snapshot', room: { closed: true } });
+    flush();
+    expect(sockets[2].closed).toBe(true);
+    expect(received.at(-1)).toEqual({ type: 'room:snapshot', room: { closed: true } });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('online'));
+    flush();
+    expect(sockets).toHaveLength(3);
+  });
+
+  it('handles healthy visibility recovery, failed ping recovery, closed-stream reconnect, and terminal disposal over SSE', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const sources: FakeEventSource[] = [];
+    class FakeEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readyState = FakeEventSource.OPEN;
+      closed = false;
+      url: string;
+      constructor(url: string) {
+        super();
+        this.url = url;
+        sources.push(this);
+      }
+      close(): void {
+        this.readyState = FakeEventSource.CLOSED;
+        this.closed = true;
+      }
+      emit(payload: unknown): void {
+        this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(payload) }));
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const live = createBoardLive('board_sse', createSseTransport());
+    activeStreams.push(live);
+    flush();
+
+    expect(sources).toHaveLength(1);
+    sources[0].emit(makeSnapshot(1, 'sse_1'));
+    flush();
+    expect(live.status()).toBe('live');
+
+    // Healthy tab return keeps EventSource open and sends POST heartbeat with connection header.
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(sources).toHaveLength(1);
+    expect(sources[0].closed).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/boards/board_sse/live',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { [LIVE_CONNECTION_HEADER]: 'sse_1' },
+      }),
+    );
+
+    // Failed POST ping (404) transitions to reconnecting and opens a new EventSource on retry.
+    document.dispatchEvent(new Event('visibilitychange'));
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(sources[0].closed).toBe(true);
+    expect(live.status()).toBe('reconnecting');
+
+    vi.advanceTimersByTime(500);
+    flush();
+    expect(sources).toHaveLength(2);
+    sources[1].emit(makeSnapshot(2, 'sse_2'));
+    flush();
+    expect(live.status()).toBe('live');
+
+    // Closed EventSource triggers immediate reconnect on visible return.
+    sources[1].readyState = FakeEventSource.CLOSED;
+    document.dispatchEvent(new Event('visibilitychange'));
+    flush();
+    expect(sources).toHaveLength(3);
+    sources[2].emit(makeSnapshot(3, 'sse_3'));
+    flush();
+    expect(live.status()).toBe('live');
+
+    // Terminal board:deleted disposes the EventSource and prevents further recovery.
+    sources[2].emit({ type: 'board:deleted', version: 4 });
+    flush();
+    expect(sources[2].closed).toBe(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('online'));
+    flush();
+    expect(sources).toHaveLength(3);
   });
 });
