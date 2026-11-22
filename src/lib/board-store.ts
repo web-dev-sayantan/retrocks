@@ -182,8 +182,8 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
     case 'reaction:updated': {
       const card = draft.cards.find((c) => c.id === event.cardId);
       if (card) {
-        card.reactions = { ...event.counts };
-        card.myReactions = [...event.myReactions];
+        reconcile({ ...event.counts })(card.reactions);
+        reconcile([...event.myReactions])(card.myReactions);
       }
       break;
     }

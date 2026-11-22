@@ -83,21 +83,46 @@ it('rejects an invalid Co-Facilitator Link without granting a cookie', async () 
   expect(response.headers.getSetCookie()).toEqual([]);
 });
 
-it('grants a signed HttpOnly Facilitator cookie when a Participant claims a valid link', async () => {
+it('grants a signed HttpOnly Facilitator cookie and returns the Facilitator Board projection when a Participant claims a valid link', async () => {
   const { claimFacilitatorRoleForRequest, getFacilitatorLinkForRequest } =
     await import('./sharing-service');
-  const { getBoardForRequest } = await import('./board-service');
+  const { createCardForRequest, getBoardForRequest } = await import('./board-service');
   const { boardId, facilitatorCookie } = await createBoard();
   const { result: link } = await runRequest(
     () => getFacilitatorLinkForRequest(boardId),
     facilitatorCookie,
   );
-  const { response } = await runRequest(() =>
-    claimFacilitatorRoleForRequest({ boardId, token: link.split('#f=')[1] }),
+  const { result: participantBoard, response: participantResponse } = await runRequest(
+    () => getBoardForRequest(boardId),
+  );
+  expect(participantBoard?.isFacilitator).toBe(false);
+  const participantCookie = participantResponse.headers.getSetCookie()[0].split(';')[0];
+  await runRequest(
+    () =>
+      createCardForRequest({
+        boardId,
+        columnId: participantBoard!.columns[0].id,
+        content: 'Participant Card before claim',
+      }),
+    participantCookie,
+  );
+
+  const { result: claimedBoard, response } = await runRequest(
+    () => claimFacilitatorRoleForRequest({ boardId, token: link.split('#f=')[1] }),
+    participantCookie,
   );
 
   const [cookie] = response.headers.getSetCookie();
   expect(cookie).toMatch(/; HttpOnly/i);
+  expect(claimedBoard).toMatchObject({
+    id: boardId,
+    isFacilitator: true,
+  });
+  expect(claimedBoard.cards).toHaveLength(1);
+  expect(claimedBoard.cards[0]).toMatchObject({
+    content: 'Participant Card before claim',
+    isMine: true,
+  });
   const { result: board } = await runRequest(
     () => getBoardForRequest(boardId),
     cookie.split(';')[0],

@@ -20,6 +20,7 @@ export interface LiveHandlers {
 export interface LiveConnection {
   ping(connectionId: string | undefined): void;
   close(): void;
+  isOpen?(): boolean;
 }
 
 /** Opens live streams; SSE and WebSocket ship as defaults, tests inject a fake. */
@@ -39,12 +40,20 @@ export function createLiveStream<Message>(
   transport = defaultLiveTransport(),
 ) {
   const [status, setStatus] = createSignal<LiveStatus>('connecting');
+  let currentStatus: LiveStatus = 'connecting';
   let generation = 0;
   let attempt = 0;
   let connection: LiveConnection | undefined;
+  let lastMessageAt: number | undefined;
+  let probeConnection: (() => void) | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+
+  function updateStatus(next: LiveStatus): void {
+    currentStatus = next;
+    setStatus(next);
+  }
 
   function disconnect(): void {
     generation += 1;
@@ -53,31 +62,34 @@ export function createLiveStream<Message>(
     clearInterval(heartbeat);
     connection?.close();
     connection = undefined;
+    lastMessageAt = undefined;
+    probeConnection = undefined;
     options.onDisconnect();
   }
 
   function dispose(): void {
-    document.removeEventListener('visibilitychange', reconnectWhenVisible);
-    window.removeEventListener('online', reconnectWhenVisible);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.removeEventListener('online', handleOnline);
     disconnect();
   }
 
   function connect(): void {
     disconnect();
-    setStatus('connecting');
+    updateStatus('connecting');
     const activeGeneration = generation;
     let connectionId: string | undefined;
 
     function retryConnection(): void {
       if (activeGeneration !== generation) return;
       disconnect();
-      setStatus('reconnecting');
+      updateStatus('reconnecting');
       const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
       attempt += 1;
       retry = setTimeout(connect, delay * (1 + Math.random() * 0.2));
     }
 
     function resetWatchdog(): void {
+      if (activeGeneration !== generation) return;
       clearTimeout(watchdog);
       watchdog = setTimeout(retryConnection, LIVE_HEARTBEAT_TIMEOUT_MS);
     }
@@ -101,8 +113,9 @@ export function createLiveStream<Message>(
       if (handshake) {
         attempt = 0;
         if (handshake.connectionId) connectionId = handshake.connectionId;
-        setStatus('live');
+        updateStatus('live');
       }
+      lastMessageAt = Date.now();
       resetWatchdog();
       options.onMessage(message);
     }
@@ -110,16 +123,36 @@ export function createLiveStream<Message>(
     const opened = transport.connect(path, { onMessage: receive, onFailure: retryConnection });
     if (!opened) return;
     connection = opened;
+    probeConnection = () => {
+      if (activeGeneration !== generation) return;
+      resetWatchdog();
+      opened.ping(connectionId);
+    };
     heartbeat = setInterval(() => opened.ping(connectionId), LIVE_HEARTBEAT_MS);
     resetWatchdog();
   }
 
-  function reconnectWhenVisible(): void {
+  function handleVisibilityChange(): void {
+    if (document.visibilityState !== 'visible') return;
+    if (
+      connection
+      && currentStatus === 'live'
+      && connection.isOpen?.() !== false
+      && lastMessageAt !== undefined
+      && Date.now() - lastMessageAt < LIVE_HEARTBEAT_TIMEOUT_MS
+    ) {
+      probeConnection?.();
+      return;
+    }
+    connect();
+  }
+
+  function handleOnline(): void {
     if (document.visibilityState === 'visible') connect();
   }
 
-  document.addEventListener('visibilitychange', reconnectWhenVisible);
-  window.addEventListener('online', reconnectWhenVisible);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('online', handleOnline);
   connect();
   return {
     status,
@@ -129,7 +162,7 @@ export function createLiveStream<Message>(
   };
 }
 
-function createSseTransport(): LiveTransport {
+export function createSseTransport(): LiveTransport {
   return {
     connect(path, handlers) {
       if (typeof EventSource === 'undefined') return undefined;
@@ -140,6 +173,9 @@ function createSseTransport(): LiveTransport {
       });
       stream.addEventListener('error', () => handlers.onFailure());
       return {
+        isOpen() {
+          return stream.readyState === EventSource.OPEN;
+        },
         ping(connectionId) {
           if (!connectionId) return;
           activePing?.abort();
@@ -163,7 +199,7 @@ function createSseTransport(): LiveTransport {
   };
 }
 
-function createWebSocketTransport(): LiveTransport {
+export function createWebSocketTransport(): LiveTransport {
   return {
     connect(path, handlers) {
       if (typeof WebSocket === 'undefined') return undefined;
@@ -174,8 +210,20 @@ function createWebSocketTransport(): LiveTransport {
       socket.addEventListener('close', () => handlers.onFailure());
       socket.addEventListener('error', () => handlers.onFailure());
       return {
+        isOpen() {
+          return socket.readyState === WebSocket.OPEN;
+        },
         ping() {
-          if (socket.readyState === WebSocket.OPEN) socket.send('ping');
+          if (socket.readyState === WebSocket.CONNECTING) return;
+          if (socket.readyState !== WebSocket.OPEN) {
+            handlers.onFailure();
+            return;
+          }
+          try {
+            socket.send('ping');
+          } catch {
+            handlers.onFailure();
+          }
         },
         close() {
           socket.close();

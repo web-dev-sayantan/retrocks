@@ -1,8 +1,10 @@
 import { respondToServerAction } from './action-response';
-import type { ActionError } from './board-types';
+import type { ActionError, BoardViewDTO } from './board-types';
 
 export type FacilitatorClaimInput = { boardId: string; token: string };
-export type FacilitatorClaimResponse = { ok: true } | ActionError;
+export type FacilitatorClaimResponse =
+  | { ok: true; board: BoardViewDTO }
+  | ActionError;
 export type FacilitatorLinkResponse = { ok: true; link: string } | ActionError;
 
 export async function claimFacilitatorRole(
@@ -12,10 +14,10 @@ export async function claimFacilitatorRole(
   const { claimFacilitatorRoleForRequest } = await import(
     '../server/services/sharing-service'
   );
-  return respondToServerAction(async () => {
-    await claimFacilitatorRoleForRequest(input);
-    return { ok: true as const };
-  });
+  return respondToServerAction(async () => ({
+    ok: true as const,
+    board: await claimFacilitatorRoleForRequest(input),
+  }));
 }
 
 export async function getFacilitatorLink(
