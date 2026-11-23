@@ -2,32 +2,80 @@
 @layer ui-sdk, theme, base, components, utilities;
 
 @layer components {
-  html:has(.home-diptych) {
+  html:has(.home-stage) {
     scrollbar-gutter: stable;
   }
 
-  .home-tool-bay {
+  /* Recessed borderless track + elevated sliding indicator (no border-in-border). */
+  .home-tabs-track {
+    background: var(--retrocks-surface-subtle);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
+  }
+
+  :is([data-theme='dark'], [data-theme='retro']) .home-tabs-track {
+    background: color-mix(in srgb, var(--retrocks-surface) 82%, var(--retrocks-canvas));
+    box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.38);
+  }
+
+  .home-tabs-indicator {
+    position: absolute;
+    top: var(--active-tab-top);
+    left: var(--active-tab-left);
+    width: var(--active-tab-width);
+    height: var(--active-tab-height);
+    pointer-events: none;
+    background: var(--retrocks-surface);
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.08),
+      0 8px 20px -8px rgb(0 0 0 / 0.16);
+  }
+
+  :is([data-theme='dark'], [data-theme='retro']) .home-tabs-indicator {
+    background: var(--retrocks-surface-subtle);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      0 6px 18px -6px rgb(0 0 0 / 0.5);
+  }
+
+  /* Border-drawn underline shape survives forced-colors mode (WCAG 1.4.1). */
+  .home-tabs-indicator::after {
+    content: '';
+    position: absolute;
+    inset-block-end: 0.25rem;
+    inset-inline: 0;
+    inline-size: 2.5rem;
+    margin-inline: auto;
+    border-block-end: 2.5px solid var(--retrocks-accent);
+    border-radius: 999px;
+  }
+
+  .home-tool-tab[data-selected] .home-tool-tab-icon {
+    color: var(--retrocks-accent);
+  }
+
+  .home-tab-panels {
     display: grid;
+  }
+
+  /* Panels share one grid cell so hidden="until-found" siblings never add gap or height. */
+  .home-tab-panel {
+    grid-area: 1 / 1;
     min-inline-size: 0;
+  }
+
+  .home-stage-inner {
     container-type: inline-size;
-  }
-
-  .home-tool-bay > h2 {
-    margin-block-start: 1.25rem;
-  }
-
-  .home-tool-bay > p {
-    margin-block-start: 0.375rem;
-  }
-
-  .home-tool-bay > a {
-    margin-block-start: 1.25rem;
+    min-inline-size: 0;
   }
 
   .home-snapshot {
     font-size: 0.75rem;
     line-height: 1.35;
     font-variant-numeric: tabular-nums;
+  }
+
+  .home-stage-inner .home-snapshot {
+    min-block-size: 19.5rem;
   }
 
   .home-snapshot-pill {
@@ -88,19 +136,15 @@
     gap: 0.125rem;
   }
 
-  @media (width >= 64rem) {
-    .home-diptych {
-      grid-template-rows: auto auto 1fr auto;
+  @media (prefers-reduced-motion: no-preference) {
+    .home-tabs-indicator {
+      transition:
+        left 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        width 220ms cubic-bezier(0.22, 1, 0.36, 1);
     }
 
-    .home-tool-bay {
-      grid-template-rows: auto auto 1fr auto;
-      grid-template-rows: subgrid;
-      grid-row: 1 / span 4;
-    }
-
-    .home-snapshot {
-      min-block-size: 18.5rem;
+    .home-tabs-indicator[data-activation-direction='none'] {
+      transition: none;
     }
   }
 

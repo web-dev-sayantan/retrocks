@@ -1,13 +1,17 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, isInaccessible, render, screen, within } from '@solidjs/testing-library';
+import { createAgent } from '@ui-sdk/solid/agent';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import App from './App';
 import { makeBoardView } from './lib/board-fixtures';
 import { recordRecentBoard } from './lib/recent-boards';
+import { recordRecentPokerRoom } from './lib/recent-poker-rooms';
 
 vi.mock('virtual:solid-env/client', () => ({ env: { VITE_APP_NAME: 'Retrocks' } }));
+
+const agent = createAgent();
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
@@ -21,36 +25,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('introduces both tools and opens their setup routes from Home', async () => {
+it('switches between Sprint Retrospectives and Pointing Poker tabs and opens their setup routes', async () => {
   render(() => <App />);
   expect(await screen.findAllByRole('heading', { level: 1 })).toHaveLength(1);
 
   const { artifact } = await captureArtifact(async () => {
-    expect(screen.getByRole('heading', { level: 1, name: 'Sprint rituals, ready in a link.' }))
+    expect(screen.getByRole('heading', { level: 1, name: 'The Sprint rituals.' }))
       .toBeInTheDocument();
     expect(document.title).toBe('Retrocks — Sprint Retrospectives & Pointing Poker');
-    expect(screen.getByText(
-      'Retrospectives and pointing poker for agile teams. Share a link and start immediately without signing in.',
-    )).toBeInTheDocument();
     expect(screen.getByText(
       'No accounts or tracking. Boards and Rooms are shared by link and expire automatically.',
     )).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create board' })).not.toBeInTheDocument();
 
-    const retro = screen.getByRole('region', { name: 'Sprint Retrospectives' });
-    const poker = screen.getByRole('region', { name: 'Pointing Poker' });
-    const createBoard = within(retro).getByRole('link', { name: 'Create a Board' });
-    const createRoom = within(poker).getByRole('link', { name: 'Create a Room' });
+    const tablist = screen.getByRole('tablist', { name: 'Retrocks tools' });
+    const retroTab = within(tablist).getByRole('tab', { name: 'Sprint Retrospectives' });
+    const pokerTab = within(tablist).getByRole('tab', { name: 'Pointing Poker' });
+    expect(retroTab).toHaveAttribute('aria-selected', 'true');
+    expect(pokerTab).toHaveAttribute('aria-selected', 'false');
 
+    const retroPanel = screen.getByRole('tabpanel', { name: 'Sprint Retrospectives' });
+    const createBoard = within(retroPanel).getByRole('link', { name: 'Create a Board' });
     expect(createBoard).toHaveAttribute('href', '/retro');
-    expect(createRoom).toHaveAttribute('href', '/pointing-poker');
 
     fireEvent.click(createBoard);
     expect(await screen.findByRole('button', { name: 'Create board' })).toBeEnabled();
     expect(window.location.pathname).toBe('/retro');
 
     fireEvent.click(screen.getByRole('link', { name: 'Retrocks' }));
-    fireEvent.click(await screen.findByRole('link', { name: 'Create a Room' }));
+    const pokerTabReturn = await screen.findByRole('tab', { name: 'Pointing Poker' });
+    fireEvent.click(pokerTabReturn);
+    flush();
+
+    expect(pokerTabReturn).toHaveAttribute('aria-selected', 'true');
+    const pokerPanel = screen.getByRole('tabpanel', { name: 'Pointing Poker' });
+    const createRoom = within(pokerPanel).getByRole('link', { name: 'Create a Room' });
+    expect(createRoom).toHaveAttribute('href', '/pointing-poker');
+
+    fireEvent.click(createRoom);
     expect(await screen.findByRole('button', { name: 'Create Room' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Display Name' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/pointing-poker');
@@ -64,10 +76,13 @@ it('renders static snapshots outside the accessibility tree and tab order', asyn
   vi.stubGlobal('fetch', fetch);
   render(() => <App />);
 
-  const retro = await screen.findByRole('region', { name: 'Sprint Retrospectives' });
-  const poker = screen.getByRole('region', { name: 'Pointing Poker' });
-  const boardSnapshot = within(retro).getByText('Sprint 42 Retro').closest('[aria-hidden="true"]');
-  const roomSnapshot = within(poker).getByText('Story queue').closest('[aria-hidden="true"]');
+  const retroPanel = await screen.findByRole('tabpanel', { name: 'Sprint Retrospectives' });
+  const boardSnapshot = within(retroPanel).getByText('Sprint 42 Retro').closest('[aria-hidden="true"]');
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Pointing Poker' }));
+  flush();
+  const pokerPanel = screen.getByRole('tabpanel', { name: 'Pointing Poker' });
+  const roomSnapshot = within(pokerPanel).getByText('Story queue').closest('[aria-hidden="true"]');
 
   for (const snapshot of [boardSnapshot, roomSnapshot]) {
     expect(snapshot).toBeInTheDocument();
@@ -80,15 +95,7 @@ it('renders static snapshots outside the accessibility tree and tab order', asyn
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it('shows Recent Boards only when this browser has visited one', async () => {
-  render(() => <App />);
-  await screen.findByRole('heading', { name: 'Sprint rituals, ready in a link.' });
-  flush();
-
-  expect(screen.queryByRole('region', { name: 'Recent Boards' })).not.toBeInTheDocument();
-});
-
-it('lists the most recently visited Boards first and persists removal across Home and Board setup', async () => {
+it('shows Recent Boards and Recent Rooms only inside their matching tab view', async () => {
   const now = Date.now();
   recordRecentBoard({
     id: 'board_0123456789abcdef',
@@ -99,10 +106,13 @@ it('lists the most recently visited Boards first and persists removal across Hom
     id: 'board_fedcba9876543210',
     title: 'Design Sprint Retro',
   }, now - 300_000);
+  recordRecentPokerRoom('room_1234567890abcdef1');
+
   render(() => <App />);
 
-  const recent = await screen.findByRole('region', { name: 'Recent Boards' });
-  const links = within(recent).getAllByRole('link');
+  const retroPanel = await screen.findByRole('tabpanel', { name: 'Sprint Retrospectives' });
+  const recentBoards = within(retroPanel).getByRole('region', { name: 'Recent Boards' });
+  const links = within(recentBoards).getAllByRole('link');
   expect(links.map((link) => link.getAttribute('href'))).toEqual([
     '/b/board_0123456789abcdef',
     '/b/board_fedcba9876543210',
@@ -111,17 +121,33 @@ it('lists the most recently visited Boards first and persists removal across Hom
   expect(links[1]).toHaveAccessibleName('Design Sprint Retro');
   expect(links[0]).toHaveAccessibleDescription('Visited 2m ago · Facilitator');
   expect(links[1]).toHaveAccessibleDescription('Visited 5m ago');
+  expect(within(retroPanel).queryByRole('region', { name: 'Recent Rooms' })).not.toBeInTheDocument();
 
-  const createRoom = screen.getByRole('link', { name: 'Create a Room' });
+  const createBoard = within(retroPanel).getByRole('link', { name: 'Create a Board' });
   const privacyNote = screen.getByText(
     'No accounts or tracking. Boards and Rooms are shared by link and expire automatically.',
   );
-  expect(createRoom.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(createBoard.compareDocumentPosition(recentBoards) & Node.DOCUMENT_POSITION_FOLLOWING)
     .toBeTruthy();
-  expect(recent.compareDocumentPosition(privacyNote) & Node.DOCUMENT_POSITION_FOLLOWING)
+  expect(recentBoards.compareDocumentPosition(privacyNote) & Node.DOCUMENT_POSITION_FOLLOWING)
     .toBeTruthy();
 
+  fireEvent.click(screen.getByRole('tab', { name: 'Pointing Poker' }));
+  flush();
+  const pokerPanel = screen.getByRole('tabpanel', { name: 'Pointing Poker' });
+  const recentRooms = within(pokerPanel).getByRole('region', { name: 'Recent Rooms' });
+  expect(within(recentRooms).getByRole('link', { name: 'Room · room_123' })).toHaveAttribute(
+    'href',
+    '/p/room_1234567890abcdef1',
+  );
+  expect(within(pokerPanel).queryByRole('region', { name: 'Recent Boards' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Sprint Retrospectives' }));
+  flush();
+
   const { artifact } = await captureArtifact(async () => {
+    const activeRetroPanel = screen.getByRole('tabpanel', { name: 'Sprint Retrospectives' });
+    const recent = within(activeRetroPanel).getByRole('region', { name: 'Recent Boards' });
     fireEvent.click(within(recent).getByRole('button', {
       name: 'Remove Team Sprint Retro from Recent Boards',
     }));
@@ -137,7 +163,7 @@ it('lists the most recently visited Boards first and persists removal across Hom
       .toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('link', { name: 'Retrocks' }));
-    await screen.findByRole('heading', { name: 'Sprint rituals, ready in a link.' });
+    await screen.findByRole('heading', { name: 'The Sprint rituals.' });
     const homeRecent = await screen.findByRole('region', { name: 'Recent Boards' });
     expect(within(homeRecent).queryByRole('link', { name: 'Team Sprint Retro' }))
       .not.toBeInTheDocument();
@@ -173,4 +199,26 @@ it('reopens a saved Board from Home', async () => {
 
   expect(await screen.findByRole('heading', { level: 1, name: board.title })).toBeInTheDocument();
   expect(window.location.pathname).toBe(`/b/${board.id}`);
+});
+
+it('exposes the tool switcher tabs to ui-sdk agents', async () => {
+  render(() => <App />);
+  await screen.findByRole('tablist', { name: 'Retrocks tools' });
+  flush();
+
+  const components = agent
+    .snapshot()
+    .filter((entry) => !entry.offPage && entry.component !== 'more');
+  for (const entry of components) {
+    expect(entry.label, `${entry.component} ${entry.ref} has no name`).toBeTruthy();
+  }
+  const labels = components.map((entry) => entry.label);
+  expect(labels).toContain('Retrocks tools');
+
+  const result = await agent.act({
+    steps: [{ ref: 'Retrocks tools', action: 'setValue', args: ['Pointing Poker'] }],
+  });
+  expect(result.ok, result.error?.message).toBe(true);
+  flush();
+  expect(screen.getByRole('tab', { name: 'Pointing Poker' })).toHaveAttribute('aria-selected', 'true');
 });

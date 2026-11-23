@@ -15,7 +15,8 @@
     "lint": "oxlint src",
     "typecheck": "tsc --noEmit",
     "knip": "knip",
-    "prepare": "husky"
+    "prepare": "husky",
+    "deploy": "pnpm exec wrangler deploy"
   },
   "lint-staged": {
     "*.{ts,tsx}": "oxlint --fix"

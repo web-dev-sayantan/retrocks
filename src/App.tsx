@@ -56,7 +56,7 @@ function AppShell(props: ParentProps) {
                   aria-current={retroMatch() ? 'page' : 'false'}
                   class="home-nav-link spring-press board-focus-ring board-touch-target px-2 text-[13px] font-medium min-[375px]:px-2.5 sm:px-3"
                 >
-                  <span>Retro<span class="hidden sm:inline">spectives</span></span>
+                  <span>Retro<span class="hidden sm:inline" /></span>
                 </a>
                 <a
                   href={pokerSetupPath}
@@ -64,7 +64,7 @@ function AppShell(props: ParentProps) {
                   aria-current={pokerSetupMatch() || pokerRoomMatch() ? 'page' : 'false'}
                   class="home-nav-link spring-press board-focus-ring board-touch-target px-2 text-[13px] font-medium min-[375px]:px-2.5 sm:px-3"
                 >
-                  <span><span class="hidden sm:inline">Pointing&nbsp;</span>Poker</span>
+                  <span>Poker</span>
                 </a>
               </nav>
 
