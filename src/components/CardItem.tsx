@@ -407,7 +407,7 @@ export default function CardItem(props: CardItemProps) {
                 }}
                 class={[
                   'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-base text-text',
-                  'placeholder:text-text-muted focus:border-focus focus:outline-none',
+                  'placeholder:text-text-muted board-focus-ring',
                 ]}
               />
               <div class="flex flex-wrap items-center justify-between gap-2">

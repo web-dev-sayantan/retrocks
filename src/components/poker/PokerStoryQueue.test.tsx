@@ -41,7 +41,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
 
   const added = await agent.act({ steps: [
     { ref: 'Story title', action: 'setValue', args: [second.title] },
-    { ref: 'Add to queue', action: 'press' },
+    { ref: 'Queue', action: 'press' },
   ] });
   expect(added.ok, added.error?.message).toBe(true);
   await screen.findByText(second.title);
@@ -820,7 +820,7 @@ test('inline Delete confirmation updates its warning and discardRoundId reactive
   }));
 });
 
-test('quick-add provides Add to queue and Add & make active buttons with IME-safe Smart Enter', async () => {
+test('quick-add provides Queue and Publish buttons with IME-safe Smart Enter', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
@@ -848,8 +848,8 @@ test('quick-add provides Add to queue and Add & make active buttons with IME-saf
   flush();
 
   const input = screen.getByRole('textbox', { name: 'Story title' }) as HTMLInputElement;
-  expect(screen.getByRole('button', { name: 'Add to queue' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Add & make active' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Queue' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Publish' })).toBeVisible();
 
   fireEvent.input(input, { target: { value: 'Composing title' } });
   flush();
@@ -884,7 +884,7 @@ test('quick-add provides Add to queue and Add & make active buttons with IME-saf
   change.mockClear();
   fireEvent.input(input, { target: { value: 'Active immediately' } });
   flush();
-  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'add-story', title: 'Active immediately', makeActive: true,
   }));
@@ -914,7 +914,7 @@ test('quick-add provides Add to queue and Add & make active buttons with IME-saf
   expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
 });
 
-test('Add & make active confirms before discarding cast votes while Add to queue does not', async () => {
+test('Publish confirms before discarding cast votes while Queue does not', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
@@ -945,7 +945,7 @@ test('Add & make active confirms before discarding cast votes while Add to queue
   fireEvent.input(input, { target: { value: 'Urgent story' } });
   flush();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
   const dialog = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
   const cancel = within(dialog).getByRole('button', { name: 'Keep voting' });
   await waitFor(() => expect(cancel).toHaveFocus());
@@ -954,7 +954,7 @@ test('Add & make active confirms before discarding cast votes while Add to queue
   expect(change).not.toHaveBeenCalled();
   expect(input.value).toBe('Urgent story');
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
   const reopened = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
   fireEvent.click(within(reopened).getByRole('button', { name: 'Lock previous & make active' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
@@ -981,7 +981,7 @@ test('Add & make active confirms before discarding cast votes while Add to queue
   change.mockClear();
   fireEvent.input(input, { target: { value: 'Active after reveal' } });
   flush();
-  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
   const revealDialog = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
   fireEvent.click(within(revealDialog).getByRole('button', { name: 'Lock previous & make active' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({

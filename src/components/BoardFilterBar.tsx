@@ -114,7 +114,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                 onInput={(event) => props.onQueryChange(event.currentTarget.value)}
                 onKeyDown={handleSearchKeyDown}
                 class={[
-                  'h-11 w-full rounded-xl border border-border/85 bg-surface py-1.5 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 focus-visible:border-accent sm:h-9 sm:pr-9 sm:text-[13px]',
+                  'h-11 w-full rounded-xl border border-border/85 bg-surface py-1.5 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 sm:h-9 sm:pr-9 sm:text-[13px]',
                   props.query.length > 0 ? 'pr-11' : 'pr-2',
                   focusRingClass,
                   '[&::-webkit-search-cancel-button]:appearance-none',

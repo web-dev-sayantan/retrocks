@@ -31,7 +31,7 @@
   --retrocks-text-muted: #555c56;
   --retrocks-accent: #255b48;
   --retrocks-accent-contrast: #ffffff;
-  --retrocks-focus: #414bb0;
+  --retrocks-focus: #255b48;
 
   /* Column accent markers and subtle tint tokens. */
   --retrocks-col-slate: #64748b;
@@ -65,7 +65,7 @@
   --retrocks-text-muted: #bfc3bf;
   --retrocks-accent: #abd7c2;
   --retrocks-accent-contrast: #1c1e20;
-  --retrocks-focus: #aab2ff;
+  --retrocks-focus: #8ccab0;
 
   --retrocks-col-slate: #94a3b8;
   --retrocks-col-sage: #6eb393;
@@ -181,6 +181,13 @@
      repeating the utility strings. */
   .board-focus-ring {
     @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+  }
+
+  :is(input, textarea, select).board-focus-ring:focus-visible {
+    border-color: var(--retrocks-focus);
+    outline: 2px solid var(--retrocks-focus);
+    outline-offset: -1px;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--retrocks-focus) 18%, transparent);
   }
 
   .board-touch-target {
@@ -791,8 +798,10 @@
 }
 
 .board-modal-field:focus-visible {
+  border-color: var(--retrocks-focus);
   outline: 2px solid var(--retrocks-focus);
-  outline-offset: 2px;
+  outline-offset: -1px;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--retrocks-focus) 18%, transparent);
 }
 
 /* ui-sdk Drawer sheet (Card details, Action Items); the drawer owns translate + backdrop opacity */
@@ -839,6 +848,14 @@
   .board-workspace :where(button, a, summary):focus-visible {
     outline: 2px solid var(--retrocks-focus);
     outline-offset: 2px;
+  }
+}
+
+@media (forced-colors: active) {
+  .board-focus-ring:focus-visible,
+  .board-modal-field:focus-visible,
+  .board-workspace :where(button, a, summary):focus-visible {
+    outline-color: Highlight;
   }
 }
 

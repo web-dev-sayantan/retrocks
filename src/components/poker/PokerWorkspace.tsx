@@ -199,7 +199,7 @@ export default function PokerWorkspace(props: {
           <Show
             when={!isRenamingRoom()}
             fallback={
-              <div ref={roomNameEditorEl} class="flex min-w-0 items-center gap-1.5">
+              <div ref={roomNameEditorEl} class="poker-room-title-wrap">
                 <input
                   ref={roomNameInputEl}
                   type="text"
@@ -223,18 +223,18 @@ export default function PokerWorkspace(props: {
                   disabled={roomNameSave.isSaving()}
                   focusableWhenDisabled
                   onClick={() => roomNameEdit.end()}
-                  class="poker-icon-btn spring-press board-focus-ring"
+                  class="poker-inline-action poker-inline-action-save spring-press board-focus-ring"
                 >
-                  <LucideIcon icon={Check} class="size-4 shrink-0" strokeWidth={2} />
+                  <LucideIcon icon={Check} class="size-3.5 shrink-0" strokeWidth={2.2} />
                 </Button>
                 <Button
                   type="button"
                   aria-label="Cancel Room rename"
                   title="Cancel Room rename"
                   onClick={cancelRoomRename}
-                  class="poker-icon-btn spring-press board-focus-ring"
+                  class="poker-inline-action spring-press board-focus-ring"
                 >
-                  <LucideIcon icon={X} class="size-4 shrink-0" strokeWidth={1.9} />
+                  <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
                 </Button>
               </div>
             }
@@ -244,7 +244,7 @@ export default function PokerWorkspace(props: {
               onPointerDown={roomNameTap.onPointerDown}
               onPointerUp={roomNameTap.onPointerUp}
               onPointerCancel={roomNameTap.onPointerCancel}
-              class="flex min-w-0 items-center gap-1"
+              class="poker-room-title-wrap"
             >
               <h1
                 ref={heading}

@@ -360,7 +360,7 @@ export default function CountdownTimer(props: {
                       ref={durationInput}
                       id={durationId}
                       required
-                      class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums focus:border-focus focus:outline-none sm:min-h-9"
+                      class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums board-focus-ring sm:min-h-9"
                     />
                   </NumberInput>
                 </div>

@@ -105,7 +105,7 @@ function QuickAddStoryForm(props: {
             onClick={() => void submit(false)}
           >
             <LucideIcon icon={Plus} class="size-3.5 shrink-0" strokeWidth={2.2} />
-            <span>Add to queue</span>
+            <span>Queue</span>
           </Button>
           <Button
             class={[
@@ -118,7 +118,7 @@ function QuickAddStoryForm(props: {
             onClick={() => void submit(true)}
           >
             <LucideIcon icon={Play} class="size-3.5 shrink-0" strokeWidth={2.1} />
-            <span>Add &amp; make active</span>
+            <span>Publish</span>
           </Button>
         </div>
       </div>
@@ -479,7 +479,7 @@ export default function PokerStoryQueue(props: {
                       aria-current={active() ? 'true' : undefined}
                     >
                       <div class="flex items-start gap-2.5">
-                        <span class="mt-0.5 inline-flex shrink-0" aria-hidden="true">
+                        <span class="inline-flex min-h-7 shrink-0 items-center" aria-hidden="true">
                           <Show
                             when={story().status === 'estimated'}
                             fallback={
@@ -512,29 +512,34 @@ export default function PokerStoryQueue(props: {
                           fallbackFocus={() => editTitleButton?.focus()}
                         />
 
-                        <span class="flex shrink-0 items-center gap-1.5">
-                          <Show when={locked()}>
-                            <span class="poker-lock-cue" title="Locked Story">
-                              <LucideIcon icon={Lock} class="size-3.5" strokeWidth={2} />
-                              <span class="sr-only">Locked</span>
-                            </span>
-                          </Show>
-                          <Show
-                            when={story().acceptedEstimate}
-                            fallback={
-                              <span class={story().status === 'skipped' ? 'text-xs font-medium text-text-muted' : 'sr-only'}>
-                                {storyStatuses[story().status]}
+                        <Show
+                          when={locked() || story().acceptedEstimate || story().status === 'skipped'}
+                          fallback={<span class="sr-only">{storyStatuses[story().status]}</span>}
+                        >
+                          <span class="flex min-h-7 shrink-0 items-center gap-1.5">
+                            <Show when={locked()}>
+                              <span class="poker-lock-cue" title="Locked Story">
+                                <LucideIcon icon={Lock} class="size-3.5" strokeWidth={2} />
+                                <span class="sr-only">Locked</span>
                               </span>
-                            }
-                          >
-                            {(estimate) => (
-                              <>
-                                <span class="sr-only">{storyStatuses[story().status]} · </span>
-                                <span class="poker-est-badge">{estimate()}</span>
-                              </>
-                            )}
-                          </Show>
-                        </span>
+                            </Show>
+                            <Show
+                              when={story().acceptedEstimate}
+                              fallback={
+                                <span class={story().status === 'skipped' ? 'text-xs font-medium text-text-muted' : 'sr-only'}>
+                                  {storyStatuses[story().status]}
+                                </span>
+                              }
+                            >
+                              {(estimate) => (
+                                <>
+                                  <span class="sr-only">{storyStatuses[story().status]} · </span>
+                                  <span class="poker-est-badge">{estimate()}</span>
+                                </>
+                              )}
+                            </Show>
+                          </span>
+                        </Show>
                       </div>
 
                       <Show when={props.canManage}>

@@ -281,7 +281,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     }
                     class={[
                       'min-w-0 flex-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
-                      'focus:border-accent focus:outline-none',
+                      'board-focus-ring',
                     ]}
                   />
                   <button
@@ -472,7 +472,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           <div
             class={[
               'relative flex items-end gap-1.5 rounded-xl border bg-surface px-3 py-1.5 transition-colors',
-              'hover:border-control/70 focus-within:border-accent',
+              'hover:border-control/70 focus-within:border-focus focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-focus',
               cardError()
                 ? 'border-col-rose/75 focus-within:border-col-rose'
                 : 'border-border/85',

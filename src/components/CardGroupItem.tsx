@@ -211,7 +211,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   onInput={(event) =>
                     setHasTitleText(event.currentTarget.value.trim().length > 0)
                   }
-                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text focus:border-focus focus:outline-none sm:min-h-7"
+                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text board-focus-ring sm:min-h-7"
                 />
                 <button
                   type="button"
