@@ -3,7 +3,13 @@ import { Check, SquareCheck } from 'lucide';
 import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
-import { unresolvedPokerRoundId, type PokerLiveRoomView, type PokerResult, type PokerRoomChange } from '../../lib/poker-types';
+import {
+  unresolvedPokerRoundId,
+  unresolvedPokerRoundWithVotesId,
+  type PokerLiveRoomView,
+  type PokerResult,
+  type PokerRoomChange,
+} from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
@@ -150,6 +156,7 @@ export default function PokerWorkspace(props: {
           deck={props.room.deck}
           roundId={props.room.round?.id}
           discardRoundId={unresolvedPokerRoundId(props.room.round)}
+          activeRoundWithVotesId={unresolvedPokerRoundWithVotesId(props.room.round)}
           onChange={props.onChange}
         />
 

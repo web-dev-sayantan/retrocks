@@ -66,6 +66,12 @@ const storyMissing = {
   message: 'That Story is no longer in the queue.',
 } as const;
 
+const storyLocked = {
+  ok: false,
+  code: 'STORY_LOCKED',
+  message: 'Unlock this Story before changing it.',
+} as const;
+
 const roundChanged = {
   ok: false,
   code: 'ROUND_CHANGED',
@@ -75,6 +81,11 @@ const discardRequired = {
   ok: false,
   code: 'ROUND_CHANGED',
   message: 'Confirm that you want to discard the current Voting Round before switching Stories.',
+} as const;
+const lockDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to discard the current Voting Round before locking this Story.',
 } as const;
 
 const invalidDeckChoice = {
@@ -238,6 +249,7 @@ export class PokerRoomStorage {
     if (!row) return null;
     const room = JSON.parse(row.data) as StoredPokerRoom;
     room.stories ??= [];
+    for (const story of room.stories) story.locked ??= false;
     room.activeStoryId ??= null;
     room.deck ??= POKER_DECK_PRESETS.fibonacci;
     room.deckType ??= 'fibonacci';
@@ -328,13 +340,14 @@ export class PokerRoomStorage {
         }
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending' });
+          room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending', locked: false });
           break;
         }
         case 'edit-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.title === command.title) return { ok: true, room };
           story.title = command.title;
           if (room.activeStoryId === story.id && unresolvedPokerRoundId(room.round) !== undefined) {
@@ -359,6 +372,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.acceptedEstimate !== command.expectedEstimate) {
             return { ok: false, code: 'INVALID_INPUT', message: 'The Accepted Estimate changed. Reopen the editor and try again.' };
           }
@@ -371,6 +385,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.status === 'pending') return { ok: true, room };
           if (story.status !== 'skipped') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Choose a skipped Story.' };
@@ -382,6 +397,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.status === 'skipped') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Return this Story to the queue before selecting it.' };
           }
@@ -395,6 +411,31 @@ export class PokerRoomStorage {
           room.activeStoryId = story.id;
           room.deckLocked = true;
           room.round = startVotingRound();
+          break;
+        }
+        case 'set-story-lock': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const story = room.stories.find((entry) => entry.id === command.storyId);
+          if (!story) return storyMissing;
+          const isActive = room.activeStoryId === story.id;
+          if (command.locked) {
+            if (command.discardRoundId !== undefined && (!isActive || command.discardRoundId !== room.round?.id)) {
+              return roundChanged;
+            }
+            if (isActive && room.round && unresolvedPokerRoundId(room.round) !== undefined
+              && Object.keys(room.round.ballots).length > 0 && command.discardRoundId === undefined) {
+              return lockDiscardRequired;
+            }
+            if (story.locked && !isActive) return { ok: true, room };
+            story.locked = true;
+            if (isActive) {
+              room.activeStoryId = null;
+              room.round = null;
+            }
+          } else {
+            if (!story.locked) return { ok: true, room };
+            story.locked = false;
+          }
           break;
         }
         case 'vote': {

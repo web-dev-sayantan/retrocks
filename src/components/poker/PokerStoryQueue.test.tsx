@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library';
 import { createAgent } from '@ui-sdk/solid/agent';
-import { createSignal, untrack } from 'solid-js';
+import { createSignal, flush, untrack } from 'solid-js';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { FIBONACCI_DECK, type PokerResult, type PokerRoomChange, type PokerLiveRoomView, type PokerStory, type PokerStoryCommand } from '../../lib/poker-types';
@@ -410,4 +410,180 @@ test('shows vote breakdown and non-voting participants after reveal', () => {
   expect(within(active).getByText('Did not vote: Maya')).toBeVisible();
   const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
   expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
+});
+
+test('Locked Stories show a lock cue for all Participants while preserving status and Accepted Estimate', () => {
+  const room: PokerLiveRoomView = {
+    closed: false,
+    id: 'room',
+    version: 2,
+    viewer: { id: 'sam', displayName: 'Sam', isFacilitator: false },
+    participants: [{ id: 'sam', displayName: 'Sam', isFacilitator: false }],
+    activeStoryId: null,
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: null,
+    stories: [
+      { id: 's1', title: 'Locked pending', status: 'pending', locked: true },
+      { id: 's2', title: 'Locked estimated', status: 'estimated', acceptedEstimate: '8', locked: true },
+      { id: 's3', title: 'Locked skipped', status: 'skipped', locked: true },
+    ],
+  };
+
+  render(() => <PokerWorkspace room={room} online={['sam']} status="live" onUnavailable={vi.fn()} onChange={vi.fn()} />);
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const items = within(queue).getAllByRole('listitem');
+  for (const item of items) {
+    expect(item).toHaveAttribute('data-locked', 'true');
+    expect(within(item).getByText('Locked')).toBeInTheDocument();
+  }
+  expect(within(items[1]).getByText('8')).toBeVisible();
+  expect(within(items[2]).getByText('Skipped')).toBeVisible();
+});
+
+test('a Facilitator can lock and unlock Stories from row actions, disabling select, title edit, and estimate edit while locked', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    activeStoryId: null,
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: null,
+    stories: [
+      { id: 's1', title: 'Checkout flow', status: 'estimated', acceptedEstimate: '5', locked: false },
+      { id: 's2', title: 'Send receipt', status: 'skipped', locked: true },
+    ],
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'set-story-lock') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        stories: current.stories.map((story) =>
+          story.id === command.storyId ? { ...story, locked: command.locked } : story,
+        ),
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
+
+  // Locked skipped Story disables Return to queue and Edit title.
+  expect(within(secondRow).getByRole('button', { name: 'Return Send receipt to queue' })).toHaveAttribute('aria-disabled', 'true');
+  expect(within(secondRow).getByRole('button', { name: 'Edit title for Send receipt' })).toHaveAttribute('aria-disabled', 'true');
+
+  // Lock the estimated Story.
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Lock Checkout flow' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'set-story-lock', storyId: 's1', locked: true,
+  }));
+  await waitFor(() => expect(firstRow).toHaveAttribute('data-locked', 'true'));
+  expect(within(firstRow).getByRole('button', { name: 'Reconsider Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
+  expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
+  expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
+
+  // Unlock the estimated Story.
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Unlock Checkout flow' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'set-story-lock', storyId: 's1', locked: false,
+  }));
+  await waitFor(() => expect(firstRow).not.toHaveAttribute('data-locked'));
+  expect(within(firstRow).getByRole('button', { name: 'Reconsider Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
+  expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
+  expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
+
+  const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
+  expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
+});
+
+test('locking the active Story confirms only when an unresolved Voting Round has cast votes, then clears the stage', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'round-empty', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'set-story-lock') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        activeStoryId: command.locked && current.activeStoryId === command.storyId ? null : current.activeStoryId,
+        round: command.locked && current.activeStoryId === command.storyId ? null : current.round,
+        stories: current.stories.map((story) =>
+          story.id === command.storyId ? { ...story, locked: command.locked } : story,
+        ),
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => (
+    <>
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+
+  // 1. Open round with 0 votes: locks immediately without confirmation dialog.
+  fireEvent.click(screen.getByRole('button', { name: 'Lock Save checkout' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'set-story-lock', storyId: 's1', locked: true,
+  }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.getByText('Select a Story from the queue')).toBeVisible();
+
+  // 2. Open round with cast votes: confirms before discarding votes and clearing stage.
+  setRoom({
+    ...untrack(room),
+    version: 3,
+    activeStoryId: 's1',
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
+  });
+  flush();
+  change.mockClear();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Lock Save checkout' }));
+  const dialog = await screen.findByRole('alertdialog', { name: 'Lock active Story?' });
+  const cancel = within(dialog).getByRole('button', { name: 'Keep voting' });
+  await waitFor(() => expect(cancel).toHaveFocus());
+  fireEvent.click(cancel);
+  await waitFor(() => expect(dialog).not.toBeVisible());
+  expect(change).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Lock Save checkout' }));
+  const reopened = await screen.findByRole('alertdialog', { name: 'Lock active Story?' });
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Lock and discard votes' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'set-story-lock', storyId: 's1', locked: true, discardRoundId: 'round-voted',
+  }));
+  expect(screen.getByText('Select a Story from the queue')).toBeVisible();
 });

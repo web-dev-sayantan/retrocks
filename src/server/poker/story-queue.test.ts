@@ -699,3 +699,151 @@ test.each(['Node', 'Cloudflare'])('Board and Poker creation have independent bud
     await runWithCloudflareEnv(env as Cloudflare.Env, exerciseBudgets);
   }
 });
+
+test('a Facilitator can lock and unlock Stories across pending, estimated, and skipped states while blocking edits and selection', async () => {
+  const { participant, mutate, read } = await openRoom();
+  await mutate({ type: 'add-story', title: 'Pending story' });
+  await mutate({ type: 'add-story', title: 'Estimated story' });
+  const added = await mutate({ type: 'add-story', title: 'Skipped story' });
+  if (!added.ok) throw new Error('Could not add Stories.');
+  const [pendingStory, estimatedStory, skippedStory] = added.room.stories;
+
+  // Estimate the second Story.
+  const selEst = await mutate({ type: 'select-story', storyId: estimatedStory.id });
+  if (!selEst.ok || !selEst.room.round) throw new Error('Could not select estimated Story.');
+  await mutate({ type: 'vote', roundId: selEst.room.round.id, choice: '5' }, participant);
+  await mutate({ type: 'reveal', roundId: selEst.room.round.id });
+  await mutate({ type: 'confirm-estimate', roundId: selEst.room.round.id, choice: '5' });
+
+  // Skip the third Story.
+  const selSkip = await mutate({ type: 'select-story', storyId: skippedStory.id });
+  if (!selSkip.ok || !selSkip.room.round) throw new Error('Could not select skipped Story.');
+  await mutate({ type: 'vote', roundId: selSkip.room.round.id, choice: '3' }, participant);
+  await mutate({ type: 'reveal', roundId: selSkip.room.round.id });
+  await mutate({ type: 'skip-story', roundId: selSkip.room.round.id });
+
+  // Non-Facilitator cannot lock or unlock.
+  expect(await mutate({ type: 'set-story-lock', storyId: pendingStory.id, locked: true }, participant))
+    .toMatchObject({ ok: false, code: 'FORBIDDEN' });
+
+  // Lock all three Stories and verify status + Accepted Estimate are preserved.
+  expect(await mutate({ type: 'set-story-lock', storyId: pendingStory.id, locked: true })).toMatchObject({
+    ok: true,
+    room: { stories: [{ id: pendingStory.id, status: 'pending', locked: true }, { id: estimatedStory.id }, { id: skippedStory.id }] },
+  });
+  expect(await mutate({ type: 'set-story-lock', storyId: estimatedStory.id, locked: true })).toMatchObject({
+    ok: true,
+    room: {
+      stories: [
+        { id: pendingStory.id, status: 'pending', locked: true },
+        { id: estimatedStory.id, status: 'estimated', acceptedEstimate: '5', locked: true },
+        { id: skippedStory.id },
+      ],
+    },
+  });
+  expect(await mutate({ type: 'set-story-lock', storyId: skippedStory.id, locked: true })).toMatchObject({
+    ok: true,
+    room: {
+      stories: [
+        { id: pendingStory.id, status: 'pending', locked: true },
+        { id: estimatedStory.id, status: 'estimated', acceptedEstimate: '5', locked: true },
+        { id: skippedStory.id, status: 'skipped', locked: true },
+      ],
+    },
+  });
+
+  // Locked Stories reject select, edit, correct-estimate, and return-story.
+  expect(await mutate({ type: 'select-story', storyId: pendingStory.id })).toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+  expect(await mutate({ type: 'select-story', storyId: estimatedStory.id })).toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+  expect(await mutate({ type: 'edit-story', storyId: pendingStory.id, title: 'Edited' })).toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+  expect(await mutate({ type: 'correct-estimate', storyId: estimatedStory.id, expectedEstimate: '5', choice: '8' }))
+    .toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+  expect(await mutate({ type: 'return-story', storyId: skippedStory.id })).toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+
+  // Reordering a locked Story is still allowed.
+  expect(await mutate({ type: 'move-story', storyId: skippedStory.id, targetId: pendingStory.id, placement: 'before' }))
+    .toMatchObject({ ok: true });
+
+  // Participant sees the persisted locked flags.
+  expect(await read(participant)).toMatchObject({
+    stories: [
+      { id: skippedStory.id, status: 'skipped', locked: true },
+      { id: pendingStory.id, status: 'pending', locked: true },
+      { id: estimatedStory.id, status: 'estimated', acceptedEstimate: '5', locked: true },
+    ],
+  });
+
+  // Unlocking restores edit, correct-estimate, return-story, and select-story.
+  expect(await mutate({ type: 'set-story-lock', storyId: estimatedStory.id, locked: false })).toMatchObject({
+    ok: true,
+    room: {
+      stories: [
+        { id: skippedStory.id, locked: true },
+        { id: pendingStory.id, locked: true },
+        { id: estimatedStory.id, status: 'estimated', acceptedEstimate: '5', locked: false },
+      ],
+    },
+  });
+  expect(await mutate({ type: 'correct-estimate', storyId: estimatedStory.id, expectedEstimate: '5', choice: '8' }))
+    .toMatchObject({ ok: true, room: { stories: [{}, {}, { id: estimatedStory.id, acceptedEstimate: '8' }] } });
+  expect(await mutate({ type: 'edit-story', storyId: estimatedStory.id, title: 'Updated estimated' }))
+    .toMatchObject({ ok: true });
+  expect(await mutate({ type: 'select-story', storyId: estimatedStory.id })).toMatchObject({ ok: true });
+});
+
+test('locking the active Story requires discard confirmation only when an unresolved Voting Round has cast votes, then clears the stage', async () => {
+  const { participant, mutate } = await openRoom();
+  const added = await mutate({ type: 'add-story', title: 'Checkout flow' });
+  if (!added.ok) throw new Error('Could not add Story.');
+  const [story] = added.room.stories;
+
+  // 1. Open round with 0 votes: locks immediately and clears stage without discardRoundId.
+  const openEmpty = await mutate({ type: 'select-story', storyId: story.id });
+  if (!openEmpty.ok || !openEmpty.room.round) throw new Error('Could not open round.');
+  expect(await mutate({ type: 'set-story-lock', storyId: story.id, locked: true })).toMatchObject({
+    ok: true,
+    room: {
+      activeStoryId: null,
+      round: null,
+      stories: [{ id: story.id, status: 'pending', locked: true }],
+    },
+  });
+
+  // Unlock and start a round with a cast vote.
+  await mutate({ type: 'set-story-lock', storyId: story.id, locked: false });
+  const openVoted = await mutate({ type: 'select-story', storyId: story.id });
+  if (!openVoted.ok || !openVoted.room.round) throw new Error('Could not reopen round.');
+  const votedRoundId = openVoted.room.round.id;
+  await mutate({ type: 'vote', roundId: votedRoundId, choice: '5' }, participant);
+
+  // 2. Open round with cast votes: requires matching discardRoundId.
+  expect(await mutate({ type: 'set-story-lock', storyId: story.id, locked: true }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate({ type: 'set-story-lock', storyId: story.id, locked: true, discardRoundId: openEmpty.room.round.id }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate({ type: 'set-story-lock', storyId: story.id, locked: true, discardRoundId: votedRoundId })).toMatchObject({
+    ok: true,
+    room: {
+      activeStoryId: null,
+      round: null,
+      stories: [{ id: story.id, status: 'pending', locked: true }],
+    },
+  });
+
+  // 3. Accepted round: locks immediately and clears stage without discardRoundId, preserving Accepted Estimate.
+  await mutate({ type: 'set-story-lock', storyId: story.id, locked: false });
+  const forAccept = await mutate({ type: 'select-story', storyId: story.id });
+  if (!forAccept.ok || !forAccept.room.round) throw new Error('Could not start round.');
+  await mutate({ type: 'vote', roundId: forAccept.room.round.id, choice: '8' }, participant);
+  await mutate({ type: 'reveal', roundId: forAccept.room.round.id });
+  await mutate({ type: 'confirm-estimate', roundId: forAccept.room.round.id, choice: '8' });
+
+  expect(await mutate({ type: 'set-story-lock', storyId: story.id, locked: true })).toMatchObject({
+    ok: true,
+    room: {
+      activeStoryId: null,
+      round: null,
+      stories: [{ id: story.id, status: 'estimated', acceptedEstimate: '8', locked: true }],
+    },
+  });
+});

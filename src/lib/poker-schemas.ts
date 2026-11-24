@@ -43,6 +43,12 @@ export const PokerCommand = v.variant('type', [
     storyId: PokerEntityId,
     discardRoundId: v.optional(PokerEntityId),
   }),
+  v.object({
+    type: v.literal('set-story-lock'),
+    storyId: PokerEntityId,
+    locked: v.boolean(),
+    discardRoundId: v.optional(PokerEntityId),
+  }),
   v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(PokerDeckChoice) }),
   v.object({ type: v.literal('reveal'), roundId: PokerEntityId }),
   v.object({ type: v.literal('restart-round'), roundId: PokerEntityId }),
@@ -70,7 +76,7 @@ const StorySummary = v.object({
   acceptedEstimate: v.optional(v.string()),
 });
 
-const Story = v.object({ id: PokerEntityId, ...StorySummary.entries });
+const Story = v.object({ id: PokerEntityId, ...StorySummary.entries, locked: v.optional(v.boolean()) });
 
 const Round = v.variant('phase', [
   v.object({

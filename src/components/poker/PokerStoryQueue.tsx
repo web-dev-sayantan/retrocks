@@ -8,6 +8,8 @@ import {
   Circle,
   CircleDot,
   CircleSlash,
+  Lock,
+  LockOpen,
   Pencil,
   Plus,
   RotateCcw,
@@ -138,6 +140,7 @@ export default function PokerStoryQueue(props: {
   deck: readonly string[];
   roundId?: string;
   discardRoundId?: string;
+  activeRoundWithVotesId?: string;
   onChange: (command: PokerStoryCommand) => Promise<PokerResult>;
 }) {
   const headingId = createUniqueId();
@@ -175,7 +178,7 @@ export default function PokerStoryQueue(props: {
   }
 
   async function selectStory(story: PokerStory) {
-    if (busy() || confirming()) return;
+    if (story.locked || busy() || confirming()) return;
     const discardRoundId = props.discardRoundId;
     if (discardRoundId !== undefined) {
       setConfirming(true);
@@ -193,6 +196,35 @@ export default function PokerStoryQueue(props: {
     await change({
       type: 'select-story',
       storyId: story.id,
+      ...(discardRoundId === undefined ? {} : { discardRoundId }),
+    });
+  }
+
+  async function toggleStoryLock(story: PokerStory) {
+    if (busy() || confirming()) return;
+    const locking = !story.locked;
+    const discardRoundId = locking && props.activeStoryId === story.id
+      ? props.activeRoundWithVotesId
+      : undefined;
+    if (discardRoundId !== undefined) {
+      setConfirming(true);
+      try {
+        if (!await confirmBoardAction({
+          title: 'Lock active Story?',
+          description: 'Locking this Story discards the current Voting Round and its votes, then clears the stage.',
+          cancelLabel: 'Keep voting',
+          confirmLabel: 'Lock and discard votes',
+          agentConfirm: 'Locks the active Story and discards the current Voting Round and its votes.',
+        })) return;
+      } finally {
+        setConfirming(false);
+      }
+    }
+    if (locking && editing()?.storyId === story.id) setEditing(null);
+    await change({
+      type: 'set-story-lock',
+      storyId: story.id,
+      locked: locking,
       ...(discardRoundId === undefined ? {} : { discardRoundId }),
     });
   }
@@ -307,6 +339,7 @@ export default function PokerStoryQueue(props: {
                   }
 
                   async function returnStory(control: HTMLElement) {
+                    if (story().locked) return;
                     const doc = control.ownerDocument;
                     const hadFocus = doc.activeElement === control;
                     if (await change({ type: 'return-story', storyId: story().id })) {
@@ -314,10 +347,13 @@ export default function PokerStoryQueue(props: {
                     }
                   }
 
+                  const locked = () => Boolean(story().locked);
+
                   return (
                     <li
                       class="poker-story-row"
                       data-status={story().status}
+                      data-locked={locked() ? 'true' : undefined}
                       aria-current={active() ? 'true' : undefined}
                     >
                       <div class="flex items-start gap-2.5">
@@ -346,7 +382,13 @@ export default function PokerStoryQueue(props: {
 
                         <p class="poker-story-title min-w-0 flex-1">{story().title}</p>
 
-                        <span class="shrink-0">
+                        <span class="flex shrink-0 items-center gap-1.5">
+                          <Show when={locked()}>
+                            <span class="poker-lock-cue" title="Locked Story">
+                              <LucideIcon icon={Lock} class="size-3.5" strokeWidth={2} />
+                              <span class="sr-only">Locked</span>
+                            </span>
+                          </Show>
                           <Show
                             when={story().acceptedEstimate}
                             fallback={
@@ -373,7 +415,7 @@ export default function PokerStoryQueue(props: {
                               <Button
                                 class="poker-row-btn poker-row-btn-primary board-focus-ring"
                                 aria-label={`Return ${story().title} to queue`}
-                                disabled={busy()}
+                                disabled={locked() || busy()}
                                 focusableWhenDisabled
                                 onClick={(event) => void returnStory(event.currentTarget)}
                               >
@@ -386,7 +428,7 @@ export default function PokerStoryQueue(props: {
                               ref={selectButton}
                               class="poker-row-btn poker-row-btn-primary board-focus-ring"
                               aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
-                              disabled={selected() || busy() || confirming()}
+                              disabled={locked() || selected() || busy() || confirming()}
                               focusableWhenDisabled
                               onClick={() => selectStory(story())}
                             >
@@ -400,9 +442,11 @@ export default function PokerStoryQueue(props: {
                             aria-label={`Edit title for ${story().title}`}
                             title="Edit title"
                             aria-expanded={editor()?.type === 'title' ? 'true' : 'false'}
-                            disabled={busy()}
+                            disabled={locked() || busy()}
                             focusableWhenDisabled
-                            onClick={() => setEditing({ storyId: story().id, type: 'title' })}
+                            onClick={() => {
+                              if (!locked()) setEditing({ storyId: story().id, type: 'title' });
+                            }}
                           >
                             <LucideIcon icon={Pencil} class="size-3" strokeWidth={2} />
                             <span class="sr-only">Edit title</span>
@@ -415,14 +459,30 @@ export default function PokerStoryQueue(props: {
                                 class="poker-row-btn board-focus-ring"
                                 aria-label={`Edit estimate for ${story().title}`}
                                 aria-expanded={editor()?.type === 'estimate' ? 'true' : 'false'}
-                                disabled={busy()}
+                                disabled={locked() || busy()}
                                 focusableWhenDisabled
-                                onClick={() => setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() })}
+                                onClick={() => {
+                                  if (!locked()) {
+                                    setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() });
+                                  }
+                                }}
                               >
                                 Edit estimate
                               </Button>
                             )}
                           </Show>
+
+                          <Button
+                            class="poker-row-btn board-focus-ring"
+                            aria-label={locked() ? `Unlock ${story().title}` : `Lock ${story().title}`}
+                            title={locked() ? 'Unlock Story' : 'Lock Story'}
+                            disabled={busy() || confirming()}
+                            focusableWhenDisabled
+                            onClick={() => void toggleStoryLock(story())}
+                          >
+                            <LucideIcon icon={locked() ? LockOpen : Lock} class="size-3" strokeWidth={2} />
+                            <span class="sr-only">{locked() ? 'Unlock Story' : 'Lock Story'}</span>
+                          </Button>
 
                           <div class="ms-auto flex items-center gap-0.5">
                             <Button
@@ -448,7 +508,7 @@ export default function PokerStoryQueue(props: {
                           </div>
                         </div>
 
-                        <Show when={editor()?.type === 'title'}>
+                        <Show when={editor()?.type === 'title' && !locked()}>
                           <StoryTitleForm
                             initialTitle={story().title}
                             busy={busy()}
@@ -456,7 +516,7 @@ export default function PokerStoryQueue(props: {
                             onCancel={finishEditing}
                           />
                         </Show>
-                        <Show when={estimateEditor()} keyed>
+                        <Show when={!locked() ? estimateEditor() : undefined} keyed>
                           {(edit) => (
                             <PokerEstimateForm
                               deck={props.deck}
