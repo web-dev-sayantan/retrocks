@@ -161,6 +161,69 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
   expect(readRecentPokerRooms()).toEqual([]);
 });
 
+it('persists optimistic, rolled-back, and live Room names and releases the stream on navigation', async () => {
+  const viewer = { id: 's'.repeat(22), displayName: 'Sam', isFacilitator: true };
+  const joined = { ...room, viewer, participants: [viewer] };
+  const path = `/p/${joined.id}`;
+  const mutation = Promise.withResolvers<Response>();
+  const responseHeaders = { 'X-Server-Function-Format': '8' };
+  vi.stubGlobal('fetch', async (_resource: string, init?: RequestInit) =>
+    init?.method === 'POST'
+      ? mutation.promise
+      : Response.json(joined, { headers: responseHeaders }),
+  );
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+
+  const close = vi.fn();
+  let receive: ((event: MessageEvent<string>) => void) | undefined;
+  vi.stubGlobal('EventSource', class extends EventTarget {
+    constructor(url: string) {
+      super();
+      expect(url).toBe(`/api/poker/${joined.id}/live`);
+      receive = (event) => { this.dispatchEvent(event); };
+    }
+
+    close = close;
+  });
+
+  const savedName = () => readRecentPokerRooms().find((entry) => entry.id === joined.id)?.name;
+  const push = (snapshot: PokerLiveRoomView) => {
+    expect(receive).toBeDefined();
+    receive?.(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'room:snapshot', room: snapshot }),
+    }));
+    flush();
+  };
+
+  window.history.replaceState(null, '', path);
+  render(() => <App />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Room' }));
+  expect(savedName()).toBe('Poker Room');
+  fireEvent.input(await screen.findByRole('textbox', { name: 'Room name' }), {
+    target: { value: 'Draft Sizing' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Room name' }));
+  await waitFor(() => expect(savedName()).toBe('Draft Sizing'));
+
+  mutation.resolve(Response.json(
+    { ok: false, code: 'FORBIDDEN', message: 'Only a Facilitator can rename the Room.' },
+    { headers: responseHeaders },
+  ));
+  await waitFor(() => expect(savedName()).toBe('Poker Room'));
+
+  push({ ...joined, id: 'x'.repeat(22), version: 9, name: 'Another Room' });
+  expect(savedName()).toBe('Poker Room');
+  expect(readRecentPokerRooms()).toHaveLength(1);
+
+  push({ ...joined, version: 2, name: 'Team Sizing' });
+  expect(savedName()).toBe('Team Sizing');
+
+  fireEvent.click(screen.getByRole('link', { name: 'Retrocks' }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  push({ ...joined, version: 3, name: 'Late Update' });
+  expect(savedName()).toBe('Team Sizing');
+});
+
 it.each([
   ['closed', { id: 'c'.repeat(22), name: 'Closed Sizing', version: 2, closed: true, canDelete: false, stories: [] }, 'Closed Sizing', true],
   ['unavailable', null, 'Room unavailable', false],
