@@ -208,6 +208,43 @@ describe('Inplace top-bar Room name editing', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' })).toBeInTheDocument();
   });
 
+  it('discards the Room name draft and ignores a late save after Facilitator permission is lost', async () => {
+    const initial = makeRoom({ name: 'Sprint Planning' });
+    const [room, setRoom] = createSignal(initial);
+    const save = Promise.withResolvers<PokerResult>();
+    const change = vi.fn(() => save.promise);
+    render(() => (
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
+    flush();
+    const input = screen.getByRole('textbox', { name: 'Room name' });
+    expect(input).toHaveFocus();
+    fireEvent.input(input, { target: { value: 'Stale draft' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'rename-room', name: 'Stale draft' });
+
+    setRoom({ ...initial, viewer: { id: 'alex', displayName: 'Alex', isFacilitator: false } });
+    flush();
+    expect(screen.queryByRole('textbox', { name: 'Room name' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Sprint Planning' })).toHaveFocus();
+
+    setRoom(initial);
+    flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
+    flush();
+    const freshInput = screen.getByRole('textbox', { name: 'Room name' });
+    expect(freshInput).toHaveValue('Sprint Planning');
+    fireEvent.input(freshInput, { target: { value: 'Fresh draft' } });
+    save.resolve({ ok: true, room: initial });
+    await save.promise;
+    await Promise.resolve();
+    flush();
+    expect(freshInput).toHaveFocus();
+    expect(freshInput).toHaveValue('Fresh draft');
+  });
+
   it('lets a Facilitator open inplace editing via touch double-tap', () => {
     const room = makeRoom({ name: 'Mobile Grooming' });
     render(() => (

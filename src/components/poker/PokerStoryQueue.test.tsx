@@ -1131,6 +1131,7 @@ test('a Facilitator can edit the active Story title inplace on the stage heading
   }));
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(await within(stage).findByText('Save checkout v2')).toBeVisible();
+  expect(within(stage).getByRole('heading', { name: 'Active Story' })).toHaveFocus();
 
   change.mockClear();
   fireDoubleTap(within(stage).getByText('Save checkout v2'));
@@ -1243,6 +1244,26 @@ test('editing the active Story title during an unresolved Voting Round with cast
   expect(change).not.toHaveBeenCalled();
   expect(await within(stage).findByText('Save checkout')).toBeVisible();
   expect(within(stage).getByText('1 of 1 voted')).toBeVisible();
+
+  fireEvent.dblClick(within(stage).getByText('Save checkout'));
+  const staleInput = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(staleInput, { target: { value: 'Stale checkout title' } });
+  fireEvent.keyDown(staleInput, { key: 'Enter' });
+  const staleDialog = await screen.findByRole('alertdialog', { name: 'Change active Story title?' });
+  const originalRoom = untrack(room);
+  setRoom({
+    ...originalRoom,
+    stories: [...originalRoom.stories, { id: 's2', title: 'New checkout', status: 'pending', locked: false }],
+    activeStoryId: 's2',
+  });
+  flush();
+  expect(within(stage).getByText('New checkout')).toBeVisible();
+  fireEvent.click(within(staleDialog).getByRole('button', { name: 'Save and restart voting' }));
+  await waitFor(() => expect(staleDialog).not.toBeVisible());
+  expect(change).not.toHaveBeenCalled();
+
+  setRoom(originalRoom);
+  flush();
 
   const queue = screen.getByRole('list', { name: 'Story queue' });
   fireEvent.dblClick(within(queue).getByText('Save checkout'));

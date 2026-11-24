@@ -52,6 +52,7 @@ export interface InlineEditSave {
   error(): string | null;
   /** Clears the failure message, on cancel or retry. */
   resetError(): void;
+  reset(): void;
   /** The in-flight save, for callers that must serialize with it. */
   saving(): Promise<boolean> | undefined;
 }
@@ -62,32 +63,38 @@ export interface InlineEditSave {
  * lands, `finish()` closes the session on success and the error shows on failure.
  */
 export function createInlineEditSave(
-  save: (text: string) => Promise<InlineEditOutcome>,
+  save: (text: string, isCurrent: () => boolean) => Promise<InlineEditOutcome>,
   finish: () => void,
+  isActive: () => boolean = () => true,
 ): InlineEditSave {
   const [isSaving, setIsSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   // A save in flight must block the next commit within the same task, before the signal catches up.
-  let inFlight = false;
+  let attempt: object | undefined;
   let pending: Promise<boolean> | undefined;
   return {
     commit(text) {
-      if (inFlight) return false;
-      inFlight = true;
+      if (attempt || !isActive()) return false;
+      const current = {};
+      attempt = current;
+      const isCurrent = () => attempt === current && isActive();
       setError(null);
       setIsSaving(true);
       pending = (async () => {
         try {
-          const outcome = await save(text);
+          const outcome = await save(text, isCurrent);
+          if (!isCurrent()) return false;
           if (outcome === true) finish();
           else if (typeof outcome === 'string') setError(outcome);
           return outcome === true;
         } catch {
           return false;
         } finally {
-          inFlight = false;
-          pending = undefined;
-          setIsSaving(false);
+          if (attempt === current) {
+            attempt = undefined;
+            pending = undefined;
+            if (isActive()) setIsSaving(false);
+          }
         }
       })();
       return false;
@@ -95,6 +102,12 @@ export function createInlineEditSave(
     isSaving: () => isSaving(),
     error: () => error(),
     resetError: () => setError(null),
+    reset() {
+      attempt = undefined;
+      pending = undefined;
+      setError(null);
+      setIsSaving(false);
+    },
     saving: () => pending,
   };
 }
