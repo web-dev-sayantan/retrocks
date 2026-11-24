@@ -70,14 +70,14 @@ export function createInlineEditSave(
   const [isSaving, setIsSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   // A save in flight must block the next commit within the same task, before the signal catches up.
-  let attempt: object | undefined;
+  let attempt: { valid: boolean } | undefined;
   let pending: Promise<boolean> | undefined;
   return {
     commit(text) {
       if (attempt || !isActive()) return false;
-      const current = {};
+      const current = { valid: true };
       attempt = current;
-      const isCurrent = () => attempt === current && isActive();
+      const isCurrent = () => current.valid && isActive();
       setError(null);
       setIsSaving(true);
       pending = (async () => {
@@ -90,11 +90,9 @@ export function createInlineEditSave(
         } catch {
           return false;
         } finally {
-          if (attempt === current) {
-            attempt = undefined;
-            pending = undefined;
-            if (isActive()) setIsSaving(false);
-          }
+          attempt = undefined;
+          pending = undefined;
+          setIsSaving(false);
         }
       })();
       return false;
@@ -103,10 +101,9 @@ export function createInlineEditSave(
     error: () => error(),
     resetError: () => setError(null),
     reset() {
-      attempt = undefined;
-      pending = undefined;
+      // Ignore the outcome but keep saves serialized until the promise settles.
+      if (attempt) attempt.valid = false;
       setError(null);
-      setIsSaving(false);
     },
     saving: () => pending,
   };

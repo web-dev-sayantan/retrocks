@@ -240,6 +240,45 @@ describe('<BoardWorkspace />', () => {
     expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
   });
 
+  it('preserves the open Voting Settings draft and takes a new baseline on reopening', async () => {
+    const initial = makeBoardView({ voteLimit: 5, allowParticipantGroup: false });
+    const [board, setBoard] = createSignal(initial);
+    const { actions, spies } = createFakeActions(initial);
+    const view = render(() => (
+      <BoardWorkspace board={board()} boardId={initial.id} actions={actions} />
+    ));
+    openBoardSettings(view);
+    const dialog = () => within(view.getByRole('dialog', { name: 'Board Settings' }));
+    const grouping = dialog().getByRole('checkbox', { name: 'Allow Participants to group Cards' });
+    fireEvent.click(grouping);
+    flush();
+
+    const updated = { ...initial, version: initial.version + 1, voteLimit: 10 };
+    setBoard(updated);
+    flush();
+    expect(grouping).toBeChecked();
+    expect(dialog().getByRole('combobox', { name: 'Vote limit' })).toHaveTextContent('5');
+    spies.updateVotingSettings.mockResolvedValue({
+      ok: true,
+      version: updated.version + 1,
+      events: [{
+        type: 'board:snapshot',
+        version: updated.version + 1,
+        serverNow: Date.now(),
+        board: { ...updated, version: updated.version + 1, allowParticipantGroup: true },
+      }],
+    });
+    fireEvent.click(dialog().getByRole('button', { name: 'Save Settings' }));
+    await flushPromises();
+    expect(spies.updateVotingSettings).toHaveBeenCalledWith({
+      boardId: initial.id, allowParticipantGroup: true,
+    });
+
+    openBoardSettings(view);
+    expect(dialog().getByRole('combobox', { name: 'Vote limit' })).toHaveTextContent('10');
+    expect(dialog().getByRole('checkbox', { name: 'Allow Participants to group Cards' })).toBeChecked();
+  });
+
   it('shows anonymous discussion in a Card detail, and applies reactions and comments from the live stream', async () => {
     const streams: EventTarget[] = [];
     vi.stubGlobal('EventSource', class extends EventTarget {
@@ -2166,6 +2205,23 @@ describe('<BoardWorkspace />', () => {
 
     expect(view.queryByRole('dialog', { name: 'Action Items' })).toBeNull();
     expect(view.getByRole('button', { name: 'More board actions' })).toHaveFocus();
+  });
+
+  it('restores Action Items focus when a CSS-hidden ancestor hides the shortcut opener', async () => {
+    const board = makeBoardView({ isLocked: true });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    flush();
+    const opener = view.getByRole('button', { name: 'Switch to dark theme' });
+    opener.focus();
+    fireEvent.keyDown(opener, { key: 'a' });
+    flush();
+
+    const close = view.getByRole('button', { name: 'Close Action Items' });
+    await waitFor(() => expect(close).toHaveFocus());
+    opener.parentElement!.style.display = 'none';
+    fireEvent.click(close);
+    flush();
+    expect(view.getByRole('button', { name: 'Action Items 0 open' })).toHaveFocus();
   });
 
   it('prevents non-Facilitator Participants from editing Action Items or accessing Board Settings when Locked', () => {

@@ -193,7 +193,7 @@ describe('Board Countdown Timer', () => {
     }
   });
 
-  it('publishes identical announcement text again only when the configuration changes', () => {
+  it('keeps equivalent and identically worded timer updates quiet', () => {
     const board = makeBoard({
       timer: { endsAt: SERVER_TIME + 120_000, remainingMs: null, durationMs: 180_000 },
     });
@@ -221,13 +221,16 @@ describe('Board Countdown Timer', () => {
       expect(region).toHaveTextContent(/^$/);
       updateDeadline(3, 121);
       expect(region).toHaveTextContent('Timer updated. 3 minutes total.');
-      const firstMessage = region.firstElementChild;
-      expect(firstMessage).toBeInTheDocument();
-      updateDeadline(4, 121);
-      expect(region.firstElementChild).toBe(firstMessage);
-      updateDeadline(5, 122);
-      expect(region).toHaveTextContent('Timer updated. 3 minutes total.');
-      expect(region.firstElementChild).not.toBe(firstMessage);
+      const observer = new MutationObserver(() => {});
+      observer.observe(region, { childList: true, subtree: true, characterData: true });
+      try {
+        updateDeadline(4, 121);
+        updateDeadline(5, 122);
+        expect(region).toHaveTextContent('Timer updated. 3 minutes total.');
+        expect(observer.takeRecords()).toEqual([]);
+      } finally {
+        observer.disconnect();
+      }
     } finally {
       view.unmount();
     }

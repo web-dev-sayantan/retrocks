@@ -150,12 +150,9 @@ export default function CountdownTimer(props: {
     }
     return { timer, announcement };
   });
-  const expiryMessage = { announcement: 'Time is up.' };
-  const announcement = createMemo(() => {
-    const current = configuration();
-    if (expiryAnnounced()) return expiryMessage;
-    return current.announcement ? current : undefined;
-  });
+  const announcement = createMemo(() =>
+    expiryAnnounced() ? 'Time is up.' : configuration().announcement,
+  );
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
@@ -428,10 +425,7 @@ export default function CountdownTimer(props: {
         </PopoverContent>
       </Popover>
       <span aria-live="polite" aria-atomic="true" class="sr-only">
-        {/* Each change inserts fresh content even when the spoken text repeats. */}
-        <Show when={announcement()} keyed>
-          {(message) => <span>{message.announcement}</span>}
-        </Show>
+        {announcement()}
       </span>
     </div>
   );

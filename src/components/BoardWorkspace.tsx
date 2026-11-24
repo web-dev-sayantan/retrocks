@@ -320,8 +320,11 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     if (!target?.isConnected || target === document.body || target.closest('[hidden], :disabled')) {
       return false;
     }
-    const style = getComputedStyle(target);
-    return style.display !== 'none' && style.visibility === 'visible';
+    if (getComputedStyle(target).visibility !== 'visible') return false;
+    for (let element: HTMLElement | null = target; element; element = element.parentElement) {
+      if (getComputedStyle(element).display === 'none') return false;
+    }
+    return true;
   }
 
   function actionItemsFocusTarget(): HTMLElement | undefined {

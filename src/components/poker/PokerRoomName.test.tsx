@@ -237,6 +237,8 @@ describe('Inplace top-bar Room name editing', () => {
     const freshInput = screen.getByRole('textbox', { name: 'Room name' });
     expect(freshInput).toHaveValue('Sprint Planning');
     fireEvent.input(freshInput, { target: { value: 'Fresh draft' } });
+    fireEvent.keyDown(freshInput, { key: 'Enter' });
+    expect(change).toHaveBeenCalledTimes(1);
     save.resolve({ ok: true, room: initial });
     await save.promise;
     await Promise.resolve();

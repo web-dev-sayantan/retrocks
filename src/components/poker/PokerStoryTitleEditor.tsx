@@ -1,7 +1,7 @@
 import { Button } from '@ui-sdk/solid/button';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, X } from 'lucide';
-import { Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
+import { Show, createEffect, createSignal, onSettled, untrack } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
@@ -35,7 +35,7 @@ export default function PokerStoryTitleEditor(props: {
   const titleEdit = titleField.api.edit;
   let editingStoryId: string | undefined;
   let disposed = false;
-  onCleanup(() => { disposed = true; });
+  onSettled(() => () => { disposed = true; });
   const titleSave = createInlineEditSave(
     saveTitleText,
     () => titleEdit.cancel(),

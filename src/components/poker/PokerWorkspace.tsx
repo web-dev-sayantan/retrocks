@@ -1,7 +1,7 @@
 import { Button } from '@ui-sdk/solid/button';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, Pencil, SquareCheck, Users, X } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onSettled } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
@@ -140,7 +140,6 @@ export default function PokerWorkspace(props: {
   const roomNameEdit = roomNameField.api.edit;
   let editingRoomId: string | undefined;
   let disposed = false;
-  onCleanup(() => { disposed = true; });
   const roomNameSave = createInlineEditSave(
     saveRoomNameText,
     () => roomNameEdit.cancel(),
@@ -200,6 +199,7 @@ export default function PokerWorkspace(props: {
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
+    return () => { disposed = true; };
   });
 
   const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
