@@ -60,12 +60,26 @@ export default function PokerWorkspace(props: {
     setCloseError('');
     const discardRoundId = unresolvedPokerRoundId(props.room.round);
     try {
-      if (discardRoundId !== undefined && !await confirmBoardAction({
-        title: 'Close Room?',
-        description: 'Closing discards the current Voting Round and its votes. Accepted Estimates stay in the read-only summary.',
-        confirmLabel: 'Close and discard votes',
-        agentConfirm: 'Closes the Room permanently and discards the current Voting Round and its votes.',
-      })) return;
+      const confirmed = await confirmBoardAction(
+        discardRoundId !== undefined
+          ? {
+              title: 'Close Room?',
+              description:
+                'Closing discards the current Voting Round and its votes while keeping Accepted Estimates in the summary. A Facilitator can reopen the Room later.',
+              confirmLabel: 'Close and discard votes',
+              agentConfirm:
+                'Closes the Room and discards the current Voting Round and its votes. Accepted Estimates stay in the summary, and a Facilitator can reopen the Room later.',
+            }
+          : {
+              title: 'Close Room?',
+              description:
+                'Closing moves the Room to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+              confirmLabel: 'Close Room',
+              agentConfirm:
+                'Closes the Room and moves it to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+            },
+      );
+      if (!confirmed) return;
 
       setClosing(true);
       const result = await props.onChange({ type: 'close-room', ...(discardRoundId === undefined ? {} : { discardRoundId }) });
@@ -123,9 +137,6 @@ export default function PokerWorkspace(props: {
               title="Close Room"
               disabled={closing()}
               focusableWhenDisabled
-              data-agent-confirm={unresolvedPokerRoundId(props.room.round) === undefined
-                ? 'Closes the Room permanently. Accepted Estimates remain in the read-only summary.'
-                : undefined}
               onClick={() => void closeRoom()}
             >
               <LucideIcon icon={SquareCheck} class="size-4 shrink-0" strokeWidth={1.85} />
