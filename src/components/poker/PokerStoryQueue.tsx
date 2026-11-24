@@ -544,7 +544,7 @@ export default function PokerStoryQueue(props: {
                           canEdit={props.canManage}
                           discardRoundId={deleteDiscardRoundId()}
                           variant="queue"
-                          onSave={(title, discardRoundId) => editStoryTitle(story().id, title, discardRoundId)}
+                          onSave={editStoryTitle}
                           onHandle={(handle) => { titleEditor = handle; }}
                           fallbackFocus={() => editTitleButton?.focus()}
                         />
