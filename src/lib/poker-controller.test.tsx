@@ -601,6 +601,105 @@ describe('createPokerRoomController', () => {
     }
   });
 
+  it('applies delete-story optimistically (clearing active stage and keeping deckLocked), guards locked Stories, and reverts on rejection', async () => {
+    const initial = makeLiveRoom({
+      stories: [
+        { id: STORY_1_ID, title: 'First story', status: 'pending', locked: false },
+        { id: STORY_2_ID, title: 'Second story', status: 'estimated', acceptedEstimate: '5', locked: true },
+      ],
+      activeStoryId: STORY_1_ID,
+      deckLocked: true,
+      round: {
+        id: ROUND_1_ID,
+        phase: 'open',
+        submittedParticipantIds: [ALICE_ID],
+        ownChoice: '5',
+      },
+    });
+    const { controller, changeRoomSpy } = mountSession(initial);
+
+    // 1. Locked Story does not mutate optimistic state on delete-story.
+    let resolveLocked!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveLocked = resolve;
+      }),
+    );
+    const lockedDelete = controller.changeRoom({ type: 'delete-story', storyId: STORY_2_ID });
+    flush();
+    let current = controller.room();
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_1_ID, STORY_2_ID]);
+    }
+    resolveLocked({ ok: false, code: 'STORY_LOCKED', message: 'Unlock this Story before changing it.' });
+    await lockedDelete;
+    flush();
+
+    // 2. Deleting active Story with cast votes and matching discardRoundId optimistically removes it, clears stage, preserves deckLocked, and reverts on rejection.
+    let resolveDeleteReject!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveDeleteReject = resolve;
+      }),
+    );
+    const deleteReject = controller.changeRoom({
+      type: 'delete-story',
+      storyId: STORY_1_ID,
+      discardRoundId: ROUND_1_ID,
+    });
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_2_ID]);
+      expect(current.activeStoryId).toBeNull();
+      expect(current.round).toBeNull();
+      expect(current.deckLocked).toBe(true);
+    }
+    resolveDeleteReject({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
+    await deleteReject;
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_1_ID, STORY_2_ID]);
+      expect(current.activeStoryId).toBe(STORY_1_ID);
+      expect(current.round?.id).toBe(ROUND_1_ID);
+    }
+
+    // 3. Commits deletion cleanly on server success.
+    let resolveDeleteOk!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveDeleteOk = resolve;
+      }),
+    );
+    const deleteOk = controller.changeRoom({
+      type: 'delete-story',
+      storyId: STORY_1_ID,
+      discardRoundId: ROUND_1_ID,
+    });
+    flush();
+    resolveDeleteOk({
+      ok: true,
+      room: makeLiveRoom({
+        version: 2,
+        stories: [{ id: STORY_2_ID, title: 'Second story', status: 'estimated', acceptedEstimate: '5', locked: true }],
+        activeStoryId: null,
+        deckLocked: true,
+        round: null,
+      }),
+    });
+    await deleteOk;
+    flush();
+    current = controller.room();
+    expect(current.version).toBe(2);
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_2_ID]);
+      expect(current.activeStoryId).toBeNull();
+      expect(current.round).toBeNull();
+      expect(current.deckLocked).toBe(true);
+    }
+  });
+
   it('disposes the live stream cleanly when a live snapshot or command closes the Room', async () => {
     const closedSnapshot: PokerClosedRoomView = {
       closed: true,

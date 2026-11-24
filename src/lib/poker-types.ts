@@ -76,7 +76,8 @@ export type PokerStoryCommand =
   | { type: 'correct-estimate'; storyId: string; expectedEstimate: string; choice: string }
   | { type: 'return-story'; storyId: string }
   | { type: 'select-story'; storyId: string; discardRoundId?: string }
-  | { type: 'set-story-lock'; storyId: string; locked: boolean; discardRoundId?: string };
+  | { type: 'set-story-lock'; storyId: string; locked: boolean; discardRoundId?: string }
+  | { type: 'delete-story'; storyId: string; discardRoundId?: string };
 
 export type PokerVotingCommand =
   | { type: 'vote'; roundId: string; choice: string | null }

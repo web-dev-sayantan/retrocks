@@ -898,3 +898,125 @@ test('locking the active Story requires discard confirmation only when an unreso
     },
   });
 });
+
+test('a Facilitator can delete unlocked pending, estimated, and skipped Stories, while Locked Stories reject until unlocked', async () => {
+  const { participant, mutate, read } = await openRoom();
+
+  await mutate({ type: 'add-story', title: 'Pending Story' });
+  await mutate({ type: 'add-story', title: 'Estimated Story' });
+  const added = await mutate({ type: 'add-story', title: 'Skipped Story' });
+  if (!added.ok) throw new Error('Could not add Stories.');
+  const [pendingStory, estimatedStory, skippedStory] = added.room.stories;
+
+  // Estimate the second Story.
+  const selectEst = await mutate({ type: 'select-story', storyId: estimatedStory.id });
+  if (!selectEst.ok || !selectEst.room.round) throw new Error('Could not select Story.');
+  await mutate({ type: 'vote', roundId: selectEst.room.round.id, choice: '5' }, participant);
+  await mutate({ type: 'reveal', roundId: selectEst.room.round.id });
+  await mutate({ type: 'confirm-estimate', roundId: selectEst.room.round.id, choice: '5' });
+
+  // Skip the third Story.
+  const selectSkip = await mutate({ type: 'select-story', storyId: skippedStory.id });
+  if (!selectSkip.ok || !selectSkip.room.round) throw new Error('Could not select skipped Story.');
+  await mutate({ type: 'vote', roundId: selectSkip.room.round.id, choice: '3' }, participant);
+  await mutate({ type: 'reveal', roundId: selectSkip.room.round.id });
+  await mutate({ type: 'skip-story', roundId: selectSkip.room.round.id });
+
+  // Non-Facilitator cannot delete Stories.
+  expect(await mutate({ type: 'delete-story', storyId: pendingStory.id }, participant))
+    .toMatchObject({ ok: false, code: 'FORBIDDEN' });
+
+  // Locked Story rejects deletion with STORY_LOCKED until unlocked.
+  await mutate({ type: 'set-story-lock', storyId: estimatedStory.id, locked: true });
+  expect(await mutate({ type: 'delete-story', storyId: estimatedStory.id }))
+    .toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+
+  // Delete unlocked pending and skipped Stories.
+  expect(await mutate({ type: 'delete-story', storyId: pendingStory.id })).toMatchObject({
+    ok: true,
+    room: {
+      stories: [
+        { id: estimatedStory.id, status: 'estimated', acceptedEstimate: '5', locked: true },
+        { id: skippedStory.id, status: 'skipped' },
+      ],
+    },
+  });
+  expect(await mutate({ type: 'delete-story', storyId: skippedStory.id })).toMatchObject({
+    ok: true,
+    room: {
+      stories: [{ id: estimatedStory.id, status: 'estimated', acceptedEstimate: '5', locked: true }],
+    },
+  });
+
+  // Unlock and delete the estimated Story.
+  await mutate({ type: 'set-story-lock', storyId: estimatedStory.id, locked: false });
+  expect(await mutate({ type: 'delete-story', storyId: estimatedStory.id })).toMatchObject({
+    ok: true,
+    room: { stories: [] },
+  });
+
+  // Deleting a missing Story returns INVALID_INPUT.
+  expect(await mutate({ type: 'delete-story', storyId: estimatedStory.id }))
+    .toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+
+  expect(await read(participant)).toMatchObject({ stories: [] });
+});
+
+test('deleting the active Story clears the stage, requires discardRoundId only when unresolved votes exist, and preserves deckLocked', async () => {
+  const { participant, mutate } = await openRoom();
+  await mutate({ type: 'add-story', title: 'First active' });
+  await mutate({ type: 'add-story', title: 'Second active' });
+  const added = await mutate({ type: 'add-story', title: 'Third active' });
+  if (!added.ok) throw new Error('Could not add Stories.');
+  const [first, second, third] = added.room.stories;
+
+  // 1. Open round with 0 votes: deletes immediately without discardRoundId and clears stage.
+  const openEmpty = await mutate({ type: 'select-story', storyId: first.id });
+  if (!openEmpty.ok || !openEmpty.room.round) throw new Error('Could not select first Story.');
+  expect(await mutate({ type: 'delete-story', storyId: first.id })).toMatchObject({
+    ok: true,
+    room: {
+      activeStoryId: null,
+      round: null,
+      deckLocked: false,
+      stories: [{ id: second.id }, { id: third.id }],
+    },
+  });
+
+  // 2. Open round with cast votes: requires matching discardRoundId, clears stage, and keeps deckLocked true.
+  const openVoted = await mutate({ type: 'select-story', storyId: second.id });
+  if (!openVoted.ok || !openVoted.room.round) throw new Error('Could not select second Story.');
+  const votedRoundId = openVoted.room.round.id;
+  await mutate({ type: 'vote', roundId: votedRoundId, choice: '5' }, participant);
+
+  expect(await mutate({ type: 'delete-story', storyId: second.id }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate({ type: 'delete-story', storyId: second.id, discardRoundId: openEmpty.room.round.id }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate({ type: 'delete-story', storyId: second.id, discardRoundId: votedRoundId })).toMatchObject({
+    ok: true,
+    room: {
+      activeStoryId: null,
+      round: null,
+      deckLocked: true,
+      stories: [{ id: third.id }],
+    },
+  });
+
+  // 3. Accepted round: deletes immediately without discardRoundId, clears stage, and keeps deckLocked true.
+  const forAccept = await mutate({ type: 'select-story', storyId: third.id });
+  if (!forAccept.ok || !forAccept.room.round) throw new Error('Could not select third Story.');
+  await mutate({ type: 'vote', roundId: forAccept.room.round.id, choice: '8' }, participant);
+  await mutate({ type: 'reveal', roundId: forAccept.room.round.id });
+  await mutate({ type: 'confirm-estimate', roundId: forAccept.room.round.id, choice: '8' });
+
+  expect(await mutate({ type: 'delete-story', storyId: third.id })).toMatchObject({
+    ok: true,
+    room: {
+      activeStoryId: null,
+      round: null,
+      deckLocked: true,
+      stories: [],
+    },
+  });
+});

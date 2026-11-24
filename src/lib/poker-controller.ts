@@ -98,6 +98,20 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       story.locked = command.locked;
       break;
     }
+    case 'delete-story': {
+      const index = room.stories.findIndex((item) => item.id === command.storyId);
+      if (index === -1) return;
+      const story = room.stories[index];
+      if (story.locked) return;
+      if (room.activeStoryId === story.id) {
+        if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) return;
+        if (unresolvedPokerRoundWithVotesId(room.round) !== undefined && command.discardRoundId === undefined) return;
+        room.activeStoryId = null;
+        room.round = null;
+      }
+      room.stories.splice(index, 1);
+      break;
+    }
     case 'set-deck': {
       if (room.deckLocked) return;
       if (command.deck.type === 'custom') {

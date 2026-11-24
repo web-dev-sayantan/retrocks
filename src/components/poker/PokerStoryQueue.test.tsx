@@ -642,3 +642,141 @@ test('locking the active Story confirms only when an unresolved Voting Round has
   }));
   expect(screen.getByText('Select a Story from the queue')).toBeVisible();
 });
+
+test('a Facilitator can delete an unlocked Story with inline confirmation, resetting on Cancel, Escape, or interacting elsewhere, while Locked Stories block deletion', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    activeStoryId: null,
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: null,
+    stories: [
+      { id: 's1', title: 'Checkout flow', status: 'pending', locked: false },
+      { id: 's2', title: 'Locked billing', status: 'estimated', acceptedEstimate: '5', locked: true },
+    ],
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'delete-story') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        stories: current.stories.filter((story) => story.id !== command.storyId),
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
+
+  // Locked Story disables Delete and clicking does not open inline confirmation.
+  const lockedDelete = within(secondRow).getByRole('button', { name: 'Delete Locked billing' });
+  expect(lockedDelete).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.click(lockedDelete);
+  expect(within(secondRow).queryByRole('group', { name: 'Confirm deleting Locked billing' })).toBeNull();
+
+  // Clicking Delete on an unlocked Story swaps into an inline confirmation without a modal dialog.
+  const deleteBtn = within(firstRow).getByRole('button', { name: 'Delete Checkout flow' });
+  fireEvent.click(deleteBtn);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  const confirmGroup = await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  const cancelBtn = within(confirmGroup).getByRole('button', { name: 'Cancel deleting Checkout flow' });
+  await waitFor(() => expect(cancelBtn).toHaveFocus());
+
+  // Cancel resets inline confirmation and restores focus to Delete.
+  fireEvent.click(cancelBtn);
+  await waitFor(() => expect(within(firstRow).queryByRole('group', { name: 'Confirm deleting Checkout flow' })).toBeNull());
+  await waitFor(() => expect(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' })).toHaveFocus());
+
+  // Escape resets inline confirmation and restores focus to Delete.
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(within(firstRow).queryByRole('group', { name: 'Confirm deleting Checkout flow' })).toBeNull());
+  await waitFor(() => expect(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' })).toHaveFocus());
+
+  // Clicking elsewhere resets inline confirmation.
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  fireEvent.pointerDown(secondRow);
+  fireEvent.click(secondRow);
+  await waitFor(() => expect(within(firstRow).queryByRole('group', { name: 'Confirm deleting Checkout flow' })).toBeNull());
+
+  // Confirm requires agent approval via data-agent-confirm and deletes the Story when approved.
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  expect((await agent.act({ steps: [{ ref: 'Confirm delete Checkout flow', action: 'press' }] })).ok).toBe(false);
+  expect(allow).toHaveBeenCalledWith(expect.objectContaining({
+    confirm: 'Deletes this Story from the queue.',
+  }), expect.anything());
+  expect(change).not.toHaveBeenCalled();
+
+  approve = true;
+  const confirmed = await agent.act({ steps: [{ ref: 'Confirm delete Checkout flow', action: 'press' }] });
+  expect(confirmed.ok, confirmed.error?.message).toBe(true);
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'delete-story', storyId: 's1',
+  }));
+  await waitFor(() => expect(within(queue).getAllByRole('listitem')).toHaveLength(1));
+  expect(within(queue).queryByText('Checkout flow')).toBeNull();
+});
+
+test('deleting the active Story notes discarded votes when unresolved votes exist and clears the active stage', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'delete-story') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        activeStoryId: current.activeStoryId === command.storyId ? null : current.activeStoryId,
+        round: current.activeStoryId === command.storyId ? null : current.round,
+        stories: current.stories.filter((story) => story.id !== command.storyId),
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const [row] = within(queue).getAllByRole('listitem');
+
+  fireEvent.click(within(row).getByRole('button', { name: 'Delete Save checkout' }));
+  const confirmGroup = await within(row).findByRole('group', { name: 'Confirm deleting Save checkout' });
+  expect(within(confirmGroup).getByText(/active votes will be discarded/i)).toBeVisible();
+
+  fireEvent.click(within(confirmGroup).getByRole('button', { name: 'Confirm delete Save checkout' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'delete-story', storyId: 's1', discardRoundId: 'round-voted',
+  }));
+  expect(screen.getByText('Add a Story to begin estimating')).toBeVisible();
+});
