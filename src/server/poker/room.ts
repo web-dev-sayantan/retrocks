@@ -88,6 +88,11 @@ const lockDiscardRequired = {
   code: 'ROUND_CHANGED',
   message: 'Confirm that you want to discard the current Voting Round before locking this Story.',
 } as const;
+const deleteDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to discard the current Voting Round before deleting this Story.',
+} as const;
 
 const invalidDeckChoice = {
   ok: false,
@@ -453,6 +458,27 @@ export class PokerRoomStorage {
           } else {
             if (!story.locked) return { ok: true, room };
             story.locked = false;
+          }
+          break;
+        }
+        case 'delete-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const index = room.stories.findIndex((entry) => entry.id === command.storyId);
+          if (index < 0) return storyMissing;
+          const story = room.stories[index];
+          if (story.locked) return storyLocked;
+          const isActive = room.activeStoryId === story.id;
+          if (command.discardRoundId !== undefined && (!isActive || command.discardRoundId !== room.round?.id)) {
+            return roundChanged;
+          }
+          if (isActive && room.round && unresolvedPokerRoundId(room.round) !== undefined
+            && Object.keys(room.round.ballots).length > 0 && command.discardRoundId === undefined) {
+            return deleteDiscardRequired;
+          }
+          room.stories.splice(index, 1);
+          if (isActive) {
+            room.activeStoryId = null;
+            room.round = null;
           }
           break;
         }

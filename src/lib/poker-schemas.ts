@@ -62,6 +62,11 @@ export const PokerCommand = v.variant('type', [
     locked: v.boolean(),
     discardRoundId: v.optional(PokerEntityId),
   }),
+  v.object({
+    type: v.literal('delete-story'),
+    storyId: PokerEntityId,
+    discardRoundId: v.optional(PokerEntityId),
+  }),
   v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(PokerDeckChoice) }),
   v.object({ type: v.literal('reveal'), roundId: PokerEntityId }),
   v.object({ type: v.literal('restart-round'), roundId: PokerEntityId }),

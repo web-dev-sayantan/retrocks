@@ -1,6 +1,7 @@
 import { Button } from '@ui-sdk/solid/button';
 import { Field, FieldLabel } from '@ui-sdk/solid/field';
 import { Input } from '@ui-sdk/solid/input';
+import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import {
   CheckCircle2,
   ChevronDown,
@@ -13,8 +14,9 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Trash2,
 } from 'lucide';
-import { For, Show, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, flush, onSettled, untrack } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import {
@@ -148,11 +150,51 @@ export default function PokerStoryQueue(props: {
   const [editing, setEditing] = createSignal<
     { storyId: string; type: 'title' } | { storyId: string; type: 'estimate'; expectedEstimate: string } | null
   >(null);
+  const [deleting, setDeleting] = createSignal<{ storyId: string; discardRoundId?: string } | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
   const [announcement, setAnnouncement] = createSignal('');
   const [confirming, setConfirming] = createSignal(false);
   const [mobileOpen, setMobileOpen] = createSignal(false);
+
+  let activeConfirmGroup: HTMLElement | undefined;
+  let activeRestoreDeleteFocus: (() => void) | undefined;
+
+  function cancelDelete(restoreFocus = false) {
+    const restore = restoreFocus ? activeRestoreDeleteFocus : undefined;
+    activeConfirmGroup = undefined;
+    activeRestoreDeleteFocus = undefined;
+    setDeleting(null);
+    if (restore) {
+      flush();
+      restore();
+    }
+  }
+
+  useShortcut(
+    () => (deleting() !== null ? 'Escape' : null),
+    () => cancelDelete(true),
+  );
+
+  createEffect(
+    () => deleting() !== null,
+    (isDeleting) => {
+      if (!isDeleting || typeof document === 'undefined') return;
+      const onOutside = (event: Event) => {
+        const target = event.target;
+        if (target instanceof Node && activeConfirmGroup?.contains(target)) return;
+        cancelDelete(false);
+      };
+      document.addEventListener('pointerdown', onOutside, true);
+      document.addEventListener('click', onOutside, true);
+      document.addEventListener('focusin', onOutside, true);
+      return () => {
+        document.removeEventListener('pointerdown', onOutside, true);
+        document.removeEventListener('click', onOutside, true);
+        document.removeEventListener('focusin', onOutside, true);
+      };
+    },
+  );
 
   const estimatedCount = createMemo(() => props.stories.filter((story) => story.status === 'estimated').length);
   const activeStoryTitle = createMemo(() => props.stories.find((story) => story.id === props.activeStoryId)?.title);
@@ -174,11 +216,13 @@ export default function PokerStoryQueue(props: {
   }
 
   async function addStory(title: string) {
+    cancelDelete(false);
     return Boolean(await change({ type: 'add-story', title }));
   }
 
   async function selectStory(story: PokerStory) {
     if (story.locked || busy() || confirming()) return;
+    cancelDelete(false);
     const discardRoundId = props.discardRoundId;
     if (discardRoundId !== undefined) {
       setConfirming(true);
@@ -202,6 +246,7 @@ export default function PokerStoryQueue(props: {
 
   async function toggleStoryLock(story: PokerStory) {
     if (busy() || confirming()) return;
+    cancelDelete(false);
     const locking = !story.locked;
     const discardRoundId = locking && props.activeStoryId === story.id
       ? props.activeRoundWithVotesId
@@ -229,7 +274,33 @@ export default function PokerStoryQueue(props: {
     });
   }
 
+  function startDelete(story: PokerStory) {
+    if (story.locked || busy() || confirming()) return;
+    if (editing()?.storyId === story.id) setEditing(null);
+    const discardRoundId = props.activeStoryId === story.id
+      ? props.activeRoundWithVotesId
+      : undefined;
+    setDeleting({
+      storyId: story.id,
+      ...(discardRoundId === undefined ? {} : { discardRoundId }),
+    });
+  }
+
+  async function confirmDelete(story: PokerStory, discardRoundId?: string) {
+    if (story.locked || busy() || confirming()) return;
+    const room = await change({
+      type: 'delete-story',
+      storyId: story.id,
+      ...(discardRoundId === undefined ? {} : { discardRoundId }),
+    });
+    cancelDelete(false);
+    if (room) {
+      setAnnouncement(`${story.title} deleted.`);
+    }
+  }
+
   async function move(story: PokerStory, index: number, offset: -1 | 1, control: HTMLElement) {
+    cancelDelete(false);
     const target = props.stories[index + offset];
     if (!target) return;
     const doc = control.ownerDocument;
@@ -319,6 +390,9 @@ export default function PokerStoryQueue(props: {
                   let selectButton: HTMLButtonElement | undefined;
                   let editTitleButton: HTMLButtonElement | undefined;
                   let editEstimateButton: HTMLButtonElement | undefined;
+                  let deleteButton: HTMLButtonElement | undefined;
+                  let confirmGroup: HTMLDivElement | undefined;
+                  let cancelDeleteButton: HTMLButtonElement | undefined;
 
                   function finishEditing() {
                     const trigger = editor()?.type === 'estimate' ? editEstimateButton : editTitleButton;
@@ -340,6 +414,7 @@ export default function PokerStoryQueue(props: {
 
                   async function returnStory(control: HTMLElement) {
                     if (story().locked) return;
+                    cancelDelete(false);
                     const doc = control.ownerDocument;
                     const hadFocus = doc.activeElement === control;
                     if (await change({ type: 'return-story', storyId: story().id })) {
@@ -348,12 +423,33 @@ export default function PokerStoryQueue(props: {
                   }
 
                   const locked = () => Boolean(story().locked);
+                  const deleteConfirm = createMemo(() => {
+                    const current = deleting();
+                    return current && current.storyId === story().id && !locked() ? current : null;
+                  });
+
+                  createEffect(
+                    () => Boolean(deleteConfirm()),
+                    (isConfirming) => {
+                      if (!isConfirming) return;
+                      activeConfirmGroup = confirmGroup;
+                      activeRestoreDeleteFocus = () => deleteButton?.focus();
+                      cancelDeleteButton?.focus();
+                      return () => {
+                        if (activeConfirmGroup === confirmGroup) {
+                          activeConfirmGroup = undefined;
+                          activeRestoreDeleteFocus = undefined;
+                        }
+                      };
+                    },
+                  );
 
                   return (
                     <li
                       class="poker-story-row"
                       data-status={story().status}
                       data-locked={locked() ? 'true' : undefined}
+                      data-confirming-delete={deleteConfirm() ? 'true' : undefined}
                       aria-current={active() ? 'true' : undefined}
                     >
                       <div class="flex items-start gap-2.5">
@@ -410,102 +506,170 @@ export default function PokerStoryQueue(props: {
                       <Show when={props.canManage}>
                         <div class="poker-row-actions">
                           <Show
-                            when={story().status !== 'skipped'}
+                            when={deleteConfirm()}
                             fallback={
-                              <Button
-                                class="poker-row-btn poker-row-btn-primary board-focus-ring"
-                                aria-label={`Return ${story().title} to queue`}
-                                disabled={locked() || busy()}
-                                focusableWhenDisabled
-                                onClick={(event) => void returnStory(event.currentTarget)}
-                              >
-                                <LucideIcon icon={RotateCcw} class="size-3" strokeWidth={2} />
-                                <span>Return to queue</span>
-                              </Button>
+                              <>
+                                <Show
+                                  when={story().status !== 'skipped'}
+                                  fallback={
+                                    <Button
+                                      class="poker-row-btn poker-row-btn-primary board-focus-ring"
+                                      aria-label={`Return ${story().title} to queue`}
+                                      disabled={locked() || busy()}
+                                      focusableWhenDisabled
+                                      onClick={(event) => void returnStory(event.currentTarget)}
+                                    >
+                                      <LucideIcon icon={RotateCcw} class="size-3" strokeWidth={2} />
+                                      <span>Return to queue</span>
+                                    </Button>
+                                  }
+                                >
+                                  <Button
+                                    ref={selectButton}
+                                    class="poker-row-btn poker-row-btn-primary board-focus-ring"
+                                    aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
+                                    disabled={locked() || selected() || busy() || confirming()}
+                                    focusableWhenDisabled
+                                    onClick={() => selectStory(story())}
+                                  >
+                                    {selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'}
+                                  </Button>
+                                </Show>
+
+                                <Button
+                                  ref={editTitleButton}
+                                  class="poker-row-btn board-focus-ring"
+                                  aria-label={`Edit title for ${story().title}`}
+                                  title="Edit title"
+                                  aria-expanded={editor()?.type === 'title' ? 'true' : 'false'}
+                                  disabled={locked() || busy()}
+                                  focusableWhenDisabled
+                                  onClick={() => {
+                                    if (!locked()) {
+                                      cancelDelete(false);
+                                      setEditing({ storyId: story().id, type: 'title' });
+                                    }
+                                  }}
+                                >
+                                  <LucideIcon icon={Pencil} class="size-3" strokeWidth={2} />
+                                  <span class="sr-only">Edit title</span>
+                                </Button>
+
+                                <Show when={story().acceptedEstimate}>
+                                  {(estimate) => (
+                                    <Button
+                                      ref={editEstimateButton}
+                                      class="poker-row-btn board-focus-ring"
+                                      aria-label={`Edit estimate for ${story().title}`}
+                                      aria-expanded={editor()?.type === 'estimate' ? 'true' : 'false'}
+                                      disabled={locked() || busy()}
+                                      focusableWhenDisabled
+                                      onClick={() => {
+                                        if (!locked()) {
+                                          cancelDelete(false);
+                                          setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() });
+                                        }
+                                      }}
+                                    >
+                                      Edit estimate
+                                    </Button>
+                                  )}
+                                </Show>
+
+                                <Button
+                                  class="poker-row-btn board-focus-ring"
+                                  aria-label={locked() ? `Unlock ${story().title}` : `Lock ${story().title}`}
+                                  title={locked() ? 'Unlock Story' : 'Lock Story'}
+                                  disabled={busy() || confirming()}
+                                  focusableWhenDisabled
+                                  onClick={() => void toggleStoryLock(story())}
+                                >
+                                  <LucideIcon icon={locked() ? LockOpen : Lock} class="size-3" strokeWidth={2} />
+                                  <span class="sr-only">{locked() ? 'Unlock Story' : 'Lock Story'}</span>
+                                </Button>
+
+                                <Button
+                                  ref={deleteButton}
+                                  class="poker-row-btn poker-row-btn-danger board-focus-ring"
+                                  aria-label={`Delete ${story().title}`}
+                                  title={locked() ? 'Unlock Story to delete' : 'Delete Story'}
+                                  disabled={locked() || busy() || confirming()}
+                                  focusableWhenDisabled
+                                  onClick={() => startDelete(story())}
+                                >
+                                  <LucideIcon icon={Trash2} class="size-3" strokeWidth={2} />
+                                  <span class="sr-only">Delete Story</span>
+                                </Button>
+
+                                <div class="ms-auto flex items-center gap-0.5">
+                                  <Button
+                                    class="poker-row-btn board-focus-ring !px-1.5"
+                                    aria-label={`Move ${story().title} up`}
+                                    title="Move up"
+                                    disabled={index() === 0 || busy()}
+                                    focusableWhenDisabled
+                                    onClick={(event) => move(story(), index(), -1, event.currentTarget)}
+                                  >
+                                    <LucideIcon icon={ChevronUp} class="size-3.5" strokeWidth={2} />
+                                  </Button>
+                                  <Button
+                                    class="poker-row-btn board-focus-ring !px-1.5"
+                                    aria-label={`Move ${story().title} down`}
+                                    title="Move down"
+                                    disabled={index() === props.stories.length - 1 || busy()}
+                                    focusableWhenDisabled
+                                    onClick={(event) => move(story(), index(), 1, event.currentTarget)}
+                                  >
+                                    <LucideIcon icon={ChevronDown} class="size-3.5" strokeWidth={2} />
+                                  </Button>
+                                </div>
+                              </>
                             }
                           >
-                            <Button
-                              ref={selectButton}
-                              class="poker-row-btn poker-row-btn-primary board-focus-ring"
-                              aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
-                              disabled={locked() || selected() || busy() || confirming()}
-                              focusableWhenDisabled
-                              onClick={() => selectStory(story())}
-                            >
-                              {selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'}
-                            </Button>
-                          </Show>
-
-                          <Button
-                            ref={editTitleButton}
-                            class="poker-row-btn board-focus-ring"
-                            aria-label={`Edit title for ${story().title}`}
-                            title="Edit title"
-                            aria-expanded={editor()?.type === 'title' ? 'true' : 'false'}
-                            disabled={locked() || busy()}
-                            focusableWhenDisabled
-                            onClick={() => {
-                              if (!locked()) setEditing({ storyId: story().id, type: 'title' });
-                            }}
-                          >
-                            <LucideIcon icon={Pencil} class="size-3" strokeWidth={2} />
-                            <span class="sr-only">Edit title</span>
-                          </Button>
-
-                          <Show when={story().acceptedEstimate}>
-                            {(estimate) => (
-                              <Button
-                                ref={editEstimateButton}
-                                class="poker-row-btn board-focus-ring"
-                                aria-label={`Edit estimate for ${story().title}`}
-                                aria-expanded={editor()?.type === 'estimate' ? 'true' : 'false'}
-                                disabled={locked() || busy()}
-                                focusableWhenDisabled
-                                onClick={() => {
-                                  if (!locked()) {
-                                    setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() });
-                                  }
-                                }}
+                            {(pendingDelete) => (
+                              <div
+                                ref={confirmGroup}
+                                class="poker-row-confirm"
+                                role="group"
+                                aria-label={`Confirm deleting ${story().title}`}
                               >
-                                Edit estimate
-                              </Button>
+                                <span
+                                  class="poker-row-confirm-note"
+                                  data-warning={pendingDelete().discardRoundId !== undefined ? 'true' : undefined}
+                                >
+                                  {pendingDelete().discardRoundId !== undefined
+                                    ? 'Delete? Active votes will be discarded.'
+                                    : 'Delete Story?'}
+                                </span>
+                                <div class="ms-auto flex items-center gap-1">
+                                  <Button
+                                    ref={cancelDeleteButton}
+                                    class="poker-row-btn board-focus-ring"
+                                    aria-label={`Cancel deleting ${story().title}`}
+                                    disabled={busy()}
+                                    focusableWhenDisabled
+                                    onClick={() => cancelDelete(true)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    class="poker-row-btn poker-row-btn-danger-solid board-focus-ring"
+                                    aria-label={`Confirm delete ${story().title}`}
+                                    data-agent-confirm={
+                                      pendingDelete().discardRoundId !== undefined
+                                        ? 'Deletes this Story and discards the current Voting Round and its votes.'
+                                        : 'Deletes this Story from the queue.'
+                                    }
+                                    disabled={busy()}
+                                    focusableWhenDisabled
+                                    onClick={() => void confirmDelete(story(), pendingDelete().discardRoundId)}
+                                  >
+                                    Confirm
+                                  </Button>
+                                </div>
+                              </div>
                             )}
                           </Show>
-
-                          <Button
-                            class="poker-row-btn board-focus-ring"
-                            aria-label={locked() ? `Unlock ${story().title}` : `Lock ${story().title}`}
-                            title={locked() ? 'Unlock Story' : 'Lock Story'}
-                            disabled={busy() || confirming()}
-                            focusableWhenDisabled
-                            onClick={() => void toggleStoryLock(story())}
-                          >
-                            <LucideIcon icon={locked() ? LockOpen : Lock} class="size-3" strokeWidth={2} />
-                            <span class="sr-only">{locked() ? 'Unlock Story' : 'Lock Story'}</span>
-                          </Button>
-
-                          <div class="ms-auto flex items-center gap-0.5">
-                            <Button
-                              class="poker-row-btn board-focus-ring !px-1.5"
-                              aria-label={`Move ${story().title} up`}
-                              title="Move up"
-                              disabled={index() === 0 || busy()}
-                              focusableWhenDisabled
-                              onClick={(event) => move(story(), index(), -1, event.currentTarget)}
-                            >
-                              <LucideIcon icon={ChevronUp} class="size-3.5" strokeWidth={2} />
-                            </Button>
-                            <Button
-                              class="poker-row-btn board-focus-ring !px-1.5"
-                              aria-label={`Move ${story().title} down`}
-                              title="Move down"
-                              disabled={index() === props.stories.length - 1 || busy()}
-                              focusableWhenDisabled
-                              onClick={(event) => move(story(), index(), 1, event.currentTarget)}
-                            >
-                              <LucideIcon icon={ChevronDown} class="size-3.5" strokeWidth={2} />
-                            </Button>
-                          </div>
                         </div>
 
                         <Show when={editor()?.type === 'title' && !locked()}>
