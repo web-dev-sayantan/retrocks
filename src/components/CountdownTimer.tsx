@@ -40,6 +40,19 @@ function formatSpokenDuration(milliseconds: number): string {
   return seconds === 0 ? minuteLabel : `${minuteLabel} and ${secondLabel}`;
 }
 
+function RunningTicker(props: { onSample: (time: number) => void }) {
+  onSettled(() => {
+    const sample = () => props.onSample(performance.now());
+    const ticker = setInterval(sample, 100);
+    document.addEventListener('visibilitychange', sample);
+    return () => {
+      clearInterval(ticker);
+      document.removeEventListener('visibilitychange', sample);
+    };
+  });
+  return null;
+}
+
 export default function CountdownTimer(props: {
   timer: TimerStateDTO;
   clock: ServerClockSample | null;
@@ -59,7 +72,6 @@ export default function CountdownTimer(props: {
   const [minutesDraft, setMinutesDraft] = createSignal<number | null>(5);
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal('');
-  const [timerAnnouncement, setTimerAnnouncement] = createSignal('');
   const [announcedDeadline, setAnnouncedDeadline] = createSignal<number | null>(null);
 
   const remainingMs = createMemo(() => {
@@ -95,17 +107,6 @@ export default function CountdownTimer(props: {
     return minutes !== null && Number.isInteger(minutes) && minutes >= MIN_TIMER_MINUTES && minutes <= MAX_TIMER_MINUTES;
   });
 
-  createEffect(isRunning, (running) => {
-    if (!running) return;
-    const sample = () => setSampledAt(performance.now());
-    const ticker = setInterval(sample, 100);
-    document.addEventListener('visibilitychange', sample);
-    return () => {
-      clearInterval(ticker);
-      document.removeEventListener('visibilitychange', sample);
-    };
-  });
-
   createEffect(
     () => [props.timer.endsAt, remainingMs(), announcedDeadline()] as const,
     ([endsAt, remaining, announced]) => {
@@ -120,27 +121,41 @@ export default function CountdownTimer(props: {
     },
   );
 
-  createEffect(
-    () => [props.timer.endsAt, props.timer.remainingMs, props.timer.durationMs] as const,
-    ([endsAt, remaining, duration], previous) => {
-      if (!previous) return;
-      const [oldEndsAt, oldRemaining, oldDuration] = previous;
-      if (endsAt === oldEndsAt && remaining === oldRemaining && duration === oldDuration) return;
-      if (duration === null) {
-        setTimerAnnouncement('Timer dismissed.');
-      } else if (remaining !== null) {
-        setTimerAnnouncement(oldRemaining === null
-          ? 'Timer paused.'
-          : `Paused timer updated. ${formatSpokenDuration(remaining)} remaining.`);
-      } else if (oldDuration === null) {
-        setTimerAnnouncement('Timer started.');
-      } else if (oldRemaining !== null) {
-        setTimerAnnouncement('Timer resumed.');
-      } else {
-        setTimerAnnouncement(`Timer updated. ${formatSpokenDuration(duration)} total.`);
-      }
-    },
-  );
+  const configuration = createMemo<{
+    timer: TimerStateDTO;
+    announcement: string;
+  }>((previous) => {
+    const { endsAt, remainingMs, durationMs } = props.timer;
+    const timer = { endsAt, remainingMs, durationMs };
+    if (!previous) return { timer, announcement: '' };
+
+    const old = previous.timer;
+    if (endsAt === old.endsAt && remainingMs === old.remainingMs && durationMs === old.durationMs) {
+      return previous;
+    }
+
+    let announcement: string;
+    if (durationMs === null) {
+      announcement = 'Timer dismissed.';
+    } else if (remainingMs !== null) {
+      announcement = old.remainingMs === null
+        ? 'Timer paused.'
+        : `Paused timer updated. ${formatSpokenDuration(remainingMs)} remaining.`;
+    } else if (old.durationMs === null) {
+      announcement = 'Timer started.';
+    } else if (old.remainingMs !== null) {
+      announcement = 'Timer resumed.';
+    } else {
+      announcement = `Timer updated. ${formatSpokenDuration(durationMs)} total.`;
+    }
+    return { timer, announcement };
+  });
+  const expiryMessage = { announcement: 'Time is up.' };
+  const announcement = createMemo(() => {
+    const current = configuration();
+    if (expiryAnnounced()) return expiryMessage;
+    return current.announcement ? current : undefined;
+  });
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
@@ -164,6 +179,7 @@ export default function CountdownTimer(props: {
     { layer: () => panel, description: 'Toggle countdown timer' },
   );
 
+  // Ensure focus enters the controlled popover when ui-sdk leaves it outside.
   createEffect(open, (isOpen) => {
     if (isOpen && panel && !panel.contains(document.activeElement)) {
       panel.focus();
@@ -229,6 +245,7 @@ export default function CountdownTimer(props: {
 
   return (
     <div class="shrink-0">
+      <Show when={isRunning()}><RunningTicker onSample={setSampledAt} /></Show>
       <Popover controller={popover} open={open()} onOpenChange={handleOpenChange} modal={false}>
         <PopoverTrigger
           aria-label={isConfigured() ? `Countdown Timer, ${isPaused() ? 'paused at ' : ''}${timeLabel()}` : 'Countdown Timer'}
@@ -411,7 +428,10 @@ export default function CountdownTimer(props: {
         </PopoverContent>
       </Popover>
       <span aria-live="polite" aria-atomic="true" class="sr-only">
-        {expiryAnnounced() ? 'Time is up.' : timerAnnouncement()}
+        {/* Each change inserts fresh content even when the spoken text repeats. */}
+        <Show when={announcement()} keyed>
+          {(message) => <span>{message.announcement}</span>}
+        </Show>
       </span>
     </div>
   );

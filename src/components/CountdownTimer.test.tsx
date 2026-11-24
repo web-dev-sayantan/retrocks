@@ -89,7 +89,7 @@ describe('Board Countdown Timer', () => {
         }],
       });
       expect(view.getByText('03:00')).toBeVisible();
-      const announcement = view.getByText('Timer started.');
+      const announcement = view.getByText('Timer started.').closest('[aria-live]');
       expect(announcement).toHaveAttribute('aria-live', 'polite');
       vi.advanceTimersByTime(1_100);
       flush();
@@ -193,6 +193,46 @@ describe('Board Countdown Timer', () => {
     }
   });
 
+  it('publishes identical announcement text again only when the configuration changes', () => {
+    const board = makeBoard({
+      timer: { endsAt: SERVER_TIME + 120_000, remainingMs: null, durationMs: 180_000 },
+    });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    try {
+      flush();
+      const region = view.container.querySelector('span[aria-live="polite"][aria-atomic="true"]')!;
+      expect(region).toHaveTextContent(/^$/);
+
+      function updateDeadline(version: number, seconds: number) {
+        streams[0].receive({
+          type: 'board:mutation',
+          version,
+          events: [{
+            type: 'timer:updated',
+            version,
+            serverNow: SERVER_TIME,
+            timer: { ...board.timer, endsAt: SERVER_TIME + seconds * 1_000 },
+          }],
+        });
+      }
+
+      sendSnapshot(board, SERVER_TIME);
+      updateDeadline(2, 120);
+      expect(region).toHaveTextContent(/^$/);
+      updateDeadline(3, 121);
+      expect(region).toHaveTextContent('Timer updated. 3 minutes total.');
+      const firstMessage = region.firstElementChild;
+      expect(firstMessage).toBeInTheDocument();
+      updateDeadline(4, 121);
+      expect(region.firstElementChild).toBe(firstMessage);
+      updateDeadline(5, 122);
+      expect(region).toHaveTextContent('Timer updated. 3 minutes total.');
+      expect(region.firstElementChild).not.toBe(firstMessage);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('announces consecutive extensions to running and paused timers', () => {
     const board = makeBoard({
       timer: { endsAt: SERVER_TIME + 120_000, remainingMs: null, durationMs: 180_000 },
@@ -211,7 +251,7 @@ describe('Board Countdown Timer', () => {
       }
 
       updateTimer(2, { endsAt: SERVER_TIME + 180_000, remainingMs: null, durationMs: 240_000 });
-      const announcement = view.getByText('Timer updated. 4 minutes total.');
+      const announcement = view.getByText('Timer updated. 4 minutes total.').closest('[aria-live]');
       expect(announcement).toHaveAttribute('aria-live', 'polite');
 
       updateTimer(3, { endsAt: SERVER_TIME + 240_000, remainingMs: null, durationMs: 300_000 });
@@ -227,6 +267,12 @@ describe('Board Countdown Timer', () => {
 
       updateTimer(6, { endsAt: null, remainingMs: 359_000, durationMs: 420_000 });
       expect(announcement).toHaveTextContent(/^Paused timer updated\. 5 minutes and 59 seconds remaining\.$/);
+
+      updateTimer(7, { endsAt: SERVER_TIME + 359_000, remainingMs: null, durationMs: 420_000 });
+      expect(announcement).toHaveTextContent(/^Timer resumed\.$/);
+
+      updateTimer(8, { endsAt: null, remainingMs: null, durationMs: null });
+      expect(announcement).toHaveTextContent(/^Timer dismissed\.$/);
     } finally {
       view.unmount();
     }
@@ -246,7 +292,7 @@ describe('Board Countdown Timer', () => {
       vi.advanceTimersByTime(2_100);
       flush();
       expect(view.getByText('00:00')).toBeVisible();
-      expect(view.getByText('Time is up.')).toHaveAttribute('aria-live', 'polite');
+      expect(view.getByText('Time is up.').closest('[aria-live]')).toHaveAttribute('aria-live', 'polite');
 
       view.unmount();
       const reloaded = render(() => <BoardWorkspace board={board} boardId={board.id} />);
@@ -337,7 +383,11 @@ describe('Board Countdown Timer', () => {
       vi.advanceTimersByTime(1_100);
       flush();
       expect(nextVisit.getByText('Time is up.')).toBeInTheDocument();
-      expect(startNote).toHaveBeenCalled();
+      expect(startNote).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(1_100);
+      fireEvent(document, new Event('visibilitychange'));
+      flush();
+      expect(startNote).toHaveBeenCalledTimes(2);
     } finally {
       nextVisit.unmount();
     }
@@ -389,6 +439,7 @@ describe('Board Countdown Timer', () => {
           fireEvent.click(trigger);
           flush();
           const dialog = view.getByRole('dialog', { name: 'Countdown Timer' });
+          expect(dialog).toHaveFocus();
           expect(dialog).toHaveAttribute('data-slot', 'popover-content');
           expect(dialog).toHaveAttribute('data-board-overlay', 'true');
           expect(dialog).toHaveClass('board-popover');
