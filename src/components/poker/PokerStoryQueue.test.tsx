@@ -964,3 +964,282 @@ test('Add & make active confirms before discarding cast votes while Add to queue
     type: 'add-story', title: 'Active after reveal', makeActive: true, discardRoundId: 'round-revealed',
   }));
 });
+
+function fireDoubleTap(target: Element) {
+  const init = { pointerType: 'touch', isPrimary: true, pointerId: 1, clientX: 20, clientY: 20, bubbles: true };
+  fireEvent.pointerDown(target, init);
+  fireEvent.pointerUp(target, init);
+  fireEvent.pointerDown(target, init);
+  fireEvent.pointerUp(target, init);
+}
+
+test('a Facilitator can edit unlocked Story titles inplace from the sidebar via double-click, double-tap, or Pencil button with IME-safe Enter, Escape, and blur', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    name: 'Poker Room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [
+      { id: 's1', title: 'Save checkout', status: 'pending', locked: false },
+      { id: 's2', title: 'Send receipt', status: 'pending', locked: false },
+    ],
+    activeStoryId: null,
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: false,
+    round: null,
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'edit-story') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        stories: current.stories.map((story) =>
+          story.id === command.storyId ? { ...story, title: command.title } : story,
+        ),
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
+
+  // 1. Double-click activates inplace editor; IME-composing Enter is ignored; real Enter saves.
+  fireEvent.dblClick(within(firstRow).getByText('Save checkout'));
+  const firstInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
+  expect(firstInput).toHaveValue('Save checkout');
+  expect(within(firstRow).queryByRole('button', { name: 'Save title' })).toBeNull();
+
+  fireEvent.input(firstInput, { target: { value: 'Save express checkout' } });
+  fireEvent.keyDown(firstInput, { key: 'Enter', isComposing: true });
+  expect(change).not.toHaveBeenCalled();
+  expect(firstInput).toBeInTheDocument();
+
+  fireEvent.keyDown(firstInput, { key: 'Enter', keyCode: 229 });
+  expect(change).not.toHaveBeenCalled();
+  expect(firstInput).toBeInTheDocument();
+
+  fireEvent.keyDown(firstInput, { key: 'Enter' });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'edit-story', storyId: 's1', title: 'Save express checkout',
+  }));
+  await waitFor(() => expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
+  expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
+
+  // 2. Pencil button activates the same inplace editor; Escape cancels without saving.
+  change.mockClear();
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit title for Save express checkout' }));
+  const pencilInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
+  expect(within(firstRow).queryByRole('button', { name: 'Save title' })).toBeNull();
+  fireEvent.input(pencilInput, { target: { value: 'Discarded draft' } });
+  fireEvent.keyDown(pencilInput, { key: 'Escape' });
+  await waitFor(() => expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
+  expect(change).not.toHaveBeenCalled();
+  expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
+
+  // 3. Touch double-tap activates inplace editor; blur saves.
+  fireDoubleTap(within(secondRow).getByText('Send receipt'));
+  const secondInput = await within(secondRow).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(secondInput, { target: { value: 'Email receipt' } });
+  fireEvent.focusOut(secondInput, { relatedTarget: document.body });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'edit-story', storyId: 's2', title: 'Email receipt',
+  }));
+  await waitFor(() => expect(within(secondRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
+  expect(within(secondRow).getByText('Email receipt')).toBeVisible();
+});
+
+test('a Facilitator can edit the active Story title inplace on the stage heading via double-click or double-tap', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    name: 'Poker Room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'r1', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'edit-story') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        stories: current.stories.map((story) =>
+          story.id === command.storyId ? { ...story, title: command.title } : story,
+        ),
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => (
+    <>
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+
+  const stage = screen.getByRole('region', { name: 'Active Story' });
+
+  // Double-click stage heading, edit, press Enter (0 votes -> no confirmation dialog).
+  fireEvent.dblClick(within(stage).getByText('Save checkout'));
+  const input = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(input, { target: { value: 'Save checkout v2' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'edit-story', storyId: 's1', title: 'Save checkout v2',
+  }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(await within(stage).findByText('Save checkout v2')).toBeVisible();
+
+  // Double-tap stage heading, edit, Escape cancels.
+  change.mockClear();
+  fireDoubleTap(within(stage).getByText('Save checkout v2'));
+  const tapInput = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(tapInput, { target: { value: 'Cancelled title' } });
+  fireEvent.keyDown(tapInput, { key: 'Escape' });
+  await waitFor(() => expect(within(stage).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
+  expect(change).not.toHaveBeenCalled();
+  expect(within(stage).getByText('Save checkout v2')).toBeVisible();
+});
+
+test('Locked Stories and non-Facilitator Participants cannot activate inplace title editing', () => {
+  const alex = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const sam = { id: 'sam', displayName: 'Sam', isFacilitator: false };
+  const [viewer, setViewer] = createSignal(alex);
+  const room = (): PokerLiveRoomView => ({
+    closed: false,
+    id: 'room',
+    name: 'Poker Room',
+    version: 1,
+    viewer: viewer(),
+    participants: [alex, sam],
+    stories: [
+      { id: 's1', title: 'Active unlocked', status: 'pending', locked: false },
+      { id: 's2', title: 'Locked Story', status: 'pending', locked: true },
+    ],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'r1', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  });
+
+  render(() => <PokerWorkspace room={room()} online={['alex', 'sam']} status="live" onUnavailable={vi.fn()} onChange={vi.fn()} />);
+
+  // Facilitator cannot inplace-edit a Locked Story.
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const lockedTitle = within(queue).getByText('Locked Story');
+  fireEvent.dblClick(lockedTitle);
+  fireDoubleTap(lockedTitle);
+  expect(screen.queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
+
+  // Non-Facilitator Participant cannot inplace-edit sidebar or stage titles.
+  setViewer(sam);
+  flush();
+  const sidebarTitle = within(queue).getByText('Active unlocked');
+  fireEvent.dblClick(sidebarTitle);
+  fireDoubleTap(sidebarTitle);
+  const stage = screen.getByRole('region', { name: 'Active Story' });
+  const stageTitle = within(stage).getByText('Active unlocked');
+  fireEvent.dblClick(stageTitle);
+  fireDoubleTap(stageTitle);
+  expect(screen.queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
+});
+
+test('editing the active Story title during an unresolved Voting Round with cast votes requires confirmation', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    name: 'Poker Room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
+  });
+
+  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+    const current = untrack(room);
+    if (command.type === 'edit-story') {
+      const next: PokerLiveRoomView = {
+        ...current,
+        version: current.version + 1,
+        stories: current.stories.map((story) =>
+          story.id === command.storyId ? { ...story, title: command.title } : story,
+        ),
+        round: { id: 'round-restarted', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+      };
+      setRoom(next);
+      return { ok: true, room: next };
+    }
+    throw new Error(`Unexpected command: ${command.type}`);
+  });
+
+  render(() => (
+    <>
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+
+  const stage = screen.getByRole('region', { name: 'Active Story' });
+
+  // 1. Edit from stage heading -> cancel confirmation keeps old title & votes intact.
+  fireEvent.dblClick(within(stage).getByText('Save checkout'));
+  const stageInput = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(stageInput, { target: { value: 'Renamed checkout' } });
+  fireEvent.keyDown(stageInput, { key: 'Enter' });
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'Change active Story title?' });
+  expect(dialog).toHaveAccessibleDescription(
+    'Changing the title restarts the current Voting Round with empty ballots.',
+  );
+  const cancelBtn = within(dialog).getByRole('button', { name: 'Keep current title' });
+  await waitFor(() => expect(cancelBtn).toHaveFocus());
+  fireEvent.click(cancelBtn);
+  await waitFor(() => expect(dialog).not.toBeVisible());
+  expect(change).not.toHaveBeenCalled();
+  expect(await within(stage).findByText('Save checkout')).toBeVisible();
+  expect(within(stage).getByText('1 of 1 voted')).toBeVisible();
+
+  // 2. Edit from sidebar -> confirm restarts voting with empty ballots.
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  fireEvent.dblClick(within(queue).getByText('Save checkout'));
+  const queueInput = await within(queue).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(queueInput, { target: { value: 'Renamed checkout' } });
+  fireEvent.keyDown(queueInput, { key: 'Enter' });
+
+  const reopened = await screen.findByRole('alertdialog', { name: 'Change active Story title?' });
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Save and restart voting' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'edit-story', storyId: 's1', title: 'Renamed checkout',
+  }));
+  await waitFor(() => expect(within(stage).getByText('Renamed checkout')).toBeVisible());
+  expect(within(stage).getByText('0 of 1 voted')).toBeVisible();
+});

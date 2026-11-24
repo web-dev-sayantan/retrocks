@@ -20,6 +20,7 @@ import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerStoryQueue from './PokerStoryQueue';
+import PokerStoryTitleEditor from './PokerStoryTitleEditor';
 import PokerVotingRound from './PokerVotingRound';
 import './poker.css';
 
@@ -102,6 +103,15 @@ export default function PokerWorkspace(props: {
     } finally {
       closeInProgress = false;
       setClosing(false);
+    }
+  }
+
+  async function editActiveStoryTitle(storyId: string, title: string): Promise<InlineEditOutcome> {
+    try {
+      const result = await props.onChange({ type: 'edit-story', storyId, title });
+      return result.ok ? true : result.message;
+    } catch {
+      return 'Could not update the Story title. Try again.';
     }
   }
 
@@ -352,7 +362,13 @@ export default function PokerWorkspace(props: {
                     )}
                   </Show>
 
-                  <p class="poker-active-title">{story().title}</p>
+                  <PokerStoryTitleEditor
+                    story={story()}
+                    canEdit={props.room.viewer?.isFacilitator === true}
+                    confirmRestartVoting={unresolvedPokerRoundWithVotesId(props.room.round) !== undefined}
+                    variant="stage"
+                    onSave={(title) => editActiveStoryTitle(story().id, title)}
+                  />
 
                   <Show when={story().acceptedEstimate !== undefined}>
                     <p class="poker-accepted-pill" role="status">

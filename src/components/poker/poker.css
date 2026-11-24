@@ -582,6 +582,86 @@
     text-wrap: pretty;
   }
 
+  .poker-story-title[data-editable='true'] {
+    cursor: text;
+    touch-action: manipulation;
+    border-radius: 0.25rem;
+  }
+
+  .poker-story-inline-editor {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .poker-story-inline-input {
+    min-inline-size: 0;
+    flex: 1;
+    min-block-size: 1.75rem;
+    padding: 0.1875rem 0.4375rem;
+    border: 1px solid var(--retrocks-focus);
+    border-radius: 0.375rem;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.38;
+  }
+
+  .poker-inline-action {
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    min-inline-size: 1.75rem;
+    min-block-size: 1.75rem;
+    border: 1px solid var(--poker-hairline);
+    border-radius: 0.375rem;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text-muted);
+    cursor: pointer;
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+  }
+
+  .poker-inline-action:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface-subtle);
+    color: var(--retrocks-text);
+  }
+
+  .poker-inline-action-save {
+    border-color: transparent;
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+  }
+
+  .poker-inline-action-save:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+    opacity: 0.9;
+  }
+
+  .poker-inline-action:is(:disabled, [aria-disabled='true']) {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .poker-inline-action-stage {
+    min-inline-size: var(--poker-target);
+    min-block-size: var(--poker-target);
+    border-radius: 0.5rem;
+  }
+
+  @media (pointer: coarse) {
+    .poker-story-inline-input {
+      min-block-size: 2.25rem;
+      font-size: max(1rem, 1em);
+    }
+
+    .poker-inline-action {
+      min-inline-size: 2.75rem;
+      min-block-size: 2.75rem;
+    }
+  }
+
   .poker-story-row[data-status='skipped'] .poker-story-title {
     color: var(--retrocks-text-muted);
     text-decoration: line-through;
@@ -758,6 +838,36 @@
     text-wrap: balance;
     overflow-wrap: break-word;
     max-inline-size: 30ch;
+  }
+
+  .poker-active-title[data-editable='true'] {
+    cursor: text;
+    touch-action: manipulation;
+    border-radius: 0.375rem;
+  }
+
+  .poker-active-title-editor {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    inline-size: min(100%, 34rem);
+  }
+
+  .poker-active-title-input {
+    min-inline-size: 0;
+    flex: 1;
+    min-block-size: var(--poker-target);
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--retrocks-focus);
+    border-radius: 0.5rem;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font: inherit;
+    font-size: clamp(1.25rem, 3cqi, 1.875rem);
+    font-weight: 650;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+    text-align: center;
   }
 
   .poker-phase-pill {
@@ -1061,6 +1171,11 @@
 
     .poker-seat-card[data-seat-state='waiting'][data-self='true'] {
       border-style: dashed;
+    }
+
+    .poker-story-inline-input,
+    .poker-active-title-input {
+      border: 1px solid CanvasText;
     }
   }
 }
