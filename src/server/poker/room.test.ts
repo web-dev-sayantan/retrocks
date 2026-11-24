@@ -316,7 +316,6 @@ test('reopening a closed Room requires a pre-close Facilitator, locks prior Stor
     expect(rejoined.viewer).toMatchObject({ displayName: 'Alex again', isFacilitator: true });
     expect(rejoined.deckType).toBe('custom');
     expect(rejoined.deck).toEqual(['Low', 'Med', 'High']);
-    expect(rejoined.deckLocked).toBe(true);
     expect(rejoined.facilitatorLinkRevision).toBeUndefined();
     expect(rooms.getFacilitatorCapability('room-a', 'facilitator')).toEqual({ ok: true, value: null });
     expect(rejoined.stories).toEqual([

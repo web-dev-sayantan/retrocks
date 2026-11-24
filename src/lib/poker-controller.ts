@@ -39,7 +39,6 @@ function applyOptimisticVote(room: PokerLiveRoomView, roundId: string, choice: s
   if (!viewerId) return;
   const index = round.submittedParticipantIds.indexOf(viewerId);
   if (choice !== null) {
-    room.deckLocked = true;
     if (index === -1) round.submittedParticipantIds.push(viewerId);
   } else if (index !== -1) {
     round.submittedParticipantIds.splice(index, 1);
@@ -124,7 +123,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       break;
     }
     case 'set-deck': {
-      if (room.deckLocked) return;
+      if (!canDiscardActiveRound(room, room.activeStoryId !== null, command.discardRoundId)) return;
       if (command.deck.type === 'custom') {
         const choices = command.deck.choices.map((c) => c.trim()).filter(Boolean);
         if (choices.length < 2 || new Set(choices).size !== choices.length) return;
@@ -133,6 +132,19 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       } else {
         room.deckType = command.deck.type;
         room.deck = [...POKER_DECK_PRESETS[command.deck.type]];
+      }
+      if (command.discardRoundId !== undefined && room.round?.id === command.discardRoundId) {
+        if (room.round.phase === 'open') {
+          room.round.ownChoice = null;
+          room.round.submittedParticipantIds = [];
+        } else if (room.round.phase === 'revealed') {
+          room.round = {
+            id: room.round.id,
+            phase: 'open',
+            ownChoice: null,
+            submittedParticipantIds: [],
+          };
+        }
       }
       break;
     }

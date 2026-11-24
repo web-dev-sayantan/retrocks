@@ -15,6 +15,7 @@ export type PokerDeckType = PokerDeckPreset | 'custom';
 export type PokerDeckCommand = {
   type: 'set-deck';
   deck: { type: PokerDeckPreset } | { type: 'custom'; choices: string[] };
+  discardRoundId?: string;
 };
 
 export interface PokerParticipant {
@@ -47,7 +48,6 @@ export interface PokerLiveRoomView {
   activeStoryId: string | null;
   deck: readonly string[];
   deckType: PokerDeckType;
-  deckLocked: boolean;
   round: PokerRoundView | null;
 }
 
@@ -100,7 +100,7 @@ export type PokerRoomChange =
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
-type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'STORY_LOCKED' | 'ROOM_CLOSED'; message: string };
+type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'STORY_LOCKED' | 'ROOM_CLOSED'; message: string };
 
 export type PokerResult<T = PokerRoomView> = { ok: true; room: T } | PokerFailure;
 export type PokerDeleteResult = { ok: true } | PokerFailure;

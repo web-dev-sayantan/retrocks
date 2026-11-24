@@ -88,7 +88,6 @@ const room: PokerLiveRoomView = {
   activeStoryId: null,
   deck: FIBONACCI_DECK,
   deckType: 'fibonacci',
-  deckLocked: false,
   round: null,
 };
 
@@ -197,7 +196,7 @@ it('persists optimistic, rolled-back, and live Room names and releases the strea
 
   window.history.replaceState(null, '', path);
   render(() => <App />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Rename Room' }));
+  fireEvent.dblClick(await screen.findByRole('heading', { name: 'Poker Room', level: 1 }));
   expect(savedName()).toBe('Poker Room');
   fireEvent.input(await screen.findByRole('textbox', { name: 'Room name' }), {
     target: { value: 'Draft Sizing' },
@@ -252,7 +251,6 @@ it('reopening a closed Room transitions directly to the join screen without relo
     activeStoryId: null,
     deck: [],
     deckType: 'fibonacci',
-    deckLocked: false,
     round: null,
   };
   vi.stubGlobal('fetch', async (resource: string, init?: RequestInit) => {

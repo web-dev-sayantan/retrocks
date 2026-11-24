@@ -1,6 +1,6 @@
 import { Button } from '@ui-sdk/solid/button';
 import { Radio, RadioGroup, createRadioGroupController } from '@ui-sdk/solid/radio';
-import { For, Show, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
+import { For, Show, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
 export default function PokerEstimateForm(props: {
   deck: readonly string[];
@@ -12,12 +12,15 @@ export default function PokerEstimateForm(props: {
   onCancel?: () => void;
 }) {
   const headingId = createUniqueId();
-  const initialChoice = untrack(() => props.initialChoice ?? null);
+  const initialChoice = untrack(() => (
+    props.initialChoice !== undefined && props.deck.includes(props.initialChoice) ? props.initialChoice : null
+  ));
   const [choice, setChoice] = createSignal(initialChoice);
   let initialRadio: HTMLButtonElement | undefined;
   const [ready, setReady] = createSignal(false);
   const controller = createRadioGroupController();
   const editing = () => props.onCancel !== undefined;
+  const deckKey = createMemo(() => props.deck.join('\0'));
 
   onSettled(() => {
     setReady(true);
@@ -41,29 +44,33 @@ export default function PokerEstimateForm(props: {
       <p id={headingId} class="text-xs font-semibold text-text-muted">
         {editing() ? 'Correct Accepted Estimate' : 'Accepted Estimate'}
       </p>
-      <RadioGroup
-        class={['poker-deck mt-2.5', editing() ? '!justify-start' : '']}
-        aria-labelledby={headingId}
-        controller={controller}
-        name="estimate"
-        value={choice()}
-        required
-        readOnly={props.busy || !ready()}
-        onValueChange={(value) => setChoice(value)}
-      >
-        <For each={props.deck}>
-          {(value) => (
-            <Radio
-              ref={(element) => { if (value === initialChoice) initialRadio = element; }}
-              data-voted-hint={props.votedChoices?.has(value) ? 'true' : undefined}
-              class="poker-vote-tile poker-vote-tile-compact board-focus-ring"
-              value={value}
-            >
-              {value}
-            </Radio>
-          )}
-        </For>
-      </RadioGroup>
+      <Show when={deckKey()} keyed>
+        {(_deckKey) => (
+          <RadioGroup
+            class={['poker-deck mt-2.5', editing() ? '!justify-start' : '']}
+            aria-labelledby={headingId}
+            controller={controller}
+            name="estimate"
+            value={choice()}
+            required
+            readOnly={props.busy || !ready()}
+            onValueChange={(value) => setChoice(value)}
+          >
+            <For each={props.deck}>
+              {(value) => (
+                <Radio
+                  ref={(element) => { if (value === initialChoice) initialRadio = element; }}
+                  data-voted-hint={props.votedChoices?.has(value) ? 'true' : undefined}
+                  class="poker-vote-tile poker-vote-tile-compact board-focus-ring"
+                  value={value}
+                >
+                  {value}
+                </Radio>
+              )}
+            </For>
+          </RadioGroup>
+        )}
+      </Show>
       <div class={['mt-3 flex flex-wrap items-center gap-2', editing() ? '' : 'justify-center']}>
         <Button
           type="submit"

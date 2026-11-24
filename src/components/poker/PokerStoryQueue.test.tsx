@@ -23,7 +23,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
   const [stories, setStories] = createSignal([first]);
   const room: PokerLiveRoomView = {
     closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
-    deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
+    deck: FIBONACCI_DECK, deckType: 'fibonacci', round: null,
   };
 
   async function change(command: PokerStoryCommand): Promise<PokerResult> {
@@ -68,7 +68,6 @@ test('a Participant can read Story statuses and the active Story without queue c
     activeStoryId: pending.id,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: false,
     round: null,
     stories: [
       pending,
@@ -108,7 +107,6 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
     activeStoryId: current.id,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'checkout-round', phase: 'open', submittedParticipantIds: [], ownChoice: null },
   };
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
@@ -141,7 +139,6 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
     closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
     activeStoryId: current.id, deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'round', phase: 'revealed', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
   });
   const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
@@ -207,7 +204,7 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [], stories: [], activeStoryId: null,
-    deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
+    deck: FIBONACCI_DECK, deckType: 'fibonacci', round: null,
   });
   const change = vi.fn(async (): Promise<PokerResult> => {
     const next = { ...untrack(room), deck: ['Under an hour', '0'], deckType: 'custom' as const };
@@ -236,10 +233,6 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
   expect(change).toHaveBeenCalledWith({ type: 'set-deck', deck: { type: 'custom', choices: ['Under an hour', '0'] } });
   await waitFor(() => expect(settings).not.toBeInTheDocument());
   expect(screen.getByRole('button', { name: 'Deck settings' })).toHaveTextContent('Custom');
-
-  setRoom((current) => ({ ...current, deckLocked: true }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Deck settings' })).toBeNull());
-  expect(screen.getByText(/The Deck is locked\./)).toBeInTheDocument();
 });
 
 test('Close Room focuses Cancel and a confirmation stays tied to the original Voting Round', async () => {
@@ -255,7 +248,6 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
     activeStoryId: 'checkout',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'first-round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
   };
   const [room, setRoom] = createSignal(initial);
@@ -315,7 +307,7 @@ test('a Facilitator can cast, clear, and reveal votes through named agent contro
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator],
     stories: [{ id: 'checkout', title: 'Save checkout', status: 'pending' }], activeStoryId: 'checkout',
-    deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: true,
+    deck: FIBONACCI_DECK, deckType: 'fibonacci',
     round: { id: 'round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
   });
   const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
@@ -369,7 +361,6 @@ test('Close Room always confirms when no unresolved Voting Round is active and r
     activeStoryId: 'checkout',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'accepted-round', phase: 'accepted', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
   };
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
@@ -416,7 +407,7 @@ test('Close Room confirms with summary copy when no Voting Round has started', a
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const room: PokerLiveRoomView = {
     closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator],
-    stories: [], activeStoryId: null, deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
+    stories: [], activeStoryId: null, deck: FIBONACCI_DECK, deckType: 'fibonacci', round: null,
   };
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
   render(() => (
@@ -450,7 +441,6 @@ test('shows vote breakdown and non-voting participants after reveal', () => {
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: {
       id: 'r1',
       phase: 'revealed',
@@ -480,7 +470,6 @@ test('Locked Stories show a lock cue for all Participants while preserving statu
     activeStoryId: null,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: null,
     stories: [
       { id: 's1', title: 'Locked pending', status: 'pending', locked: true },
@@ -513,7 +502,6 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
     activeStoryId: null,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: null,
     stories: [
       { id: 's1', title: 'Checkout flow', status: 'estimated', acceptedEstimate: '5', locked: false },
@@ -543,7 +531,9 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
 
   expect(within(secondRow).getByRole('button', { name: 'Return Send receipt to queue' })).toHaveAttribute('aria-disabled', 'true');
-  expect(within(secondRow).getByRole('button', { name: 'Edit title for Send receipt' })).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.dblClick(within(secondRow).getByText('Send receipt'));
+  flush();
+  expect(within(secondRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
 
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Lock Checkout flow' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
@@ -551,7 +541,9 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   }));
   await waitFor(() => expect(firstRow).toHaveAttribute('data-locked', 'true'));
   expect(within(firstRow).getByRole('button', { name: 'Reconsider Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
-  expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.dblClick(within(firstRow).getByText('Checkout flow'));
+  flush();
+  expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
   expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
 
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Unlock Checkout flow' }));
@@ -560,7 +552,11 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   }));
   await waitFor(() => expect(firstRow).not.toHaveAttribute('data-locked'));
   expect(within(firstRow).getByRole('button', { name: 'Reconsider Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
-  expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
+  fireEvent.dblClick(within(firstRow).getByText('Checkout flow'));
+  flush();
+  const unlockedTitle = within(firstRow).getByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.keyDown(unlockedTitle, { key: 'Escape' });
+  flush();
   expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
 
   const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
@@ -580,7 +576,6 @@ test('locking the active Story confirms only when an unresolved Voting Round has
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'round-empty', phase: 'open', submittedParticipantIds: [], ownChoice: null },
   });
 
@@ -655,7 +650,6 @@ test('a Facilitator can delete an unlocked Story with inline confirmation, reset
     activeStoryId: null,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: null,
     stories: [
       { id: 's1', title: 'Checkout flow', status: 'pending', locked: false },
@@ -768,7 +762,6 @@ test('deleting the active Story notes discarded votes when unresolved votes exis
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
   });
 
@@ -817,7 +810,6 @@ test('inline Delete confirmation updates its warning and discardRoundId reactive
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: false,
     round: { id: 'round-live', phase: 'open', submittedParticipantIds: [], ownChoice: null },
   });
 
@@ -835,7 +827,6 @@ test('inline Delete confirmation updates its warning and discardRoundId reactive
   setRoom({
     ...untrack(room),
     version: 2,
-    deckLocked: true,
     round: { id: 'round-live', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
   });
   flush();
@@ -860,7 +851,6 @@ test('quick-add provides Queue and Publish buttons with IME-safe Smart Enter', a
     activeStoryId: null,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: false,
     round: null,
   });
 
@@ -954,7 +944,6 @@ test('Publish confirms before discarding cast votes while Queue does not', async
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
   });
 
@@ -1024,7 +1013,7 @@ function fireDoubleTap(target: Element) {
   fireEvent.pointerUp(target, init);
 }
 
-test('a Facilitator can edit unlocked Story titles inplace from the sidebar via double-click, double-tap, or Pencil button with IME-safe Enter, Escape, and blur', async () => {
+test('a Facilitator can edit unlocked Story titles inplace from the sidebar via double-click and double-tap with IME-safe Enter, Escape, and blur', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
@@ -1040,7 +1029,6 @@ test('a Facilitator can edit unlocked Story titles inplace from the sidebar via 
     activeStoryId: null,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: false,
     round: null,
   });
 
@@ -1087,11 +1075,11 @@ test('a Facilitator can edit unlocked Story titles inplace from the sidebar via 
   expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
 
   change.mockClear();
-  fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit title for Save express checkout' }));
-  const pencilInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.dblClick(within(firstRow).getByText('Save express checkout'));
+  const reopenedInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
   expect(within(firstRow).queryByRole('button', { name: 'Save title' })).toBeNull();
-  fireEvent.input(pencilInput, { target: { value: 'Discarded draft' } });
-  fireEvent.keyDown(pencilInput, { key: 'Escape' });
+  fireEvent.input(reopenedInput, { target: { value: 'Discarded draft' } });
+  fireEvent.keyDown(reopenedInput, { key: 'Escape' });
   await waitFor(() => expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
   expect(change).not.toHaveBeenCalled();
   expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
@@ -1120,7 +1108,6 @@ test('a Facilitator can edit the active Story title inplace on the stage heading
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'r1', phase: 'open', submittedParticipantIds: [], ownChoice: null },
   });
 
@@ -1188,7 +1175,6 @@ test('Locked Stories and non-Facilitator Participants cannot activate inplace ti
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'r1', phase: 'open', submittedParticipantIds: [], ownChoice: null },
   });
 
@@ -1225,7 +1211,6 @@ test('editing the active Story title during an unresolved Voting Round with cast
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
   });
 
@@ -1305,4 +1290,83 @@ test('editing the active Story title during an unresolved Voting Round with cast
   }));
   await waitFor(() => expect(within(stage).getByText('Renamed checkout')).toBeVisible());
   expect(within(stage).getByText('0 of 1 voted')).toBeVisible();
+});
+
+test('clicking Select on a locked Story subtly wiggles the Unlock button beside it', async () => {
+  vi.useFakeTimers();
+  try {
+    const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+    const [room, setRoom] = createSignal<PokerLiveRoomView>({
+      closed: false,
+      id: 'room',
+      name: 'Poker Room',
+      version: 1,
+      viewer: facilitator,
+      participants: [facilitator],
+      activeStoryId: null,
+      deck: FIBONACCI_DECK,
+      deckType: 'fibonacci',
+      round: null,
+      stories: [
+        { id: 's1', title: 'Unlocked Story', status: 'pending', locked: false },
+        { id: 's2', title: 'Locked Story', status: 'pending', locked: true },
+      ],
+    });
+    const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+      const current = untrack(room);
+      if (command.type === 'set-story-lock') {
+        const next: PokerLiveRoomView = {
+          ...current,
+          version: current.version + 1,
+          stories: current.stories.map((story) =>
+            story.id === command.storyId ? { ...story, locked: command.locked } : story,
+          ),
+        };
+        setRoom(next);
+        return { ok: true, room: next };
+      }
+      return { ok: true, room: current };
+    });
+
+    render(() => <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+    const queue = screen.getByRole('list', { name: 'Story queue' });
+    const [unlockedRow, lockedRow] = within(queue).getAllByRole('listitem');
+    const lockedSelect = within(lockedRow).getByRole('button', { name: 'Select Locked Story' });
+    const unlockBtn = within(lockedRow).getByRole('button', { name: 'Unlock Locked Story' });
+    const unlockedLockBtn = within(unlockedRow).getByRole('button', { name: 'Lock Unlocked Story' });
+
+    expect(unlockBtn).not.toHaveAttribute('data-wiggling');
+
+    // Clicking Select on the locked Story triggers the wiggle on its Unlock button without selecting.
+    fireEvent.click(lockedSelect);
+    flush();
+    expect(change).not.toHaveBeenCalled();
+    expect(unlockBtn).toHaveAttribute('data-wiggling', 'true');
+    expect(unlockedLockBtn).not.toHaveAttribute('data-wiggling');
+
+    // Clears after the fallback duration (covers prefers-reduced-motion where animationend does not fire).
+    vi.advanceTimersByTime(400);
+    flush();
+    expect(unlockBtn).not.toHaveAttribute('data-wiggling');
+
+    // Re-triggering and completing via animationend clears immediately.
+    fireEvent.click(lockedSelect);
+    flush();
+    expect(unlockBtn).toHaveAttribute('data-wiggling', 'true');
+    fireEvent.animationEnd(unlockBtn);
+    flush();
+    expect(unlockBtn).not.toHaveAttribute('data-wiggling');
+
+    // Unlocking the Story while wiggling clears the wiggle state.
+    fireEvent.click(lockedSelect);
+    flush();
+    expect(unlockBtn).toHaveAttribute('data-wiggling', 'true');
+    fireEvent.click(unlockBtn);
+    await vi.runAllTimersAsync();
+    flush();
+    expect(within(lockedRow).getByRole('button', { name: 'Lock Locked Story' })).not.toHaveAttribute('data-wiggling');
+  } finally {
+    vi.useRealTimers();
+  }
 });

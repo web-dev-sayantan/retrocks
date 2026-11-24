@@ -90,6 +90,7 @@ export const PokerCommand = v.variant('type', [
       v.object({ type: v.literal('t-shirt') }),
       v.object({ type: v.literal('custom'), choices: CustomDeckChoices }),
     ]),
+    discardRoundId: v.optional(PokerEntityId),
   }),
 ]);
 
@@ -139,7 +140,6 @@ const LiveRoom = v.object({
   activeStoryId: v.nullable(PokerEntityId),
   deck: v.array(v.string()),
   deckType: v.picklist(['fibonacci', 't-shirt', 'custom']),
-  deckLocked: v.boolean(),
   round: v.nullable(Round),
 });
 

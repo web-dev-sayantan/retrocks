@@ -11,7 +11,6 @@ import {
   CircleSlash,
   Lock,
   LockOpen,
-  Pencil,
   Play,
   Plus,
   RotateCcw,
@@ -27,6 +26,7 @@ import {
   type PokerStory,
   type PokerStoryCommand,
 } from '../../lib/poker-types';
+import { createWiggle } from '../../lib/wiggle';
 import LucideIcon from '../LucideIcon';
 import PokerEstimateForm from './PokerEstimateForm';
 import PokerStoryTitleEditor, { type PokerStoryTitleEditorHandle } from './PokerStoryTitleEditor';
@@ -474,7 +474,6 @@ export default function PokerStoryQueue(props: {
                     return current?.storyId === story().id ? current : undefined;
                   });
                   let selectButton: HTMLButtonElement | undefined;
-                  let editTitleButton: HTMLButtonElement | undefined;
                   let editEstimateButton: HTMLButtonElement | undefined;
                   let deleteButton: HTMLButtonElement | undefined;
                   let titleEditor: PokerStoryTitleEditorHandle | undefined;
@@ -501,11 +500,19 @@ export default function PokerStoryQueue(props: {
                   }
 
                   const locked = () => Boolean(story().locked);
+                  const lockWiggle = createWiggle();
                   const deleteSession = () => {
                     const session = deletingStory();
                     return session?.storyId === story().id && !locked() ? session : undefined;
                   };
                   const deleteDiscardRoundId = () => (active() ? props.activeRoundWithVotesId : undefined);
+
+                  function bindSelectButton(el: HTMLButtonElement) {
+                    selectButton = el;
+                    el.addEventListener('click', () => {
+                      if (locked() && !busy() && !confirming()) lockWiggle.trigger();
+                    });
+                  }
 
                   return (
                     <li
@@ -546,7 +553,6 @@ export default function PokerStoryQueue(props: {
                           variant="queue"
                           onSave={editStoryTitle}
                           onHandle={(handle) => { titleEditor = handle; }}
-                          fallbackFocus={() => editTitleButton?.focus()}
                         />
 
                         <Show
@@ -602,7 +608,7 @@ export default function PokerStoryQueue(props: {
                                   }
                                 >
                                   <Button
-                                    ref={selectButton}
+                                    ref={bindSelectButton}
                                     class="poker-row-btn poker-row-btn-primary board-focus-ring"
                                     aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
                                     disabled={locked() || selected() || busy() || confirming()}
@@ -612,26 +618,6 @@ export default function PokerStoryQueue(props: {
                                     {selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'}
                                   </Button>
                                 </Show>
-
-                                <Button
-                                  ref={editTitleButton}
-                                  class="poker-row-btn board-focus-ring"
-                                  aria-label={`Edit title for ${story().title}`}
-                                  title="Edit title"
-                                  aria-expanded={titleEditor?.isEditing() ? 'true' : 'false'}
-                                  disabled={locked() || busy()}
-                                  focusableWhenDisabled
-                                  onClick={() => {
-                                    if (!locked()) {
-                                      cancelDelete();
-                                      setEditingEstimate(null);
-                                      titleEditor?.start();
-                                    }
-                                  }}
-                                >
-                                  <LucideIcon icon={Pencil} class="size-3" strokeWidth={2} />
-                                  <span class="sr-only">Edit title</span>
-                                </Button>
 
                                 <Show when={story().acceptedEstimate}>
                                   {(estimate) => (
@@ -656,12 +642,18 @@ export default function PokerStoryQueue(props: {
                                 </Show>
 
                                 <Button
-                                  class="poker-row-btn board-focus-ring"
+                                  ref={lockWiggle.ref}
+                                  class="poker-row-btn board-focus-ring ui-wiggle"
+                                  data-wiggling={locked() && lockWiggle.wiggling() ? 'true' : undefined}
+                                  onAnimationEnd={lockWiggle.onAnimationEnd}
                                   aria-label={locked() ? `Unlock ${story().title}` : `Lock ${story().title}`}
                                   title={locked() ? 'Unlock Story' : 'Lock Story'}
                                   disabled={busy() || confirming()}
                                   focusableWhenDisabled
-                                  onClick={() => void toggleStoryLock(story())}
+                                  onClick={() => {
+                                    lockWiggle.cancel();
+                                    void toggleStoryLock(story());
+                                  }}
                                 >
                                   <LucideIcon icon={locked() ? LockOpen : Lock} class="size-3" strokeWidth={2} />
                                   <span class="sr-only">{locked() ? 'Unlock Story' : 'Lock Story'}</span>
