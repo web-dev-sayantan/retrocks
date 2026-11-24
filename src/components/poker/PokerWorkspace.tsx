@@ -1,6 +1,6 @@
 import { Button } from '@ui-sdk/solid/button';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
-import { Check, Pencil, SquareCheck, Users, X } from 'lucide';
+import { Check, SquareCheck, Users, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
@@ -128,7 +128,6 @@ export default function PokerWorkspace(props: {
   let activeHeading!: HTMLHeadingElement;
   let roomNameEditorEl: HTMLDivElement | undefined;
   let roomNameInputEl: HTMLInputElement | undefined;
-  let renameRoomButtonEl: HTMLButtonElement | undefined;
 
   const canManage = () => props.room.viewer?.isFacilitator === true;
 
@@ -182,7 +181,7 @@ export default function PokerWorkspace(props: {
 
   createEffect(isRenamingRoom, (renaming, wasRenaming) => {
     if (!renaming && wasRenaming && document.activeElement === document.body) {
-      renameRoomButtonEl?.focus();
+      heading?.focus();
     }
   });
 
@@ -216,26 +215,28 @@ export default function PokerWorkspace(props: {
                   }}
                   class="poker-input poker-room-title-input board-focus-ring"
                 />
-                <Button
-                  type="button"
-                  aria-label="Save Room name"
-                  title="Save Room name"
-                  disabled={roomNameSave.isSaving()}
-                  focusableWhenDisabled
-                  onClick={() => roomNameEdit.end()}
-                  class="poker-inline-action poker-inline-action-save spring-press board-focus-ring"
-                >
-                  <LucideIcon icon={Check} class="size-3.5 shrink-0" strokeWidth={2.2} />
-                </Button>
-                <Button
-                  type="button"
-                  aria-label="Cancel Room rename"
-                  title="Cancel Room rename"
-                  onClick={cancelRoomRename}
-                  class="poker-inline-action spring-press board-focus-ring"
-                >
-                  <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
-                </Button>
+                <div class="poker-room-title-actions">
+                  <Button
+                    type="button"
+                    aria-label="Save Room name"
+                    title="Save Room name"
+                    disabled={roomNameSave.isSaving()}
+                    focusableWhenDisabled
+                    onClick={() => roomNameEdit.end()}
+                    class="poker-inline-action poker-inline-action-save spring-press board-focus-ring"
+                  >
+                    <LucideIcon icon={Check} class="size-3.5 shrink-0" strokeWidth={2.2} />
+                  </Button>
+                  <Button
+                    type="button"
+                    aria-label="Cancel Room rename"
+                    title="Cancel Room rename"
+                    onClick={cancelRoomRename}
+                    class="poker-inline-action spring-press board-focus-ring"
+                  >
+                    <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
+                  </Button>
+                </div>
               </div>
             }
           >
@@ -257,25 +258,13 @@ export default function PokerWorkspace(props: {
               >
                 {props.room.name}
               </h1>
-              <Show when={canManage()}>
-                <Button
-                  ref={renameRoomButtonEl}
-                  type="button"
-                  aria-label="Rename Room"
-                  title="Rename Room"
-                  onClick={startRoomRename}
-                  class="poker-icon-btn spring-press board-focus-ring"
-                >
-                  <LucideIcon icon={Pencil} class="size-3.5 shrink-0" strokeWidth={1.85} />
-                </Button>
-              </Show>
             </div>
           </Show>
           <PokerDeckSettings
             deck={props.room.deck}
             deckType={props.room.deckType}
-            locked={props.room.deckLocked}
             canManage={props.room.viewer?.isFacilitator === true}
+            discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
             onChange={props.onChange}
           />
           <p
@@ -349,7 +338,7 @@ export default function PokerWorkspace(props: {
                   </p>
                   <p class="max-w-sm text-sm leading-relaxed text-text-muted [text-wrap:pretty]">
                     {props.room.stories.length === 0 && props.room.viewer?.isFacilitator
-                      ? 'Add your first Story in the queue on the left, or adjust the Deck in the top bar before round one starts.'
+                      ? 'Add your first Story in the queue on the left, or adjust the Deck in the top bar anytime.'
                       : 'Votes stay private until the Facilitator reveals them.'}
                   </p>
                 </div>

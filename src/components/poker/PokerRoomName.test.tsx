@@ -36,7 +36,6 @@ function makeRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoomView
     activeStoryId: null,
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: false,
     round: null,
     ...overrides,
   };
@@ -156,7 +155,7 @@ describe('Inplace top-bar Room name editing', () => {
     expect(change).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' }));
     flush();
     const editInput = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
     fireEvent.input(editInput, { target: { value: 'Payments Estimation' } });
@@ -172,7 +171,7 @@ describe('Inplace top-bar Room name editing', () => {
     });
     expect(await screen.findByRole('heading', { level: 1, name: 'Payments Estimation' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1, name: 'Payments Estimation' }));
     flush();
     const resetInput = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
     fireEvent.input(resetInput, { target: { value: '   ' } });
@@ -191,7 +190,7 @@ describe('Inplace top-bar Room name editing', () => {
       <PokerWorkspace room={room} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
     ));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' }));
     flush();
     const input = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
     const cancelButton = screen.getByRole('button', { name: 'Cancel Room rename' });

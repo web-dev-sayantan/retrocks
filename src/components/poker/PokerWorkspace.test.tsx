@@ -24,7 +24,6 @@ function makeRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoomView
     activeStoryId: 's1',
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
-    deckLocked: true,
     round: { id: 'r1', phase: 'open', submittedParticipantIds: [], ownChoice: null },
     ...overrides,
   };

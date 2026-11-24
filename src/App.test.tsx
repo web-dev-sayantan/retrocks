@@ -88,7 +88,6 @@ const room: PokerLiveRoomView = {
   activeStoryId: null,
   deck: FIBONACCI_DECK,
   deckType: 'fibonacci',
-  deckLocked: false,
   round: null,
 };
 
@@ -189,7 +188,6 @@ it('reopening a closed Room transitions directly to the join screen without relo
     activeStoryId: null,
     deck: [],
     deckType: 'fibonacci',
-    deckLocked: false,
     round: null,
   };
   vi.stubGlobal('fetch', async (resource: string, init?: RequestInit) => {

@@ -43,7 +43,6 @@ function makeLiveRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoom
     activeStoryId: STORY_1_ID,
     deck: [...FIBONACCI_DECK],
     deckType: 'fibonacci',
-    deckLocked: false,
     round: {
       id: ROUND_1_ID,
       phase: 'open',
@@ -268,7 +267,6 @@ describe('createPokerRoomController', () => {
     const optimisticRoom = controller.room();
     expect(optimisticRoom.closed).toBe(false);
     if (!optimisticRoom.closed && optimisticRoom.round?.phase === 'open') {
-      expect(optimisticRoom.deckLocked).toBe(true);
       expect(optimisticRoom.round.ownChoice).toBe('5');
       expect(optimisticRoom.round.submittedParticipantIds).toContain(ALICE_ID);
     } else {
@@ -430,7 +428,7 @@ describe('createPokerRoomController', () => {
       expect(current.stories.map((s) => s.id)).toEqual([STORY_1_ID, STORY_2_ID]);
     }
 
-    // 3. Set deck optimistically, then reject with DECK_LOCKED -> reverts.
+    // 3. Set deck optimistically with discardRoundId, then reject with ROUND_CHANGED -> reverts.
     let resolveDeck!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -440,6 +438,7 @@ describe('createPokerRoomController', () => {
     const deckPromise = controller.changeRoom({
       type: 'set-deck',
       deck: { type: 't-shirt' },
+      discardRoundId: ROUND_1_ID,
     });
     flush();
     current = controller.room();
@@ -447,7 +446,7 @@ describe('createPokerRoomController', () => {
       expect(current.deckType).toBe('t-shirt');
       expect(current.deck).toEqual(['XS', 'S', 'M', 'L', 'XL']);
     }
-    resolveDeck({ ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked.' });
+    resolveDeck({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
     await deckPromise;
     flush();
     current = controller.room();
@@ -600,14 +599,13 @@ describe('createPokerRoomController', () => {
     }
   });
 
-  it('applies delete-story optimistically (clearing active stage and keeping deckLocked), guards locked Stories, and reverts on rejection', async () => {
+  it('applies delete-story optimistically (clearing active stage), guards locked Stories, and reverts on rejection', async () => {
     const initial = makeLiveRoom({
       stories: [
         { id: STORY_1_ID, title: 'First story', status: 'pending', locked: false },
         { id: STORY_2_ID, title: 'Second story', status: 'estimated', acceptedEstimate: '5', locked: true },
       ],
       activeStoryId: STORY_1_ID,
-      deckLocked: true,
       round: {
         id: ROUND_1_ID,
         phase: 'open',
@@ -650,7 +648,6 @@ describe('createPokerRoomController', () => {
       expect(current.stories.map((s) => s.id)).toEqual([STORY_2_ID]);
       expect(current.activeStoryId).toBeNull();
       expect(current.round).toBeNull();
-      expect(current.deckLocked).toBe(true);
     }
     resolveDeleteReject({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
     await deleteReject;
@@ -680,7 +677,6 @@ describe('createPokerRoomController', () => {
         version: 2,
         stories: [{ id: STORY_2_ID, title: 'Second story', status: 'estimated', acceptedEstimate: '5', locked: true }],
         activeStoryId: null,
-        deckLocked: true,
         round: null,
       }),
     });
@@ -692,7 +688,6 @@ describe('createPokerRoomController', () => {
       expect(current.stories.map((s) => s.id)).toEqual([STORY_2_ID]);
       expect(current.activeStoryId).toBeNull();
       expect(current.round).toBeNull();
-      expect(current.deckLocked).toBe(true);
     }
   });
 

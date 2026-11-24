@@ -98,6 +98,11 @@ const editDiscardRequired = {
   code: 'ROUND_CHANGED',
   message: 'Confirm that you want to restart the current Voting Round before editing this Story title.',
 } as const;
+const deckDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to restart the current Voting Round before changing the Deck.',
+} as const;
 
 const invalidDeckChoice = {
   ok: false,
@@ -123,7 +128,8 @@ function validateActiveRoundDiscard(
     | typeof discardRequired
     | typeof lockDiscardRequired
     | typeof deleteDiscardRequired
-    | typeof editDiscardRequired,
+    | typeof editDiscardRequired
+    | typeof deckDiscardRequired,
 ) {
   if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) {
     return roundChanged;
@@ -158,7 +164,6 @@ export interface StoredPokerRoom {
   activeStoryId: string | null;
   deck: readonly string[];
   deckType: PokerDeckType;
-  deckLocked: boolean;
   round: StoredVotingRound | null;
 }
 
@@ -244,7 +249,6 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     activeStoryId: viewer ? room.activeStoryId : null,
     deck: viewer ? room.deck : [],
     deckType: viewer ? room.deckType : 'fibonacci',
-    deckLocked: viewer ? room.deckLocked : false,
     round: viewer ? projectRound(room, viewer.id) : null,
   };
 }
@@ -299,8 +303,6 @@ export class PokerRoomStorage {
     room.activeStoryId ??= null;
     room.deck ??= POKER_DECK_PRESETS.fibonacci;
     room.deckType ??= 'fibonacci';
-    // Before the persisted lock, any Room that had started voting still had a round.
-    room.deckLocked ??= room.round != null;
     room.round ??= null;
     return room;
   }
@@ -322,7 +324,6 @@ export class PokerRoomStorage {
       activeStoryId: null,
       deck: POKER_DECK_PRESETS.fibonacci,
       deckType: 'fibonacci',
-      deckLocked: false,
       round: null,
     };
     this.db.run(
@@ -405,15 +406,23 @@ export class PokerRoomStorage {
         }
         case 'set-deck': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          if (room.deckLocked) {
-            return { ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked once the first vote is cast.' };
-          }
           const { deck } = command;
           const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
           if (room.deckType === deck.type && room.deck.length === choices.length
             && room.deck.every((choice, index) => choice === choices[index])) return { ok: true, room };
+          const hasActiveStory = room.activeStoryId !== null;
+          const discardError = validateActiveRoundDiscard(room, hasActiveStory, command.discardRoundId, deckDiscardRequired);
+          if (discardError) return discardError;
           room.deckType = deck.type;
           room.deck = choices;
+          if (
+            hasActiveStory
+            && room.round
+            && unresolvedPokerRoundId(room.round) !== undefined
+            && Object.keys(room.round.ballots).length > 0
+          ) {
+            room.round = startVotingRound();
+          }
           break;
         }
         case 'add-story': {
@@ -553,10 +562,7 @@ export class PokerRoomStorage {
           }
           if ((round.ballots[participant.id] ?? null) === choice) return { ok: true, room };
           if (choice === null) delete round.ballots[participant.id];
-          else {
-            round.ballots[participant.id] = choice;
-            room.deckLocked = true;
-          }
+          else round.ballots[participant.id] = choice;
           break;
         }
         case 'reveal': {

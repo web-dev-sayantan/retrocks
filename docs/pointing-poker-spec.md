@@ -13,7 +13,7 @@ Pointing Poker gives agile teams a live, account-free way to discuss Stories, es
 - Each Participant selects a Room-specific Display Name. They may enter a real name or an alias. The join screen explains that others in the Room can see it.
 - Participants who choose the same name get distinct roster entries and independent votes. Refreshing or reconnecting in the same browser preserves the Participant's name and current vote.
 - The default Deck is Fibonacci (`0, 1, 2, 3, 5, 8, 13, 21`). The T-shirt preset is `XS, S, M, L, XL`. A custom Deck contains at least two distinct, nonblank numeric or text choices in the Facilitator's chosen order. Every Deck choice can become an Accepted Estimate.
-- The Facilitator can change the Deck until the first Voting Round opens. Every subsequent Voting Round uses that Deck.
+- The Facilitator can change the Deck at any time. If an unresolved Voting Round has votes, confirm before discarding its ballots and restarting voting with the new Deck. Existing Accepted Estimates stay as they are.
 
 ## Stories and voting
 
@@ -37,7 +37,7 @@ The first release supports live estimation and title-based Story creation. Discu
 ## Acceptance scenarios
 
 - **Create and share.** A Facilitator sets up a Room and shares its participant link before entering any Stories. People on desktop and mobile join with names of their choice. A teammate who opens the Co-Facilitator Link gains control. After a Facilitator replaces that link, the old link fails to grant access to new claimants and existing Facilitators can still manage the Room.
-- **Use all three Deck types.** A Facilitator can start with either preset or an ordered custom Deck. A custom Deck with fewer than two distinct, nonblank choices cannot be used. The chosen Deck remains fixed after the first Voting Round starts, including if that round is discarded.
+- **Use all three Deck types.** A Facilitator can start with either preset or an ordered custom Deck, and switch Decks at any time. A custom Deck with fewer than two distinct, nonblank choices cannot be used. Changing the Deck during an unresolved Voting Round with votes requires confirmation and restarts voting with empty ballots, while previously recorded Accepted Estimates remain unchanged.
 - **Vote independently and reveal together.** Two Participants called Sam vote independently. Each can see their own choice, and the Facilitator sees submission status before reveal. One Sam can refresh, change their preserved vote, and disconnect. Reveal displays both latest choices by name. Someone arriving after reveal can view the results and join the next round.
 - **Change course during voting.** A Facilitator edits the active Story, and Participants vote again with empty ballots. If the Facilitator switches away from an unresolved Story and confirms, its ballots are discarded. The Facilitator can also explicitly skip a Story and bring it back later.
 - **Record and correct estimates.** The Facilitator explicitly confirms a unanimous result, corrects a recording mistake, and later starts a new round for that Story. Its previous Accepted Estimate survives until the replacement is confirmed. Once the Facilitator moves to another Story, the previous round's named ballots are gone.

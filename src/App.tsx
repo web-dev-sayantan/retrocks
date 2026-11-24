@@ -79,7 +79,10 @@ function AppShell(props: ParentProps) {
         fallback={(error, reset) => (
           <PageMessage
             title="Something went wrong"
-            message={error instanceof Error ? error.message : 'An unexpected error occurred.'}
+            message={(() => {
+              const err = error();
+              return err instanceof Error ? err.message : 'An unexpected error occurred.';
+            })()}
           >
             <button type="button" onClick={reset} class="page-message-action">
               Try again

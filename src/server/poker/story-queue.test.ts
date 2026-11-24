@@ -459,7 +459,7 @@ test('the Facilitator can change the Deck and Participants receive its ordered c
 
   try {
     expect(await readFrame()).toMatchObject({
-      type: 'room:snapshot', room: { deckType: 'fibonacci', deckLocked: false },
+      type: 'room:snapshot', room: { deckType: 'fibonacci' },
     });
     expect(await readFrame()).toMatchObject({ type: 'room:presence' });
     expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } }, participant)).toMatchObject({
@@ -482,13 +482,13 @@ test('the Facilitator can change the Deck and Participants receive its ordered c
       ok: true, room: { deckType: 'custom', deck },
     });
     expect(await readFrame()).toMatchObject({ type: 'room:snapshot', room: { deckType: 'custom', deck } });
-    expect(await read(participant)).toMatchObject({ deckType: 'custom', deck, deckLocked: false });
+    expect(await read(participant)).toMatchObject({ deckType: 'custom', deck });
   } finally {
     await reader.cancel();
   }
 });
 
-test('opening a Voting Round leaves the Deck editable until the first vote is cast, then locks it permanently', async () => {
+test('a Facilitator can change the Deck at any time, confirming to restart active rounds with votes while keeping Accepted Estimates', async () => {
   const { participant, mutate, read } = await openRoom();
   const firstStory = await mutate({ type: 'add-story', title: 'Checkout' });
   if (!firstStory.ok) throw new Error('Could not add first Story.');
@@ -500,72 +500,103 @@ test('opening a Voting Round leaves the Deck editable until the first vote is ca
   const opened = await mutate({ type: 'select-story', storyId: firstStoryId });
   expect(opened).toMatchObject({
     ok: true,
-    room: { deckLocked: false, deckType: 'fibonacci', deck: ['0', '1', '2', '3', '5', '8', '13', '21'] },
+    room: { deckType: 'fibonacci', deck: ['0', '1', '2', '3', '5', '8', '13', '21'] },
   });
   if (!opened.ok || !opened.room.round) throw new Error('Could not open Voting Round.');
   const roundId = opened.room.round.id;
 
+  // Changing Deck during an open round with no votes updates immediately without restarting.
   expect(await mutate({ type: 'set-deck', deck: { type: 'custom', choices: ['Review', 0] } })).toMatchObject({
     ok: true,
-    room: { deckLocked: false, deckType: 'custom', deck: ['Review', '0'], round: { id: roundId, phase: 'open' } },
+    room: { deckType: 'custom', deck: ['Review', '0'], round: { id: roundId, phase: 'open' } },
   });
-  expect(await read(participant)).toMatchObject({ deckLocked: false, deck: ['Review', '0'] });
+  expect(await read(participant)).toMatchObject({ deck: ['Review', '0'] });
 
+  // Once a vote is cast, changing Deck requires discardRoundId and restarts voting with empty ballots.
   expect(await mutate({ type: 'vote', roundId, choice: '  Review ' }, participant)).toMatchObject({
     ok: true,
-    room: { deckLocked: true, round: { ownChoice: 'Review' } },
+    room: { round: { ownChoice: 'Review' } },
   });
   expect(await mutate({ type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({
     ok: false,
-    code: 'DECK_LOCKED',
-    message: 'The Deck is locked once the first vote is cast.',
+    code: 'ROUND_CHANGED',
+    message: 'Confirm that you want to restart the current Voting Round before changing the Deck.',
   });
-  expect(await read(participant)).toMatchObject({ deckLocked: true, deck: ['Review', '0'] });
-
-  expect(await mutate({ type: 'vote', roundId, choice: null }, participant)).toMatchObject({
+  // Saving the same Deck is a no-op and does not require confirmation or restart the round.
+  expect(await mutate({ type: 'set-deck', deck: { type: 'custom', choices: ['Review', '0'] } })).toMatchObject({
     ok: true,
-    room: { deckLocked: true, round: { ownChoice: null, submittedParticipantIds: [] } },
+    room: { deckType: 'custom', deck: ['Review', '0'], round: { id: roundId, phase: 'open' } },
   });
-  expect(await mutate({ type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({
-    ok: false,
-    code: 'DECK_LOCKED',
-    message: 'The Deck is locked once the first vote is cast.',
-  });
+  expect(await read(participant)).toMatchObject({ deck: ['Review', '0'], round: { ownChoice: 'Review' } });
 
-  const switched = await mutate({ type: 'select-story', storyId: secondStoryId, discardRoundId: roundId });
-  expect(switched).toMatchObject({ ok: true, room: { deckLocked: true, deck: ['Review', '0'] } });
-  if (!switched.ok || !switched.room.round) throw new Error('Could not switch Stories.');
-  expect(await mutate({ type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({
-    ok: false,
-    code: 'DECK_LOCKED',
-    message: 'The Deck is locked once the first vote is cast.',
+  const restarted = await mutate({
+    type: 'set-deck',
+    deck: { type: 'fibonacci' },
+    discardRoundId: roundId,
   });
+  expect(restarted).toMatchObject({
+    ok: true,
+    room: {
+      deckType: 'fibonacci',
+      deck: ['0', '1', '2', '3', '5', '8', '13', '21'],
+      round: { phase: 'open', submittedParticipantIds: [], ownChoice: null },
+    },
+  });
+  if (!restarted.ok || !restarted.room.round) throw new Error('Expected restarted Voting Round.');
+  expect(restarted.room.round.id).not.toBe(roundId);
+  const secondRoundId = restarted.room.round.id;
 
-  const secondRoundId = switched.room.round.id;
+  // Vote, reveal, and confirm an Accepted Estimate under Fibonacci.
   expect(await mutate({ type: 'vote', roundId: secondRoundId, choice: '5' }, participant)).toMatchObject({
-    ok: false, code: 'INVALID_INPUT',
-  });
-  expect(await mutate({ type: 'vote', roundId: secondRoundId, choice: '  Review ' }, participant)).toMatchObject({
-    ok: true, room: { round: { ownChoice: 'Review' } },
-  });
-  expect(await mutate({ type: 'vote', roundId: secondRoundId, choice: 0 })).toMatchObject({
-    ok: true, room: { round: { ownChoice: '0' } },
+    ok: true, room: { round: { ownChoice: '5' } },
   });
   expect(await mutate({ type: 'reveal', roundId: secondRoundId })).toMatchObject({
-    ok: true, room: { round: { ballots: [{ choice: '0' }, { choice: 'Review' }] } },
+    ok: true, room: { round: { phase: 'revealed', ballots: [{ choice: '5' }] } },
   });
+
+  // Changing Deck while revealed (unresolved with votes) also requires discardRoundId.
+  expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } })).toMatchObject({
+    ok: false,
+    code: 'ROUND_CHANGED',
+  });
+
+  // Confirming the estimate resolves the round; changing Deck afterward succeeds without confirmation
+  // and preserves the existing Accepted Estimate.
   expect(await mutate({ type: 'confirm-estimate', roundId: secondRoundId, choice: '5' })).toMatchObject({
+    ok: true,
+    room: { stories: [{ id: firstStoryId, status: 'estimated', acceptedEstimate: '5' }, { id: secondStoryId }] },
+  });
+  expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } })).toMatchObject({
+    ok: true,
+    room: {
+      deckType: 't-shirt',
+      deck: ['XS', 'S', 'M', 'L', 'XL'],
+      stories: [{ id: firstStoryId, status: 'estimated', acceptedEstimate: '5' }, { id: secondStoryId }],
+    },
+  });
+
+  // Correcting an earlier Story's Accepted Estimate validates against the new Deck.
+  expect(await mutate({ type: 'correct-estimate', storyId: firstStoryId, expectedEstimate: '5', choice: '8' })).toMatchObject({
     ok: false, code: 'INVALID_INPUT',
   });
-  expect(await mutate({ type: 'confirm-estimate', roundId: secondRoundId, choice: ' Review ' })).toMatchObject({
-    ok: true, room: { stories: [{ id: firstStoryId }, { id: secondStoryId, status: 'estimated', acceptedEstimate: 'Review' }] },
+  expect(await mutate({ type: 'correct-estimate', storyId: firstStoryId, expectedEstimate: '5', choice: 'M' })).toMatchObject({
+    ok: true,
+    room: { stories: [{ id: firstStoryId, status: 'estimated', acceptedEstimate: 'M' }, { id: secondStoryId }] },
   });
-  expect(await mutate({ type: 'correct-estimate', storyId: secondStoryId, expectedEstimate: 'Review', choice: 0 })).toMatchObject({
-    ok: true, room: { stories: [{ id: firstStoryId }, { id: secondStoryId, status: 'estimated', acceptedEstimate: '0' }] },
+
+  // Selecting the next Story uses the new Deck.
+  const nextStory = await mutate({ type: 'select-story', storyId: secondStoryId });
+  expect(nextStory).toMatchObject({ ok: true, room: { deckType: 't-shirt', deck: ['XS', 'S', 'M', 'L', 'XL'] } });
+  if (!nextStory.ok || !nextStory.room.round) throw new Error('Could not select second Story.');
+  expect(await mutate({ type: 'vote', roundId: nextStory.room.round.id, choice: '5' }, participant)).toMatchObject({
+    ok: false, code: 'INVALID_INPUT',
+  });
+  expect(await mutate({ type: 'vote', roundId: nextStory.room.round.id, choice: 'L' }, participant)).toMatchObject({
+    ok: true, room: { round: { ownChoice: 'L' } },
   });
 });
 
-test('a Deck save racing the first cast vote cannot change the Deck after the vote lands', async () => {
+test('a Deck save racing the first cast vote requires confirmation if the vote lands first', async () => {
   const { participant, mutate, read } = await openRoom();
   const added = await mutate({ type: 'add-story', title: 'Checkout' });
   if (!added.ok) throw new Error('Could not add Story.');
@@ -578,14 +609,13 @@ test('a Deck save racing the first cast vote cannot change the Deck after the vo
     mutate({ type: 'set-deck', deck: { type: 't-shirt' } }),
   ]);
   if (voted.ok) {
-    expect(changed).toMatchObject({ ok: false, code: 'DECK_LOCKED' });
+    expect(changed).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
     expect(await read(participant)).toMatchObject({
       deck: ['0', '1', '2', '3', '5', '8', '13', '21'],
-      deckLocked: true,
     });
   } else {
     expect(voted.code).toBe('INVALID_INPUT');
-    expect(changed).toMatchObject({ ok: true, room: { deck: ['XS', 'S', 'M', 'L', 'XL'], deckLocked: false } });
+    expect(changed).toMatchObject({ ok: true, room: { deck: ['XS', 'S', 'M', 'L', 'XL'] } });
   }
 });
 
@@ -944,7 +974,7 @@ test('a Facilitator can delete unlocked pending, estimated, and skipped Stories,
   expect(await read(participant)).toMatchObject({ stories: [] });
 });
 
-test('deleting the active Story clears the stage, requires discardRoundId only when unresolved votes exist, and preserves deckLocked', async () => {
+test('deleting the active Story clears the stage and requires discardRoundId only when unresolved votes exist', async () => {
   const { participant, mutate } = await openRoom();
   await mutate({ type: 'add-story', title: 'First active' });
   await mutate({ type: 'add-story', title: 'Second active' });
@@ -959,7 +989,6 @@ test('deleting the active Story clears the stage, requires discardRoundId only w
     room: {
       activeStoryId: null,
       round: null,
-      deckLocked: false,
       stories: [{ id: second.id }, { id: third.id }],
     },
   });
@@ -978,7 +1007,6 @@ test('deleting the active Story clears the stage, requires discardRoundId only w
     room: {
       activeStoryId: null,
       round: null,
-      deckLocked: true,
       stories: [{ id: third.id }],
     },
   });
@@ -994,7 +1022,6 @@ test('deleting the active Story clears the stage, requires discardRoundId only w
     room: {
       activeStoryId: null,
       round: null,
-      deckLocked: true,
       stories: [],
     },
   });

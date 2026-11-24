@@ -10,8 +10,10 @@ import {
 } from '@ui-sdk/solid/popover';
 import { Radio, RadioGroup } from '@ui-sdk/solid/radio';
 import { Textarea } from '@ui-sdk/solid/textarea';
-import { ChevronDown, Layers, Lock } from 'lucide';
+import { ChevronDown, Layers } from 'lucide';
 import { For, Show, createSignal, onSettled } from 'solid-js';
+
+import { confirmBoardAction } from '../../lib/board-confirm';
 
 import {
   POKER_DECK_PRESETS,
@@ -38,14 +40,15 @@ function parseCustomChoices(value: string): string[] {
 export default function PokerDeckSettings(props: {
   deck: readonly string[];
   deckType: PokerDeckType;
-  locked: boolean;
   canManage: boolean;
+  discardRoundId?: string;
   onChange: (command: PokerDeckCommand) => Promise<PokerResult>;
 }) {
   const [open, setOpen] = createSignal(false);
   const [draftType, setDraftType] = createSignal<PokerDeckType>();
   const [draftChoices, setDraftChoices] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
+  const [confirming, setConfirming] = createSignal(false);
   const [ready, setReady] = createSignal(false);
   const [fieldError, setFieldError] = createSignal('');
   const [error, setError] = createSignal('');
@@ -63,7 +66,7 @@ export default function PokerDeckSettings(props: {
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
-    if (!nextOpen) {
+    if (!nextOpen && !confirming()) {
       setDraftType(undefined);
       setDraftChoices(undefined);
       setFieldError('');
@@ -72,26 +75,66 @@ export default function PokerDeckSettings(props: {
   }
 
   async function save() {
-    if (busy() || !ready() || props.locked) return;
+    if (busy() || confirming() || !ready()) return;
     const type = selectedType();
-    const deck = type === 'custom' ? { type, choices: parseCustomChoices(customChoices()) } : { type };
+    const choices = type === 'custom' ? parseCustomChoices(customChoices()) : POKER_DECK_PRESETS[type];
+    const unchanged = props.deckType === type
+      && props.deck.length === choices.length
+      && props.deck.every((choice, index) => choice === choices[index]);
+    if (unchanged) {
+      setDraftType(undefined);
+      setDraftChoices(undefined);
+      setOpen(false);
+      return;
+    }
+
+    const deck: PokerDeckCommand['deck'] = type === 'custom' ? { type, choices: [...choices] } : { type };
+    const discardRoundId = props.discardRoundId;
+    if (discardRoundId !== undefined && (type !== 'custom' || (choices.length >= 2 && new Set(choices).size === choices.length))) {
+      setConfirming(true);
+      setOpen(false);
+      try {
+        const confirmed = await confirmBoardAction({
+          title: 'Change Deck and restart voting?',
+          description: 'Changing the Deck discards the current Voting Round and its votes. Existing Accepted Estimates stay as they are.',
+          cancelLabel: 'Keep current Deck',
+          confirmLabel: 'Change Deck & restart',
+          agentConfirm: 'Changes the Deck, discards the current Voting Round and its votes, and keeps existing Accepted Estimates.',
+        });
+        if (!confirmed) {
+          setOpen(true);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      } finally {
+        setConfirming(false);
+      }
+    }
+
     setBusy(true);
     setError('');
     setFieldError('');
     try {
-      const result = await props.onChange({ type: 'set-deck', deck });
+      const result = await props.onChange({
+        type: 'set-deck',
+        deck,
+        ...(discardRoundId === undefined ? {} : { discardRoundId }),
+      });
       if (result.ok) {
         setDraftType(undefined);
         setDraftChoices(undefined);
         setOpen(false);
       } else if (type === 'custom' && result.code === 'INVALID_INPUT') {
         setFieldError(result.message);
+        setOpen(true);
         queueMicrotask(() => choicesInput?.focus());
       } else {
         setError(result.message);
+        setOpen(true);
       }
     } catch {
       setError('Could not save the Deck. Try again.');
+      setOpen(true);
     } finally {
       setBusy(false);
     }
@@ -99,7 +142,7 @@ export default function PokerDeckSettings(props: {
 
   return (
     <Show
-      when={props.canManage && !props.locked}
+      when={props.canManage}
       fallback={
         <div
           class="poker-bar-chip"
@@ -108,10 +151,6 @@ export default function PokerDeckSettings(props: {
         >
           <LucideIcon icon={Layers} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />
           <span>{deckName[props.deckType]}</span>
-          <Show when={props.locked}>
-            <LucideIcon icon={Lock} class="size-3 shrink-0 text-text-muted" strokeWidth={2} />
-            <span class="sr-only"> — The Deck is locked.</span>
-          </Show>
           <span class="sr-only"> ({props.deck.join(', ')})</span>
         </div>
       }
@@ -135,7 +174,7 @@ export default function PokerDeckSettings(props: {
         >
           <PopoverTitle class="text-sm font-semibold">Deck settings</PopoverTitle>
           <PopoverDescription class="mt-0.5 text-xs text-text-muted">
-            The Deck locks once the first vote is cast.
+            Changing the Deck during a round with votes restarts voting. Existing estimates stay as they are.
           </PopoverDescription>
           <p
             class="mt-2.5 rounded-lg bg-surface-subtle/70 px-2.5 py-1.5 text-xs text-text-muted [overflow-wrap:anywhere]"
