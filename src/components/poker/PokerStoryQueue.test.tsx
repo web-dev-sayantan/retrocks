@@ -273,6 +273,9 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
   close.focus();
   fireEvent.click(close);
   const dialog = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  expect(dialog).toHaveAccessibleDescription(
+    'Closing discards the current Voting Round and its votes while keeping Accepted Estimates in the summary. A Facilitator can reopen the Room later.',
+  );
   const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
   await waitFor(() => expect(cancel).toHaveFocus());
   fireEvent.click(cancel);
@@ -290,7 +293,7 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
   const reopened = await screen.findByRole('alertdialog', { name: 'Close Room?' });
   expect((await finish()).ok).toBe(false);
   expect(allow).toHaveBeenCalledWith(expect.objectContaining({
-    confirm: 'Closes the Room permanently and discards the current Voting Round and its votes.',
+    confirm: 'Closes the Room and discards the current Voting Round and its votes. Accepted Estimates stay in the summary, and a Facilitator can reopen the Room later.',
   }), expect.anything());
   expect(change).not.toHaveBeenCalled();
   expect(reopened).toBeVisible();
@@ -357,26 +360,78 @@ test('a Facilitator can cast, clear, and reveal votes through named agent contro
   expect(within(ballots).getByRole('listitem')).toHaveTextContent('Alex8');
 });
 
-test('agent closure requires approval even when there is no unresolved Voting Round', async () => {
+test('Close Room always confirms when no unresolved Voting Round is active and requires agent approval', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const room: PokerLiveRoomView = {
+    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
+    stories: [{ id: 'checkout', title: 'Save checkout', status: 'estimated', acceptedEstimate: '5' }],
+    activeStoryId: 'checkout',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'accepted-round', phase: 'accepted', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
+  };
+  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
+  render(() => (
+    <>
+      <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+
+  const close = screen.getByRole('button', { name: 'Close Room' });
+  close.focus();
+  fireEvent.click(close);
+  const dialog = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  expect(dialog).toHaveAccessibleDescription(
+    'Closing moves the Room to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+  );
+  const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+  await waitFor(() => expect(cancel).toHaveFocus());
+  fireEvent.click(cancel);
+  await waitFor(() => expect(dialog).not.toBeVisible());
+  await waitFor(() => expect(close).toHaveFocus());
+  expect(change).not.toHaveBeenCalled();
+
+  const open = () => agent.act({ steps: [{ ref: 'Close Room', action: 'press' }] });
+  const finish = () => agent.act({ steps: [{ ref: 'Close Room?', action: 'press', args: ['Close Room'] }] });
+  const opened = await open();
+  expect(opened.ok, opened.error?.message).toBe(true);
+  const reopened = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  expect((await finish()).ok).toBe(false);
+  expect(allow).toHaveBeenCalledWith(expect.objectContaining({
+    confirm: 'Closes the Room and moves it to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+  }), expect.anything());
+  expect(change).not.toHaveBeenCalled();
+  expect(reopened).toBeVisible();
+
+  approve = true;
+  const confirmed = await finish();
+  expect(confirmed.ok, confirmed.error?.message).toBe(true);
+  await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'close-room' }));
+});
+
+test('Close Room confirms with summary copy when no Voting Round has started', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const room: PokerLiveRoomView = {
     closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
     stories: [], activeStoryId: null, deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   };
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
-  render(() => <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
+  render(() => (
+    <>
+      <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
 
-  const close = () => agent.act({ steps: [{ ref: 'Close Room', action: 'press' }] });
-  expect((await close()).ok).toBe(false);
-  expect(allow).toHaveBeenCalledWith(expect.objectContaining({
-    confirm: 'Closes the Room permanently. Accepted Estimates remain in the read-only summary.',
-  }), expect.anything());
-  expect(change).not.toHaveBeenCalled();
-
-  approve = true;
-  const confirmed = await close();
-  expect(confirmed.ok, confirmed.error?.message).toBe(true);
-  expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'close-room' });
+  fireEvent.click(screen.getByRole('button', { name: 'Close Room' }));
+  const dialog = await screen.findByRole('alertdialog', { name: 'Close Room?' });
+  expect(dialog).toHaveAccessibleDescription(
+    'Closing moves the Room to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+  );
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close Room' }));
+  await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'close-room' }));
 });
 
 test('shows vote breakdown and non-voting participants after reveal', () => {
