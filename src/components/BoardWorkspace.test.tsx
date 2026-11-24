@@ -1865,14 +1865,20 @@ describe('<BoardWorkspace />', () => {
         flush();
       };
 
-      send({
+      expect(view.queryByText(/Private Mode is on|Blind Voting is on|Board locked\./)).toBeNull();
+
+      const privateBoard: BoardViewDTO = {
         ...board, version: 2, isBlurred: true, blindVoting: true,
         cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
-      });
+      };
+      send(privateBoard);
       const status = within(view.getByRole('group', { name: 'Board status' }));
       expect(status.getByText('Private Mode')).toBeVisible();
       expect(status.getByText('Blind Voting')).toBeVisible();
       expect(view.getByText(/Private Mode is on.*Blind Voting is on/)).toHaveAttribute('aria-live', 'polite');
+      const announcement = view.getByText(/Private Mode is on.*Blind Voting is on/);
+      send({ ...privateBoard, version: 3, title: 'Updated title' });
+      expect(view.getByText(/Private Mode is on.*Blind Voting is on/)).toBe(announcement);
       expect(view.queryByText(peer.content)).not.toBeInTheDocument();
       expect(view.getByText(own.content)).toBeVisible();
       fireEvent.click(within(view.getByText(own.content).closest('article')!).getByRole('button', { name: 'Card actions' }));
@@ -1880,14 +1886,14 @@ describe('<BoardWorkspace />', () => {
       expect(view.getByRole('menuitem', { name: 'Edit Card' })).toBeEnabled();
 
       send({
-        ...board, version: 3, isBlurred: true, blindVoting: true, isLocked: true,
+        ...board, version: 4, isBlurred: true, blindVoting: true, isLocked: true,
         cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
       });
       expect(status.getByText('Private Mode')).toBeVisible();
       expect(status.getByText('Blind Voting')).toBeVisible();
       expect(status.getByText('Locked')).toBeVisible();
 
-      send({ ...board, version: 4, blindVoting: true });
+      send({ ...board, version: 5, blindVoting: true });
       expect(view.getByText(peer.content)).toBeVisible();
       expect(status.queryByText('Private Mode')).not.toBeInTheDocument();
       expect(status.getByText('Blind Voting')).toBeVisible();
@@ -4750,6 +4756,29 @@ describe('<BoardWorkspace />', () => {
       { scenario: 'column-architectural-rails' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('keeps the Add Column draft through Board updates and clears it on soft navigation', () => {
+    const initialBoard = makeBoardView({ isFacilitator: true });
+    const [board, setBoard] = createSignal(initialBoard);
+    const view = render(() => <BoardWorkspace board={board()} boardId={board().id} />);
+    const openComposer = () => {
+      fireEvent.click(view.getByRole('button', { name: 'Add a Column' }));
+      flush();
+      return within(view.getByRole('dialog', { name: 'Add a Column' }))
+        .getByLabelText('New column title');
+    };
+
+    const title = openComposer();
+    fireEvent.input(title, { target: { value: 'Risks' } });
+    setBoard({ ...initialBoard, title: 'Updated Board', version: initialBoard.version + 1 });
+    flush();
+    expect(title).toHaveValue('Risks');
+
+    setBoard({ ...initialBoard, id: 'another-board', title: 'Another Board' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
+    expect(openComposer()).toHaveValue('');
   });
 
   it('keeps 3 Columns balanced at 1024px and opens Add Column in a non-shifting overlay dialog with zero diagnostics', async () => {
