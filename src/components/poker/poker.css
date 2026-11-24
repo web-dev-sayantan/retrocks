@@ -197,6 +197,7 @@
   }
 
   .poker-room-title-wrap {
+    position: relative;
     display: flex;
     min-inline-size: 0;
     min-block-size: var(--poker-target);
@@ -218,15 +219,30 @@
   .poker-room-title-input {
     field-sizing: content;
     inline-size: auto;
-    min-inline-size: 6ch;
+    min-inline-size: 2ch;
     max-inline-size: min(18rem, 55vi);
     min-block-size: 2rem;
-    margin-inline-start: calc(-0.4375rem - 1px);
-    padding-inline: 0.4375rem;
+    margin-inline: calc(-0.375rem - 1px);
+    padding-inline: 0.375rem;
     font-size: 0.9375rem;
     font-weight: 600;
     letter-spacing: -0.015em;
     line-height: 1.25;
+  }
+
+  .poker-room-title-actions {
+    position: absolute;
+    inset-block-start: calc(100% + 0.125rem);
+    inset-inline-start: calc(-0.375rem - 1px);
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid var(--poker-hairline);
+    border-radius: 0.5rem;
+    background: var(--retrocks-surface);
+    box-shadow: 0 8px 20px -8px color-mix(in oklab, var(--retrocks-text) 24%, transparent);
   }
 
   @supports not (field-sizing: content) {

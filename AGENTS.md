@@ -104,6 +104,10 @@ Also:
 
 - DON'T READ OR TOUCH .env
 
+## Coding conventions
+
+- **DO NOT use `createEffect` unless absolutely necessary.** Prefer declarative JSX bindings (`class`, `style`, `data-*`), derived state (`createMemo`), event handlers, `ref` callbacks (for native DOM listeners/directives), and `onSettled` (for mount-time setup/teardown). Only reach for `createEffect(compute, apply)` when an imperative side effect must synchronize with reactive state changes that cannot be expressed declaratively or driven by a user event.
+
 ## Agent skills
 
 ### Issue tracker
