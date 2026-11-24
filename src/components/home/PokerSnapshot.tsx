@@ -25,50 +25,66 @@ export default function PokerSnapshot() {
         </>
       }
     >
-      <div class="home-poker-layout grid flex-1 gap-2.5 bg-canvas/70 p-3">
-        <div class="min-w-0 rounded-lg border border-border bg-surface">
-          <div class="grid gap-0.5 rounded-t-lg border-b border-border/70 bg-surface-subtle/75 px-2.5 py-2">
-            <p class="text-text-muted">Active Story</p>
-            <p class="font-semibold">{activeStory}</p>
+      <div class="home-poker-layout grid flex-1 bg-canvas/70">
+        <div class="home-poker-rail grid min-w-0 content-start border-b border-border/70 p-2.5">
+          <div class="mb-2 flex items-center justify-between gap-2 text-text-muted">
+            <p class="font-semibold">Story queue</p>
+            <span>1 / 3</span>
           </div>
-          <div class="grid gap-2.5 p-2.5">
-            <div class="grid grid-cols-6 gap-1">
-              <For each={deck}>
-                {(value) => (
-                  <span class={[
-                    'rounded-md border py-1.5 text-center font-semibold',
-                    value === 5 ? 'border-accent bg-accent text-accent-contrast' : 'border-border bg-canvas/80',
-                  ]}>
-                    {value}
-                  </span>
-                )}
-              </For>
-            </div>
-            <div class="grid grid-cols-2 gap-1.5">
-              <For each={ballots}>
-                {(ballot) => (
-                  <span class="flex items-center justify-between gap-1 rounded-md border border-border/70 bg-canvas/70 px-1.5 py-1">
-                    {ballot.name} <strong class="font-semibold">{ballot.value}</strong>
-                  </span>
-                )}
-              </For>
-            </div>
+          <div class="home-poker-row home-poker-row-active">
+            <span class="size-1.5 shrink-0 rounded-full bg-accent" />
+            <p class="min-w-0 flex-1 font-semibold text-text">{activeStory}</p>
+          </div>
+          <div class="home-poker-row">
+            <span class="size-1.5 shrink-0 rounded-full bg-accent/80" />
+            <p class="min-w-0 flex-1 text-text">Export CSV summary</p>
+            <span class="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-semibold text-text">5</span>
+          </div>
+          <div class="home-poker-row">
+            <span class="size-1.5 shrink-0 rounded-full border border-control" />
+            <p class="min-w-0 flex-1 text-text-muted">Filter by owner tag</p>
           </div>
         </div>
 
-        <div class="grid min-w-0 content-start gap-1.5 rounded-lg border border-border bg-surface p-2.5">
-          <p class="mb-0.5 font-semibold">Story queue</p>
-          <div class="home-story-row border-accent/45 bg-surface-subtle/60">
-            <p class="font-semibold">{activeStory}</p>
-            <p class="text-text-muted">Revealed</p>
+        <div class="flex min-w-0 flex-col items-center justify-between gap-3 p-3 text-center">
+          <div class="grid justify-items-center gap-0.5">
+            <p class="text-[10px] font-medium text-text-muted">Revealed votes</p>
+            <p class="text-sm font-semibold tracking-tight text-text">{activeStory}</p>
           </div>
-          <div class="home-story-row border-border/80 bg-canvas/70">
-            <p>Export CSV summary</p>
-            <p class="text-text-muted">Accepted Estimate <strong class="font-semibold text-text">5</strong></p>
+
+          <div class="flex flex-wrap justify-center gap-2.5">
+            <For each={ballots}>
+              {(ballot) => (
+                <div class="grid justify-items-center gap-1">
+                  <span
+                    class={[
+                      'grid h-8 w-6 place-items-center rounded-md border bg-surface text-xs font-bold',
+                      ballot.value === 5 ? 'border-accent text-accent' : 'border-border text-text',
+                    ]}
+                  >
+                    {ballot.value}
+                  </span>
+                  <span class="text-[10px] text-text-muted">{ballot.name}</span>
+                </div>
+              )}
+            </For>
           </div>
-          <div class="home-story-row border-border/80 bg-canvas/70">
-            <p>Filter by owner tag</p>
-            <p class="text-text-muted">Pending</p>
+
+          <div class="flex w-full justify-center gap-1 border-t border-border/60 pt-2.5">
+            <For each={deck}>
+              {(value) => (
+                <span
+                  class={[
+                    'grid h-8 w-6 place-items-center rounded-md border font-semibold',
+                    value === 5
+                      ? '-translate-y-0.5 border-accent bg-accent text-accent-contrast'
+                      : 'border-border bg-surface text-text',
+                  ]}
+                >
+                  {value}
+                </span>
+              )}
+            </For>
           </div>
         </div>
       </div>

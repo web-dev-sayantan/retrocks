@@ -6,6 +6,8 @@ export default function PokerEstimateForm(props: {
   deck: readonly string[];
   busy: boolean;
   initialChoice?: string;
+  votedChoices?: ReadonlySet<string>;
+  compact?: boolean;
   onSave: (choice: string) => void;
   onCancel?: () => void;
 }) {
@@ -24,7 +26,7 @@ export default function PokerEstimateForm(props: {
 
   return (
     <form
-      class="poker-form mt-3"
+      class={['poker-form w-full', editing() ? 'mt-3 text-left' : 'flex flex-col items-center']}
       method="post"
       aria-labelledby={headingId}
       aria-busy={props.busy ? 'true' : 'false'}
@@ -36,11 +38,11 @@ export default function PokerEstimateForm(props: {
         else props.onSave(value);
       }}
     >
-      <p id={headingId} class="text-sm font-semibold">
+      <p id={headingId} class="text-xs font-semibold text-text-muted">
         {editing() ? 'Correct Accepted Estimate' : 'Accepted Estimate'}
       </p>
       <RadioGroup
-        class="poker-deck mt-2"
+        class={['poker-deck mt-2.5', editing() ? '!justify-start' : '']}
         aria-labelledby={headingId}
         controller={controller}
         name="estimate"
@@ -53,7 +55,8 @@ export default function PokerEstimateForm(props: {
           {(value) => (
             <Radio
               ref={(element) => { if (value === initialChoice) initialRadio = element; }}
-              class="poker-vote-tile board-focus-ring"
+              data-voted-hint={props.votedChoices?.has(value) ? 'true' : undefined}
+              class="poker-vote-tile poker-vote-tile-compact board-focus-ring"
               value={value}
             >
               {value}
@@ -61,17 +64,22 @@ export default function PokerEstimateForm(props: {
           )}
         </For>
       </RadioGroup>
-      <div class="mt-3 flex flex-wrap gap-2">
+      <div class={['mt-3 flex flex-wrap items-center gap-2', editing() ? '' : 'justify-center']}>
         <Button
           type="submit"
-          class="poker-primary board-focus-ring"
+          class={['poker-primary spring-press board-focus-ring', editing() ? '' : '!rounded-full !px-4']}
           disabled={props.busy || !ready()}
           focusableWhenDisabled={ready()}
         >
           {editing() ? 'Save estimate' : 'Confirm estimate'}
         </Button>
         <Show when={props.onCancel}>
-          <Button type="button" class="poker-secondary board-focus-ring" disabled={props.busy} onClick={() => props.onCancel?.()}>
+          <Button
+            type="button"
+            class="poker-ghost spring-press board-focus-ring"
+            disabled={props.busy}
+            onClick={() => props.onCancel?.()}
+          >
             Cancel
           </Button>
         </Show>

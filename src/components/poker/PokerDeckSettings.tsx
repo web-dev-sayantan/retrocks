@@ -1,10 +1,20 @@
 import { Button } from '@ui-sdk/solid/button';
 import { Field, FieldDescription, FieldError, FieldLabel } from '@ui-sdk/solid/field';
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from '@ui-sdk/solid/popover';
 import { Radio, RadioGroup } from '@ui-sdk/solid/radio';
 import { Textarea } from '@ui-sdk/solid/textarea';
-import { For, Show, createSignal, createUniqueId, onSettled } from 'solid-js';
+import { ChevronDown, Layers, Lock } from 'lucide';
+import { For, Show, createSignal, onSettled } from 'solid-js';
 
 import type { PokerDeckCommand, PokerDeckType, PokerResult } from '../../lib/poker-types';
+import LucideIcon from '../LucideIcon';
 
 const deckTypes = ['fibonacci', 't-shirt', 'custom'] as const;
 const deckName: Record<PokerDeckType, string> = {
@@ -20,7 +30,7 @@ export default function PokerDeckSettings(props: {
   canManage: boolean;
   onChange: (command: PokerDeckCommand) => Promise<PokerResult>;
 }) {
-  const titleId = createUniqueId();
+  const [open, setOpen] = createSignal(false);
   const [draftType, setDraftType] = createSignal<PokerDeckType>();
   const [draftChoices, setDraftChoices] = createSignal<string>();
   const [busy, setBusy] = createSignal(false);
@@ -45,6 +55,7 @@ export default function PokerDeckSettings(props: {
       if (result.ok) {
         setDraftType(undefined);
         setDraftChoices(undefined);
+        setOpen(false);
       } else if (type === 'custom' && result.code === 'INVALID_INPUT') {
         setFieldError(result.message);
         queueMicrotask(() => choicesInput?.focus());
@@ -59,18 +70,56 @@ export default function PokerDeckSettings(props: {
   }
 
   return (
-    <div class="poker-voting mt-5 border-t pt-4">
-      <h3 class="text-sm font-semibold" id={titleId}>Deck</h3>
-      <p class="mt-1 text-sm [overflow-wrap:anywhere]" role="status">
-        <span class="font-semibold">{deckName[props.deckType]}</span>{' · '}
-        <span>{props.deck.join(', ')}</span>
-      </p>
-      <Show when={props.canManage}>
-        <Show when={!props.locked} fallback={<p class="mt-2 text-sm">The Deck is locked.</p>}>
+    <Show
+      when={props.canManage && !props.locked}
+      fallback={
+        <div
+          class="poker-bar-chip"
+          title={`${deckName[props.deckType]}: ${props.deck.join(', ')}`}
+          role="status"
+        >
+          <LucideIcon icon={Layers} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />
+          <span>{deckName[props.deckType]}</span>
+          <Show when={props.locked}>
+            <LucideIcon icon={Lock} class="size-3 shrink-0 text-text-muted" strokeWidth={2} />
+            <span class="sr-only"> — The Deck is locked.</span>
+          </Show>
+          <span class="sr-only"> ({props.deck.join(', ')})</span>
+        </div>
+      }
+    >
+      <Popover open={open()} onOpenChange={setOpen}>
+        <PopoverTrigger
+          class="poker-bar-chip poker-bar-chip-interactive spring-press board-focus-ring"
+          aria-label="Deck settings"
+          title={`Deck: ${deckName[props.deckType]} (${props.deck.join(', ')})`}
+        >
+          <LucideIcon icon={Layers} class="size-3.5 shrink-0 text-text-muted" strokeWidth={1.9} />
+          <span>{deckName[props.deckType]}</span>
+          <LucideIcon icon={ChevronDown} class="size-3 shrink-0 text-text-muted" strokeWidth={2} />
+        </PopoverTrigger>
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={12}
+          class="board-popover z-40 w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl p-4 text-text"
+        >
+          <PopoverTitle class="text-sm font-semibold">Deck settings</PopoverTitle>
+          <PopoverDescription class="mt-0.5 text-xs text-text-muted">
+            The Deck locks when voting starts.
+          </PopoverDescription>
+          <p
+            class="mt-2.5 rounded-lg bg-surface-subtle/70 px-2.5 py-1.5 text-xs text-text-muted [overflow-wrap:anywhere]"
+            role="status"
+          >
+            <span class="font-semibold text-text">{deckName[props.deckType]}</span>{' · '}
+            <span>{props.deck.join(', ')}</span>
+          </p>
           <form
             aria-label="Deck settings"
             aria-busy={busy() ? 'true' : 'false'}
-            class="mt-3 grid gap-2"
+            class="poker-form mt-3 grid gap-3"
             method="post"
             onSubmit={(event) => {
               event.preventDefault();
@@ -78,7 +127,7 @@ export default function PokerDeckSettings(props: {
             }}
           >
             <RadioGroup
-              aria-labelledby={titleId}
+              aria-label="Deck preset"
               class="poker-deck-types"
               value={selectedType()}
               disabled={!ready()}
@@ -90,13 +139,19 @@ export default function PokerDeckSettings(props: {
               }}
             >
               <For each={deckTypes}>
-                {(type) => <Radio class="poker-story-control board-focus-ring" value={type}>{deckName[type]}</Radio>}
+                {(type) => (
+                  <Radio class="poker-deck-option board-focus-ring" value={type}>
+                    {deckName[type]}
+                  </Radio>
+                )}
               </For>
             </RadioGroup>
             <Show when={selectedType() === 'custom'}>
-              <Field name="choices" invalid={fieldError() ? true : undefined} class="grid min-w-0 gap-1">
-                <FieldLabel class="text-sm font-semibold">Custom choices</FieldLabel>
-                <FieldDescription class="text-sm">Enter one choice per line, in the order they should appear.</FieldDescription>
+              <Field name="choices" invalid={fieldError() ? true : undefined} class="grid min-w-0 gap-1.5">
+                <FieldLabel class="text-xs font-semibold text-text-muted">Custom choices</FieldLabel>
+                <FieldDescription class="text-xs text-text-muted">
+                  Enter one choice per line, in the order they should appear.
+                </FieldDescription>
                 <Textarea
                   ref={choicesInput}
                   class="poker-input poker-deck-input board-focus-ring"
@@ -109,27 +164,31 @@ export default function PokerDeckSettings(props: {
                   readonly={busy() || !ready()}
                   required
                 />
-                <FieldError match="valueMissing" class="text-sm text-[var(--poker-error)]">Enter your Deck choices.</FieldError>
+                <FieldError match="valueMissing" class="poker-error-text text-xs font-medium">
+                  Enter your Deck choices.
+                </FieldError>
                 <Show when={fieldError()}>
-                  <FieldError match class="text-sm font-medium text-[var(--poker-error)]">{fieldError()}</FieldError>
+                  <FieldError match class="poker-error-text text-xs font-medium">{fieldError()}</FieldError>
                 </Show>
               </Field>
             </Show>
             <div class="flex flex-wrap items-center gap-2">
               <Button
-                class="poker-story-control board-focus-ring"
+                class="poker-primary spring-press board-focus-ring"
                 type="submit"
                 disabled={busy() || !ready()}
                 focusableWhenDisabled={ready()}
               >
                 Save Deck
               </Button>
-              <p class="text-sm">The Deck locks when voting starts.</p>
+              <PopoverClose class="poker-ghost spring-press board-focus-ring">
+                Cancel
+              </PopoverClose>
             </div>
-            <p role="alert" class={error() ? 'text-sm font-medium text-[var(--poker-error)]' : 'sr-only'}>{error()}</p>
+            <p role="alert" class={error() ? 'poker-error-text text-xs font-medium' : 'sr-only'}>{error()}</p>
           </form>
-        </Show>
-      </Show>
-    </div>
+        </PopoverContent>
+      </Popover>
+    </Show>
   );
 }

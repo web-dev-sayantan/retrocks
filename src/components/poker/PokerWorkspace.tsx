@@ -1,13 +1,15 @@
 import { Button } from '@ui-sdk/solid/button';
+import { Check, SquareCheck } from 'lucide';
 import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
-import { unresolvedPokerRoundId, type PokerResult, type PokerLiveRoomView, type PokerRoomChange } from '../../lib/poker-types';
+import { unresolvedPokerRoundId, type PokerLiveRoomView, type PokerResult, type PokerRoomChange } from '../../lib/poker-types';
+import LucideIcon from '../LucideIcon';
 import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
-import PokerVotingRound from './PokerVotingRound';
 import PokerStoryQueue from './PokerStoryQueue';
+import PokerVotingRound from './PokerVotingRound';
 import './poker.css';
 
 export default function PokerWorkspace(props: {
@@ -20,10 +22,34 @@ export default function PokerWorkspace(props: {
   onChange: (command: PokerRoomChange) => Promise<PokerResult>;
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
+  const onlineSet = createMemo(() => new Set(props.online));
+  const openRound = createMemo(() => (props.room.round?.phase === 'open' ? props.room.round : null));
+  const revealedRound = createMemo(() => (props.room.round && props.room.round.phase !== 'open' ? props.room.round : null));
   const submitted = createMemo(() => {
-    const round = props.room.round;
-    return round?.phase === 'open' ? new Set(round.submittedParticipantIds) : null;
+    const round = openRound();
+    return round ? new Set(round.submittedParticipantIds) : null;
   });
+
+  const voteSpread = createMemo(() => {
+    const round = revealedRound();
+    if (!round || round.ballots.length === 0) return null;
+    const counts = new Map<string, number>();
+    for (const ballot of round.ballots) {
+      counts.set(ballot.choice, (counts.get(ballot.choice) ?? 0) + 1);
+    }
+    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const topCount = entries[0]?.[1] ?? 0;
+    const unanimous = entries.length === 1 && round.ballots.length > 1;
+    const topChoices = new Set(entries.filter(([, count]) => count === topCount && count > 1).map(([choice]) => choice));
+    return { entries, unanimous, topChoices };
+  });
+  const nonVoters = createMemo(() => {
+    const round = revealedRound();
+    if (!round) return [];
+    const voted = new Set(round.ballots.map((ballot) => ballot.participantId));
+    return props.room.participants.filter((participant) => !voted.has(participant.id));
+  });
+
   const [closeError, setCloseError] = createSignal('');
   const [closing, setClosing] = createSignal(false);
   let closeInProgress = false;
@@ -61,15 +87,40 @@ export default function PokerWorkspace(props: {
 
   return (
     <main class="poker-workspace" data-deck-type={props.room.deckType}>
-      <header class="mb-7 flex flex-wrap items-end justify-between gap-3 border-b border-border pb-5">
-        <h1 ref={heading} tabindex={-1} class="poker-title">Pointing Poker</h1>
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <p class="text-sm font-medium text-text-muted" aria-live="polite">
-            {props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}
+      <header class="poker-room-bar">
+        <div class="flex min-w-0 flex-wrap items-center gap-2.5 sm:gap-3">
+          <h1 ref={heading} tabindex={-1} class="poker-room-bar-title board-focus-ring rounded">
+            Pointing Poker
+          </h1>
+          <PokerDeckSettings
+            deck={props.room.deck}
+            deckType={props.room.deckType}
+            locked={props.room.deckLocked}
+            canManage={props.room.viewer?.isFacilitator === true}
+            onChange={props.onChange}
+          />
+          <p class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted tabular-nums" aria-live="polite">
+            <span
+              aria-hidden="true"
+              class="poker-presence-dot"
+              data-state={props.status === 'live' ? 'online' : 'reconnecting'}
+            />
+            <span>{props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}</span>
           </p>
+        </div>
+
+        <div class="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <PokerRoomSharing
+            roomId={props.room.id}
+            isFacilitator={props.room.viewer?.isFacilitator ?? false}
+            revision={props.room.facilitatorLinkRevision}
+          />
           <Show when={props.room.viewer?.isFacilitator}>
+            <span aria-hidden="true" class="mx-0.5 h-4 w-px bg-border/70" />
             <Button
-              class="poker-story-control board-focus-ring"
+              class="poker-icon-btn spring-press board-focus-ring"
+              aria-label="Close Room"
+              title="Close Room"
               disabled={closing()}
               focusableWhenDisabled
               data-agent-confirm={unresolvedPokerRoundId(props.room.round) === undefined
@@ -77,55 +128,21 @@ export default function PokerWorkspace(props: {
                 : undefined}
               onClick={() => void closeRoom()}
             >
-              Close Room
+              <LucideIcon icon={SquareCheck} class="size-4 shrink-0" strokeWidth={1.85} />
             </Button>
             <PokerRoomDeletion roomId={props.room.id} onUnavailable={props.onUnavailable} />
           </Show>
         </div>
       </header>
 
-      <p role="alert" class={(closeError() || props.claimError) ? 'mb-4 text-sm font-medium text-[var(--poker-error)]' : 'sr-only'}>
+      <p
+        role="alert"
+        class={(closeError() || props.claimError) ? 'poker-error-text border-b border-border/60 px-4 py-2.5 text-sm font-medium sm:px-6' : 'sr-only'}
+      >
         {closeError() || props.claimError}
       </p>
-      <div class="poker-layout">
-        <section class="poker-active min-w-0 rounded-xl p-5 sm:p-7" aria-labelledby="poker-active-story">
-          <h2 ref={activeHeading} id="poker-active-story" tabindex={-1} class="text-sm font-semibold">Active Story</h2>
-          <Show when={activeStory()} fallback={
-            <p class="mt-2 text-base leading-relaxed">
-              {props.room.viewer?.isFacilitator ? 'Select a Story from the queue.' : 'Waiting for the Facilitator to select a Story.'}
-            </p>
-          }>
-            {(story) => (
-              <>
-                <p class="poker-active-title mt-2 font-semibold [overflow-wrap:anywhere]">{story().title}</p>
-                <p class="mt-2 text-sm font-semibold [overflow-wrap:anywhere]" role="status">
-                  {story().acceptedEstimate !== undefined ? `Accepted Estimate · ${story().acceptedEstimate}` : ''}
-                </p>
-              </>
-            )}
-          </Show>
-          <Show when={props.room.round} fallback={
-            <PokerDeckSettings
-              deck={props.room.deck}
-              deckType={props.room.deckType}
-              locked={props.room.deckLocked}
-              canManage={props.room.viewer?.isFacilitator === true}
-              onChange={props.onChange}
-            />
-          }>
-            {(round) => (
-              <PokerVotingRound
-                round={round()}
-                deck={props.room.deck}
-                hasEstimate={activeStory()?.acceptedEstimate !== undefined}
-                onSkip={() => activeHeading.focus()}
-                canManage={props.room.viewer?.isFacilitator === true}
-                onChange={props.onChange}
-              />
-            )}
-          </Show>
-        </section>
 
+      <div class="poker-split">
         <PokerStoryQueue
           stories={props.room.stories}
           activeStoryId={props.room.activeStoryId}
@@ -136,44 +153,196 @@ export default function PokerWorkspace(props: {
           onChange={props.onChange}
         />
 
-        <section class="poker-roster min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-6" aria-labelledby="poker-participants">
-          <h2 id="poker-participants" class="text-xl font-semibold tracking-tight">Participants</h2>
-          <ul class="mt-3 divide-y divide-border">
-            <For each={props.room.participants} keyed={(participant) => participant.id}>
-              {(participant) => (
-                <li class="flex items-start justify-between gap-3 py-2.5 text-sm">
-                  <div class="min-w-0">
-                    <p class="font-medium [overflow-wrap:anywhere]">
-                      {participant().displayName}
-                      <Show when={participant().id === props.room.viewer?.id}> (you)</Show>
+        <section class="poker-stage" aria-labelledby="poker-active-story">
+          <div class="poker-stage-inner">
+            <h2 ref={activeHeading} id="poker-active-story" tabindex={-1} class="sr-only">
+              Active Story
+            </h2>
+
+            <Show
+              when={activeStory()}
+              fallback={
+                <div class="flex flex-1 flex-col items-center justify-center gap-3 py-8 sm:py-14">
+                  <p class="text-lg font-semibold tracking-tight text-text text-balance">
+                    {props.room.stories.length === 0
+                      ? (props.room.viewer?.isFacilitator ? 'Add a Story to begin estimating' : 'Waiting for Stories')
+                      : (props.room.viewer?.isFacilitator ? 'Select a Story from the queue' : 'Waiting for the Facilitator to select a Story')}
+                  </p>
+                  <p class="max-w-sm text-sm leading-relaxed text-text-muted [text-wrap:pretty]">
+                    {props.room.stories.length === 0 && props.room.viewer?.isFacilitator
+                      ? 'Add your first Story in the queue on the left, or adjust the Deck in the top bar before round one starts.'
+                      : 'Votes stay private until the Facilitator reveals them.'}
+                  </p>
+                </div>
+              }
+            >
+              {(story) => (
+                <div class="flex flex-col items-center gap-2.5">
+                  <Show when={openRound()}>
+                    {(round) => (
+                      <span class="poker-phase-pill tabular-nums">
+                        <span aria-hidden="true" class="poker-presence-dot" />
+                        <span>
+                          {round().submittedParticipantIds.length} of {Math.max(props.room.participants.length, round().submittedParticipantIds.length)} voted
+                        </span>
+                      </span>
+                    )}
+                  </Show>
+                  <Show when={revealedRound()}>
+                    {(round) => (
+                      <span class="poker-phase-pill">
+                        {round().phase === 'accepted' ? 'Estimate recorded' : 'Revealed votes'}
+                      </span>
+                    )}
+                  </Show>
+
+                  <p class="poker-active-title">{story().title}</p>
+
+                  <Show when={story().acceptedEstimate !== undefined}>
+                    <p class="poker-accepted-pill" role="status">
+                      <LucideIcon icon={Check} class="size-3.5 text-accent" strokeWidth={2.4} />
+                      <span>Accepted Estimate</span>
+                      <strong class="font-bold">{story().acceptedEstimate}</strong>
                     </p>
-                    <div class="flex flex-wrap gap-x-2 text-xs text-text-muted">
-                      <Show when={participant().isFacilitator}><span>Facilitator</span></Show>
-                      <Show when={submitted()}>
-                        {(ids) => <span>{ids().has(participant().id) ? 'Voted' : 'Awaiting vote'}</span>}
-                      </Show>
-                    </div>
-                  </div>
-                  <span class={[
-                    'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-                    props.online.includes(participant().id)
-                      ? 'bg-[var(--poker-pale)] text-[var(--poker-highlight)]'
-                      : 'bg-surface-subtle text-text-muted',
-                  ]}>
-                    {props.online.includes(participant().id) ? 'Online' : 'Offline'}
-                  </span>
-                </li>
+                  </Show>
+
+                  <Show when={voteSpread()}>
+                    {(spread) => (
+                      <div class="poker-spread" aria-label="Vote breakdown">
+                        <Show
+                          when={spread().unanimous}
+                          fallback={
+                            <For each={spread().entries}>
+                              {([choice, count], idx) => (
+                                <>
+                                  <Show when={idx() > 0}>
+                                    <span aria-hidden="true" class="opacity-35">/</span>
+                                  </Show>
+                                  <span>
+                                    <strong class="font-semibold text-text">{choice}</strong> ×{count}
+                                  </span>
+                                </>
+                              )}
+                            </For>
+                          }
+                        >
+                          <span class="font-medium text-accent">
+                            Unanimous <strong class="font-semibold text-text">{spread().entries[0]?.[0]}</strong>
+                          </span>
+                        </Show>
+                      </div>
+                    )}
+                  </Show>
+                </div>
               )}
-            </For>
-          </ul>
-          <PokerRoomSharing
-            roomId={props.room.id}
-            isFacilitator={props.room.viewer?.isFacilitator ?? false}
-            revision={props.room.facilitatorLinkRevision}
-          />
+            </Show>
+
+            <Show
+              when={revealedRound()}
+              fallback={
+                <Show when={props.room.participants.length > 0}>
+                  <ul class="poker-seats" aria-label="Participants">
+                    <For each={props.room.participants} keyed={(participant) => participant.id}>
+                      {(participant) => {
+                        const isOnline = () => onlineSet().has(participant().id);
+                        const hasVoted = () => submitted()?.has(participant().id) ?? false;
+                        return (
+                          <li class="poker-seat" data-online={isOnline() ? 'true' : 'false'}>
+                            <Show when={openRound()}>
+                              <div
+                                class="poker-seat-card"
+                                data-seat-state={hasVoted() ? 'voted' : 'waiting'}
+                                aria-hidden="true"
+                              >
+                                <Show when={hasVoted()}>
+                                  <LucideIcon icon={Check} class="size-4" strokeWidth={2.4} />
+                                </Show>
+                              </div>
+                            </Show>
+                            <span class="inline-flex max-w-full items-center gap-1.5 text-xs font-medium text-text">
+                              <span
+                                aria-hidden="true"
+                                class="poker-presence-dot"
+                                data-state={isOnline() ? 'online' : 'offline'}
+                              />
+                              <span class="truncate">
+                                {participant().displayName}
+                                <Show when={participant().id === props.room.viewer?.id}> (you)</Show>
+                              </span>
+                            </span>
+                            <span class="sr-only">
+                              {isOnline() ? 'Online' : 'Offline'}
+                              <Show when={submitted()}>
+                                {(ids) => (ids().has(participant().id) ? ', Voted' : ', Awaiting vote')}
+                              </Show>
+                            </span>
+                            <Show when={participant().isFacilitator}>
+                              <span class="text-[11px] leading-none text-text-muted">Facilitator</span>
+                            </Show>
+                          </li>
+                        );
+                      }}
+                    </For>
+                  </ul>
+                </Show>
+              }
+            >
+              {(round) => (
+                <>
+                  <ul class="poker-seats" aria-label="Revealed votes">
+                    <For each={round().ballots} keyed={(ballot) => ballot.participantId}>
+                      {(ballot) => {
+                        const isOnline = () => onlineSet().has(ballot().participantId);
+                        const isConsensus = () => voteSpread()?.topChoices.has(ballot().choice) ?? false;
+                        return (
+                          <li class="poker-seat grid justify-items-center" data-online={isOnline() ? 'true' : 'false'}>
+                            <span class="order-2 inline-flex max-w-full items-center gap-1.5 text-xs font-medium text-text">
+                              <span
+                                aria-hidden="true"
+                                class="poker-presence-dot"
+                                data-state={isOnline() ? 'online' : 'offline'}
+                              />
+                              <span class="truncate">{ballot().displayName}</span>
+                            </span>
+                            <span
+                              class="poker-seat-card order-1"
+                              data-seat-state="revealed"
+                              data-consensus={isConsensus() ? 'true' : undefined}
+                            >
+                              {ballot().choice}
+                            </span>
+                          </li>
+                        );
+                      }}
+                    </For>
+                  </ul>
+                  <Show when={nonVoters().length > 0}>
+                    <p class="text-xs text-text-muted">
+                      Did not vote: {nonVoters().map((participant) => participant.displayName).join(', ')}
+                    </p>
+                  </Show>
+                </>
+              )}
+            </Show>
+          </div>
+
+          <Show when={props.room.round}>
+            {(round) => (
+              <div class="w-full max-w-[44rem]">
+                <PokerVotingRound
+                  round={round()}
+                  deck={props.room.deck}
+                  participantCount={props.room.participants.length}
+                  hasEstimate={activeStory()?.acceptedEstimate !== undefined}
+                  onSkip={() => activeHeading.focus()}
+                  canManage={props.room.viewer?.isFacilitator === true}
+                  onChange={props.onChange}
+                />
+              </div>
+            )}
+          </Show>
         </section>
       </div>
-      <p class="mt-5 text-sm text-text-muted">This Room expires 90 days after creation or its most recent vote or content change, whichever is later.</p>
     </main>
   );
 }

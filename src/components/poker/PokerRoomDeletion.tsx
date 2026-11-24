@@ -7,9 +7,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@ui-sdk/solid/alert-dialog';
+import { Trash2 } from 'lucide';
 import { createSignal } from 'solid-js';
 
 import { deletePokerRoom } from '../../lib/poker-actions';
+import LucideIcon from '../LucideIcon';
 
 export default function PokerRoomDeletion(props: { roomId: string; onUnavailable: () => void }) {
   const [error, setError] = createSignal('');
@@ -31,8 +33,12 @@ export default function PokerRoomDeletion(props: { roomId: string; onUnavailable
 
   return (
     <AlertDialog onOpenChange={() => setError('')} pendingAnnouncement="Deleting the Room…">
-      <AlertDialogTrigger class="poker-story-control board-focus-ring text-[var(--poker-error)]">
-        Delete Room
+      <AlertDialogTrigger
+        aria-label="Delete Room"
+        title="Delete Room"
+        class="poker-icon-btn poker-icon-btn-danger spring-press board-focus-ring"
+      >
+        <LucideIcon icon={Trash2} class="size-4 shrink-0" strokeWidth={1.85} />
       </AlertDialogTrigger>
       <AlertDialogBackdrop class="board-dialog-backdrop z-40" />
       <AlertDialogContent class="board-dialog-surface z-50 w-[min(22rem,calc(100vw-2rem))] overscroll-contain rounded-2xl border border-border bg-surface p-5 text-text shadow-2xl">
@@ -41,17 +47,17 @@ export default function PokerRoomDeletion(props: { roomId: string; onUnavailable
           This permanently deletes the Room, its Stories, and any estimates. The participant link will stop working for everyone.
         </AlertDialogDescription>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
-          <AlertDialogClose class="poker-story-control board-focus-ring">Cancel</AlertDialogClose>
+          <AlertDialogClose class="poker-secondary spring-press board-focus-ring">Cancel</AlertDialogClose>
           <AlertDialogClose
-            class="board-focus-ring min-h-11 cursor-pointer rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 aria-disabled:cursor-wait sm:min-h-9"
+            class="board-focus-ring spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg bg-rose-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-rose-800 aria-disabled:cursor-wait sm:min-h-9"
             data-agent-confirm="Permanently deletes the Room, its Stories, and its estimates for everyone."
             value="confirm"
             action={removeRoom}
           >
-            {(state) => state.pending ? 'Deleting Room…' : 'Delete permanently'}
+            {(state) => (state.pending ? 'Deleting Room…' : 'Delete permanently')}
           </AlertDialogClose>
         </div>
-        <p role="alert" class={error() ? 'mt-3 text-sm font-medium text-text' : 'sr-only'}>{error()}</p>
+        <p role="alert" class={error() ? 'poker-error-text mt-3 text-sm font-medium' : 'sr-only'}>{error()}</p>
       </AlertDialogContent>
     </AlertDialog>
   );

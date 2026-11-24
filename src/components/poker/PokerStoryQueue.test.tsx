@@ -198,7 +198,8 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
   await waitFor(() => expect(change).toHaveBeenLastCalledWith({
     type: 'correct-estimate', storyId: current.id, expectedEstimate: '2', choice: '0',
   }));
-  expect(await screen.findByText('Estimated · 0')).toBeVisible();
+  await waitFor(() => expect(within(screen.getByRole('list', { name: 'Story queue' })).getByRole('listitem'))
+    .toHaveTextContent('Save checkoutEstimated · 0'));
   expect(screen.getByRole('button', { name: 'Edit estimate for Save checkout' })).toHaveFocus();
 });
 
@@ -215,9 +216,12 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
   });
   render(() => <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />);
 
-  const settings = screen.getByRole('form', { name: 'Deck settings' });
+  const opened = await agent.act({ steps: [{ ref: 'Deck settings', action: 'press' }] });
+  expect(opened.ok, opened.error?.message).toBe(true);
+
+  const settings = await screen.findByRole('form', { name: 'Deck settings' });
   for (const name of ['T-shirt', 'Fibonacci', 'Custom']) {
-    const selected = await agent.act({ steps: [{ ref: 'Deck', action: 'setValue', args: [name] }] });
+    const selected = await agent.act({ steps: [{ ref: 'Deck preset', action: 'setValue', args: [name] }] });
     expect(selected.ok, selected.error?.message).toBe(true);
     expect(within(settings).getByRole('radio', { name })).toHaveAttribute('aria-checked', 'true');
   }
@@ -230,11 +234,12 @@ test('a Facilitator can save an ordered custom Deck through the labeled settings
   ] });
   expect(entered.ok, entered.error?.message).toBe(true);
   expect(change).toHaveBeenCalledWith({ type: 'set-deck', deck: { type: 'custom', choices: ['Under an hour', '0'] } });
-  expect(await screen.findByText('Under an hour, 0')).toBeVisible();
+  await waitFor(() => expect(settings).not.toBeInTheDocument());
+  expect(screen.getByRole('button', { name: 'Deck settings' })).toHaveTextContent('Custom');
 
   setRoom((current) => ({ ...current, deckLocked: true }));
-  await waitFor(() => expect(settings).not.toBeInTheDocument());
-  expect(screen.getByText('The Deck is locked.')).toBeVisible();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Deck settings' })).toBeNull());
+  expect(screen.getByText(/The Deck is locked\./)).toBeInTheDocument();
 });
 
 test('Close Room focuses Cancel and a confirmation stays tied to the original Voting Round', async () => {
@@ -372,4 +377,37 @@ test('agent closure requires approval even when there is no unresolved Voting Ro
   const confirmed = await close();
   expect(confirmed.ok, confirmed.error?.message).toBe(true);
   expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'close-room' });
+});
+
+test('shows vote breakdown and non-voting participants after reveal', () => {
+  const alex = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const priya = { id: 'priya', displayName: 'Priya', isFacilitator: false };
+  const maya = { id: 'maya', displayName: 'Maya', isFacilitator: false };
+  const room: PokerLiveRoomView = {
+    closed: false,
+    id: 'room',
+    version: 3,
+    viewer: alex,
+    participants: [alex, priya, maya],
+    stories: [{ id: 's1', title: 'Add webhook retries', status: 'pending' }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: {
+      id: 'r1',
+      phase: 'revealed',
+      ballots: [
+        { participantId: 'alex', displayName: 'Alex', choice: '5' },
+        { participantId: 'priya', displayName: 'Priya', choice: '5' },
+      ],
+    },
+  };
+  render(() => <PokerWorkspace room={room} online={['alex', 'priya', 'maya']} status="live" onUnavailable={vi.fn()} onChange={vi.fn()} />);
+
+  const active = screen.getByRole('region', { name: 'Active Story' });
+  expect(within(active).getByLabelText('Vote breakdown')).toHaveTextContent('Unanimous 5');
+  expect(within(active).getByText('Did not vote: Maya')).toBeVisible();
+  const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
+  expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
 });

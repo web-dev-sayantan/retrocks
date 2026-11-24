@@ -1,16 +1,26 @@
 import { Button } from '@ui-sdk/solid/button';
 import { Field, FieldLabel } from '@ui-sdk/solid/field';
 import { Input } from '@ui-sdk/solid/input';
-import { ChevronDown, ChevronUp } from 'lucide';
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  CircleDot,
+  CircleSlash,
+  Pencil,
+  Plus,
+  RotateCcw,
+} from 'lucide';
 import { For, Show, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
+import { confirmBoardAction } from '../../lib/board-confirm';
 import {
   POKER_STORY_TITLE_LIMIT,
   type PokerResult,
   type PokerStory,
   type PokerStoryCommand,
 } from '../../lib/poker-types';
-import { confirmBoardAction } from '../../lib/board-confirm';
 import LucideIcon from '../LucideIcon';
 import PokerEstimateForm from './PokerEstimateForm';
 
@@ -41,7 +51,7 @@ function StoryTitleForm(props: {
 
   return (
     <form
-      class="poker-story-form poker-form"
+      class={['poker-form', editing() ? 'mt-2.5 grid gap-2' : 'px-3 pb-2']}
       method="post"
       aria-label={editing() ? 'Edit Story title' : 'Add a Story'}
       aria-busy={props.busy ? 'true' : 'false'}
@@ -54,34 +64,69 @@ function StoryTitleForm(props: {
         }
       }}
     >
-      <Field name="title" class="min-w-0">
-        <FieldLabel class="mb-1 block text-sm font-semibold">Story title</FieldLabel>
-        <Input
-          ref={input}
-          class="poker-input board-focus-ring"
-          value={title()}
-          onValueChange={(value) => setTitle(value)}
-          readonly={props.busy || !ready()}
-          required
-          maxlength={POKER_STORY_TITLE_LIMIT}
-          pattern={'.*\\S.*'}
-        />
-      </Field>
-      <div class="flex flex-wrap gap-2">
-        <Button
-          class="poker-primary board-focus-ring"
-          type="submit"
-          disabled={props.busy || !ready()}
-          focusableWhenDisabled={ready()}
-        >
-          {editing() ? 'Save title' : 'Add Story'}
-        </Button>
-        <Show when={props.onCancel}>
-          <Button class="poker-secondary board-focus-ring" onClick={() => props.onCancel?.()} disabled={props.busy}>
+      <Show
+        when={editing()}
+        fallback={
+          <div class="poker-quick-add">
+            <Field name="title" class="min-w-0 flex-1">
+              <FieldLabel class="sr-only">Story title</FieldLabel>
+              <Input
+                ref={input}
+                class="poker-quick-add-input"
+                placeholder="Add a Story…"
+                value={title()}
+                onValueChange={(value) => setTitle(value)}
+                readonly={props.busy || !ready()}
+                required
+                maxlength={POKER_STORY_TITLE_LIMIT}
+                pattern={'.*\\S.*'}
+              />
+            </Field>
+            <Button
+              class="poker-quick-add-submit spring-press board-focus-ring"
+              type="submit"
+              aria-label="Add Story"
+              title="Add Story"
+              disabled={props.busy || !ready()}
+              focusableWhenDisabled={ready()}
+            >
+              <LucideIcon icon={Plus} class="size-4" strokeWidth={2.2} />
+            </Button>
+          </div>
+        }
+      >
+        <Field name="title" class="min-w-0">
+          <FieldLabel class="mb-1 block text-xs font-semibold text-text-muted">Story title</FieldLabel>
+          <Input
+            ref={input}
+            class="poker-input board-focus-ring"
+            value={title()}
+            onValueChange={(value) => setTitle(value)}
+            readonly={props.busy || !ready()}
+            required
+            maxlength={POKER_STORY_TITLE_LIMIT}
+            pattern={'.*\\S.*'}
+          />
+        </Field>
+        <div class="flex flex-wrap gap-1.5">
+          <Button
+            class="poker-primary spring-press board-focus-ring"
+            type="submit"
+            disabled={props.busy || !ready()}
+            focusableWhenDisabled={ready()}
+          >
+            Save title
+          </Button>
+          <Button
+            type="button"
+            class="poker-ghost spring-press board-focus-ring"
+            onClick={() => props.onCancel?.()}
+            disabled={props.busy}
+          >
             Cancel
           </Button>
-        </Show>
-      </div>
+        </div>
+      </Show>
     </form>
   );
 }
@@ -96,6 +141,7 @@ export default function PokerStoryQueue(props: {
   onChange: (command: PokerStoryCommand) => Promise<PokerResult>;
 }) {
   const headingId = createUniqueId();
+  const listPanelId = createUniqueId();
   const [editing, setEditing] = createSignal<
     { storyId: string; type: 'title' } | { storyId: string; type: 'estimate'; expectedEstimate: string } | null
   >(null);
@@ -103,6 +149,10 @@ export default function PokerStoryQueue(props: {
   const [error, setError] = createSignal('');
   const [announcement, setAnnouncement] = createSignal('');
   const [confirming, setConfirming] = createSignal(false);
+  const [mobileOpen, setMobileOpen] = createSignal(false);
+
+  const estimatedCount = createMemo(() => props.stories.filter((story) => story.status === 'estimated').length);
+  const activeStoryTitle = createMemo(() => props.stories.find((story) => story.id === props.activeStoryId)?.title);
 
   async function change(command: PokerStoryCommand) {
     if (busy()) return null;
@@ -150,8 +200,8 @@ export default function PokerStoryQueue(props: {
   async function move(story: PokerStory, index: number, offset: -1 | 1, control: HTMLElement) {
     const target = props.stories[index + offset];
     if (!target) return;
-    const document = control.ownerDocument;
-    const hadFocus = document.activeElement === control;
+    const doc = control.ownerDocument;
+    const hadFocus = doc.activeElement === control;
     const room = await change({
       type: 'move-story',
       storyId: story.id,
@@ -163,170 +213,275 @@ export default function PokerStoryQueue(props: {
     if (position >= 0 && position !== index) {
       setAnnouncement(`${story.title} moved to position ${position + 1} of ${room.stories.length}.`);
     }
-    if (hadFocus && document.activeElement === document.body && control.isConnected) {
+    if (hadFocus && doc.activeElement === doc.body && control.isConnected) {
       control.focus({ preventScroll: true });
     }
   }
 
   return (
-    <section class="poker-queue min-w-0 rounded-xl border border-border bg-surface p-5 sm:p-6" aria-labelledby={headingId}>
-      <h2 id={headingId} class="text-xl font-semibold tracking-tight">Story queue</h2>
-      <Show when={props.canManage}>
-        <StoryTitleForm busy={busy()} onSave={addStory} />
-      </Show>
-      <Show when={props.stories.length} fallback={
-        <p class="mt-4 text-sm leading-relaxed text-text-muted">No Stories have been added yet.</p>
-      }>
-        <ol class="poker-story-list mt-4 grid gap-2" aria-labelledby={headingId}>
-          <For each={props.stories} keyed={(story) => story.id}>
-            {(story, index) => {
-              const active = () => props.activeStoryId === story().id;
-              const selected = () => active() && props.roundId !== undefined;
-              const editor = createMemo(() => {
-                const current = editing();
-                return current?.storyId === story().id ? current : null;
-              });
-              const estimateEditor = createMemo(() => {
-                const current = editor();
-                return current?.type === 'estimate' ? current : undefined;
-              });
-              let selectButton: HTMLButtonElement | undefined;
-              let editTitleButton: HTMLButtonElement | undefined;
-              let editEstimateButton: HTMLButtonElement | undefined;
-              function finishEditing() {
-                const trigger = editor()?.type === 'estimate' ? editEstimateButton : editTitleButton;
-                setEditing(null);
-                trigger?.focus();
-              }
-              async function saveTitle(title: string) {
-                const room = await change({ type: 'edit-story', storyId: story().id, title });
-                if (room) finishEditing();
-                return Boolean(room);
-              }
+    <div class="poker-queue-pane min-w-0">
+      <button
+        type="button"
+        class="poker-mobile-queue-toggle board-focus-ring"
+        aria-expanded={mobileOpen() ? 'true' : 'false'}
+        aria-controls={listPanelId}
+        onClick={() => setMobileOpen((open) => !open)}
+      >
+        <span class="flex min-w-0 items-center gap-2">
+          <span>Story queue</span>
+          <span class="text-xs font-medium text-text-muted tabular-nums">
+            {estimatedCount()}/{props.stories.length}
+          </span>
+          <Show when={activeStoryTitle()}>
+            {(title) => <span class="truncate text-xs font-normal text-text-muted">{title()}</span>}
+          </Show>
+        </span>
+        <LucideIcon
+          icon={ChevronDown}
+          class={['spring-chevron size-4 shrink-0 text-text-muted', mobileOpen() ? 'rotate-180' : '']}
+          strokeWidth={2}
+        />
+      </button>
 
-              async function saveEstimate(expectedEstimate: string, choice: string) {
-                if (await change({ type: 'correct-estimate', storyId: story().id, expectedEstimate, choice })) {
-                  finishEditing();
-                }
-              }
-              async function returnStory(control: HTMLElement) {
-                const doc = control.ownerDocument;
-                const hadFocus = doc.activeElement === control;
-                if (await change({ type: 'return-story', storyId: story().id })) {
-                  if (hadFocus && !control.isConnected && doc.activeElement === doc.body) selectButton?.focus();
-                }
-              }
+      <section
+        id={listPanelId}
+        class="poker-queue-body min-w-0"
+        data-mobile-collapsed={mobileOpen() ? 'false' : 'true'}
+        aria-labelledby={headingId}
+      >
+        <div class="flex items-center justify-between gap-2 px-4 pt-3.5 pb-2.5">
+          <h2 id={headingId} class="text-[13px] font-semibold text-text-muted">Story queue</h2>
+          <Show when={props.stories.length > 0}>
+            <span class="text-xs font-medium text-text-muted tabular-nums" aria-hidden="true">
+              {estimatedCount()} / {props.stories.length}
+            </span>
+          </Show>
+        </div>
 
-              return (
-                <li class="poker-story" aria-current={active() ? 'true' : undefined}>
-                  <div class="flex items-start justify-between gap-3">
-                    <p class="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{story().title}</p>
-                    <span class="poker-story-status">
-                      {storyStatuses[story().status]}
-                      <Show when={story().acceptedEstimate}>
-                        {(estimate) => <> · {estimate()}</>}
-                      </Show>
-                    </span>
-                  </div>
-                  <Show when={props.canManage}>
-                    <div class="mt-2 flex flex-wrap items-center gap-1">
-                      <Show when={story().status !== 'skipped'} fallback={
-                        <Button
-                          class="poker-story-control board-focus-ring"
-                          aria-label={`Return ${story().title} to queue`}
-                          disabled={busy()}
-                          focusableWhenDisabled
-                          onClick={(event) => void returnStory(event.currentTarget)}
-                        >
-                          Return to queue
-                        </Button>
-                      }>
-                        <Button
-                          ref={selectButton}
-                          class="poker-story-control board-focus-ring"
-                          aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
-                          disabled={selected() || busy() || confirming()}
-                          focusableWhenDisabled
-                          onClick={() => selectStory(story())}
-                        >
-                          {selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'}
-                        </Button>
-                      </Show>
-                      <Button
-                        ref={editTitleButton}
-                        class="poker-story-control board-focus-ring"
-                        aria-label={`Edit title for ${story().title}`}
-                        aria-expanded={editor()?.type === 'title' ? 'true' : 'false'}
-                        disabled={busy()}
-                        focusableWhenDisabled
-                        onClick={() => setEditing({ storyId: story().id, type: 'title' })}
-                      >
-                        Edit title
-                      </Button>
-                      <Show when={story().acceptedEstimate}>
-                        {(estimate) => (
+        <Show when={props.canManage}>
+          <StoryTitleForm busy={busy()} onSave={addStory} />
+        </Show>
+
+        <div class="poker-queue-scroll">
+          <Show
+            when={props.stories.length}
+            fallback={
+              <p class="px-4 py-3 text-sm leading-relaxed text-text-muted">
+                No Stories have been added yet.
+              </p>
+            }
+          >
+            <ol class="poker-story-list" aria-labelledby={headingId}>
+              <For each={props.stories} keyed={(story) => story.id}>
+                {(story, index) => {
+                  const active = () => props.activeStoryId === story().id;
+                  const selected = () => active() && props.roundId !== undefined;
+                  const editor = createMemo(() => {
+                    const current = editing();
+                    return current?.storyId === story().id ? current : null;
+                  });
+                  const estimateEditor = createMemo(() => {
+                    const current = editor();
+                    return current?.type === 'estimate' ? current : undefined;
+                  });
+                  let selectButton: HTMLButtonElement | undefined;
+                  let editTitleButton: HTMLButtonElement | undefined;
+                  let editEstimateButton: HTMLButtonElement | undefined;
+
+                  function finishEditing() {
+                    const trigger = editor()?.type === 'estimate' ? editEstimateButton : editTitleButton;
+                    setEditing(null);
+                    trigger?.focus();
+                  }
+
+                  async function saveTitle(title: string) {
+                    const room = await change({ type: 'edit-story', storyId: story().id, title });
+                    if (room) finishEditing();
+                    return Boolean(room);
+                  }
+
+                  async function saveEstimate(expectedEstimate: string, choice: string) {
+                    if (await change({ type: 'correct-estimate', storyId: story().id, expectedEstimate, choice })) {
+                      finishEditing();
+                    }
+                  }
+
+                  async function returnStory(control: HTMLElement) {
+                    const doc = control.ownerDocument;
+                    const hadFocus = doc.activeElement === control;
+                    if (await change({ type: 'return-story', storyId: story().id })) {
+                      if (hadFocus && !control.isConnected && doc.activeElement === doc.body) selectButton?.focus();
+                    }
+                  }
+
+                  return (
+                    <li
+                      class="poker-story-row"
+                      data-status={story().status}
+                      aria-current={active() ? 'true' : undefined}
+                    >
+                      <div class="flex items-start gap-2.5">
+                        <span class="mt-0.5 inline-flex shrink-0" aria-hidden="true">
+                          <Show
+                            when={story().status === 'estimated'}
+                            fallback={
+                              <Show
+                                when={story().status === 'skipped'}
+                                fallback={
+                                  <Show
+                                    when={active()}
+                                    fallback={<LucideIcon icon={Circle} class="size-3.5 text-text-muted/70" strokeWidth={2} />}
+                                  >
+                                    <LucideIcon icon={CircleDot} class="size-3.5 text-accent" strokeWidth={2.2} />
+                                  </Show>
+                                }
+                              >
+                                <LucideIcon icon={CircleSlash} class="size-3.5 text-text-muted/70" strokeWidth={2} />
+                              </Show>
+                            }
+                          >
+                            <LucideIcon icon={CheckCircle2} class="size-3.5 text-accent" strokeWidth={2.2} />
+                          </Show>
+                        </span>
+
+                        <p class="poker-story-title min-w-0 flex-1">{story().title}</p>
+
+                        <span class="shrink-0">
+                          <Show
+                            when={story().acceptedEstimate}
+                            fallback={
+                              <span class={story().status === 'skipped' ? 'text-xs font-medium text-text-muted' : 'sr-only'}>
+                                {storyStatuses[story().status]}
+                              </span>
+                            }
+                          >
+                            {(estimate) => (
+                              <>
+                                <span class="sr-only">{storyStatuses[story().status]} · </span>
+                                <span class="poker-est-badge">{estimate()}</span>
+                              </>
+                            )}
+                          </Show>
+                        </span>
+                      </div>
+
+                      <Show when={props.canManage}>
+                        <div class="poker-row-actions">
+                          <Show
+                            when={story().status !== 'skipped'}
+                            fallback={
+                              <Button
+                                class="poker-row-btn poker-row-btn-primary board-focus-ring"
+                                aria-label={`Return ${story().title} to queue`}
+                                disabled={busy()}
+                                focusableWhenDisabled
+                                onClick={(event) => void returnStory(event.currentTarget)}
+                              >
+                                <LucideIcon icon={RotateCcw} class="size-3" strokeWidth={2} />
+                                <span>Return to queue</span>
+                              </Button>
+                            }
+                          >
+                            <Button
+                              ref={selectButton}
+                              class="poker-row-btn poker-row-btn-primary board-focus-ring"
+                              aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
+                              disabled={selected() || busy() || confirming()}
+                              focusableWhenDisabled
+                              onClick={() => selectStory(story())}
+                            >
+                              {selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'}
+                            </Button>
+                          </Show>
+
                           <Button
-                            ref={editEstimateButton}
-                            class="poker-story-control board-focus-ring"
-                            aria-label={`Edit estimate for ${story().title}`}
-                            aria-expanded={editor()?.type === 'estimate' ? 'true' : 'false'}
+                            ref={editTitleButton}
+                            class="poker-row-btn board-focus-ring"
+                            aria-label={`Edit title for ${story().title}`}
+                            title="Edit title"
+                            aria-expanded={editor()?.type === 'title' ? 'true' : 'false'}
                             disabled={busy()}
                             focusableWhenDisabled
-                            onClick={() => setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() })}
+                            onClick={() => setEditing({ storyId: story().id, type: 'title' })}
                           >
-                            Edit estimate
+                            <LucideIcon icon={Pencil} class="size-3" strokeWidth={2} />
+                            <span class="sr-only">Edit title</span>
                           </Button>
-                        )}
+
+                          <Show when={story().acceptedEstimate}>
+                            {(estimate) => (
+                              <Button
+                                ref={editEstimateButton}
+                                class="poker-row-btn board-focus-ring"
+                                aria-label={`Edit estimate for ${story().title}`}
+                                aria-expanded={editor()?.type === 'estimate' ? 'true' : 'false'}
+                                disabled={busy()}
+                                focusableWhenDisabled
+                                onClick={() => setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() })}
+                              >
+                                Edit estimate
+                              </Button>
+                            )}
+                          </Show>
+
+                          <div class="ms-auto flex items-center gap-0.5">
+                            <Button
+                              class="poker-row-btn board-focus-ring !px-1.5"
+                              aria-label={`Move ${story().title} up`}
+                              title="Move up"
+                              disabled={index() === 0 || busy()}
+                              focusableWhenDisabled
+                              onClick={(event) => move(story(), index(), -1, event.currentTarget)}
+                            >
+                              <LucideIcon icon={ChevronUp} class="size-3.5" strokeWidth={2} />
+                            </Button>
+                            <Button
+                              class="poker-row-btn board-focus-ring !px-1.5"
+                              aria-label={`Move ${story().title} down`}
+                              title="Move down"
+                              disabled={index() === props.stories.length - 1 || busy()}
+                              focusableWhenDisabled
+                              onClick={(event) => move(story(), index(), 1, event.currentTarget)}
+                            >
+                              <LucideIcon icon={ChevronDown} class="size-3.5" strokeWidth={2} />
+                            </Button>
+                          </div>
+                        </div>
+
+                        <Show when={editor()?.type === 'title'}>
+                          <StoryTitleForm
+                            initialTitle={story().title}
+                            busy={busy()}
+                            onSave={saveTitle}
+                            onCancel={finishEditing}
+                          />
+                        </Show>
+                        <Show when={estimateEditor()} keyed>
+                          {(edit) => (
+                            <PokerEstimateForm
+                              deck={props.deck}
+                              busy={busy()}
+                              initialChoice={edit.expectedEstimate}
+                              onSave={(choice) => void saveEstimate(edit.expectedEstimate, choice)}
+                              onCancel={finishEditing}
+                            />
+                          )}
+                        </Show>
                       </Show>
-                      <div class="poker-move-controls">
-                        <Button
-                          class="poker-story-control board-focus-ring"
-                          aria-label={`Move ${story().title} up`}
-                          disabled={index() === 0 || busy()}
-                          focusableWhenDisabled
-                          onClick={(event) => move(story(), index(), -1, event.currentTarget)}
-                        >
-                          <LucideIcon icon={ChevronUp} />
-                        </Button>
-                        <Button
-                          class="poker-story-control board-focus-ring"
-                          aria-label={`Move ${story().title} down`}
-                          disabled={index() === props.stories.length - 1 || busy()}
-                          focusableWhenDisabled
-                          onClick={(event) => move(story(), index(), 1, event.currentTarget)}
-                        >
-                          <LucideIcon icon={ChevronDown} />
-                        </Button>
-                      </div>
-                    </div>
-                    <Show when={editor()?.type === 'title'}>
-                      <StoryTitleForm
-                        initialTitle={story().title}
-                        busy={busy()}
-                        onSave={saveTitle}
-                        onCancel={finishEditing}
-                      />
-                    </Show>
-                    <Show when={estimateEditor()} keyed>
-                      {(edit) => (
-                        <PokerEstimateForm
-                          deck={props.deck}
-                          busy={busy()}
-                          initialChoice={edit.expectedEstimate}
-                          onSave={(choice) => void saveEstimate(edit.expectedEstimate, choice)}
-                          onCancel={finishEditing}
-                        />
-                      )}
-                    </Show>
-                  </Show>
-                </li>
-              );
-            }}
-          </For>
-        </ol>
-      </Show>
-      <p class="sr-only" role="status">{announcement()}</p>
-      <p class="text-sm font-medium text-[var(--poker-error)] [&:not(:empty)]:mt-3" role="alert">{error()}</p>
-    </section>
+                    </li>
+                  );
+                }}
+              </For>
+            </ol>
+          </Show>
+        </div>
+
+        <p class="sr-only" role="status">{announcement()}</p>
+        <p class="poker-error-text px-4 text-xs font-medium [&:not(:empty)]:py-2" role="alert">{error()}</p>
+        <p class="poker-rail-foot">
+          This Room expires 90 days after creation or its most recent vote or content change, whichever is later.
+        </p>
+      </section>
+    </div>
   );
 }

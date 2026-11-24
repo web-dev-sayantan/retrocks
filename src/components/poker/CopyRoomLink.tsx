@@ -1,7 +1,7 @@
 import { Button } from '@ui-sdk/solid/button';
 import { createSignal, createUniqueId, onSettled } from 'solid-js';
 
-export default function CopyRoomLink(props: { label: string; href: string }) {
+export default function CopyRoomLink(props: { label: string; href: string; primary?: boolean }) {
   const linkId = createUniqueId();
   const [origin, setOrigin] = createSignal('');
   const [message, setMessage] = createSignal('');
@@ -41,13 +41,13 @@ export default function CopyRoomLink(props: { label: string; href: string }) {
   }
 
   return (
-    <div class="grid min-w-0 gap-2">
-      <label for={linkId} class="text-sm font-semibold">{props.label}</label>
+    <div class="grid min-w-0 gap-1.5">
+      <label for={linkId} class="text-xs font-semibold text-text-muted">{props.label}</label>
       <div class="flex flex-wrap gap-2">
         <input
           id={linkId}
           ref={input}
-          class="poker-input board-focus-ring flex-[1_1_14rem]"
+          class="board-modal-field board-focus-ring min-h-11 min-w-0 flex-[1_1_12rem] px-3 text-base sm:min-h-9 sm:text-sm [overflow-wrap:anywhere]"
           type="text"
           value={link()}
           readonly
@@ -57,13 +57,16 @@ export default function CopyRoomLink(props: { label: string; href: string }) {
           type="button"
           command="--copy"
           commandfor={linkId}
-          class="poker-secondary board-focus-ring"
+          class={[
+            props.primary ? 'poker-primary' : 'poker-secondary',
+            'spring-press board-focus-ring shrink-0',
+          ]}
           onClick={(event) => { if (!('CommandEvent' in window)) void copy(event.currentTarget); }}
         >
           Copy {props.label.toLowerCase()}
         </Button>
       </div>
-      <p class="text-sm text-text-muted" role="status">{message()}</p>
+      <p class={message() ? 'text-xs text-text-muted' : 'sr-only'} role="status">{message()}</p>
     </div>
   );
 }

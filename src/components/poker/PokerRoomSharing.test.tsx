@@ -23,10 +23,18 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-test('shares the participant link while keeping the Co-Facilitator Link behind a Facilitator control', async () => {
+test('shares the participant link and QR code in a Share dialog while keeping the Co-Facilitator Link Facilitator-only', async () => {
   const visitor = render(() => <PokerRoomSharing roomId={roomId} isFacilitator={false} />);
-  expect(visitor.getByRole('textbox', { name: 'Participant link' })).toHaveValue(window.location.origin + roomPath);
-  expect(visitor.queryByRole('button', { name: 'Show Co-Facilitator Link' })).toBeNull();
+  const visitorTrigger = visitor.getByRole('button', { name: 'Share' });
+  fireEvent.click(visitorTrigger);
+  flush();
+
+  const visitorDialog = within(await visitor.findByRole('dialog', { name: 'Share Room' }));
+  expect(visitorDialog.getByRole('textbox', { name: 'Participant link' })).toHaveValue(window.location.origin + roomPath);
+  expect(visitorDialog.getByRole('img', { name: 'Participant link QR code' })).toBeVisible();
+  expect(visitorDialog.queryByRole('button', { name: 'Show Co-Facilitator Link' })).toBeNull();
+  fireEvent.click(visitorDialog.getByRole('button', { name: 'Close Share' }));
+  await waitFor(() => expect(visitorTrigger).toHaveFocus());
   visitor.unmount();
 
   const view = render(() => (
@@ -35,6 +43,10 @@ test('shares the participant link while keeping the Co-Facilitator Link behind a
       <BoardConfirmDialog />
     </>
   ));
+
+  const opened = await agent.act({ steps: [{ ref: 'Share', action: 'press' }] });
+  expect(opened.ok, opened.error?.message).toBe(true);
+  await view.findByRole('dialog', { name: 'Share Room' });
   expect(view.queryByDisplayValue(window.location.origin + firstLink)).toBeNull();
 
   const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');

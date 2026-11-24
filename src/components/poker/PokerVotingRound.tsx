@@ -8,6 +8,7 @@ import PokerEstimateForm from './PokerEstimateForm';
 export default function PokerVotingRound(props: {
   round: PokerRoundView;
   deck: readonly string[];
+  participantCount: number;
   canManage: boolean;
   hasEstimate: boolean;
   onSkip: () => void;
@@ -18,8 +19,13 @@ export default function PokerVotingRound(props: {
   const [pendingRound, setPendingRound] = createSignal<string>();
   const [failure, setFailure] = createSignal<{ roundId: string; message: string }>();
   const busy = () => pendingRound() !== undefined;
-  const open = createMemo(() => props.round.phase === 'open' ? props.round : null);
-  const revealed = createMemo(() => props.round.phase !== 'open' ? props.round : null);
+  const open = createMemo(() => (props.round.phase === 'open' ? props.round : null));
+  const revealed = createMemo(() => (props.round.phase !== 'open' ? props.round : null));
+  const votedChoices = createMemo(() => {
+    const current = revealed();
+    if (!current) return undefined;
+    return new Set(current.ballots.map((ballot) => ballot.choice));
+  });
   const error = () => {
     const current = failure();
     return current?.roundId === props.round.id ? current.message : '';
@@ -47,86 +53,84 @@ export default function PokerVotingRound(props: {
   }
 
   return (
-    <div class="poker-voting mt-5 border-t pt-4">
-      <h3 ref={heading} id={headingId} tabindex={-1} class="text-base font-semibold">
+    <div class="poker-hand-section">
+      <h3 ref={heading} id={headingId} tabindex={-1} class="sr-only">
         {open() ? 'Cast your vote' : 'Revealed votes'}
       </h3>
       <Show when={open()}>
         {(round) => (
           <>
-            <RadioGroup
-              class="poker-deck mt-3"
-              aria-labelledby={headingId}
-              value={round().ownChoice}
-              readOnly={busy()}
-              onValueChange={(choice) => void change({ type: 'vote', roundId: round().id, choice })}
-            >
-              <For each={props.deck}>
-                {(choice) => <Radio class="poker-vote-tile board-focus-ring" value={choice}>{choice}</Radio>}
-              </For>
-            </RadioGroup>
-            <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <div class="flex flex-wrap items-center gap-2">
-                <p role="status" class="text-sm">
-                  {round().ownChoice === null ? 'Your vote is private until reveal.' : `Your vote is ${round().ownChoice}.`}
-                </p>
-                <Show when={round().ownChoice !== null}>
-                  <Button
-                    type="button"
-                    class="poker-story-control board-focus-ring"
-                    disabled={busy()}
-                    focusableWhenDisabled
-                    onClick={() => void change({ type: 'vote', roundId: round().id, choice: null })}
-                  >
-                    Clear vote
-                  </Button>
-                </Show>
-              </div>
-              <Show when={props.canManage}>
+            <Show when={props.canManage}>
+              <div class="mb-2 flex justify-center">
                 <Button
                   type="button"
-                  class="poker-primary board-focus-ring aria-disabled:cursor-default aria-disabled:opacity-65"
+                  class="poker-primary spring-press board-focus-ring !rounded-full !px-5"
                   disabled={busy() || round().submittedParticipantIds.length === 0}
                   focusableWhenDisabled
                   onClick={() => void change({ type: 'reveal', roundId: round().id })}
                 >
                   Reveal votes
                 </Button>
+              </div>
+            </Show>
+
+            <RadioGroup
+              class="poker-deck"
+              aria-labelledby={headingId}
+              value={round().ownChoice}
+              readOnly={busy()}
+              onValueChange={(choice) => void change({ type: 'vote', roundId: round().id, choice })}
+            >
+              <For each={props.deck}>
+                {(choice) => (
+                  <Radio class="poker-vote-tile spring-press board-focus-ring" value={choice}>
+                    {choice}
+                  </Radio>
+                )}
+              </For>
+            </RadioGroup>
+
+            <div class="flex flex-wrap items-center justify-center gap-3 text-xs text-text-muted">
+              <p role="status">
+                {round().ownChoice === null ? 'Your vote is private until reveal.' : `Your vote is ${round().ownChoice}.`}
+              </p>
+              <Show when={round().ownChoice !== null}>
+                <Button
+                  type="button"
+                  class="board-focus-ring cursor-pointer font-medium text-text underline underline-offset-2 transition-opacity hover:opacity-80 disabled:opacity-50"
+                  disabled={busy()}
+                  focusableWhenDisabled
+                  onClick={() => void change({ type: 'vote', roundId: round().id, choice: null })}
+                >
+                  Clear vote
+                </Button>
               </Show>
             </div>
           </>
         )}
       </Show>
+
       <Show when={revealed()}>
         {(round) => (
           <>
             <Show when={round().phase === 'revealed' && !props.canManage}>
-              <p class="mt-1 text-sm" role="status">Waiting for an Accepted Estimate.</p>
+              <p class="text-sm text-text-muted" role="status">Waiting for an Accepted Estimate.</p>
             </Show>
-            <ul aria-labelledby={headingId} class="mt-3 grid gap-2 sm:grid-cols-2">
-              <For each={round().ballots} keyed={(ballot) => ballot.participantId}>
-                {(ballot) => (
-                  <li class="poker-ballot flex items-center justify-between gap-2 rounded-lg border px-3 py-2">
-                    <span class="text-sm font-semibold [overflow-wrap:anywhere]">{ballot().displayName}</span>
-                    <span class="text-base font-bold tabular-nums [overflow-wrap:anywhere]">{ballot().choice}</span>
-                  </li>
-                )}
-              </For>
-            </ul>
             <Show when={props.canManage}>
               <Show when={round().phase === 'revealed' && round().id} keyed>
                 {(roundId) => (
                   <PokerEstimateForm
                     deck={props.deck}
                     busy={busy()}
+                    votedChoices={votedChoices()}
                     onSave={(choice) => void change({ type: 'confirm-estimate', roundId, choice })}
                   />
                 )}
               </Show>
-              <div class="mt-3 flex flex-wrap gap-2">
+              <div class="flex flex-wrap items-center justify-center gap-2">
                 <Button
                   type="button"
-                  class="poker-secondary board-focus-ring"
+                  class="poker-ghost spring-press board-focus-ring !rounded-full"
                   disabled={busy()}
                   focusableWhenDisabled
                   onClick={() => void change({ type: 'restart-round', roundId: round().id })}
@@ -136,7 +140,7 @@ export default function PokerVotingRound(props: {
                 <Show when={round().phase === 'revealed'}>
                   <Button
                     type="button"
-                    class="poker-secondary board-focus-ring"
+                    class="poker-ghost spring-press board-focus-ring !rounded-full"
                     disabled={busy()}
                     focusableWhenDisabled
                     onClick={() => void change({ type: 'skip-story', roundId: round().id })}
@@ -149,7 +153,8 @@ export default function PokerVotingRound(props: {
           </>
         )}
       </Show>
-      <p class="text-sm font-medium text-[var(--poker-error)] [&:not(:empty)]:mt-3" role="alert">{error()}</p>
+
+      <p class="poker-error-text text-sm font-medium [&:empty]:hidden" role="alert">{error()}</p>
     </div>
   );
 }

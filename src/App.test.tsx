@@ -141,10 +141,14 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
   };
 
   fireEvent.click(home);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Poker' }));
+  flush();
   await openSavedRoom();
   fireEvent.click(poker);
   await openSavedRoom();
   fireEvent.click(home);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Poker' }));
+  flush();
 
   const list = await screen.findByRole('region', { name: 'Recent Rooms' });
   const remove = 'Remove Room · abcdefgh from Recent Rooms';

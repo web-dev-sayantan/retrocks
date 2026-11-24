@@ -1,280 +1,902 @@
-.poker-entry,
-.poker-workspace {
-  --poker-accent: #304977;
-  --poker-accent-contrast: #ffffff;
-  --poker-pale: #e5ecf9;
-  --poker-highlight: #304977;
-  --poker-error: #9f302d;
-}
+@layer ui-sdk, theme, base, components, utilities;
 
-:is([data-theme='dark'], [data-theme='retro']) :is(.poker-entry, .poker-workspace) {
-  --poker-accent: #c4d5fb;
-  --poker-accent-contrast: #202b47;
-  --poker-pale: #283550;
-  --poker-highlight: #d3dfff;
-  --poker-error: #ffaca9;
-}
-
-.poker-entry {
-  max-inline-size: 38rem;
-  margin-inline: auto;
-  padding: clamp(3rem, 9vb, 6rem) 1.25rem 4rem;
-}
-
-.poker-workspace {
-  container-type: inline-size;
-  max-inline-size: 72rem;
-  margin-inline: auto;
-  padding: clamp(2rem, 6vb, 4rem) 1.25rem 4rem;
-}
-
-.poker-title {
-  font-size: clamp(2rem, 5vi, 3rem);
-  font-weight: 660;
-  line-height: 1.12;
-  letter-spacing: -0.045em;
-  text-wrap: balance;
-}
-
-.poker-input {
-  min-inline-size: 0;
-  min-block-size: 3rem;
-  inline-size: 100%;
-  padding-inline: 0.875rem;
-  border: 1px solid var(--color-control);
-  border-radius: 0.625rem;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font: inherit;
-  font-size: max(1rem, 1em);
-}
-
-.poker-input:user-invalid {
-  border-color: var(--poker-error);
-}
-
-.poker-primary,
-.poker-secondary {
-  min-block-size: 3rem;
-  border-radius: 0.625rem;
-  padding: 0.625rem 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.poker-primary {
-  background-color: var(--poker-accent);
-  color: var(--poker-accent-contrast);
-}
-
-.poker-secondary {
-  border: 1px solid var(--color-control);
-  background-color: var(--color-surface);
-  color: var(--color-text);
-}
-
-.poker-primary:hover {
-  background-color: color-mix(in srgb, var(--poker-accent), var(--poker-accent-contrast) 8%);
-}
-
-.poker-secondary:hover {
-  background-color: var(--color-surface-subtle);
-}
-
-.poker-form[aria-busy="true"] .poker-primary {
-  opacity: 0.65;
-  cursor: wait;
-  pointer-events: none;
-}
-
-.poker-layout {
-  display: grid;
-  align-items: start;
-  gap: 1.25rem;
-  grid-template-areas: "active" "queue" "roster";
-}
-
-@container (min-width: 45rem) {
-  .poker-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(19rem, 24rem);
-    grid-template-rows: auto 1fr;
-    grid-template-areas:
-      "active queue"
-      "roster queue";
+@layer components {
+  .poker-entry,
+  .poker-workspace,
+  .poker-summary {
+    --poker-rail: color-mix(in oklab, var(--retrocks-surface-subtle) 52%, var(--retrocks-canvas));
+    --poker-hairline: color-mix(in oklab, var(--retrocks-border) 62%, transparent);
+    --poker-accent-tint: color-mix(in oklab, var(--retrocks-accent) 10%, transparent);
+    --poker-accent-border: color-mix(in oklab, var(--retrocks-accent) 48%, var(--retrocks-border));
+    --poker-target: 2.25rem;
+    --poker-error-text: #a63a50;
   }
-}
 
-.poker-active {
-  grid-area: active;
-  background: var(--poker-pale);
-  color: var(--poker-highlight);
-}
+  :is([data-theme='dark'], [data-theme='retro']) :is(.poker-entry, .poker-workspace, .poker-summary) {
+    --poker-rail: color-mix(in oklab, var(--retrocks-surface) 44%, var(--retrocks-canvas));
+    --poker-accent-tint: color-mix(in oklab, var(--retrocks-accent) 12%, transparent);
+    --poker-error-text: var(--retrocks-col-rose);
+  }
 
-.poker-active-title {
-  font-size: clamp(1.5rem, 4cqi, 2.5rem);
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-}
+  [data-theme='parchment'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+    --poker-error-text: #8f2d3f;
+  }
 
-.poker-queue {
-  grid-area: queue;
-}
+  @media (pointer: coarse) {
+    .poker-entry,
+    .poker-workspace,
+    .poker-summary {
+      --poker-target: 2.75rem;
+    }
+  }
 
-.poker-roster {
-  grid-area: roster;
-}
+  .poker-entry {
+    max-inline-size: 28rem;
+    margin-inline: auto;
+    padding: clamp(2.5rem, 8vb, 5rem) 1.25rem 4rem;
+  }
 
-.poker-story-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 0.5rem;
-  margin-block-start: 1rem;
-}
+  .poker-entry-title {
+    font-size: clamp(1.75rem, 4vi, 2.25rem);
+    font-weight: 650;
+    line-height: 1.12;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
 
-.poker-story-form > [data-slot='field'] {
-  flex: 1 1 10rem;
-}
+  .poker-summary {
+    max-inline-size: 46rem;
+    margin-inline: auto;
+    padding: clamp(1.75rem, 5vb, 3.25rem) 1.25rem 4rem;
+  }
 
-.poker-story-list {
-  padding-inline-start: 1.25rem;
-  list-style-type: decimal;
-}
+  .poker-summary-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-block-start: 1px solid var(--poker-hairline);
+  }
 
-.poker-story::marker {
-  color: var(--color-text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-}
+  .poker-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 0.75rem;
+    border-block-end: 1px solid var(--poker-hairline);
+  }
 
-.poker-story {
-  min-inline-size: 0;
-  padding: 0.625rem 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: 0.625rem;
-}
+  .poker-workspace {
+    container: poker-shell / inline-size;
+    max-inline-size: 82rem;
+    margin-inline: auto;
+    padding-inline: 0;
+    padding-block-end: 2rem;
+  }
 
-.poker-story[aria-current='true'] {
-  border-color: var(--poker-highlight);
-  background: var(--poker-pale);
-}
+  .poker-error-text {
+    color: var(--poker-error-text);
+  }
 
-.poker-story-status {
-  flex-shrink: 0;
-  max-inline-size: 50%;
-  color: var(--color-text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
+  .poker-input {
+    min-inline-size: 0;
+    min-block-size: var(--poker-target);
+    inline-size: 100%;
+    padding-inline: 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
+    border-radius: 0.5rem;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font: inherit;
+    font-size: 0.9375rem;
+    transition: border-color 140ms ease-out, background-color 140ms ease-out;
+  }
 
-.poker-move-controls {
-  display: flex;
-  gap: 0.25rem;
-  margin-inline-start: auto;
-}
+  @media (pointer: coarse) {
+    .poker-input {
+      font-size: max(1rem, 1em);
+    }
+  }
 
-.poker-story-control {
-  display: inline-grid;
-  place-items: center;
-  min-inline-size: 2.75rem;
-  min-block-size: 2.75rem;
-  padding-inline: 0.5rem;
-  border: 1px solid var(--color-control);
-  border-radius: 0.5rem;
-  background: var(--color-surface);
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-}
+  .poker-input:hover:not(:disabled, :read-only) {
+    border-color: var(--retrocks-control);
+  }
 
-.poker-story-control:hover:not([aria-disabled='true']) {
-  background: var(--color-surface-subtle);
-}
+  .poker-input:user-invalid,
+  .poker-input[data-invalid] {
+    border-color: var(--poker-error-text);
+  }
 
-.poker-story-control[aria-disabled='true'] {
-  opacity: 0.62;
-  cursor: default;
-}
+  .poker-deck-input {
+    padding-block: 0.5rem;
+    resize: vertical;
+  }
 
-.poker-voting {
-  border-color: color-mix(in srgb, var(--poker-highlight), transparent 72%);
-}
+  .poker-primary,
+  .poker-secondary,
+  .poker-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    min-block-size: var(--poker-target);
+    padding-inline: 0.9375rem;
+    border-radius: 0.5rem;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+  }
 
-.poker-deck {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 3.25rem), 1fr));
-  gap: 0.5rem;
-}
+  .poker-primary {
+    border: 1px solid transparent;
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+  }
 
-.poker-workspace[data-deck-type='custom'] .poker-deck {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
-  align-items: start;
-}
+  .poker-primary:hover:not(:disabled, [aria-disabled='true']) {
+    opacity: 0.92;
+  }
 
-.poker-vote-tile {
-  display: grid;
-  place-items: center;
-  min-block-size: 3.5rem;
-  padding: 0.4rem;
-  border: 1px solid var(--poker-highlight);
-  border-radius: 0.5rem;
-  background: var(--color-surface);
-  color: var(--poker-highlight);
-  font-size: 1.25rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
+  .poker-secondary {
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+  }
 
-.poker-workspace[data-deck-type='custom'] .poker-vote-tile {
-  font-size: 1rem;
-  line-height: 1.25;
-  text-align: center;
-}
+  .poker-secondary:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface-subtle);
+  }
 
-.poker-vote-tile:hover {
-  background: var(--poker-pale);
-}
+  .poker-ghost {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--retrocks-text-muted);
+    font-weight: 500;
+  }
 
-.poker-vote-tile[data-checked] {
-  background: var(--poker-accent);
-  color: var(--poker-accent-contrast);
-}
+  .poker-ghost:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface-subtle);
+    color: var(--retrocks-text);
+  }
 
-.poker-ballot {
-  background: var(--color-surface);
-  border-color: var(--color-control);
-}
+  :is(.poker-primary, .poker-secondary, .poker-ghost):is(:disabled, [aria-disabled='true']) {
+    opacity: 0.52;
+    cursor: default;
+  }
 
-.poker-deck-types {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-}
+  .poker-form[aria-busy='true'] .poker-primary {
+    opacity: 0.6;
+    cursor: wait;
+    pointer-events: none;
+  }
 
-.poker-deck-types [data-checked] {
-  border-color: var(--poker-accent);
-  background: var(--poker-accent);
-  color: var(--poker-accent-contrast);
-}
+  .poker-room-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.625rem 1rem;
+    padding: 0.75rem 1rem;
+    border-block-end: 1px solid var(--poker-hairline);
+  }
 
-.poker-deck-types [data-checked]:hover {
-  background: color-mix(in srgb, var(--poker-accent), var(--poker-accent-contrast) 8%);
-}
+  .poker-room-bar-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+    text-wrap: balance;
+  }
 
-.poker-deck-input {
-  padding-block: 0.625rem;
-  resize: vertical;
-}
+  .poker-bar-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-block-size: 1.875rem;
+    padding-inline: 0.625rem;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--retrocks-surface-subtle) 75%, transparent);
+    color: var(--retrocks-text-muted);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
 
-.poker-deck-input[data-invalid] {
-  border-color: var(--poker-error);
-}
+  .poker-bar-chip-interactive {
+    min-block-size: var(--poker-target);
+    border-color: var(--poker-hairline);
+    background: transparent;
+    color: var(--retrocks-text);
+    cursor: pointer;
+  }
 
-.poker-summary {
-  max-inline-size: 48rem;
+  @media (pointer: fine) {
+    .poker-bar-chip-interactive {
+      min-block-size: 1.875rem;
+    }
+  }
+
+  .poker-bar-chip-interactive:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface-subtle);
+    border-color: var(--retrocks-border);
+  }
+
+  .poker-bar-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    min-block-size: var(--poker-target);
+    padding-inline: 0.875rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
+    border-radius: 999px;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .poker-bar-pill:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface-subtle);
+  }
+
+  .poker-icon-btn {
+    display: inline-grid;
+    place-items: center;
+    min-inline-size: var(--poker-target);
+    min-block-size: var(--poker-target);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--retrocks-text-muted);
+    cursor: pointer;
+    transition: background-color 140ms ease-out, color 140ms ease-out;
+  }
+
+  .poker-icon-btn:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface-subtle);
+    color: var(--retrocks-text);
+  }
+
+  .poker-icon-btn-danger:hover:not(:disabled, [aria-disabled='true']) {
+    background: color-mix(in oklab, var(--retrocks-col-rose) 14%, transparent);
+    color: var(--poker-error-text);
+  }
+
+  .poker-icon-btn:is(:disabled, [aria-disabled='true']) {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .poker-presence-dot {
+    inline-size: 0.4375rem;
+    block-size: 0.4375rem;
+    border-radius: 999px;
+    background: var(--retrocks-accent);
+    flex-shrink: 0;
+  }
+
+  .poker-presence-dot[data-state='offline'] {
+    background: transparent;
+    border: 1.5px solid var(--retrocks-control);
+  }
+
+  .poker-presence-dot[data-state='reconnecting'] {
+    background: var(--retrocks-col-amber);
+  }
+
+  .poker-deck-types {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.375rem;
+  }
+
+  .poker-deck-option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: var(--poker-target);
+    padding-inline: 0.5rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 85%, transparent);
+    border-radius: 0.5rem;
+    background: var(--retrocks-canvas);
+    color: var(--retrocks-text);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+  }
+
+  .poker-deck-option:hover:not([data-checked], [data-disabled]) {
+    background: var(--retrocks-surface-subtle);
+  }
+
+  .poker-deck-option[data-checked] {
+    border-color: var(--retrocks-accent);
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+  }
+
+  .poker-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .poker-queue-pane {
+    background: var(--poker-rail);
+    border-block-end: 1px solid var(--poker-hairline);
+  }
+
+  .poker-mobile-queue-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    inline-size: 100%;
+    min-block-size: 2.75rem;
+    padding: 0.625rem 1rem;
+    border: 0;
+    background: transparent;
+    color: var(--retrocks-text);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .poker-mobile-queue-toggle:hover {
+    background: color-mix(in oklab, var(--retrocks-surface-subtle) 50%, transparent);
+  }
+
+  .poker-queue-body[data-mobile-collapsed='true'] {
+    display: none;
+  }
+
+  @container poker-shell (inline-size >= 48rem) {
+    .poker-room-bar {
+      padding-inline: 1.5rem;
+    }
+
+    .poker-split {
+      grid-template-columns: minmax(17.5rem, 21rem) minmax(0, 1fr);
+      min-block-size: calc(100dvh - 8.5rem);
+      align-items: stretch;
+    }
+
+    .poker-queue-pane {
+      display: flex;
+      flex-direction: column;
+      border-block-end: 0;
+      border-inline-end: 1px solid var(--poker-hairline);
+    }
+
+    .poker-mobile-queue-toggle {
+      display: none;
+    }
+
+    .poker-queue-body[data-mobile-collapsed='true'] {
+      display: flex;
+    }
+  }
+
+  .poker-queue-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-block-size: 0;
+  }
+
+  .poker-queue-scroll {
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+  }
+
+  .poker-quick-add {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.25rem 0.25rem 0.625rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 82%, transparent);
+    border-radius: 0.5rem;
+    background: var(--retrocks-canvas);
+    transition: border-color 140ms ease-out;
+  }
+
+  .poker-quick-add:focus-within {
+    border-color: var(--retrocks-focus);
+  }
+
+  .poker-quick-add-input {
+    min-inline-size: 0;
+    inline-size: 100%;
+    min-block-size: 1.875rem;
+    border: 0;
+    background: transparent;
+    color: var(--retrocks-text);
+    font: inherit;
+    font-size: 0.875rem;
+    outline: none;
+  }
+
+  @media (pointer: coarse) {
+    .poker-quick-add-input {
+      min-block-size: 2.25rem;
+      font-size: max(1rem, 1em);
+    }
+  }
+
+  .poker-quick-add-input::placeholder {
+    color: var(--retrocks-text-muted);
+    opacity: 0.8;
+  }
+
+  .poker-quick-add-submit {
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    min-inline-size: 1.875rem;
+    min-block-size: 1.875rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: var(--retrocks-surface-subtle);
+    color: var(--retrocks-text);
+    cursor: pointer;
+    transition: background-color 140ms ease-out, color 140ms ease-out;
+  }
+
+  @media (pointer: coarse) {
+    .poker-quick-add-submit {
+      min-inline-size: 2.75rem;
+      min-block-size: 2.75rem;
+    }
+  }
+
+  .poker-quick-add-submit:hover:not(:disabled) {
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+  }
+
+  .poker-story-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+  }
+
+  .poker-story-row {
+    position: relative;
+    padding: 0.625rem 0.75rem 0.625rem 1rem;
+    transition: background-color 130ms ease-out;
+  }
+
+  .poker-story-row:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    inset-inline: 1rem 0.75rem;
+    inset-block-end: 0;
+    block-size: 1px;
+    background: var(--poker-hairline);
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  .poker-story-row:hover {
+    background: color-mix(in oklab, var(--retrocks-surface-subtle) 55%, transparent);
+  }
+
+  .poker-story-row[aria-current='true'] {
+    background: var(--poker-accent-tint);
+  }
+
+  .poker-story-row[aria-current='true']::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block: 0.375rem;
+    inline-size: 2.5px;
+    border-radius: 0 2px 2px 0;
+    background: var(--retrocks-accent);
+  }
+
+  .poker-story-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.38;
+    color: var(--retrocks-text);
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+  }
+
+  .poker-story-row[data-status='skipped'] .poker-story-title {
+    color: var(--retrocks-text-muted);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklab, var(--retrocks-border) 90%, transparent);
+  }
+
+  .poker-est-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 1.5rem;
+    padding: 0.125rem 0.4375rem;
+    border-radius: 999px;
+    background: var(--retrocks-surface-subtle);
+    color: var(--retrocks-text);
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+
+  /* Hover, focus-within, and touch-visible row controls (natural-interactions) */
+  .poker-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    margin-block-start: 0.375rem;
+    opacity: 0;
+    transition: opacity 130ms ease-out;
+  }
+
+  .poker-story-row:hover .poker-row-actions,
+  .poker-story-row:focus-within .poker-row-actions,
+  .poker-story-row[aria-current='true'] .poker-row-actions {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    .poker-row-actions {
+      opacity: 1;
+    }
+  }
+
+  .poker-row-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    min-inline-size: 1.75rem;
+    min-block-size: 1.75rem;
+    padding-inline: 0.5rem;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    background: transparent;
+    color: var(--retrocks-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+  }
+
+  @media (pointer: coarse) {
+    .poker-row-btn {
+      min-inline-size: 2.75rem;
+      min-block-size: 2.75rem;
+      padding-inline: 0.625rem;
+    }
+  }
+
+  .poker-row-btn:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    border-color: var(--poker-hairline);
+  }
+
+  .poker-row-btn-primary {
+    color: var(--retrocks-text);
+    background: color-mix(in oklab, var(--retrocks-surface) 75%, transparent);
+    border-color: var(--poker-hairline);
+  }
+
+  .poker-row-btn:is(:disabled, [aria-disabled='true']) {
+    opacity: 0.42;
+    cursor: default;
+  }
+
+  .poker-rail-foot {
+    padding: 0.75rem 1rem;
+    border-block-start: 1px solid var(--poker-hairline);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: var(--retrocks-text-muted);
+  }
+
+  .poker-stage {
+    container: poker-stage / inline-size;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: clamp(1.5rem, 3.5vb, 2.5rem);
+    padding: clamp(1.5rem, 4.5vb, 3rem) clamp(1rem, 4cqi, 2.5rem) clamp(1.5rem, 4vb, 2.5rem);
+    min-inline-size: 0;
+  }
+
+  .poker-stage-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(1.25rem, 3vb, 2rem);
+    inline-size: 100%;
+    max-inline-size: 44rem;
+    text-align: center;
+  }
+
+  .poker-active-title {
+    font-size: clamp(1.5rem, 3.6cqi, 2.25rem);
+    font-weight: 650;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    color: var(--retrocks-text);
+    text-wrap: balance;
+    overflow-wrap: break-word;
+    max-inline-size: 30ch;
+  }
+
+  .poker-phase-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--retrocks-text-muted);
+  }
+
+  .poker-accepted-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    padding: 0.3125rem 0.75rem;
+    border: 1px solid var(--poker-accent-border);
+    border-radius: 999px;
+    background: var(--poker-accent-tint);
+    color: var(--retrocks-text);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .poker-seats {
+    display: flex;
+    flex-wrap: wrap;
+    flex-wrap: balance;
+    justify-content: center;
+    gap: 1.125rem 1.375rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    inline-size: 100%;
+  }
+
+  .poker-seat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    min-inline-size: 4.25rem;
+    max-inline-size: 8.5rem;
+  }
+
+  .poker-seat[data-online='false'] {
+    opacity: 0.62;
+  }
+
+  .poker-seat-card {
+    display: grid;
+    place-items: center;
+    inline-size: 2.625rem;
+    block-size: 3.625rem;
+    padding: 0.25rem;
+    border-radius: 0.5625rem;
+    corner-shape: squircle;
+    font-size: 1rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease-out, border-color 180ms ease-out;
+  }
+
+  .poker-workspace[data-deck-type='custom'] .poker-seat-card[data-seat-state='revealed'] {
+    inline-size: auto;
+    min-inline-size: 2.75rem;
+    max-inline-size: 7.5rem;
+    padding-inline: 0.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .poker-seat-card[data-seat-state='waiting'] {
+    border: 1.5px dashed color-mix(in oklab, var(--retrocks-border) 90%, transparent);
+    background: transparent;
+    color: var(--retrocks-text-muted);
+  }
+
+  .poker-seat-card[data-seat-state='voted'] {
+    border: 1px solid var(--poker-accent-border);
+    background: var(--poker-accent-tint);
+    color: var(--retrocks-accent);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 4px 12px -4px rgb(0 0 0 / 0.18);
+  }
+
+  .poker-seat-card[data-seat-state='revealed'] {
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 95%, transparent);
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 6px 16px -6px rgb(0 0 0 / 0.22);
+  }
+
+  .poker-seat-card[data-consensus='true'] {
+    border-color: var(--retrocks-accent);
+    color: var(--retrocks-accent);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .poker-seat-card[data-seat-state='revealed'] {
+      animation: poker-card-flip 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+  }
+
+  @keyframes poker-card-flip {
+    from {
+      opacity: 0.45;
+      transform: scale(0.9) rotateY(-24deg);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) rotateY(0);
+    }
+  }
+
+  .poker-spread {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem 0.625rem;
+    padding: 0.3125rem 0.75rem;
+    border: 1px solid var(--poker-hairline);
+    border-radius: 999px;
+    background: var(--retrocks-surface);
+    font-size: 0.8125rem;
+    color: var(--retrocks-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .poker-hand-section {
+    inline-size: 100%;
+    padding-block-start: 1.5rem;
+    border-block-start: 1px solid var(--poker-hairline);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.875rem;
+  }
+
+  .poker-deck {
+    display: flex;
+    flex-wrap: wrap;
+    flex-wrap: balance;
+    justify-content: center;
+    gap: 0.5rem;
+    inline-size: 100%;
+  }
+
+  .poker-workspace[data-deck-type='custom'] .poker-deck {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.5rem), 1fr));
+    align-items: stretch;
+  }
+
+  .poker-vote-tile {
+    display: inline-grid;
+    place-items: center;
+    min-inline-size: 3rem;
+    min-block-size: 4.125rem;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 95%, transparent);
+    border-radius: 0.6875rem;
+    corner-shape: squircle;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font-size: 1.0625rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.14);
+    transition:
+      transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 140ms ease-out,
+      border-color 140ms ease-out,
+      color 140ms ease-out,
+      box-shadow 180ms ease-out;
+  }
+
+  .poker-vote-tile-compact {
+    min-inline-size: 2.625rem;
+    min-block-size: var(--poker-target);
+    padding: 0.375rem 0.625rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .poker-workspace[data-deck-type='custom'] .poker-vote-tile {
+    min-block-size: 3rem;
+    font-size: 0.875rem;
+    line-height: 1.25;
+    text-align: center;
+  }
+
+  .poker-vote-tile:hover:not([data-checked], [data-disabled], [data-readonly]) {
+    transform: translateY(-4px);
+    border-color: var(--retrocks-accent);
+  }
+
+  .poker-vote-tile-compact:hover:not([data-checked], [data-disabled], [data-readonly]) {
+    transform: translateY(-2px);
+  }
+
+  .poker-vote-tile[data-voted-hint='true']:not([data-checked]) {
+    border-color: var(--poker-accent-border);
+  }
+
+  .poker-vote-tile[data-checked] {
+    transform: translateY(-7px);
+    border-color: var(--retrocks-accent);
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+    box-shadow: 0 10px 22px -8px rgb(0 0 0 / 0.32);
+  }
+
+  .poker-vote-tile-compact[data-checked] {
+    transform: translateY(-2px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .poker-vote-tile:hover:not([data-checked], [data-disabled], [data-readonly]),
+    .poker-vote-tile[data-checked],
+    .poker-vote-tile-compact[data-checked] {
+      transform: none;
+    }
+
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation: none;
+    }
+  }
+
+  /* Forced Colors Mode (WCAG high contrast resilience) */
+  @media (forced-colors: active) {
+    .poker-story-row[aria-current='true'] {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+
+    .poker-vote-tile[data-checked],
+    .poker-deck-option[data-checked] {
+      border: 2px solid Highlight;
+      background: Highlight;
+      color: HighlightText;
+    }
+
+    .poker-seat-card[data-seat-state='voted'],
+    .poker-seat-card[data-consensus='true'] {
+      border: 2px solid Highlight;
+    }
+  }
 }
