@@ -51,7 +51,7 @@ export interface CardDetailDrawerProps {
   side: 'bottom' | 'right';
   onClose: () => void;
   onExit: () => void;
-  restoreFocus: () => void;
+  restoreFocusTarget: () => HTMLElement | undefined;
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
@@ -94,29 +94,25 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   // Live sync: another viewer's optimistic/live owner change shows while this
   // editor is idle; an active edit keeps its draft.
   createEffect(
-    () => ({ next: props.card.actionOwner, editing: ownerEditing() }),
-    ({ next, editing }) => {
-      if (!editing && ownerInputEl && ownerInputEl.value !== next) {
-        ownerInputEl.value = next;
+    () => ownerEditing() ? undefined : props.card.actionOwner,
+    (owner) => {
+      if (owner !== undefined && ownerInputEl && ownerInputEl.value !== owner) {
+        ownerInputEl.value = owner;
       }
     },
   );
 
   onSettled(() => () => {
     // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
-    const restoreFocus = untrack(() => props.restoreFocus);
+    const restoreFocusTarget = untrack(() => props.restoreFocusTarget);
     queueMicrotask(() => {
-      if (document.activeElement === document.body) restoreFocus();
+      if (document.activeElement === document.body) restoreFocusTarget()?.focus({ preventScroll: true });
     });
   });
 
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
-
-  createEffect(() => props.isOpen, (open, wasOpen) => {
-    if (!open && wasOpen) untrack(() => props.restoreFocus());
-  });
 
   const isSavingAction = () => props.isActionItemPending?.(props.card.id) ?? false;
 
@@ -206,7 +202,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     >
       <DrawerBackdrop data-print-hide="true" class="board-drawer-backdrop" />
       <DrawerContent
-        finalFocus="none"
+        finalFocus={props.restoreFocusTarget}
         render={(contentProps) => (
           <div
             {...contentProps}

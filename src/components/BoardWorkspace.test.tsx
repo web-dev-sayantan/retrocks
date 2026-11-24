@@ -362,6 +362,52 @@ describe('<BoardWorkspace />', () => {
     }
   });
 
+  it('closes remotely deleted Card details without stealing focus from another control', async () => {
+    const streams: EventTarget[] = [];
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() {
+        super();
+        streams.push(this);
+      }
+      close() {}
+    });
+    const card = makeCard();
+    const board = makeBoardView({ cards: [card] });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <>
+        <button type="button">Outside Board</button>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      </>
+    ));
+    try {
+      flush();
+      fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
+      await flushPromises();
+      expect(view.getByRole('dialog', { name: 'Card details' })).toBeInTheDocument();
+
+      streams[0].dispatchEvent(new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'board:snapshot',
+          version: 2,
+          serverNow: 200,
+          board: { ...board, version: 2, cards: [] },
+        } satisfies BoardLiveMessage),
+      }));
+      flush();
+      const outside = view.getByRole('button', { name: 'Outside Board' });
+      outside.focus();
+      await flushPromises();
+
+      expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+      expect(view.queryByRole('button', { name: 'Open Card details' })).toBeNull();
+      expect(outside).toHaveFocus();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('retains a failed comment in Card details and clears it after a successful retry', async () => {
     const card = makeCard();
     const board = makeBoardView({ cards: [card] });
