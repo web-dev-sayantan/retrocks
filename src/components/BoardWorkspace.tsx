@@ -155,6 +155,15 @@ function getAddColumnSlotClass(columnCount: number): string {
 }
 
 export default function BoardWorkspace(props: BoardWorkspaceProps) {
+  // The route ID scopes viewer-local state across live snapshots.
+  return (
+    <For each={[props.boardId]}>
+      {(boardId) => <BoardWorkspaceSession {...props} boardId={boardId} />}
+    </For>
+  );
+}
+
+function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   // The Board controller owns the store, live stream, server clock,
   // mutation handlers, and pending state; this component keeps layout and UI state.
   const controller = createBoardController({
@@ -166,7 +175,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [isDramaticReveal, setIsDramaticReveal] = createSignal(false);
-  const [modeAnnouncement, setModeAnnouncement] = createSignal('');
   const revealChime = createTimerChime();
   let dramaticRevealTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -270,6 +278,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setIsAddingColumn(true);
   }
 
+  // The controller-opened dialog needs focus after its input has mounted.
   createEffect(isAddingColumn, (open) => {
     if (open) newColumnTitleEl?.focus();
   });
@@ -374,58 +383,37 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     },
   );
 
-  createEffect(
-    () => props.boardId,
-    (nextId, previousId) => {
-      if (previousId !== undefined && nextId !== previousId) {
-        setSearchQuery('');
-        setQuickFilter('all');
-        setSortMode('newest');
-        setActiveColumnId(null);
-        setMobileDrafts((drafts) => {
-          for (const id of Object.keys(drafts)) delete drafts[id];
-        });
-      }
-    },
-  );
+  const boardModes = createMemo(() => {
+    const board = controller.board();
+    return board && {
+      id: board.id,
+      isBlurred: board.isBlurred,
+      blindVoting: board.blindVoting,
+      isLocked: board.isLocked,
+    };
+  });
+  const boardModeStatus = createMemo<{
+    modes: ReturnType<typeof boardModes>;
+    announcement: string;
+  }>((previous) => {
+    const modes = boardModes();
+    const before = previous?.modes;
+    if (!modes || before?.id !== modes.id) return { modes, announcement: '' };
 
-  createEffect(
-    () => {
-      const board = controller.board();
-      return board && {
-        id: board.id,
-        isBlurred: board.isBlurred,
-        blindVoting: board.blindVoting,
-        isLocked: board.isLocked,
-      };
-    },
-    (board, previous) => {
-      if (!board || previous?.id !== board.id) {
-        setModeAnnouncement('');
-        return;
-      }
-      const changes: string[] = [];
-      if (board.isBlurred !== previous.isBlurred) {
-        changes.push(board.isBlurred ? 'Private Mode is on.' : 'All Cards revealed.');
-      }
-      if (board.blindVoting !== previous.blindVoting) {
-        changes.push(board.blindVoting ? 'Blind Voting is on.' : 'Blind Voting is off.');
-      }
-      if (board.isLocked !== previous.isLocked) {
-        changes.push(board.isLocked ? 'Board locked.' : 'Board unlocked.');
-      }
-      setModeAnnouncement(changes.join(' '));
-    },
-  );
+    const changes: string[] = [];
+    if (modes.isBlurred !== before.isBlurred) {
+      changes.push(modes.isBlurred ? 'Private Mode is on.' : 'All Cards revealed.');
+    }
+    if (modes.blindVoting !== before.blindVoting) {
+      changes.push(modes.blindVoting ? 'Blind Voting is on.' : 'Blind Voting is off.');
+    }
+    if (modes.isLocked !== before.isLocked) {
+      changes.push(modes.isLocked ? 'Board locked.' : 'Board unlocked.');
+    }
+    return { modes, announcement: changes.join(' ') };
+  });
 
   let unavailableHeading: HTMLHeadingElement | undefined;
-
-  createEffect(
-    () => controller.board() !== null,
-    (hasBoard) => {
-      if (hasBoard) logPrivacyColophon();
-    },
-  );
 
   onSettled(() => {
     const viewport = window.visualViewport;
@@ -802,6 +790,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     >
       {(board) => (
         <div
+          ref={() => logPrivacyColophon()}
           class="board-workspace flex min-h-dvh flex-col bg-canvas"
           data-board-print-ready={isPrinting() ? "" : undefined}
           data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
@@ -810,7 +799,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <PrintBoard board={board()} />
           </Show>
           <div aria-live="polite" aria-atomic="true" class="sr-only">
-            {modeAnnouncement()}
+            {boardModeStatus().announcement}
           </div>
           <header role="banner" class="board-masthead">
             <div class="board-island board-masthead-island">

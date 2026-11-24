@@ -127,16 +127,12 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   let composerEl: HTMLTextAreaElement | undefined;
 
-  createEffect(
-    () => (props.isLocked ? null : props.view.column.id),
-    (columnId) => {
-      if (!columnId || !composerEl) return;
-      props.onRegisterComposer?.(columnId, composerEl);
-      return () => {
-        props.onRegisterComposer?.(columnId, null);
-      };
-    },
-  );
+  const contributingColumnId = createMemo(() => canContribute(props) ? props.view.column.id : null);
+  createEffect(contributingColumnId, (columnId) => {
+    if (!columnId || !composerEl) return;
+    props.onRegisterComposer?.(columnId, composerEl);
+    return () => props.onRegisterComposer?.(columnId, null);
+  });
 
   function canManageGroup(group: CardGroupDTO): boolean {
     return props.canGroupCards && areAllGroupCardsMine(props, group, props.view.cards);

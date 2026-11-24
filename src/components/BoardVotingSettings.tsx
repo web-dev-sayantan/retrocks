@@ -83,25 +83,24 @@ export default function BoardVotingSettings(props: {
       : Number.isSafeInteger(limit) && limit >= 1;
   });
 
-  createEffect(() => props.open, (open) => {
-    if (!open) return;
-    untrack(() => {
-      const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } =
-        props.board;
-      initialSettings = {
-        voteLimit,
-        maxVotesPerCard,
-        blindVoting,
-        allowParticipantGroup,
-      };
+  // Capture the baseline on open so live updates leave the draft intact.
+  createEffect(
+    () => props.open ? untrack(() => {
+      const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } = props.board;
+      return { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup };
+    }) : null,
+    (settings) => {
+      if (!settings) return;
+      initialSettings = settings;
+      const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } = settings;
       setVoteLimitChoice(voteLimit === null ? 'unlimited' : VOTE_LIMIT_OPTIONS.some((option) => option === voteLimit) ? String(voteLimit) : 'custom');
       setCustomLimit(voteLimit);
       setSingleVote(maxVotesPerCard === 1);
       setBlindVoting(blindVoting);
       setAllowParticipantGroup(allowParticipantGroup);
       setError(null);
-    });
-  });
+    },
+  );
 
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();

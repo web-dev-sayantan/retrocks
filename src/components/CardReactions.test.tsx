@@ -1,6 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
-import { flush } from 'solid-js';
+import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import CardReactions from './CardReactions';
@@ -52,6 +52,31 @@ describe('<CardReactions /> picker dismissal', () => {
       expect(pending).toHaveClass('sr-only');
     }, { scenario: 'card-reactions-popup' });
     expectNoDiagnostics(artifact);
+  });
+
+  it('starts closed when reactions become available again', () => {
+    const [disabled, setDisabled] = createSignal(false);
+    const view = render(() => (
+      <CardReactions
+        cardId="card_1"
+        reactions={{}}
+        myReactions={[]}
+        disabled={disabled()}
+        onToggleReaction={() => Promise.resolve(null)}
+      />
+    ));
+    const trigger = () => view.getByRole('button', { name: 'Add reaction' });
+    fireEvent.click(trigger());
+    flush();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'true');
+
+    setDisabled(true);
+    flush();
+    expect(view.queryByRole('button', { name: 'Add reaction' })).toBeNull();
+
+    setDisabled(false);
+    flush();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('clears the Board overlay when focus moves to another Card', () => {

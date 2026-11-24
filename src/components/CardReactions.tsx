@@ -1,6 +1,6 @@
 import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/solid/popover';
 import { SmilePlus } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { For, Show, createMemo, createSignal } from 'solid-js';
 
 import { REACTION_EMOJIS, type ReactionEmoji } from '../lib/board-types';
 import LucideIcon from './LucideIcon';
@@ -15,17 +15,13 @@ export interface CardReactionsProps {
 }
 
 export default function CardReactions(props: CardReactionsProps) {
-  const [pickerOpen, setPickerOpen] = createSignal(false);
+  const [pickerOpen, setPickerOpen] = createSignal<boolean | null>(() => props.disabled ? null : false);
   const [pendingEmoji, setPendingEmoji] = createSignal<ReactionEmoji | null>(
     null,
   );
 
   const [reactionError, setReactionError] = createSignal<string | null>(null);
   let pickerTrigger: HTMLButtonElement | undefined;
-
-  createEffect(() => props.disabled, (disabled) => {
-    if (disabled) setPickerOpen(false);
-  });
 
   const activeReactions = createMemo(() => {
     const counts = props.reactions;
@@ -92,7 +88,7 @@ export default function CardReactions(props: CardReactionsProps) {
 
       <Show when={!props.disabled}>
         <Popover
-          open={pickerOpen()}
+          open={pickerOpen() === true}
           onOpenChange={(open) => setPickerOpen(open)}
         >
           <PopoverTrigger
