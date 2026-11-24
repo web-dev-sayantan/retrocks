@@ -29,6 +29,7 @@ import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
+import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import {
   ArrowRightLeftIcon,
@@ -169,12 +170,6 @@ export default function CardItem(props: CardItemProps) {
   const isEditing = () => textField.present('input');
   const [hasText, setHasText] = createSignal(true);
   const [textLength, setTextLength] = createSignal(0);
-  let editorEl: HTMLTextAreaElement | undefined;
-
-  // bindInput fills, selects, and focuses the editor once its element mounts.
-  createEffect(isEditing, (editing) => {
-    if (editing && editorEl) cardEdit.bindInput(editorEl);
-  });
 
   // A menu item that starts the edit unmounts, so fall back to the Card actions trigger.
   createEffect(isEditing, (editing, wasEditing) => {
@@ -392,24 +387,28 @@ export default function CardItem(props: CardItemProps) {
           when={!isEditing()}
           fallback={
             <div class="space-y-2">
-              <textarea
-                ref={(el) => { editorEl = el; }}
-                aria-label="Edit card text"
-                aria-invalid={textSave.error() ? 'true' : undefined}
-                readonly={textSave.isSaving()}
-                maxlength={MAX_CARD_CONTENT_LENGTH}
-                rows={3}
-                onKeyDown={(event) => cardEdit.inputKeydown(event)}
-                onFocusOut={(event) => cardEdit.end('focus-out', event)}
-                onInput={(e) => {
-                  setHasText(e.currentTarget.value.trim().length > 0);
-                  setTextLength(e.currentTarget.value.length);
-                }}
-                class={[
-                  'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-base text-text',
-                  'placeholder:text-text-muted board-focus-ring',
-                ]}
-              />
+              <InlineEditorMount bind={(el) => cardEdit.bindInput(el)}>
+                {(ref) => (
+                  <textarea
+                    ref={ref}
+                    aria-label="Edit card text"
+                    aria-invalid={textSave.error() ? 'true' : undefined}
+                    readonly={textSave.isSaving()}
+                    maxlength={MAX_CARD_CONTENT_LENGTH}
+                    rows={3}
+                    onKeyDown={(event) => cardEdit.inputKeydown(event)}
+                    onFocusOut={(event) => cardEdit.end('focus-out', event)}
+                    onInput={(e) => {
+                      setHasText(e.currentTarget.value.trim().length > 0);
+                      setTextLength(e.currentTarget.value.length);
+                    }}
+                    class={[
+                      'w-full resize-none rounded-md border border-border bg-canvas px-2.5 py-2 text-base text-text',
+                      'placeholder:text-text-muted board-focus-ring',
+                    ]}
+                  />
+                )}
+              </InlineEditorMount>
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span class="text-[11px] text-text-muted tabular-nums">
                   {textLength()}/{MAX_CARD_CONTENT_LENGTH}

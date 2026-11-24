@@ -93,6 +93,7 @@ import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import ExportBoardMenu from './ExportBoardMenu';
 import { CloseIcon } from './Icons';
+import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
@@ -237,13 +238,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const isRenamingBoard = () => boardTitleField.present('input');
   const [hasBoardTitleText, setHasBoardTitleText] = createSignal(true);
   let renameBoardButtonEl: HTMLButtonElement | undefined;
-  let boardTitleInputEl: HTMLInputElement | undefined;
   const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
-
-  // bindInput fills, selects, and focuses the editor once its element mounts.
-  createEffect(isRenamingBoard, (renaming) => {
-    if (renaming && boardTitleInputEl) boardTitleEdit.bindInput(boardTitleInputEl);
-  });
 
   // The mobile menu that starts a rename unmounts, so restore the header's fallback focus chain.
   createEffect(isRenamingBoard, (renaming, wasRenaming) => {
@@ -821,21 +816,25 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   when={!isRenamingBoard()}
                   fallback={
                     <div class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
-                      <input
-                        ref={boardTitleInputEl}
-                        type="text"
-                        aria-label="Board title"
-                        maxlength={MAX_BOARD_TITLE_LENGTH}
-                        onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
-                        onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
-                        onInput={(e) =>
-                          setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
-                        }
-                        class={[
-                          'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
-                          'board-focus-ring',
-                        ]}
-                      />
+                      <InlineEditorMount bind={(el) => boardTitleEdit.bindInput(el)}>
+                        {(ref) => (
+                          <input
+                            ref={ref}
+                            type="text"
+                            aria-label="Board title"
+                            maxlength={MAX_BOARD_TITLE_LENGTH}
+                            onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
+                            onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
+                            onInput={(e) =>
+                              setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
+                            }
+                            class={[
+                              'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
+                              'board-focus-ring',
+                            ]}
+                          />
+                        )}
+                      </InlineEditorMount>
                       <button
                         type="button"
                         aria-label="Save Board title"
