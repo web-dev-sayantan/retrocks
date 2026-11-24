@@ -1,8 +1,11 @@
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
+import { wrapDatabaseSync } from '../adapters/node/sqlite';
 import { generateEntityId } from '../crypto';
 import { openNodePokerRooms, type NodePokerRooms } from './node';
+import { PokerRoomStorage } from './room';
 
 const day = 24 * 60 * 60 * 1000;
 let rooms: NodePokerRooms;
@@ -178,4 +181,68 @@ test('closed Room deletion uses the retained Facilitator capability', () => {
   expect(rooms.delete('room-a', 'facilitator')).toEqual({ ok: true });
   expect(rooms.read('room-a', 'visitor')).toBeNull();
   expect(rooms.delete('room-a', 'facilitator')).toMatchObject({ ok: false, code: 'ROOM_NOT_FOUND' });
+});
+
+test('Room name defaults to Poker Room when omitted or blank, and appears on open, pre-join, and closed projections', () => {
+  const unnamed = rooms.create('room-default', 'creator', 'Alex');
+  expect(unnamed).toMatchObject({ name: 'Poker Room' });
+  expect(rooms.read('room-default', 'visitor')).toMatchObject({ name: 'Poker Room', viewer: null });
+
+  const blank = rooms.create('room-blank', 'creator', 'Alex', '   ');
+  expect(blank).toMatchObject({ name: 'Poker Room' });
+
+  const named = rooms.create('room-named', 'creator', 'Alex', '  Sprint 14 Planning  ');
+  expect(named).toMatchObject({ name: 'Sprint 14 Planning' });
+  expect(rooms.read('room-named', 'visitor')).toMatchObject({ name: 'Sprint 14 Planning', viewer: null });
+
+  expect(rooms.mutate('room-named', 'creator', { type: 'close-room' }).ok).toBe(true);
+  expect(rooms.read('room-named', 'visitor')).toMatchObject({ closed: true, name: 'Sprint 14 Planning' });
+});
+
+test('loading a legacy stored Room without a name defaults to Poker Room', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const storage = new PokerRoomStorage(wrapDatabaseSync(db));
+    storage.create('room-legacy', 'creator', 'Alex');
+    const row = db.prepare('SELECT data FROM poker_rooms WHERE id = ?').get('room-legacy') as { data: string };
+    const parsed = JSON.parse(row.data) as Record<string, unknown>;
+    delete parsed.name;
+    db.prepare('UPDATE poker_rooms SET data = ? WHERE id = ?').run(JSON.stringify(parsed), 'room-legacy');
+
+    expect(storage.read('room-legacy', 'creator')).toMatchObject({ name: 'Poker Room' });
+  } finally {
+    db.close();
+  }
+});
+
+test('only a Facilitator can rename a Room, blank resets to Poker Room, and live Participants receive updates', async () => {
+  const id = generateEntityId();
+  rooms.create(id, 'facilitator', 'Alex', 'Initial Name');
+  rooms.mutate(id, 'participant', { type: 'join', displayName: 'Sam' });
+
+  const connection = new AbortController();
+  const response = rooms.connect(id, 'participant', new Request('https://retrocks.test/live', { signal: connection.signal }));
+  const reader = response.body!.getReader();
+  const nextFrame = async () => {
+    const { value } = await reader.read();
+    return parsePokerLiveMessage(new TextDecoder().decode(value).slice(6));
+  };
+
+  try {
+    expect(await nextFrame()).toMatchObject({ type: 'room:snapshot', room: { name: 'Initial Name' } });
+    expect(await nextFrame()).toMatchObject({ type: 'room:presence' });
+
+    expect(rooms.mutate(id, 'participant', { type: 'rename-room', name: 'Hijacked' }))
+      .toMatchObject({ ok: false, code: 'FORBIDDEN' });
+
+    const renamed = rooms.mutate(id, 'facilitator', { type: 'rename-room', name: '  Payments Estimation  ' });
+    expect(renamed).toMatchObject({ ok: true, room: { name: 'Payments Estimation' } });
+    expect(await nextFrame()).toMatchObject({ type: 'room:snapshot', room: { name: 'Payments Estimation' } });
+
+    const reset = rooms.mutate(id, 'facilitator', { type: 'rename-room', name: '   ' });
+    expect(reset).toMatchObject({ ok: true, room: { name: 'Poker Room' } });
+    expect(await nextFrame()).toMatchObject({ type: 'room:snapshot', room: { name: 'Poker Room' } });
+  } finally {
+    connection.abort();
+  }
 });

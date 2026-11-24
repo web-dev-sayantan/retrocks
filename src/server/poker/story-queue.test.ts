@@ -629,6 +629,7 @@ test('closing an unresolved Room publishes only the ordered summary and ends liv
     if (!result.ok) throw new Error(result.message);
     const summary = {
       id,
+      name: 'Poker Room',
       version: result.room.version,
       closed: true,
       canDelete: false,

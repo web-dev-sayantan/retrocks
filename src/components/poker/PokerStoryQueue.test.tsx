@@ -22,7 +22,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
   const second = { id: 'second', title: 'Pay with gift card', status: 'pending' } satisfies PokerStory;
   const [stories, setStories] = createSignal([first]);
   const room: PokerLiveRoomView = {
-    closed: false, id: 'room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
+    closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: null, participants: [], stories: [], activeStoryId: null,
     deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   };
 
@@ -61,7 +61,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
 test('a Participant can read Story statuses and the active Story without queue controls', () => {
   const pending = { id: 'pending', title: 'Restore cart', status: 'pending' } as const;
   const room: PokerLiveRoomView = {
-    closed: false, id: 'room',
+    closed: false, id: 'room', name: 'Poker Room',
     version: 2,
     viewer: { id: 'sam', displayName: 'Sam', isFacilitator: false },
     participants: [],
@@ -100,7 +100,7 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
   const target = { id: 'receipt', title: 'Send receipt', status: 'pending' } as const;
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const room: PokerLiveRoomView = {
-    closed: false, id: 'room',
+    closed: false, id: 'room', name: 'Poker Room',
     version: 1,
     viewer: facilitator,
     participants: [facilitator],
@@ -138,7 +138,7 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const current = { id: 'checkout', title: 'Save checkout', status: 'pending' } as const;
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
-    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
+    closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator], stories: [current],
     activeStoryId: current.id, deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
     deckLocked: true,
@@ -206,7 +206,7 @@ test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it fr
 test('a Facilitator can save an ordered custom Deck through the labeled settings', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
-    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [], stories: [], activeStoryId: null,
+    closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [], stories: [], activeStoryId: null,
     deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   });
   const change = vi.fn(async (): Promise<PokerResult> => {
@@ -247,6 +247,7 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
   const initial: PokerLiveRoomView = {
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 1,
     viewer: facilitator,
     participants: [facilitator],
@@ -312,7 +313,7 @@ test('Close Room focuses Cancel and a confirmation stays tied to the original Vo
 test('a Facilitator can cast, clear, and reveal votes through named agent controls', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
-    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
+    closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator],
     stories: [{ id: 'checkout', title: 'Save checkout', status: 'pending' }], activeStoryId: 'checkout',
     deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: true,
     round: { id: 'round', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
@@ -363,7 +364,7 @@ test('a Facilitator can cast, clear, and reveal votes through named agent contro
 test('Close Room always confirms when no unresolved Voting Round is active and requires agent approval', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const room: PokerLiveRoomView = {
-    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
+    closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator],
     stories: [{ id: 'checkout', title: 'Save checkout', status: 'estimated', acceptedEstimate: '5' }],
     activeStoryId: 'checkout',
     deck: FIBONACCI_DECK,
@@ -414,7 +415,7 @@ test('Close Room always confirms when no unresolved Voting Round is active and r
 test('Close Room confirms with summary copy when no Voting Round has started', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const room: PokerLiveRoomView = {
-    closed: false, id: 'room', version: 1, viewer: facilitator, participants: [facilitator],
+    closed: false, id: 'room', name: 'Poker Room', version: 1, viewer: facilitator, participants: [facilitator],
     stories: [], activeStoryId: null, deck: FIBONACCI_DECK, deckType: 'fibonacci', deckLocked: false, round: null,
   };
   const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
@@ -441,6 +442,7 @@ test('shows vote breakdown and non-voting participants after reveal', () => {
   const room: PokerLiveRoomView = {
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 3,
     viewer: alex,
     participants: [alex, priya, maya],
@@ -471,6 +473,7 @@ test('Locked Stories show a lock cue for all Participants while preserving statu
   const room: PokerLiveRoomView = {
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 2,
     viewer: { id: 'sam', displayName: 'Sam', isFacilitator: false },
     participants: [{ id: 'sam', displayName: 'Sam', isFacilitator: false }],
@@ -503,6 +506,7 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 1,
     viewer: facilitator,
     participants: [facilitator],
@@ -571,6 +575,7 @@ test('locking the active Story confirms only when an unresolved Voting Round has
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 1,
     viewer: facilitator,
     participants: [facilitator],

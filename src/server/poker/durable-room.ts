@@ -23,8 +23,8 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     this.storage = new PokerRoomStorage(wrapDurableObjectSql(ctx.storage));
   }
 
-  async create(id: string, hash: string, displayName: string): Promise<PokerRoomView> {
-    const room = this.storage.create(id, hash, displayName);
+  async create(id: string, hash: string, displayName: string, name?: string): Promise<PokerRoomView> {
+    const room = this.storage.create(id, hash, displayName, name);
     await this.ctx.storage.setAlarm(room.expiresAt);
     return projectPokerRoom(room, hash);
   }

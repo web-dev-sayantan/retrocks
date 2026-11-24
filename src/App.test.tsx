@@ -79,6 +79,7 @@ it.each([
 
 const room: PokerLiveRoomView = {
   id: 'abcdefghijklmnopqrstuv',
+  name: 'Poker Room',
   closed: false,
   version: 1,
   viewer: null,
@@ -98,7 +99,7 @@ it.each(['p', 'P'])(
     window.history.replaceState(null, '', `/${segment}/${room.id}`);
     render(() => <App />);
 
-    expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
+    expect(await screen.findByRole('heading', { name: 'Join Poker Room', level: 1 }))
       .toBeInTheDocument();
     expect(readRecentPokerRooms()).toEqual([]);
     const header = within(screen.getByRole('banner'));
@@ -126,12 +127,12 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
     target: { value: 'Sam' },
   });
   fireEvent.submit(setup);
-  await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 });
+  await screen.findByRole('heading', { name: 'Poker Room', level: 1 });
   await waitFor(() => expect(window.location.pathname).toBe(`/p/${room.id}`));
   expect(poker).toHaveAttribute('aria-current', 'page');
 
   const home = screen.getByRole('link', { name: 'Retrocks' });
-  const label = 'Room · abcdefgh';
+  const label = 'Poker Room';
   const openSavedRoom = async () => {
     const list = await screen.findByRole('region', { name: 'Recent Rooms' });
     const link = within(list).getByRole('link', { name: label });
@@ -151,7 +152,7 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
   flush();
 
   const list = await screen.findByRole('region', { name: 'Recent Rooms' });
-  const remove = 'Remove Room · abcdefgh from Recent Rooms';
+  const remove = 'Remove Poker Room from Recent Rooms';
   expect(within(list).getByRole('button', { name: remove })).toBeEnabled();
   const agent = createAgent();
   expect(agent.snapshot().some((control) => control.label === remove)).toBe(true);
@@ -161,7 +162,7 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
 });
 
 it.each([
-  ['closed', { id: 'c'.repeat(22), version: 2, closed: true, canDelete: false, stories: [] }, 'Room summary', true],
+  ['closed', { id: 'c'.repeat(22), name: 'Closed Sizing', version: 2, closed: true, canDelete: false, stories: [] }, 'Closed Sizing', true],
   ['unavailable', null, 'Room unavailable', false],
 ] as const)('handles a saved Room that is %s', async (_, response, heading, saved) => {
   const id = response?.id ?? 'u'.repeat(22);

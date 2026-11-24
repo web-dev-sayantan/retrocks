@@ -16,6 +16,7 @@ function makeRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoomView
   return {
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 1,
     viewer: alex,
     participants: [alex, priya],

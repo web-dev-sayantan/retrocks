@@ -15,7 +15,7 @@ export const getPokerRoom = query(async (id: string): Promise<PokerRoomView | nu
 export const createPokerRoom = formAction(async (form: FormData) => {
   'use server';
   const { createPokerRoomForRequest } = await import('../server/poker/service');
-  const result = await createPokerRoomForRequest(form.get('displayName'));
+  const result = await createPokerRoomForRequest(form.get('displayName'), form.get('roomName'));
   if (result.ok) return redirect(pokerRoomPath(result.room.id));
   return pokerResponse(result);
 });

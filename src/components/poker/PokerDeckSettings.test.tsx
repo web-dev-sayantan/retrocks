@@ -26,6 +26,7 @@ test('Deck settings previews Fibonacci, T-shirt, and live-parsed Custom choices 
     room: {
       closed: false,
       id: 'room',
+      name: 'Poker Room',
       version: 2,
       viewer: { id: 'alex', displayName: 'Alex', isFacilitator: true },
       participants: [],
@@ -91,6 +92,7 @@ test('changing the Deck while a Voting Round is open with no votes updates the o
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
     id: 'room',
+    name: 'Poker Room',
     version: 1,
     viewer: facilitator,
     participants: [facilitator],

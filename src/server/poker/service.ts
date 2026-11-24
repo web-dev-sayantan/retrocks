@@ -3,20 +3,28 @@ import { getRequestEvent } from '@solidjs/web';
 import { safeParse } from 'valibot';
 
 import { PokerCommand, PokerRoomId } from '../../lib/poker-schemas';
-import type { PokerDeleteResult, PokerResult, PokerRoomView } from '../../lib/poker-types';
+import { POKER_ROOM_NAME_LIMIT, type PokerDeleteResult, type PokerResult, type PokerRoomView } from '../../lib/poker-types';
 import { generateEntityId, hashTokenWithSalt } from '../crypto';
 import { checkPokerCreateRateLimit } from '../rate-limit';
 import { ensureParticipantSession, getSessionFromRequest, type RetrocksSession } from '../session';
-import { pokerDisplayName } from './room';
+import { pokerDisplayName, pokerRoomName } from './room';
 import { getPokerRoomAccess } from './runtime';
 
 export function hashPokerParticipant(roomId: string, session: RetrocksSession) {
   return hashTokenWithSalt(session.participantId, `poker:${roomId}`);
 }
 
-export async function createPokerRoomForRequest(input: unknown): Promise<PokerResult> {
+export async function createPokerRoomForRequest(input: unknown, roomNameInput?: unknown): Promise<PokerResult> {
   const displayName = pokerDisplayName(input);
   if (!displayName) return { ok: false, code: 'INVALID_INPUT', message: 'Enter a valid Display Name.' };
+  const roomName = pokerRoomName(roomNameInput);
+  if (!roomName) {
+    return {
+      ok: false,
+      code: 'INVALID_INPUT',
+      message: `Enter a Room name of ${POKER_ROOM_NAME_LIMIT} characters or fewer.`,
+    };
+  }
   const request = getRequestEvent()?.request;
   if (!request) throw new Error('A request is required to create a Room.');
   if (!(await checkPokerCreateRateLimit(request)).allowed) {
@@ -26,7 +34,7 @@ export async function createPokerRoomForRequest(input: unknown): Promise<PokerRe
   const session = await ensureParticipantSession({ renew: true });
   const id = generateEntityId();
   const room = await getPokerRoomAccess(id);
-  return { ok: true, room: await room.create(await hashPokerParticipant(id, session), displayName) };
+  return { ok: true, room: await room.create(await hashPokerParticipant(id, session), displayName, roomName) };
 }
 
 export async function readPokerRoomForRequest(id: string): Promise<PokerRoomView | null> {
@@ -44,7 +52,9 @@ export async function mutatePokerRoomForRequest(id: string, input: unknown): Pro
   if (!command.success) {
     const type = input && typeof input === 'object' && 'type' in input ? input.type : undefined;
     const message = type === 'set-deck' ? 'Enter at least two different, nonblank Deck choices.'
-      : type === 'join' ? 'Enter a valid Display Name.' : 'Check the Room details and try again.';
+      : type === 'join' ? 'Enter a valid Display Name.'
+      : type === 'rename-room' ? `Enter a Room name of ${POKER_ROOM_NAME_LIMIT} characters or fewer.`
+      : 'Check the Room details and try again.';
     return {
       ok: false,
       code: 'INVALID_INPUT',

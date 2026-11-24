@@ -28,6 +28,7 @@ function makeLiveRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoom
   return {
     closed: false,
     id: ROOM_ID,
+    name: 'Poker Room',
     version: 1,
     viewer: { id: ALICE_ID, displayName: 'Alice', isFacilitator: true },
     facilitatorLinkRevision: 1,
@@ -605,6 +606,7 @@ describe('createPokerRoomController', () => {
     const closedSnapshot: PokerClosedRoomView = {
       closed: true,
       id: ROOM_ID,
+      name: 'Poker Room',
       version: 3,
       canDelete: true,
       stories: [{ title: 'First story', status: 'estimated', acceptedEstimate: '5' }],
@@ -734,6 +736,7 @@ describe('createPokerRoomController', () => {
           room: {
             closed: true,
             id: ROOM_ID,
+            name: 'Poker Room',
             version: 5,
             canDelete: true,
             stories: [{ title: 'First story', status: 'pending' }],
@@ -745,5 +748,30 @@ describe('createPokerRoomController', () => {
       { scenario: 'poker-room-controller-live-and-optimistic-actions' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('optimistically renames the Room, defaults blank to Poker Room, and rolls back on failure', async () => {
+    const initial = makeLiveRoom({ name: 'Sprint 14' });
+    const { controller, changeRoomSpy } = mountSession(initial);
+
+    let resolveRename!: (value: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => { resolveRename = resolve; }),
+    );
+
+    const pending = controller.changeRoom({ type: 'rename-room', name: '  Payments Planning  ' });
+    flush();
+    expect(controller.room().name).toBe('Payments Planning');
+
+    resolveRename({ ok: true, room: makeLiveRoom({ name: 'Payments Planning', version: 2 }) });
+    await pending;
+    flush();
+    expect(controller.room().name).toBe('Payments Planning');
+
+    changeRoomSpy.mockResolvedValueOnce({ ok: false, code: 'FORBIDDEN', message: 'Facilitator access is required.' });
+    const rejected = await controller.changeRoom({ type: 'rename-room', name: '   ' });
+    flush();
+    expect(rejected).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(controller.room().name).toBe('Payments Planning');
   });
 });
