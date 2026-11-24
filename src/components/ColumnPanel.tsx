@@ -37,6 +37,7 @@ import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
 import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
+import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from '../lib/board-controller';
 
@@ -111,12 +112,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const isRenaming = () => titleField.present('input');
   const [hasTitleText, setHasTitleText] = createSignal(true);
   let titleButtonEl: HTMLButtonElement | undefined;
-  let renameInputEl: HTMLInputElement | undefined;
-
-  // bindInput fills, selects, and focuses the editor once its element mounts.
-  createEffect(isRenaming, (renaming) => {
-    if (renaming && renameInputEl) columnEdit.bindInput(renameInputEl);
-  });
 
   // The title button re-mounts while editing ends, so guide focus back when nothing took it.
   createEffect(isRenaming, (renaming, wasRenaming) => {
@@ -265,21 +260,25 @@ export default function ColumnPanel(props: ColumnPanelProps) {
               when={!isRenaming()}
               fallback={
                 <div class="flex min-w-0 flex-1 items-center gap-1">
-                  <input
-                    ref={renameInputEl}
-                    type="text"
-                    aria-label="Column title"
-                    maxlength={MAX_COLUMN_TITLE_LENGTH}
-                    onKeyDown={(event) => columnEdit.inputKeydown(event)}
-                    onFocusOut={(event) => columnEdit.end('focus-out', event)}
-                    onInput={(e) =>
-                      setHasTitleText(e.currentTarget.value.trim().length > 0)
-                    }
-                    class={[
-                      'min-w-0 flex-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
-                      'board-focus-ring',
-                    ]}
-                  />
+                  <InlineEditorMount bind={(el) => columnEdit.bindInput(el)}>
+                    {(ref) => (
+                      <input
+                        ref={ref}
+                        type="text"
+                        aria-label="Column title"
+                        maxlength={MAX_COLUMN_TITLE_LENGTH}
+                        onKeyDown={(event) => columnEdit.inputKeydown(event)}
+                        onFocusOut={(event) => columnEdit.end('focus-out', event)}
+                        onInput={(e) =>
+                          setHasTitleText(e.currentTarget.value.trim().length > 0)
+                        }
+                        class={[
+                          'min-w-0 flex-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
+                          'board-focus-ring',
+                        ]}
+                      />
+                    )}
+                  </InlineEditorMount>
                   <button
                     type="button"
                     aria-label="Save column title"
