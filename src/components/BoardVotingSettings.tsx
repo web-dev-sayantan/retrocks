@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from '@ui-sdk/solid/select';
 import { ChevronDown } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
+import { For, Show, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
 
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
@@ -58,17 +58,34 @@ export default function BoardVotingSettings(props: {
   onDeleteBoard: () => Promise<string | null>;
 }) {
   const destructiveActionsId = createUniqueId();
-  const [voteLimitChoice, setVoteLimitChoice] = createSignal('5');
-  const [customLimit, setCustomLimit] = createSignal<number | null>(null);
-  const [singleVote, setSingleVote] = createSignal(false);
-  const [blindVoting, setBlindVoting] = createSignal(false);
-  const [allowParticipantGroup, setAllowParticipantGroup] = createSignal(false);
-  const [pending, setPending] = createSignal<'save' | 'reset' | 'lock' | 'delete' | null>(null);
-  const [error, setError] = createSignal<string | null>(null);
-  let initialSettings: Pick<
+  const openingSettings = createMemo<Pick<
     BoardViewDTO,
     'voteLimit' | 'maxVotesPerCard' | 'blindVoting' | 'allowParticipantGroup'
-  >;
+  > | null>((previous) => {
+    // Keep the opening snapshot through the exit animation and unrelated live updates.
+    if (!props.open) return previous ?? null;
+    return untrack(() => {
+      const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } = props.board;
+      return { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup };
+    });
+  });
+  const [voteLimitChoice, setVoteLimitChoice] = createSignal(() => {
+    const limit = openingSettings()?.voteLimit;
+    if (limit === undefined) return '5';
+    if (limit === null) return 'unlimited';
+    return VOTE_LIMIT_OPTIONS.some((option) => option === limit) ? String(limit) : 'custom';
+  });
+  const [customLimit, setCustomLimit] = createSignal(() => openingSettings()?.voteLimit ?? null);
+  const [singleVote, setSingleVote] = createSignal(() => openingSettings()?.maxVotesPerCard === 1);
+  const [blindVoting, setBlindVoting] = createSignal(() => openingSettings()?.blindVoting ?? false);
+  const [allowParticipantGroup, setAllowParticipantGroup] = createSignal(() =>
+    openingSettings()?.allowParticipantGroup ?? false,
+  );
+  const [pending, setPending] = createSignal<'save' | 'reset' | 'lock' | 'delete' | null>(null);
+  const [error, setError] = createSignal<string | null>(() => {
+    openingSettings();
+    return null;
+  });
 
   const voteLimit = createMemo(() => {
     const choice = voteLimitChoice();
@@ -83,29 +100,10 @@ export default function BoardVotingSettings(props: {
       : Number.isSafeInteger(limit) && limit >= 1;
   });
 
-  createEffect(() => props.open, (open) => {
-    if (!open) return;
-    untrack(() => {
-      const { voteLimit, maxVotesPerCard, blindVoting, allowParticipantGroup } =
-        props.board;
-      initialSettings = {
-        voteLimit,
-        maxVotesPerCard,
-        blindVoting,
-        allowParticipantGroup,
-      };
-      setVoteLimitChoice(voteLimit === null ? 'unlimited' : VOTE_LIMIT_OPTIONS.some((option) => option === voteLimit) ? String(voteLimit) : 'custom');
-      setCustomLimit(voteLimit);
-      setSingleVote(maxVotesPerCard === 1);
-      setBlindVoting(blindVoting);
-      setAllowParticipantGroup(allowParticipantGroup);
-      setError(null);
-    });
-  });
-
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
-    if (pending() || !validLimit() || !canControlFacilitation(props.board)) return;
+    const initialSettings = openingSettings();
+    if (!initialSettings || pending() || !validLimit() || !canControlFacilitation(props.board)) return;
 
     const patch: VotingSettingsPatch = {};
     const limit = voteLimit();

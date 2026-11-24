@@ -20,6 +20,7 @@ import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerStoryQueue from './PokerStoryQueue';
+import { InlineEditorMount } from '../InlineEditorMount';
 import PokerStoryTitleEditor from './PokerStoryTitleEditor';
 import PokerVotingRound from './PokerVotingRound';
 import './poker.css';
@@ -127,7 +128,6 @@ export default function PokerWorkspace(props: {
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
   let roomNameEditorEl: HTMLDivElement | undefined;
-  let roomNameInputEl: HTMLInputElement | undefined;
 
   const canManage = () => props.room.viewer?.isFacilitator === true;
 
@@ -137,7 +137,13 @@ export default function PokerWorkspace(props: {
     disabled: () => !canManage(),
   }));
   const roomNameEdit = roomNameField.api.edit;
-  const roomNameSave = createInlineEditSave(saveRoomNameText, () => roomNameEdit.cancel());
+  let editingRoomId: string | undefined;
+  let disposed = false;
+  const roomNameSave = createInlineEditSave(
+    saveRoomNameText,
+    () => roomNameEdit.cancel(),
+    () => !disposed && canManage() && editingRoomId === props.room.id,
+  );
   const isRenamingRoom = () => roomNameField.present('input');
   const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
 
@@ -148,8 +154,9 @@ export default function PokerWorkspace(props: {
 
   function startRoomRename(): void {
     roomNameTap.reset();
-    if (!canManage()) return;
-    roomNameEdit.start(props.room.id);
+    if (!canManage() || isRenamingRoom()) return;
+    editingRoomId = props.room.id;
+    roomNameEdit.start(editingRoomId);
   }
 
   function handleRoomNameDoubleClick(event: MouseEvent): void {
@@ -160,7 +167,7 @@ export default function PokerWorkspace(props: {
 
   function cancelRoomRename(): void {
     roomNameTap.reset();
-    roomNameSave.resetError();
+    roomNameSave.reset();
     roomNameEdit.cancel();
   }
 
@@ -175,9 +182,12 @@ export default function PokerWorkspace(props: {
     }
   }
 
-  createEffect(isRenamingRoom, (renaming) => {
-    if (renaming && roomNameInputEl) roomNameEdit.bindInput(roomNameInputEl);
-  });
+  createEffect(
+    () => canManage() ? props.room.id : undefined,
+    (roomId, previousRoomId) => {
+      if (previousRoomId !== undefined && roomId !== previousRoomId) cancelRoomRename();
+    },
+  );
 
   createEffect(isRenamingRoom, (renaming, wasRenaming) => {
     if (!renaming && wasRenaming && document.activeElement === document.body) {
@@ -187,6 +197,7 @@ export default function PokerWorkspace(props: {
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
+    return () => { disposed = true; };
   });
 
   const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
@@ -199,22 +210,27 @@ export default function PokerWorkspace(props: {
             when={!isRenamingRoom()}
             fallback={
               <div ref={roomNameEditorEl} class="poker-room-title-wrap">
-                <input
-                  ref={roomNameInputEl}
-                  type="text"
-                  aria-label="Room name"
-                  placeholder={POKER_DEFAULT_ROOM_NAME}
-                  maxlength={POKER_ROOM_NAME_LIMIT}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
-                    roomNameEdit.inputKeydown(event);
-                  }}
-                  onFocusOut={(event) => {
-                    if (event.relatedTarget instanceof Node && roomNameEditorEl?.contains(event.relatedTarget)) return;
-                    roomNameEdit.end('focus-out', event);
-                  }}
-                  class="poker-input poker-room-title-input board-focus-ring"
-                />
+                <InlineEditorMount bind={(input) => roomNameEdit.bindInput(input)}>
+                  {(ref) => (
+                    <input
+                      ref={ref}
+                      type="text"
+                      aria-label="Room name"
+                      placeholder={POKER_DEFAULT_ROOM_NAME}
+                      maxlength={POKER_ROOM_NAME_LIMIT}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
+                        if (event.key === 'Escape') roomNameSave.reset();
+                        roomNameEdit.inputKeydown(event);
+                      }}
+                      onFocusOut={(event) => {
+                        if (event.relatedTarget instanceof Node && roomNameEditorEl?.contains(event.relatedTarget)) return;
+                        roomNameEdit.end('focus-out', event);
+                      }}
+                      class="poker-input poker-room-title-input board-focus-ring"
+                    />
+                  )}
+                </InlineEditorMount>
                 <div class="poker-room-title-actions">
                   <Button
                     type="button"
@@ -369,7 +385,8 @@ export default function PokerWorkspace(props: {
                     canEdit={props.room.viewer?.isFacilitator === true}
                     discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
                     variant="stage"
-                    onSave={(title, discardRoundId) => editActiveStoryTitle(story().id, title, discardRoundId)}
+                    onSave={editActiveStoryTitle}
+                    fallbackFocus={() => activeHeading.focus()}
                   />
 
                   <Show when={story().acceptedEstimate !== undefined}>

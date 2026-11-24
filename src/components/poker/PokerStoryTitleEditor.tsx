@@ -1,12 +1,13 @@
 import { Button } from '@ui-sdk/solid/button';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, X } from 'lucide';
-import { Show, createEffect, createSignal, untrack } from 'solid-js';
+import { Show, createEffect, createSignal, onSettled, untrack } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
 import { POKER_STORY_TITLE_LIMIT, type PokerStory } from '../../lib/poker-types';
+import { InlineEditorMount } from '../InlineEditorMount';
 import LucideIcon from '../LucideIcon';
 
 export interface PokerStoryTitleEditorHandle {
@@ -20,7 +21,7 @@ export default function PokerStoryTitleEditor(props: {
   canEdit: boolean;
   discardRoundId?: string;
   variant: 'queue' | 'stage';
-  onSave: (title: string, discardRoundId?: string) => Promise<InlineEditOutcome>;
+  onSave: (storyId: string, title: string, discardRoundId?: string) => Promise<InlineEditOutcome>;
   onHandle?: (handle: PokerStoryTitleEditorHandle) => void;
   fallbackFocus?: () => void;
 }) {
@@ -32,32 +33,40 @@ export default function PokerStoryTitleEditor(props: {
     disabled: () => !canEdit(),
   }));
   const titleEdit = titleField.api.edit;
-  const titleSave = createInlineEditSave(saveTitleText, () => titleEdit.cancel());
+  let editingStoryId: string | undefined;
+  let disposed = false;
+  onSettled(() => () => { disposed = true; });
+  const titleSave = createInlineEditSave(
+    saveTitleText,
+    () => titleEdit.cancel(),
+    () => !disposed && canEdit() && editingStoryId === props.story.id,
+  );
   const isEditing = () => titleField.present('input');
   const [hasText, setHasText] = createSignal(true);
   let editorEl: HTMLDivElement | undefined;
-  let inputEl: HTMLInputElement | undefined;
 
   const titleTap = createDoubleTap(() => canEdit(), startEdit);
 
   function startEdit(): void {
     titleTap.reset();
-    if (!canEdit()) return;
+    if (!canEdit() || isEditing()) return;
     titleSave.resetError();
     setHasText(props.story.title.trim().length > 0);
-    titleEdit.start(props.story.id);
+    editingStoryId = props.story.id;
+    titleEdit.start(editingStoryId);
   }
 
   function cancelEdit(): void {
     titleTap.reset();
-    titleSave.resetError();
+    titleSave.reset();
     titleEdit.cancel();
   }
 
-  async function saveTitleText(text: string): Promise<InlineEditOutcome> {
+  async function saveTitleText(text: string, isCurrent: () => boolean): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return 'Enter a Story title.';
     if (trimmed === props.story.title) return true;
+    const storyId = props.story.id;
     const discardRoundId = props.discardRoundId;
     if (discardRoundId !== undefined) {
       const confirmed = await confirmBoardAction({
@@ -67,19 +76,15 @@ export default function PokerStoryTitleEditor(props: {
         confirmLabel: 'Save and restart voting',
         agentConfirm: 'Changes the active Story title and restarts the current Voting Round with empty ballots.',
       });
-      if (!confirmed) return true;
+      if (!confirmed || !isCurrent()) return true;
     }
-    return props.onSave(trimmed, discardRoundId);
+    return props.onSave(storyId, trimmed, discardRoundId);
   }
 
   untrack(() => props.onHandle)?.({
     start: startEdit,
     cancel: cancelEdit,
     isEditing,
-  });
-
-  createEffect(isEditing, (editing) => {
-    if (editing && inputEl) titleEdit.bindInput(inputEl);
   });
 
   createEffect(isEditing, (editing, wasEditing) => {
@@ -89,21 +94,15 @@ export default function PokerStoryTitleEditor(props: {
   });
 
   createEffect(
-    () => !canEdit() && isEditing(),
-    (shouldCancel) => {
-      if (shouldCancel) untrack(cancelEdit);
-    },
-  );
-
-  createEffect(
-    () => props.story.id,
-    (id, previousId) => {
-      if (previousId !== undefined && id !== previousId) untrack(cancelEdit);
+    () => canEdit() ? props.story.id : undefined,
+    (storyId, previousStoryId) => {
+      if (previousStoryId !== undefined && storyId !== previousStoryId) untrack(cancelEdit);
     },
   );
 
   function handleKeyDown(event: KeyboardEvent): void {
     if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Escape') titleSave.reset();
     titleEdit.inputKeydown(event);
   }
 
@@ -138,25 +137,29 @@ export default function PokerStoryTitleEditor(props: {
         class={props.variant === 'stage' ? 'poker-active-title-editor' : 'poker-story-inline-editor min-w-0 flex-1'}
       >
         <div class={props.variant === 'stage' ? 'flex w-full items-center justify-center gap-1.5' : 'flex min-w-0 items-center gap-1'}>
-          <input
-            ref={inputEl}
-            type="text"
-            aria-label="Edit Story title"
-            aria-invalid={titleSave.error() ? 'true' : undefined}
-            maxlength={POKER_STORY_TITLE_LIMIT}
-            readonly={titleSave.isSaving()}
-            onKeyDown={handleKeyDown}
-            onFocusOut={handleFocusOut}
-            onInput={(event) => {
-              titleSave.resetError();
-              setHasText(event.currentTarget.value.trim().length > 0);
-            }}
-            class={
-              props.variant === 'stage'
-                ? 'poker-active-title-input board-focus-ring'
-                : 'poker-story-inline-input board-focus-ring'
-            }
-          />
+          <InlineEditorMount bind={(input) => titleEdit.bindInput(input)}>
+            {(ref) => (
+              <input
+                ref={ref}
+                type="text"
+                aria-label="Edit Story title"
+                aria-invalid={titleSave.error() ? 'true' : undefined}
+                maxlength={POKER_STORY_TITLE_LIMIT}
+                readonly={titleSave.isSaving()}
+                onKeyDown={handleKeyDown}
+                onFocusOut={handleFocusOut}
+                onInput={(event) => {
+                  titleSave.resetError();
+                  setHasText(event.currentTarget.value.trim().length > 0);
+                }}
+                class={
+                  props.variant === 'stage'
+                    ? 'poker-active-title-input board-focus-ring'
+                    : 'poker-story-inline-input board-focus-ring'
+                }
+              />
+            )}
+          </InlineEditorMount>
           <Button
             class={[
               'poker-inline-action poker-inline-action-save spring-press board-focus-ring',

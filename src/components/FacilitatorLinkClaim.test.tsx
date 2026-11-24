@@ -148,6 +148,41 @@ describe('FacilitatorLinkClaim', () => {
     }
   });
 
+  it('ignores a superseded claim result and stops claiming after unmount', async () => {
+    const older = Promise.withResolvers<FacilitatorClaimResponse>();
+    const newer = Promise.withResolvers<FacilitatorClaimResponse>();
+    const claimedBoard = makeBoardView({ id: BOARD_ID, version: 3, isFacilitator: true });
+    const claim = vi.fn<(input: FacilitatorClaimInput) => Promise<FacilitatorClaimResponse>>()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    const onClaimed = vi.fn();
+
+    window.history.replaceState(null, '', `${BOARD_PATH}#f=${VALID_TOKEN}`);
+    const view = render(() => (
+      <FacilitatorLinkClaim boardId={BOARD_ID} claim={claim} onClaimed={onClaimed} />
+    ));
+    await waitFor(() => expect(claim).toHaveBeenCalledTimes(1));
+
+    const openAnotherLink = () => {
+      window.history.replaceState(null, '', `${BOARD_PATH}#f=${'B'.repeat(43)}`);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    };
+    openAnotherLink();
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(window.location.hash).toBe('');
+
+    newer.resolve({ ok: true, board: claimedBoard });
+    await waitFor(() => expect(onClaimed).toHaveBeenCalledWith(claimedBoard));
+    older.resolve({ ok: true, board: { ...claimedBoard, version: 2 } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onClaimed).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    openAnotherLink();
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(window.location.hash).toBe(`#f=${'B'.repeat(43)}`);
+  });
+
   it('activates Facilitator controls, preserves local filter state, and reconnects live updates in place', async () => {
     const { artifact } = await captureArtifact(
       async () => {

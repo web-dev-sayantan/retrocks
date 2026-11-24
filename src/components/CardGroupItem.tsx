@@ -2,7 +2,7 @@ import { Menu, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/solid/collapsible';
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
 import type {
   CardGroupDTO,
@@ -17,6 +17,7 @@ import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import CardItem from './CardItem';
+import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import type { WorkspaceVoting } from '../lib/board-controller';
 import VoteControls from './VoteControls';
@@ -67,10 +68,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   let moveTrigger: HTMLButtonElement | undefined;
   let titleButtonEl: HTMLButtonElement | undefined;
 
-  createEffect(isMoving, (moving, wasMoving) => {
-    if (!moving && wasMoving && moveFailed()) moveTrigger?.focus({ preventScroll: true });
-  });
-
   const otherColumns = createMemo(
     () => props.columns.filter((column) => column.id !== props.group.columnId),
   );
@@ -91,12 +88,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const titleSave = createInlineEditSave(saveGroupTitle, () => groupEdit.cancel());
   const isRenaming = () => titleField.present('input');
   const [hasTitleText, setHasTitleText] = createSignal(true);
-  let renameInputEl: HTMLInputElement | undefined;
-
-  // bindInput fills, selects, and focuses the editor once its element mounts.
-  createEffect(isRenaming, (renaming) => {
-    if (renaming && renameInputEl) groupEdit.bindInput(renameInputEl);
-  });
 
   // The title button re-mounts while editing ends, so guide focus back when nothing took it.
   createEffect(isRenaming, (renaming, wasRenaming) => {
@@ -128,13 +119,18 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     if (isMoving()) return;
     setIsMoving(true);
     setMoveFailed(false);
+    let ok = false;
     try {
-      const ok = await props.actions.moveCardGroup(props.group.id, targetColumnId);
-      setMoveFailed(!ok);
+      ok = await props.actions.moveCardGroup(props.group.id, targetColumnId);
     } catch {
-      setMoveFailed(true);
-    } finally {
-      setIsMoving(false);
+      // Treat an unexpected rejection like a failed move.
+    }
+    setMoveFailed(!ok);
+    setIsMoving(false);
+    if (!ok) {
+      onSettled(() => {
+        if (moveTrigger?.isConnected) moveTrigger.focus({ preventScroll: true });
+      });
     }
   }
 
@@ -200,19 +196,23 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             when={!isRenaming() || !canManageGroup()}
             fallback={
               <div class="col-span-2 flex min-w-0 items-center gap-1">
-                <input
-                  ref={renameInputEl}
-                  type="text"
-                  aria-label="Card Group title"
-                  readonly={titleSave.isSaving()}
-                  maxlength={MAX_GROUP_TITLE_LENGTH}
-                  onKeyDown={(event) => groupEdit.inputKeydown(event)}
-                  onFocusOut={(event) => groupEdit.end('focus-out', event)}
-                  onInput={(event) =>
-                    setHasTitleText(event.currentTarget.value.trim().length > 0)
-                  }
-                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text board-focus-ring sm:min-h-7"
-                />
+                <InlineEditorMount bind={(el) => groupEdit.bindInput(el)}>
+                  {(ref) => (
+                    <input
+                      ref={ref}
+                      type="text"
+                      aria-label="Card Group title"
+                      readonly={titleSave.isSaving()}
+                      maxlength={MAX_GROUP_TITLE_LENGTH}
+                      onKeyDown={(event) => groupEdit.inputKeydown(event)}
+                      onFocusOut={(event) => groupEdit.end('focus-out', event)}
+                      onInput={(event) =>
+                        setHasTitleText(event.currentTarget.value.trim().length > 0)
+                      }
+                      class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text board-focus-ring sm:min-h-7"
+                    />
+                  )}
+                </InlineEditorMount>
                 <button
                   type="button"
                   aria-label="Save Card Group title"

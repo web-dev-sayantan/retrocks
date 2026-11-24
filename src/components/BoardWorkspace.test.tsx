@@ -240,6 +240,45 @@ describe('<BoardWorkspace />', () => {
     expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
   });
 
+  it('preserves the open Voting Settings draft and takes a new baseline on reopening', async () => {
+    const initial = makeBoardView({ voteLimit: 5, allowParticipantGroup: false });
+    const [board, setBoard] = createSignal(initial);
+    const { actions, spies } = createFakeActions(initial);
+    const view = render(() => (
+      <BoardWorkspace board={board()} boardId={initial.id} actions={actions} />
+    ));
+    openBoardSettings(view);
+    const dialog = () => within(view.getByRole('dialog', { name: 'Board Settings' }));
+    const grouping = dialog().getByRole('checkbox', { name: 'Allow Participants to group Cards' });
+    fireEvent.click(grouping);
+    flush();
+
+    const updated = { ...initial, version: initial.version + 1, voteLimit: 10 };
+    setBoard(updated);
+    flush();
+    expect(grouping).toBeChecked();
+    expect(dialog().getByRole('combobox', { name: 'Vote limit' })).toHaveTextContent('5');
+    spies.updateVotingSettings.mockResolvedValue({
+      ok: true,
+      version: updated.version + 1,
+      events: [{
+        type: 'board:snapshot',
+        version: updated.version + 1,
+        serverNow: Date.now(),
+        board: { ...updated, version: updated.version + 1, allowParticipantGroup: true },
+      }],
+    });
+    fireEvent.click(dialog().getByRole('button', { name: 'Save Settings' }));
+    await flushPromises();
+    expect(spies.updateVotingSettings).toHaveBeenCalledWith({
+      boardId: initial.id, allowParticipantGroup: true,
+    });
+
+    openBoardSettings(view);
+    expect(dialog().getByRole('combobox', { name: 'Vote limit' })).toHaveTextContent('10');
+    expect(dialog().getByRole('checkbox', { name: 'Allow Participants to group Cards' })).toBeChecked();
+  });
+
   it('shows anonymous discussion in a Card detail, and applies reactions and comments from the live stream', async () => {
     const streams: EventTarget[] = [];
     vi.stubGlobal('EventSource', class extends EventTarget {
@@ -356,6 +395,52 @@ describe('<BoardWorkspace />', () => {
       expect(view.queryByText(card.content)).not.toBeInTheDocument();
       await Promise.resolve();
       expect(view.getByRole('main')).toHaveFocus();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('closes remotely deleted Card details without stealing focus from another control', async () => {
+    const streams: EventTarget[] = [];
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() {
+        super();
+        streams.push(this);
+      }
+      close() {}
+    });
+    const card = makeCard();
+    const board = makeBoardView({ cards: [card] });
+    const { actions } = createFakeActions(board);
+    const view = render(() => (
+      <>
+        <button type="button">Outside Board</button>
+        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      </>
+    ));
+    try {
+      flush();
+      fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
+      await flushPromises();
+      expect(view.getByRole('dialog', { name: 'Card details' })).toBeInTheDocument();
+
+      streams[0].dispatchEvent(new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'board:snapshot',
+          version: 2,
+          serverNow: 200,
+          board: { ...board, version: 2, cards: [] },
+        } satisfies BoardLiveMessage),
+      }));
+      flush();
+      const outside = view.getByRole('button', { name: 'Outside Board' });
+      outside.focus();
+      await flushPromises();
+
+      expect(view.queryByRole('dialog', { name: 'Card details' })).toBeNull();
+      expect(view.queryByRole('button', { name: 'Open Card details' })).toBeNull();
+      expect(outside).toHaveFocus();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -827,8 +912,8 @@ describe('<BoardWorkspace />', () => {
       await flushPromises();
       expect(toastTitle('Copy the selected link manually.')).toBeVisible();
       expect(link).toHaveFocus();
-      expect(link.selectionStart).toBe(0);
-      expect(link.selectionEnd).toBe(participantUrl.length);
+      expect(link).toHaveProperty('selectionStart', 0);
+      expect(link).toHaveProperty('selectionEnd', participantUrl.length);
 
       copy.focus();
       fireEvent.click(copy);
@@ -1865,14 +1950,20 @@ describe('<BoardWorkspace />', () => {
         flush();
       };
 
-      send({
+      expect(view.queryByText(/Private Mode is on|Blind Voting is on|Board locked\./)).toBeNull();
+
+      const privateBoard: BoardViewDTO = {
         ...board, version: 2, isBlurred: true, blindVoting: true,
         cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
-      });
+      };
+      send(privateBoard);
       const status = within(view.getByRole('group', { name: 'Board status' }));
       expect(status.getByText('Private Mode')).toBeVisible();
       expect(status.getByText('Blind Voting')).toBeVisible();
       expect(view.getByText(/Private Mode is on.*Blind Voting is on/)).toHaveAttribute('aria-live', 'polite');
+      const announcement = view.getByText(/Private Mode is on.*Blind Voting is on/);
+      send({ ...privateBoard, version: 3, title: 'Updated title' });
+      expect(view.getByText(/Private Mode is on.*Blind Voting is on/)).toBe(announcement);
       expect(view.queryByText(peer.content)).not.toBeInTheDocument();
       expect(view.getByText(own.content)).toBeVisible();
       fireEvent.click(within(view.getByText(own.content).closest('article')!).getByRole('button', { name: 'Card actions' }));
@@ -1880,14 +1971,14 @@ describe('<BoardWorkspace />', () => {
       expect(view.getByRole('menuitem', { name: 'Edit Card' })).toBeEnabled();
 
       send({
-        ...board, version: 3, isBlurred: true, blindVoting: true, isLocked: true,
+        ...board, version: 4, isBlurred: true, blindVoting: true, isLocked: true,
         cards: [own, { ...peer, content: '', redacted: true, placeholderLines: 2, myVotes: 0 }],
       });
       expect(status.getByText('Private Mode')).toBeVisible();
       expect(status.getByText('Blind Voting')).toBeVisible();
       expect(status.getByText('Locked')).toBeVisible();
 
-      send({ ...board, version: 4, blindVoting: true });
+      send({ ...board, version: 5, blindVoting: true });
       expect(view.getByText(peer.content)).toBeVisible();
       expect(status.queryByText('Private Mode')).not.toBeInTheDocument();
       expect(status.getByText('Blind Voting')).toBeVisible();
@@ -2114,6 +2205,23 @@ describe('<BoardWorkspace />', () => {
 
     expect(view.queryByRole('dialog', { name: 'Action Items' })).toBeNull();
     expect(view.getByRole('button', { name: 'More board actions' })).toHaveFocus();
+  });
+
+  it('restores Action Items focus when a CSS-hidden ancestor hides the shortcut opener', async () => {
+    const board = makeBoardView({ isLocked: true });
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} />);
+    flush();
+    const opener = view.getByRole('button', { name: 'Switch to dark theme' });
+    opener.focus();
+    fireEvent.keyDown(opener, { key: 'a' });
+    flush();
+
+    const close = view.getByRole('button', { name: 'Close Action Items' });
+    await waitFor(() => expect(close).toHaveFocus());
+    opener.parentElement!.style.display = 'none';
+    fireEvent.click(close);
+    flush();
+    expect(view.getByRole('button', { name: 'Action Items 0 open' })).toHaveFocus();
   });
 
   it('prevents non-Facilitator Participants from editing Action Items or accessing Board Settings when Locked', () => {
@@ -2625,7 +2733,7 @@ describe('<BoardWorkspace />', () => {
     expect(queryByText('CI reliability')).not.toBeInTheDocument();
   });
 
-  it('navigates the floating Card Group move menu with the keyboard and restores focus on Escape', async () => {
+  it('navigates the floating Card Group move menu with the keyboard and restores focus on Escape and failed moves', async () => {
     const board = makeBoardView({
       cards: [
         makeCard({ id: 'card_1', groupId: 'group_1' }),
@@ -2642,6 +2750,12 @@ describe('<BoardWorkspace />', () => {
       }],
     });
     const { actions, spies } = createFakeActions(board);
+
+    spies.moveCardGroup.mockResolvedValueOnce({
+      ok: false,
+      code: 'VALIDATION_ERROR',
+      message: 'Could not move the Card Group.',
+    });
 
     const { artifact } = await captureArtifact(async () => {
       const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
@@ -2670,6 +2784,21 @@ describe('<BoardWorkspace />', () => {
         expect(trigger).toHaveAttribute('aria-expanded', 'false');
         expect(view.queryByRole('menu', { name: 'Move Card Group to Column' })).not.toBeInTheDocument();
         expect(spies.moveCardGroup).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+        flush();
+        const target = view.getByRole('menuitem', { name: 'To Improve' });
+        await waitFor(() => expect(target).toHaveFocus());
+        const focus = vi.spyOn(trigger, 'focus');
+        fireEvent.keyDown(target, { key: 'Enter' });
+        flush();
+        expect(trigger).toBeDisabled();
+        await flushPromises();
+        expect(trigger).toBeEnabled();
+        expect(trigger).toHaveFocus();
+        expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+        expect(view.getByText('Could not move the Card Group. Try again.')).toBeVisible();
+        focus.mockRestore();
       } finally {
         view.unmount();
       }
@@ -4752,6 +4881,29 @@ describe('<BoardWorkspace />', () => {
     expectNoDiagnostics(artifact);
   });
 
+  it('keeps the Add Column draft through Board updates and clears it on soft navigation', () => {
+    const initialBoard = makeBoardView({ isFacilitator: true });
+    const [board, setBoard] = createSignal(initialBoard);
+    const view = render(() => <BoardWorkspace board={board()} boardId={board().id} />);
+    const openComposer = () => {
+      fireEvent.click(view.getByRole('button', { name: 'Add a Column' }));
+      flush();
+      return within(view.getByRole('dialog', { name: 'Add a Column' }))
+        .getByLabelText('New column title');
+    };
+
+    const title = openComposer();
+    fireEvent.input(title, { target: { value: 'Risks' } });
+    setBoard({ ...initialBoard, title: 'Updated Board', version: initialBoard.version + 1 });
+    flush();
+    expect(title).toHaveValue('Risks');
+
+    setBoard({ ...initialBoard, id: 'another-board', title: 'Another Board' });
+    flush();
+    expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
+    expect(openComposer()).toHaveValue('');
+  });
+
   it('keeps 3 Columns balanced at 1024px and opens Add Column in a non-shifting overlay dialog with zero diagnostics', async () => {
     const board = makeBoardView({ isFacilitator: true });
     const { actions, spies } = createFakeActions(board);
@@ -5179,6 +5331,10 @@ describe('<BoardWorkspace />', () => {
     fireEvent.dblClick(getByRole('heading', { level: 1, name: 'Sprint 42 Retro' }));
     flush();
     const titleInput = getByRole('textbox', { name: 'Board title' });
+    expect(titleInput).toHaveFocus();
+    expect(titleInput).toHaveValue('Sprint 42 Retro');
+    expect(titleInput).toHaveProperty('selectionStart', 0);
+    expect(titleInput).toHaveProperty('selectionEnd', 15);
     fireEvent.input(titleInput, { target: { value: 'Sprint 43 Retro' } });
     flush();
     fireEvent.focusOut(titleInput);
@@ -5197,6 +5353,36 @@ describe('<BoardWorkspace />', () => {
     expect(queryByRole('textbox', { name: 'Board title' })).toBeNull();
   });
 
+  it('opens a Column editor through the agent and preserves IME and Escape behavior', async () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const { actions, spies } = createFakeActions(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    flush();
+    const result = await createAgent().act({
+      steps: [{ ref: 'Column options for Went Well', action: 'press', args: ['Rename column'] }],
+    });
+    flush();
+    expect(result.ok, result.error?.message).toBe(true);
+
+    const input = view.getByRole('textbox', { name: 'Column title' });
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue('Went Well');
+    expect(input).toHaveProperty('selectionStart', 0);
+    expect(input).toHaveProperty('selectionEnd', 'Went Well'.length);
+    fireEvent.input(input, { target: { value: '改善' } });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    await flushPromises();
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue('改善');
+    expect(spies.updateColumn).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    flush();
+    expect(input).not.toBeInTheDocument();
+    expect(view.getByRole('button', { name: 'Went Well' })).toHaveFocus();
+    expect(spies.updateColumn).not.toHaveBeenCalled();
+  });
+
   it('saves the Column title on blur and returns focus to the column title button', async () => {
     const board = makeBoardView({ isFacilitator: true });
     const { actions, spies } = createFakeActions(board);
@@ -5212,6 +5398,9 @@ describe('<BoardWorkspace />', () => {
     flush();
     const columnInput = view.getByRole('textbox', { name: 'Column title' });
     expect(columnInput).toHaveFocus();
+    expect(columnInput).toHaveValue('Went Well');
+    expect(columnInput).toHaveProperty('selectionStart', 0);
+    expect(columnInput).toHaveProperty('selectionEnd', 9);
     fireEvent.input(columnInput, { target: { value: 'Wins' } });
     flush();
     fireEvent.focusOut(columnInput);
@@ -5248,6 +5437,9 @@ describe('<BoardWorkspace />', () => {
     flush();
     const groupInput = view.getByRole('textbox', { name: 'Card Group title' });
     expect(groupInput).toHaveFocus();
+    expect(groupInput).toHaveValue('CI stability');
+    expect(groupInput).toHaveProperty('selectionStart', 0);
+    expect(groupInput).toHaveProperty('selectionEnd', 12);
     fireEvent.input(groupInput, { target: { value: 'CI wins' } });
     flush();
     fireEvent.focusOut(groupInput);
@@ -5271,6 +5463,9 @@ describe('<BoardWorkspace />', () => {
     flush();
     const editBox = view.getByRole('textbox', { name: 'Edit card text' });
     expect(editBox).toHaveFocus();
+    expect(editBox).toHaveValue('Old note');
+    expect(editBox).toHaveProperty('selectionStart', 0);
+    expect(editBox).toHaveProperty('selectionEnd', 8);
     fireEvent.input(editBox, { target: { value: 'New note' } });
     flush();
     fireEvent.focusOut(editBox);

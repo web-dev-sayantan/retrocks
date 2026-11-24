@@ -531,7 +531,9 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
 
   expect(within(secondRow).getByRole('button', { name: 'Return Send receipt to queue' })).toHaveAttribute('aria-disabled', 'true');
-  expect(within(secondRow).getByRole('button', { name: 'Edit title for Send receipt' })).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.dblClick(within(secondRow).getByText('Send receipt'));
+  flush();
+  expect(within(secondRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
 
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Lock Checkout flow' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
@@ -539,7 +541,9 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   }));
   await waitFor(() => expect(firstRow).toHaveAttribute('data-locked', 'true'));
   expect(within(firstRow).getByRole('button', { name: 'Reconsider Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
-  expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.dblClick(within(firstRow).getByText('Checkout flow'));
+  flush();
+  expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
   expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
 
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Unlock Checkout flow' }));
@@ -548,7 +552,11 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   }));
   await waitFor(() => expect(firstRow).not.toHaveAttribute('data-locked'));
   expect(within(firstRow).getByRole('button', { name: 'Reconsider Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
-  expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
+  fireEvent.dblClick(within(firstRow).getByText('Checkout flow'));
+  flush();
+  const unlockedTitle = within(firstRow).getByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.keyDown(unlockedTitle, { key: 'Escape' });
+  flush();
   expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).not.toHaveAttribute('aria-disabled', 'true');
 
   const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
@@ -698,6 +706,33 @@ test('a Facilitator can delete an unlocked Story with inline confirmation, reset
 
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
   await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  const outside = screen.getByRole('textbox', { name: 'Story title' });
+  outside.focus();
+  await waitFor(() => expect(within(firstRow).queryByRole('group')).toBeNull());
+  expect(outside).toHaveFocus();
+
+  const beforeLock = untrack(room);
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  setRoom({ ...beforeLock, stories: beforeLock.stories.map((story) =>
+    story.id === 's1' ? { ...story, locked: true } : story) });
+  flush();
+  expect(within(firstRow).queryByRole('group')).toBeNull();
+  setRoom({ ...beforeLock });
+  flush();
+  expect(within(firstRow).queryByRole('group')).toBeNull();
+
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  setRoom({ ...beforeLock, stories: beforeLock.stories.slice(1) });
+  flush();
+  expect(firstRow).not.toBeInTheDocument();
+  setRoom({ ...beforeLock });
+  flush();
+  const restoredRow = within(queue).getAllByRole('listitem')[0];
+  expect(within(restoredRow).queryByRole('group')).toBeNull();
+  fireEvent.click(within(restoredRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(restoredRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
   expect((await agent.act({ steps: [{ ref: 'Confirm delete Checkout flow', action: 'press' }] })).ok).toBe(false);
   expect(allow).toHaveBeenCalledWith(expect.objectContaining({
     confirm: 'Deletes this Story from the queue.',
@@ -978,7 +1013,7 @@ function fireDoubleTap(target: Element) {
   fireEvent.pointerUp(target, init);
 }
 
-test('a Facilitator can edit unlocked Story titles inplace from the sidebar via double-click, double-tap, or Pencil button with IME-safe Enter, Escape, and blur', async () => {
+test('a Facilitator can edit unlocked Story titles inplace from the sidebar via double-click and double-tap with IME-safe Enter, Escape, and blur', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false,
@@ -1040,11 +1075,11 @@ test('a Facilitator can edit unlocked Story titles inplace from the sidebar via 
   expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
 
   change.mockClear();
-  fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit title for Save express checkout' }));
-  const pencilInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.dblClick(within(firstRow).getByText('Save express checkout'));
+  const reopenedInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
   expect(within(firstRow).queryByRole('button', { name: 'Save title' })).toBeNull();
-  fireEvent.input(pencilInput, { target: { value: 'Discarded draft' } });
-  fireEvent.keyDown(pencilInput, { key: 'Escape' });
+  fireEvent.input(reopenedInput, { target: { value: 'Discarded draft' } });
+  fireEvent.keyDown(reopenedInput, { key: 'Escape' });
   await waitFor(() => expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
   expect(change).not.toHaveBeenCalled();
   expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
@@ -1110,6 +1145,7 @@ test('a Facilitator can edit the active Story title inplace on the stage heading
   }));
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(await within(stage).findByText('Save checkout v2')).toBeVisible();
+  expect(within(stage).getByRole('heading', { name: 'Active Story' })).toHaveFocus();
 
   change.mockClear();
   fireDoubleTap(within(stage).getByText('Save checkout v2'));
@@ -1220,6 +1256,26 @@ test('editing the active Story title during an unresolved Voting Round with cast
   expect(change).not.toHaveBeenCalled();
   expect(await within(stage).findByText('Save checkout')).toBeVisible();
   expect(within(stage).getByText('1 of 1 voted')).toBeVisible();
+
+  fireEvent.dblClick(within(stage).getByText('Save checkout'));
+  const staleInput = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
+  fireEvent.input(staleInput, { target: { value: 'Stale checkout title' } });
+  fireEvent.keyDown(staleInput, { key: 'Enter' });
+  const staleDialog = await screen.findByRole('alertdialog', { name: 'Change active Story title?' });
+  const originalRoom = untrack(room);
+  setRoom({
+    ...originalRoom,
+    stories: [...originalRoom.stories, { id: 's2', title: 'New checkout', status: 'pending', locked: false }],
+    activeStoryId: 's2',
+  });
+  flush();
+  expect(within(stage).getByText('New checkout')).toBeVisible();
+  fireEvent.click(within(staleDialog).getByRole('button', { name: 'Save and restart voting' }));
+  await waitFor(() => expect(staleDialog).not.toBeVisible());
+  expect(change).not.toHaveBeenCalled();
+
+  setRoom(originalRoom);
+  flush();
 
   const queue = screen.getByRole('list', { name: 'Story queue' });
   fireEvent.dblClick(within(queue).getByText('Save checkout'));

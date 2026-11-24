@@ -47,7 +47,7 @@ export interface ActionItemsDrawerProps {
   side: 'bottom' | 'right';
   isLocked: boolean;
   onClose: () => void;
-  onRestoreFocus?: (previousFocus: HTMLElement | null) => void;
+  restoreFocusTarget?: () => HTMLElement | undefined;
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
@@ -86,10 +86,10 @@ function ActionItemRow(props: {
   // Live sync: another viewer's optimistic/live owner change shows while this
   // editor is idle; an active edit keeps its draft.
   createEffect(
-    () => ({ next: props.card.actionOwner, editing: ownerEditing() }),
-    ({ next, editing }) => {
-      if (!editing && ownerInputEl && ownerInputEl.value !== next) {
-        ownerInputEl.value = next;
+    () => ownerEditing() ? undefined : props.card.actionOwner,
+    (owner) => {
+      if (owner !== undefined && ownerInputEl && ownerInputEl.value !== owner) {
+        ownerInputEl.value = owner;
       }
     },
   );
@@ -210,10 +210,16 @@ function ActionItemRow(props: {
 }
 
 export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
-  let previousFocus: HTMLElement | null = null;
   let contentEl: HTMLDivElement | undefined;
-  const [filter, setFilter] = createSignal<ActionItemFilter>('all');
-  const [copyStatus, setCopyStatus] = createSignal('');
+  const drawerSession = createMemo(() => props.open ? {} : null);
+  const [filter, setFilter] = createSignal((): ActionItemFilter => {
+    drawerSession();
+    return 'all';
+  });
+  const [copyStatus, setCopyStatus] = createSignal(() => {
+    drawerSession();
+    return '';
+  });
 
   // While the drawer is open its layer outranks the paused page, so the
   // same "a" that opened it closes it here.
@@ -245,28 +251,19 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
     return 'No Action Items yet.';
   });
 
-  createEffect(() => props.open, (open, wasOpen) => {
-    if (open) {
-      previousFocus =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setFilter('all');
-      setCopyStatus('');
-    } else if (wasOpen && props.onRestoreFocus) {
-      props.onRestoreFocus(previousFocus);
-    }
-  });
-
   async function copyChecklist(): Promise<void> {
+    const session = drawerSession();
     const items = visibleItems();
-    if (items.length === 0) return;
+    if (!session || items.length === 0) return;
     const markdown = buildActionItemsMarkdown(items);
     try {
       await navigator.clipboard.writeText(markdown);
+      if (drawerSession() !== session) return;
       setCopyStatus(
         `Copied ${items.length} Action ${items.length === 1 ? 'Item' : 'Items'}`,
       );
     } catch {
-      setCopyStatus('Could not copy to the clipboard.');
+      if (drawerSession() === session) setCopyStatus('Could not copy to the clipboard.');
     }
   }
 
@@ -281,7 +278,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
       <DrawerBackdrop data-print-hide="true" class="board-drawer-backdrop" />
       <DrawerContent
         ref={contentEl}
-        finalFocus="none"
+        finalFocus={props.restoreFocusTarget}
         data-board-overlay="true"
         data-print-hide="true"
         class="board-drawer-panel"

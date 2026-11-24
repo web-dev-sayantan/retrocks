@@ -93,6 +93,7 @@ import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import ExportBoardMenu from './ExportBoardMenu';
 import { CloseIcon } from './Icons';
+import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
@@ -155,6 +156,15 @@ function getAddColumnSlotClass(columnCount: number): string {
 }
 
 export default function BoardWorkspace(props: BoardWorkspaceProps) {
+  // The route ID scopes viewer-local state across live snapshots.
+  return (
+    <For each={[props.boardId]}>
+      {(boardId) => <BoardWorkspaceSession {...props} boardId={boardId} />}
+    </For>
+  );
+}
+
+function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   // The Board controller owns the store, live stream, server clock,
   // mutation handlers, and pending state; this component keeps layout and UI state.
   const controller = createBoardController({
@@ -166,7 +176,6 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   });
 
   const [isDramaticReveal, setIsDramaticReveal] = createSignal(false);
-  const [modeAnnouncement, setModeAnnouncement] = createSignal('');
   const revealChime = createTimerChime();
   let dramaticRevealTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -237,13 +246,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   const isRenamingBoard = () => boardTitleField.present('input');
   const [hasBoardTitleText, setHasBoardTitleText] = createSignal(true);
   let renameBoardButtonEl: HTMLButtonElement | undefined;
-  let boardTitleInputEl: HTMLInputElement | undefined;
   const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
-
-  // bindInput fills, selects, and focuses the editor once its element mounts.
-  createEffect(isRenamingBoard, (renaming) => {
-    if (renaming && boardTitleInputEl) boardTitleEdit.bindInput(boardTitleInputEl);
-  });
 
   // The mobile menu that starts a rename unmounts, so restore the header's fallback focus chain.
   createEffect(isRenamingBoard, (renaming, wasRenaming) => {
@@ -270,6 +273,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setIsAddingColumn(true);
   }
 
+  // The controller-opened dialog needs focus after its input has mounted.
   createEffect(isAddingColumn, (open) => {
     if (open) newColumnTitleEl?.focus();
   });
@@ -305,13 +309,26 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   // Action Items Drawer state
   const [isActionItemsOpen, setIsActionItemsOpen] = createSignal(false);
   let actionItemsHeaderEntry: HTMLButtonElement | undefined;
+  let actionItemsOpener: HTMLElement | null = null;
 
-  function restoreActionItemsFocus(previousFocus: HTMLElement | null): void {
-    for (const target of [previousFocus, actionItemsHeaderEntry, boardMenuTriggerEl]) {
-      if (!target?.isConnected || target.closest('[hidden]')) continue;
-      target.focus({ preventScroll: true });
-      if (document.activeElement === target) return;
+  function openActionItems(): void {
+    actionItemsOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setIsActionItemsOpen(true);
+  }
+
+  function isAvailableFocusTarget(target: HTMLElement | null | undefined): target is HTMLElement {
+    if (!target?.isConnected || target === document.body || target.closest('[hidden], :disabled')) {
+      return false;
     }
+    if (getComputedStyle(target).visibility !== 'visible') return false;
+    for (let element: HTMLElement | null = target; element; element = element.parentElement) {
+      if (getComputedStyle(element).display === 'none') return false;
+    }
+    return true;
+  }
+
+  function actionItemsFocusTarget(): HTMLElement | undefined {
+    return [actionItemsOpener, actionItemsHeaderEntry, boardMenuTriggerEl].find(isAvailableFocusTarget);
   }
 
   const openActionItemCount = createMemo(
@@ -374,58 +391,37 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     },
   );
 
-  createEffect(
-    () => props.boardId,
-    (nextId, previousId) => {
-      if (previousId !== undefined && nextId !== previousId) {
-        setSearchQuery('');
-        setQuickFilter('all');
-        setSortMode('newest');
-        setActiveColumnId(null);
-        setMobileDrafts((drafts) => {
-          for (const id of Object.keys(drafts)) delete drafts[id];
-        });
-      }
-    },
-  );
+  const boardModes = createMemo(() => {
+    const board = controller.board();
+    return board && {
+      id: board.id,
+      isBlurred: board.isBlurred,
+      blindVoting: board.blindVoting,
+      isLocked: board.isLocked,
+    };
+  });
+  const boardModeStatus = createMemo<{
+    modes: ReturnType<typeof boardModes>;
+    announcement: string;
+  }>((previous) => {
+    const modes = boardModes();
+    const before = previous?.modes;
+    if (!modes || before?.id !== modes.id) return { modes, announcement: '' };
 
-  createEffect(
-    () => {
-      const board = controller.board();
-      return board && {
-        id: board.id,
-        isBlurred: board.isBlurred,
-        blindVoting: board.blindVoting,
-        isLocked: board.isLocked,
-      };
-    },
-    (board, previous) => {
-      if (!board || previous?.id !== board.id) {
-        setModeAnnouncement('');
-        return;
-      }
-      const changes: string[] = [];
-      if (board.isBlurred !== previous.isBlurred) {
-        changes.push(board.isBlurred ? 'Private Mode is on.' : 'All Cards revealed.');
-      }
-      if (board.blindVoting !== previous.blindVoting) {
-        changes.push(board.blindVoting ? 'Blind Voting is on.' : 'Blind Voting is off.');
-      }
-      if (board.isLocked !== previous.isLocked) {
-        changes.push(board.isLocked ? 'Board locked.' : 'Board unlocked.');
-      }
-      setModeAnnouncement(changes.join(' '));
-    },
-  );
+    const changes: string[] = [];
+    if (modes.isBlurred !== before.isBlurred) {
+      changes.push(modes.isBlurred ? 'Private Mode is on.' : 'All Cards revealed.');
+    }
+    if (modes.blindVoting !== before.blindVoting) {
+      changes.push(modes.blindVoting ? 'Blind Voting is on.' : 'Blind Voting is off.');
+    }
+    if (modes.isLocked !== before.isLocked) {
+      changes.push(modes.isLocked ? 'Board locked.' : 'Board unlocked.');
+    }
+    return { modes, announcement: changes.join(' ') };
+  });
 
   let unavailableHeading: HTMLHeadingElement | undefined;
-
-  createEffect(
-    () => controller.board() !== null,
-    (hasBoard) => {
-      if (hasBoard) logPrivacyColophon();
-    },
-  );
 
   onSettled(() => {
     const viewport = window.visualViewport;
@@ -583,9 +579,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   useShortcut(
     () => (controller.board() ? 'a' : null),
-    () => {
-      setIsActionItemsOpen(true);
-    },
+    openActionItems,
     { description: 'Toggle Action Items' },
   );
 
@@ -661,12 +655,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setIsCardDetailOpen(true);
   }
 
-  function restoreCardDetailFocus(): void {
-    if (cardDetailTrigger?.isConnected) {
-      cardDetailTrigger.focus({ preventScroll: true });
-      if (document.activeElement === cardDetailTrigger) return;
-    }
-    boardMain?.focus({ preventScroll: true });
+  function cardDetailFocusTarget(): HTMLElement | undefined {
+    return isAvailableFocusTarget(cardDetailTrigger) ? cardDetailTrigger : boardMain;
   }
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
@@ -802,6 +792,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     >
       {(board) => (
         <div
+          ref={() => logPrivacyColophon()}
           class="board-workspace flex min-h-dvh flex-col bg-canvas"
           data-board-print-ready={isPrinting() ? "" : undefined}
           data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
@@ -810,7 +801,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             <PrintBoard board={board()} />
           </Show>
           <div aria-live="polite" aria-atomic="true" class="sr-only">
-            {modeAnnouncement()}
+            {boardModeStatus().announcement}
           </div>
           <header role="banner" class="board-masthead">
             <div class="board-island board-masthead-island">
@@ -821,21 +812,25 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                   when={!isRenamingBoard()}
                   fallback={
                     <div class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
-                      <input
-                        ref={boardTitleInputEl}
-                        type="text"
-                        aria-label="Board title"
-                        maxlength={MAX_BOARD_TITLE_LENGTH}
-                        onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
-                        onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
-                        onInput={(e) =>
-                          setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
-                        }
-                        class={[
-                          'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
-                          'board-focus-ring',
-                        ]}
-                      />
+                      <InlineEditorMount bind={(el) => boardTitleEdit.bindInput(el)}>
+                        {(ref) => (
+                          <input
+                            ref={ref}
+                            type="text"
+                            aria-label="Board title"
+                            maxlength={MAX_BOARD_TITLE_LENGTH}
+                            onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
+                            onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
+                            onInput={(e) =>
+                              setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
+                            }
+                            class={[
+                              'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
+                              'board-focus-ring',
+                            ]}
+                          />
+                        )}
+                      </InlineEditorMount>
                       <button
                         type="button"
                         aria-label="Save Board title"
@@ -958,7 +953,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       title="Action Items (A)"
                       onClick={(event) => {
                         event.currentTarget.focus();
-                        setIsActionItemsOpen(true);
+                        openActionItems();
                       }}
                       class={[
                         'spring-press hidden board-touch-target min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9',
@@ -1059,7 +1054,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                             class="board-menu-item"
                             onSelect={() => {
                               closeBoardMenu(true);
-                              setIsActionItemsOpen(true);
+                              openActionItems();
                             }}
                           >
                             <span class="inline-flex items-center gap-2"><LucideIcon icon={Flag} class="size-3.5" strokeWidth={1.9} /> Action Items</span>{' '}
@@ -1481,7 +1476,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
-                restoreFocus={restoreCardDetailFocus}
+                restoreFocusTarget={cardDetailFocusTarget}
                 onUpdateActionItem={controller.updateActionItem}
                 onToggleReaction={controller.toggleReaction}
                 onCreateComment={controller.createComment}
@@ -1499,7 +1494,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             side={isMobileBoard() ? 'bottom' : 'right'}
             isLocked={board().isLocked}
             onClose={() => setIsActionItemsOpen(false)}
-            onRestoreFocus={restoreActionItemsFocus}
+            restoreFocusTarget={actionItemsFocusTarget}
             onUpdateActionItem={controller.updateActionItem}
             isActionItemPending={controller.isActionItemPending}
           />
