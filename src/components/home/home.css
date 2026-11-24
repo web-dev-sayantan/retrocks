@@ -63,6 +63,11 @@
     min-inline-size: 0;
   }
 
+  /* content-visibility: hidden creates a stacking context; prevent hidden panels from intercepting clicks. */
+  .home-tab-panel[hidden] {
+    pointer-events: none;
+  }
+
   .home-stage-inner {
     container-type: inline-size;
     min-inline-size: 0;
