@@ -74,7 +74,7 @@ export function unresolvedPokerRoundWithVotesId(round: PokerRoundView | null) {
 }
 
 export type PokerStoryCommand =
-  | { type: 'add-story'; title: string }
+  | { type: 'add-story'; title: string; makeActive?: boolean; discardRoundId?: string }
   | { type: 'edit-story'; storyId: string; title: string }
   | { type: 'move-story'; storyId: string; targetId: string; placement: 'before' | 'after' }
   | { type: 'correct-estimate'; storyId: string; expectedEstimate: string; choice: string }

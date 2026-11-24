@@ -12,6 +12,7 @@ import {
   Lock,
   LockOpen,
   Pencil,
+  Play,
   Plus,
   RotateCcw,
   Trash2,
@@ -34,30 +35,116 @@ const storyStatuses = {
   skipped: 'Skipped',
 };
 
+function QuickAddStoryForm(props: {
+  busy: boolean;
+  smartEnterMakesActive: boolean;
+  onAdd: (title: string, makeActive: boolean) => Promise<boolean>;
+}) {
+  const [title, setTitle] = createSignal('');
+  const [ready, setReady] = createSignal(false);
+  let formEl!: HTMLFormElement;
+
+  onSettled(() => {
+    setReady(true);
+  });
+
+  async function submit(makeActive: boolean) {
+    if (!ready() || props.busy) return;
+    if (!formEl.reportValidity()) return;
+    if (!title().trim()) return;
+    if (await props.onAdd(title(), makeActive)) {
+      setTitle('');
+      formEl.reset();
+    }
+  }
+
+  return (
+    <form
+      ref={formEl}
+      class="poker-form px-3 pb-2.5"
+      method="post"
+      aria-label="Add a Story"
+      aria-busy={props.busy ? 'true' : 'false'}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(props.smartEnterMakesActive);
+      }}
+    >
+      <div class="poker-quick-add">
+        <Field name="title" class="min-w-0">
+          <FieldLabel class="sr-only">Story title</FieldLabel>
+          <Input
+            class="poker-quick-add-input board-focus-ring"
+            placeholder="Add a Story…"
+            value={title()}
+            onValueChange={(value) => setTitle(value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              // Ignore Enter while confirming IME composition.
+              if (event.isComposing || event.keyCode === 229) return;
+              event.preventDefault();
+              void submit(props.smartEnterMakesActive);
+            }}
+            readonly={props.busy || !ready()}
+            required
+            maxlength={POKER_STORY_TITLE_LIMIT}
+            pattern={'.*\\S.*'}
+          />
+        </Field>
+        <div class="poker-quick-add-actions">
+          <Button
+            class={[
+              'poker-quick-add-btn spring-press board-focus-ring',
+              !props.smartEnterMakesActive ? 'poker-quick-add-btn-primary' : '',
+            ]}
+            type="button"
+            disabled={props.busy || !ready()}
+            focusableWhenDisabled={ready()}
+            onClick={() => void submit(false)}
+          >
+            <LucideIcon icon={Plus} class="size-3.5 shrink-0" strokeWidth={2.2} />
+            <span>Add to queue</span>
+          </Button>
+          <Button
+            class={[
+              'poker-quick-add-btn spring-press board-focus-ring',
+              props.smartEnterMakesActive ? 'poker-quick-add-btn-primary' : '',
+            ]}
+            type="button"
+            disabled={props.busy || !ready()}
+            focusableWhenDisabled={ready()}
+            onClick={() => void submit(true)}
+          >
+            <LucideIcon icon={Play} class="size-3.5 shrink-0" strokeWidth={2.1} />
+            <span>Add &amp; make active</span>
+          </Button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
 function StoryTitleForm(props: {
-  initialTitle?: string;
+  initialTitle: string;
   busy: boolean;
   onSave: (title: string) => Promise<boolean>;
-  onCancel?: () => void;
+  onCancel: () => void;
 }) {
-  const [title, setTitle] = createSignal(untrack(() => props.initialTitle ?? ''));
-  const editing = () => Boolean(props.onCancel);
+  const [title, setTitle] = createSignal(untrack(() => props.initialTitle));
   const [ready, setReady] = createSignal(false);
   let input!: HTMLInputElement;
 
   onSettled(() => {
     setReady(true);
-    if (editing()) {
-      input.focus();
-      input.select();
-    }
+    input.focus();
+    input.select();
   });
 
   return (
     <form
-      class={['poker-form', editing() ? 'mt-2.5 grid gap-2' : 'px-3 pb-2']}
+      class="poker-form mt-2.5 grid gap-2"
       method="post"
-      aria-label={editing() ? 'Edit Story title' : 'Add a Story'}
+      aria-label="Edit Story title"
       aria-busy={props.busy ? 'true' : 'false'}
       onSubmit={async (event) => {
         event.preventDefault();
@@ -68,69 +155,37 @@ function StoryTitleForm(props: {
         }
       }}
     >
-      <Show
-        when={editing()}
-        fallback={
-          <div class="poker-quick-add">
-            <Field name="title" class="min-w-0 flex-1">
-              <FieldLabel class="sr-only">Story title</FieldLabel>
-              <Input
-                ref={input}
-                class="poker-quick-add-input"
-                placeholder="Add a Story…"
-                value={title()}
-                onValueChange={(value) => setTitle(value)}
-                readonly={props.busy || !ready()}
-                required
-                maxlength={POKER_STORY_TITLE_LIMIT}
-                pattern={'.*\\S.*'}
-              />
-            </Field>
-            <Button
-              class="poker-quick-add-submit spring-press board-focus-ring"
-              type="submit"
-              aria-label="Add Story"
-              title="Add Story"
-              disabled={props.busy || !ready()}
-              focusableWhenDisabled={ready()}
-            >
-              <LucideIcon icon={Plus} class="size-4" strokeWidth={2.2} />
-            </Button>
-          </div>
-        }
-      >
-        <Field name="title" class="min-w-0">
-          <FieldLabel class="mb-1 block text-xs font-semibold text-text-muted">Story title</FieldLabel>
-          <Input
-            ref={input}
-            class="poker-input board-focus-ring"
-            value={title()}
-            onValueChange={(value) => setTitle(value)}
-            readonly={props.busy || !ready()}
-            required
-            maxlength={POKER_STORY_TITLE_LIMIT}
-            pattern={'.*\\S.*'}
-          />
-        </Field>
-        <div class="flex flex-wrap gap-1.5">
-          <Button
-            class="poker-primary spring-press board-focus-ring"
-            type="submit"
-            disabled={props.busy || !ready()}
-            focusableWhenDisabled={ready()}
-          >
-            Save title
-          </Button>
-          <Button
-            type="button"
-            class="poker-ghost spring-press board-focus-ring"
-            onClick={() => props.onCancel?.()}
-            disabled={props.busy}
-          >
-            Cancel
-          </Button>
-        </div>
-      </Show>
+      <Field name="title" class="min-w-0">
+        <FieldLabel class="mb-1 block text-xs font-semibold text-text-muted">Story title</FieldLabel>
+        <Input
+          ref={input}
+          class="poker-input board-focus-ring"
+          value={title()}
+          onValueChange={(value) => setTitle(value)}
+          readonly={props.busy || !ready()}
+          required
+          maxlength={POKER_STORY_TITLE_LIMIT}
+          pattern={'.*\\S.*'}
+        />
+      </Field>
+      <div class="flex flex-wrap gap-1.5">
+        <Button
+          class="poker-primary spring-press board-focus-ring"
+          type="submit"
+          disabled={props.busy || !ready()}
+          focusableWhenDisabled={ready()}
+        >
+          Save title
+        </Button>
+        <Button
+          type="button"
+          class="poker-ghost spring-press board-focus-ring"
+          onClick={() => props.onCancel()}
+          disabled={props.busy}
+        >
+          Cancel
+        </Button>
+      </div>
     </form>
   );
 }
@@ -215,9 +270,33 @@ export default function PokerStoryQueue(props: {
     return null;
   }
 
-  async function addStory(title: string) {
+  async function addStory(title: string, makeActive: boolean) {
+    if (busy() || confirming()) return false;
     cancelDelete(false);
-    return Boolean(await change({ type: 'add-story', title }));
+    if (!makeActive) {
+      return Boolean(await change({ type: 'add-story', title }));
+    }
+    const discardRoundId = props.activeRoundWithVotesId;
+    if (discardRoundId !== undefined) {
+      setConfirming(true);
+      try {
+        if (!await confirmBoardAction({
+          title: 'Make new Story active?',
+          description: 'Making this Story active discards the current Voting Round and its votes, then locks the previous Story.',
+          cancelLabel: 'Keep voting',
+          confirmLabel: 'Lock previous & make active',
+          agentConfirm: 'Discards the current Voting Round and its votes, locks the previous Story, and makes the new Story active.',
+        })) return false;
+      } finally {
+        setConfirming(false);
+      }
+    }
+    return Boolean(await change({
+      type: 'add-story',
+      title,
+      makeActive: true,
+      ...(discardRoundId === undefined ? {} : { discardRoundId }),
+    }));
   }
 
   async function selectStory(story: PokerStory) {
@@ -362,7 +441,11 @@ export default function PokerStoryQueue(props: {
         </div>
 
         <Show when={props.canManage}>
-          <StoryTitleForm busy={busy()} onSave={addStory} />
+          <QuickAddStoryForm
+            busy={busy() || confirming()}
+            smartEnterMakesActive={props.discardRoundId === undefined}
+            onAdd={addStory}
+          />
         </Show>
 
         <div class="poker-queue-scroll">
