@@ -37,6 +37,7 @@ function applyOptimisticVote(room: PokerLiveRoomView, roundId: string, choice: s
   if (!viewerId) return;
   const index = round.submittedParticipantIds.indexOf(viewerId);
   if (choice !== null) {
+    room.deckLocked = true;
     if (index === -1) round.submittedParticipantIds.push(viewerId);
   } else if (index !== -1) {
     round.submittedParticipantIds.splice(index, 1);

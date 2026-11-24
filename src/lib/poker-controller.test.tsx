@@ -267,6 +267,7 @@ describe('createPokerRoomController', () => {
     const optimisticRoom = controller.room();
     expect(optimisticRoom.closed).toBe(false);
     if (!optimisticRoom.closed && optimisticRoom.round?.phase === 'open') {
+      expect(optimisticRoom.deckLocked).toBe(true);
       expect(optimisticRoom.round.ownChoice).toBe('5');
       expect(optimisticRoom.round.submittedParticipantIds).toContain(ALICE_ID);
     } else {
