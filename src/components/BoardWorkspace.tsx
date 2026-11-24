@@ -305,13 +305,23 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
   // Action Items Drawer state
   const [isActionItemsOpen, setIsActionItemsOpen] = createSignal(false);
   let actionItemsHeaderEntry: HTMLButtonElement | undefined;
+  let actionItemsOpener: HTMLElement | null = null;
 
-  function restoreActionItemsFocus(previousFocus: HTMLElement | null): void {
-    for (const target of [previousFocus, actionItemsHeaderEntry, boardMenuTriggerEl]) {
-      if (!target?.isConnected || target.closest('[hidden]')) continue;
-      target.focus({ preventScroll: true });
-      if (document.activeElement === target) return;
+  function openActionItems(): void {
+    actionItemsOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setIsActionItemsOpen(true);
+  }
+
+  function isAvailableFocusTarget(target: HTMLElement | null | undefined): target is HTMLElement {
+    if (!target?.isConnected || target === document.body || target.closest('[hidden], :disabled')) {
+      return false;
     }
+    const style = getComputedStyle(target);
+    return style.display !== 'none' && style.visibility === 'visible';
+  }
+
+  function actionItemsFocusTarget(): HTMLElement | undefined {
+    return [actionItemsOpener, actionItemsHeaderEntry, boardMenuTriggerEl].find(isAvailableFocusTarget);
   }
 
   const openActionItemCount = createMemo(
@@ -583,9 +593,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
 
   useShortcut(
     () => (controller.board() ? 'a' : null),
-    () => {
-      setIsActionItemsOpen(true);
-    },
+    openActionItems,
     { description: 'Toggle Action Items' },
   );
 
@@ -661,12 +669,8 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
     setIsCardDetailOpen(true);
   }
 
-  function restoreCardDetailFocus(): void {
-    if (cardDetailTrigger?.isConnected) {
-      cardDetailTrigger.focus({ preventScroll: true });
-      if (document.activeElement === cardDetailTrigger) return;
-    }
-    boardMain?.focus({ preventScroll: true });
+  function cardDetailFocusTarget(): HTMLElement | undefined {
+    return isAvailableFocusTarget(cardDetailTrigger) ? cardDetailTrigger : boardMain;
   }
 
   async function handleAddColumn(event: SubmitEvent): Promise<void> {
@@ -958,7 +962,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                       title="Action Items (A)"
                       onClick={(event) => {
                         event.currentTarget.focus();
-                        setIsActionItemsOpen(true);
+                        openActionItems();
                       }}
                       class={[
                         'spring-press hidden board-touch-target min-w-11 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-border/80 bg-surface px-3 text-[13px] leading-none font-medium text-text sm:inline-flex sm:h-9',
@@ -1059,7 +1063,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                             class="board-menu-item"
                             onSelect={() => {
                               closeBoardMenu(true);
-                              setIsActionItemsOpen(true);
+                              openActionItems();
                             }}
                           >
                             <span class="inline-flex items-center gap-2"><LucideIcon icon={Flag} class="size-3.5" strokeWidth={1.9} /> Action Items</span>{' '}
@@ -1481,7 +1485,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
-                restoreFocus={restoreCardDetailFocus}
+                restoreFocusTarget={cardDetailFocusTarget}
                 onUpdateActionItem={controller.updateActionItem}
                 onToggleReaction={controller.toggleReaction}
                 onCreateComment={controller.createComment}
@@ -1499,7 +1503,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
             side={isMobileBoard() ? 'bottom' : 'right'}
             isLocked={board().isLocked}
             onClose={() => setIsActionItemsOpen(false)}
-            onRestoreFocus={restoreActionItemsFocus}
+            restoreFocusTarget={actionItemsFocusTarget}
             onUpdateActionItem={controller.updateActionItem}
             isActionItemPending={controller.isActionItemPending}
           />

@@ -1,6 +1,6 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
-import { createStore, flush } from 'solid-js';
+import { createSignal, createStore, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardViewDTO, CardViewDTO } from '../lib/board-types';
@@ -194,6 +194,41 @@ describe('<ActionItemsDrawer />', () => {
     expect(drawer.getByLabelText('Mark Write runbook as Done')).toBeChecked();
   });
 
+  it('shows live owners while idle and preserves the draft and caret during an edit', () => {
+    const [board, setBoard] = createStore(makeBoard([{ ...openItem }]));
+    const view = render(() => (
+      <ActionItemsDrawer
+        side="right"
+        open={true}
+        board={board}
+        cards={board.cards}
+        isLocked={false}
+        onClose={() => {}}
+        onUpdateActionItem={vi.fn(async () => true)}
+      />
+    ));
+    flush();
+
+    const owner = view.getByRole<HTMLInputElement>('textbox', { name: 'Owner for Ship the API' });
+    setBoard((draft) => { draft.cards[0].actionOwner = 'Platform'; });
+    flush();
+    expect(owner).toHaveValue('Platform');
+
+    owner.focus();
+    fireEvent.input(owner, { target: { value: 'API squad' } });
+    owner.setSelectionRange(3, 3);
+    flush();
+    setBoard((draft) => { draft.cards[0].actionOwner = 'Operations'; });
+    flush();
+    expect(owner).toHaveValue('API squad');
+    expect(owner.selectionStart).toBe(3);
+    expect(owner.selectionEnd).toBe(3);
+
+    fireEvent.keyDown(owner, { key: 'Escape' });
+    flush();
+    expect(owner).toHaveValue('Operations');
+  });
+
   it('keeps a failed owner draft and rolls back a failed Done change so both can be retried', async () => {
     let completeOwnerSave!: (ok: boolean) => void;
     const onUpdate = vi.fn<() => Promise<boolean>>()
@@ -347,6 +382,45 @@ describe('<ActionItemsDrawer />', () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
+  it('starts each opening with All selected and ignores a previous opening’s clipboard result', async () => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    let finishCopy!: () => void;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: () => new Promise<void>((resolve) => { finishCopy = resolve; }) },
+    });
+    const board = makeBoard([openItem, doneItem]);
+    const [open, setOpen] = createSignal(true);
+    try {
+      const view = render(() => (
+        <ActionItemsDrawer
+          side="right"
+          open={open()}
+          board={board}
+          cards={board.cards}
+          isLocked={false}
+          onClose={() => setOpen(false)}
+          onUpdateActionItem={vi.fn(async () => true)}
+        />
+      ));
+      await flushPromises();
+      fireEvent.click(view.getByRole('radio', { name: 'Open (1)' }));
+      flush();
+      fireEvent.click(view.getByRole('button', { name: 'Copy as Markdown Checklist' }));
+      fireEvent.click(view.getByRole('button', { name: 'Close Action Items' }));
+      await flushPromises();
+      setOpen(true);
+      await flushPromises();
+      expect(view.getByRole('radio', { name: 'All (2)' })).toBeChecked();
+      finishCopy();
+      await flushPromises();
+      expect(view.queryByText('Copied 1 Action Item')).toBeNull();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
+      else Reflect.deleteProperty(navigator, 'clipboard');
     }
   });
 
