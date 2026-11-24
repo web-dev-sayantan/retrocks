@@ -13,7 +13,12 @@ import { Textarea } from '@ui-sdk/solid/textarea';
 import { ChevronDown, Layers, Lock } from 'lucide';
 import { For, Show, createSignal, onSettled } from 'solid-js';
 
-import type { PokerDeckCommand, PokerDeckType, PokerResult } from '../../lib/poker-types';
+import {
+  POKER_DECK_PRESETS,
+  type PokerDeckCommand,
+  type PokerDeckType,
+  type PokerResult,
+} from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 
 const deckTypes = ['fibonacci', 't-shirt', 'custom'] as const;
@@ -22,6 +27,13 @@ const deckName: Record<PokerDeckType, string> = {
   't-shirt': 'T-shirt',
   custom: 'Custom',
 };
+
+function parseCustomChoices(value: string): string[] {
+  return value
+    .split('\n')
+    .map((choice) => choice.trim())
+    .filter(Boolean);
+}
 
 export default function PokerDeckSettings(props: {
   deck: readonly string[];
@@ -39,14 +51,30 @@ export default function PokerDeckSettings(props: {
   const [error, setError] = createSignal('');
   const selectedType = () => draftType() ?? props.deckType;
   const customChoices = () => draftChoices() ?? (props.deckType === 'custom' ? props.deck.join('\n') : '');
+  const previewDetail = () => {
+    const type = selectedType();
+    if (type !== 'custom') return POKER_DECK_PRESETS[type].join(', ');
+    const parsed = parseCustomChoices(customChoices());
+    return parsed.length >= 2 ? parsed.join(', ') : 'Enter at least two choices.';
+  };
   let choicesInput: HTMLTextAreaElement | undefined;
 
   onSettled(() => { setReady(true); });
 
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setDraftType(undefined);
+      setDraftChoices(undefined);
+      setFieldError('');
+      setError('');
+    }
+  }
+
   async function save() {
     if (busy() || !ready() || props.locked) return;
     const type = selectedType();
-    const deck = type === 'custom' ? { type, choices: customChoices().split('\n') } : { type };
+    const deck = type === 'custom' ? { type, choices: parseCustomChoices(customChoices()) } : { type };
     setBusy(true);
     setError('');
     setFieldError('');
@@ -88,7 +116,7 @@ export default function PokerDeckSettings(props: {
         </div>
       }
     >
-      <Popover open={open()} onOpenChange={setOpen}>
+      <Popover open={open()} onOpenChange={handleOpenChange}>
         <PopoverTrigger
           class="poker-bar-chip poker-bar-chip-interactive spring-press board-focus-ring"
           aria-label="Deck settings"
@@ -107,14 +135,14 @@ export default function PokerDeckSettings(props: {
         >
           <PopoverTitle class="text-sm font-semibold">Deck settings</PopoverTitle>
           <PopoverDescription class="mt-0.5 text-xs text-text-muted">
-            The Deck locks when voting starts.
+            The Deck locks once the first vote is cast.
           </PopoverDescription>
           <p
             class="mt-2.5 rounded-lg bg-surface-subtle/70 px-2.5 py-1.5 text-xs text-text-muted [overflow-wrap:anywhere]"
             role="status"
           >
-            <span class="font-semibold text-text">{deckName[props.deckType]}</span>{' · '}
-            <span>{props.deck.join(', ')}</span>
+            <span class="font-semibold text-text">{deckName[selectedType()]}</span>{' · '}
+            <span>{previewDetail()}</span>
           </p>
           <form
             aria-label="Deck settings"

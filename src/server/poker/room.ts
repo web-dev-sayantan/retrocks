@@ -316,7 +316,7 @@ export class PokerRoomStorage {
         case 'set-deck': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           if (room.deckLocked) {
-            return { ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked once the first Voting Round opens.' };
+            return { ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked once the first vote is cast.' };
           }
           const { deck } = command;
           const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
@@ -393,7 +393,6 @@ export class PokerRoomStorage {
             return discardRequired;
           }
           room.activeStoryId = story.id;
-          room.deckLocked = true;
           room.round = startVotingRound();
           break;
         }
@@ -408,7 +407,10 @@ export class PokerRoomStorage {
           }
           if ((round.ballots[participant.id] ?? null) === choice) return { ok: true, room };
           if (choice === null) delete round.ballots[participant.id];
-          else round.ballots[participant.id] = choice;
+          else {
+            round.ballots[participant.id] = choice;
+            room.deckLocked = true;
+          }
           break;
         }
         case 'reveal': {
