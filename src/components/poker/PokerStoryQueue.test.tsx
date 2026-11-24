@@ -354,7 +354,7 @@ test('a Facilitator can cast, clear, and reveal votes through named agent contro
   ] });
   expect(reveal.ok, reveal.error?.message).toBe(true);
   const ballots = await within(active).findByRole('list', { name: 'Revealed votes' });
-  expect(within(ballots).getByRole('listitem')).toHaveTextContent('Alex8');
+  expect(within(ballots).getByRole('listitem')).toHaveTextContent('Alex (you)8');
 });
 
 test('agent closure requires approval even when there is no unresolved Voting Round', async () => {

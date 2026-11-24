@@ -1,5 +1,5 @@
 import { Button } from '@ui-sdk/solid/button';
-import { Check, SquareCheck } from 'lucide';
+import { Check, SquareCheck, Users } from 'lucide';
 import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
@@ -50,6 +50,8 @@ export default function PokerWorkspace(props: {
     return props.room.participants.filter((participant) => !voted.has(participant.id));
   });
 
+  const onlineStatusLabel = createMemo(() => (props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'));
+
   const [closeError, setCloseError] = createSignal('');
   const [closing, setClosing] = createSignal(false);
   let closeInProgress = false;
@@ -99,13 +101,15 @@ export default function PokerWorkspace(props: {
             canManage={props.room.viewer?.isFacilitator === true}
             onChange={props.onChange}
           />
-          <p class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted tabular-nums" aria-live="polite">
-            <span
-              aria-hidden="true"
-              class="poker-presence-dot"
-              data-state={props.status === 'live' ? 'online' : 'reconnecting'}
-            />
-            <span>{props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}</span>
+          <p
+            class="poker-bar-chip poker-online-pill tabular-nums"
+            data-state={props.status === 'live' ? 'online' : 'reconnecting'}
+            title={onlineStatusLabel()}
+            aria-live="polite"
+          >
+            <LucideIcon icon={Users} class="poker-online-icon size-3.5 shrink-0" strokeWidth={2} />
+            <span aria-hidden="true">{props.online.length}</span>
+            <span class="sr-only">{onlineStatusLabel()}</span>
           </p>
         </div>
 
@@ -245,13 +249,19 @@ export default function PokerWorkspace(props: {
                     <For each={props.room.participants} keyed={(participant) => participant.id}>
                       {(participant) => {
                         const isOnline = () => onlineSet().has(participant().id);
+                        const isSelf = () => participant().id === props.room.viewer?.id;
                         const hasVoted = () => submitted()?.has(participant().id) ?? false;
                         return (
-                          <li class="poker-seat" data-online={isOnline() ? 'true' : 'false'}>
+                          <li
+                            class="poker-seat"
+                            data-online={isOnline() ? 'true' : 'false'}
+                            data-self={isSelf() ? 'true' : undefined}
+                          >
                             <Show when={openRound()}>
                               <div
                                 class="poker-seat-card"
                                 data-seat-state={hasVoted() ? 'voted' : 'waiting'}
+                                data-self={isSelf() ? 'true' : undefined}
                                 aria-hidden="true"
                               >
                                 <Show when={hasVoted()}>
@@ -259,7 +269,7 @@ export default function PokerWorkspace(props: {
                                 </Show>
                               </div>
                             </Show>
-                            <span class="inline-flex max-w-full items-center gap-1.5 text-xs font-medium text-text">
+                            <span class="poker-seat-name inline-flex max-w-full items-center gap-1.5 text-xs">
                               <span
                                 aria-hidden="true"
                                 class="poker-presence-dot"
@@ -267,13 +277,13 @@ export default function PokerWorkspace(props: {
                               />
                               <span class="truncate">
                                 {participant().displayName}
-                                <Show when={participant().id === props.room.viewer?.id}> (you)</Show>
+                                <Show when={isSelf()}> (you)</Show>
                               </span>
                             </span>
                             <span class="sr-only">
                               {isOnline() ? 'Online' : 'Offline'}
                               <Show when={submitted()}>
-                                {(ids) => (ids().has(participant().id) ? ', Voted' : ', Awaiting vote')}
+                                {(ids) => <span>{ids().has(participant().id) ? ', Voted' : ', Awaiting vote'}</span>}
                               </Show>
                             </span>
                             <Show when={participant().isFacilitator}>
@@ -293,20 +303,29 @@ export default function PokerWorkspace(props: {
                     <For each={round().ballots} keyed={(ballot) => ballot.participantId}>
                       {(ballot) => {
                         const isOnline = () => onlineSet().has(ballot().participantId);
+                        const isSelf = () => ballot().participantId === props.room.viewer?.id;
                         const isConsensus = () => voteSpread()?.topChoices.has(ballot().choice) ?? false;
                         return (
-                          <li class="poker-seat grid justify-items-center" data-online={isOnline() ? 'true' : 'false'}>
-                            <span class="order-2 inline-flex max-w-full items-center gap-1.5 text-xs font-medium text-text">
+                          <li
+                            class="poker-seat grid justify-items-center"
+                            data-online={isOnline() ? 'true' : 'false'}
+                            data-self={isSelf() ? 'true' : undefined}
+                          >
+                            <span class="poker-seat-name order-2 inline-flex max-w-full items-center gap-1.5 text-xs">
                               <span
                                 aria-hidden="true"
                                 class="poker-presence-dot"
                                 data-state={isOnline() ? 'online' : 'offline'}
                               />
-                              <span class="truncate">{ballot().displayName}</span>
+                              <span class="truncate">
+                                {ballot().displayName}
+                                <Show when={isSelf()}> (you)</Show>
+                              </span>
                             </span>
                             <span
                               class="poker-seat-card order-1"
                               data-seat-state="revealed"
+                              data-self={isSelf() ? 'true' : undefined}
                               data-consensus={isConsensus() ? 'true' : undefined}
                             >
                               {ballot().choice}
