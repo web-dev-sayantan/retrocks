@@ -2,9 +2,10 @@ import 'server-only';
 
 import { safeParse } from 'valibot';
 
-import { PokerDisplayName } from '../../lib/poker-schemas';
+import { PokerDisplayName, PokerRoomNameInput } from '../../lib/poker-schemas';
 import {
   POKER_DECK_PRESETS,
+  POKER_DEFAULT_ROOM_NAME,
   unresolvedPokerRoundId,
   type PokerDeckType,
   type PokerDeleteResult,
@@ -99,6 +100,7 @@ interface StoredParticipant extends PokerParticipant {
 
 export interface StoredPokerRoom {
   id: string;
+  name: string;
   version: number;
   expiresAt: number;
   participants: StoredParticipant[];
@@ -120,6 +122,12 @@ export function pokerDeckContains(room: StoredPokerRoom, choice: string): boolea
 
 export function pokerDisplayName(input: unknown): string | undefined {
   const parsed = safeParse(PokerDisplayName, input);
+  return parsed.success ? parsed.output : undefined;
+}
+
+export function pokerRoomName(input: unknown): string | undefined {
+  if (input === undefined || input === null) return POKER_DEFAULT_ROOM_NAME;
+  const parsed = safeParse(PokerRoomNameInput, input);
   return parsed.success ? parsed.output : undefined;
 }
 
@@ -166,6 +174,7 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     return {
       closed: true,
       id: room.id,
+      name: room.name,
       version: room.version,
       canDelete: pokerCanDeleteRoom(room, hash),
       stories: room.stories.map(({ title, status, acceptedEstimate }) => ({
@@ -178,6 +187,7 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
   return {
     closed: false,
     id: room.id,
+    name: room.name,
     version: room.version,
     viewer,
     ...(viewer?.isFacilitator && room.facilitatorCapability
@@ -237,6 +247,7 @@ export class PokerRoomStorage {
     );
     if (!row) return null;
     const room = JSON.parse(row.data) as StoredPokerRoom;
+    room.name = typeof room.name === 'string' && room.name.trim() ? room.name.trim() : POKER_DEFAULT_ROOM_NAME;
     room.stories ??= [];
     room.activeStoryId ??= null;
     room.deck ??= POKER_DECK_PRESETS.fibonacci;
@@ -252,10 +263,11 @@ export class PokerRoomStorage {
     return room && projectPokerRoom(room, hash);
   }
 
-  create(id: string, hash: string, displayName: string): StoredPokerRoom {
+  create(id: string, hash: string, displayName: string, name = POKER_DEFAULT_ROOM_NAME): StoredPokerRoom {
     this.ensureSchema();
     const room: StoredPokerRoom = {
       id,
+      name: name.trim() || POKER_DEFAULT_ROOM_NAME,
       version: 1,
       expiresAt: Date.now() + ROOM_TTL_MS,
       participants: [{ id: generateEntityId(), hash, displayName, isFacilitator: true }],
@@ -288,6 +300,13 @@ export class PokerRoomStorage {
       }
 
       switch (command.type) {
+        case 'rename-room': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const nextName = command.name.trim() || POKER_DEFAULT_ROOM_NAME;
+          if (room.name === nextName) return { ok: true, room };
+          room.name = nextName;
+          break;
+        }
         case 'close-room': {
           if (!pokerCanDeleteRoom(room, hash)) return forbidden;
           if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;

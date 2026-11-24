@@ -1,9 +1,19 @@
 import { Button } from '@ui-sdk/solid/button';
-import { Check, SquareCheck } from 'lucide';
-import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { Check, Pencil, SquareCheck, X } from 'lucide';
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
-import { unresolvedPokerRoundId, type PokerLiveRoomView, type PokerResult, type PokerRoomChange } from '../../lib/poker-types';
+import { createDoubleTap } from '../../lib/double-tap';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import {
+  POKER_DEFAULT_ROOM_NAME,
+  POKER_ROOM_NAME_LIMIT,
+  unresolvedPokerRoundId,
+  type PokerLiveRoomView,
+  type PokerResult,
+  type PokerRoomChange,
+} from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
@@ -80,18 +90,147 @@ export default function PokerWorkspace(props: {
 
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
+  let roomNameInputEl: HTMLInputElement | undefined;
+  let renameRoomButtonEl: HTMLButtonElement | undefined;
+
+  const canManage = () => props.room.viewer?.isFacilitator === true;
+
+  const roomNameField = usePrimitive(inlineEdit, () => ({
+    value: () => props.room.name,
+    commit: (text: string) => roomNameSave.commit(text),
+    disabled: () => !canManage(),
+  }));
+  const roomNameEdit = roomNameField.api.edit;
+  const roomNameSave = createInlineEditSave(saveRoomNameText, () => roomNameEdit.cancel());
+  const isRenamingRoom = () => roomNameField.present('input');
+  const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
+
+  function isRoomNameEditTarget(target: EventTarget | null): boolean {
+    if (!canManage()) return false;
+    return !(target instanceof Element && target.closest('button'));
+  }
+
+  function startRoomRename(): void {
+    roomNameTap.reset();
+    if (!canManage()) return;
+    roomNameEdit.start(props.room.id);
+  }
+
+  function handleRoomNameDoubleClick(event: MouseEvent): void {
+    if (!isRoomNameEditTarget(event.target)) return;
+    roomNameTap.reset();
+    startRoomRename();
+  }
+
+  function cancelRoomRename(): void {
+    roomNameTap.reset();
+    roomNameSave.resetError();
+    roomNameEdit.cancel();
+  }
+
+  async function saveRoomNameText(text: string): Promise<InlineEditOutcome> {
+    const nextName = text.trim() || POKER_DEFAULT_ROOM_NAME;
+    if (nextName === props.room.name) return true;
+    try {
+      const result = await props.onChange({ type: 'rename-room', name: nextName });
+      return result.ok ? true : result.message;
+    } catch {
+      return 'Could not rename the Room. Try again.';
+    }
+  }
+
+  createEffect(isRenamingRoom, (renaming) => {
+    if (renaming && roomNameInputEl) roomNameEdit.bindInput(roomNameInputEl);
+  });
+
+  createEffect(isRenamingRoom, (renaming, wasRenaming) => {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
+      renameRoomButtonEl?.focus();
+    }
+  });
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
   });
 
+  const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
+
   return (
     <main class="poker-workspace" data-deck-type={props.room.deckType}>
       <header class="poker-room-bar">
         <div class="flex min-w-0 flex-wrap items-center gap-2.5 sm:gap-3">
-          <h1 ref={heading} tabindex={-1} class="poker-room-bar-title board-focus-ring rounded">
-            Pointing Poker
-          </h1>
+          <Show
+            when={!isRenamingRoom()}
+            fallback={
+              <div class="flex min-w-0 items-center gap-1.5">
+                <input
+                  ref={roomNameInputEl}
+                  type="text"
+                  aria-label="Room name"
+                  placeholder={POKER_DEFAULT_ROOM_NAME}
+                  maxlength={POKER_ROOM_NAME_LIMIT}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
+                    roomNameEdit.inputKeydown(event);
+                  }}
+                  onFocusOut={(event) => roomNameEdit.end('focus-out', event)}
+                  class="poker-input poker-room-title-input board-focus-ring"
+                />
+                <Button
+                  type="button"
+                  aria-label="Save Room name"
+                  title="Save Room name"
+                  disabled={roomNameSave.isSaving()}
+                  focusableWhenDisabled
+                  onClick={() => roomNameEdit.end()}
+                  class="poker-icon-btn spring-press board-focus-ring"
+                >
+                  <LucideIcon icon={Check} class="size-4 shrink-0" strokeWidth={2} />
+                </Button>
+                <Button
+                  type="button"
+                  aria-label="Cancel Room rename"
+                  title="Cancel Room rename"
+                  onClick={cancelRoomRename}
+                  class="poker-icon-btn spring-press board-focus-ring"
+                >
+                  <LucideIcon icon={X} class="size-4 shrink-0" strokeWidth={1.9} />
+                </Button>
+              </div>
+            }
+          >
+            <div
+              onDblClick={handleRoomNameDoubleClick}
+              onPointerDown={roomNameTap.onPointerDown}
+              onPointerUp={roomNameTap.onPointerUp}
+              onPointerCancel={roomNameTap.onPointerCancel}
+              class="flex min-w-0 items-center gap-1"
+            >
+              <h1
+                ref={heading}
+                tabindex={-1}
+                title={canManage() ? `${props.room.name} — Double-click to rename` : props.room.name}
+                class={[
+                  'poker-room-bar-title board-focus-ring min-w-0 truncate rounded',
+                  canManage() && 'cursor-text touch-manipulation',
+                ]}
+              >
+                {props.room.name}
+              </h1>
+              <Show when={canManage()}>
+                <Button
+                  ref={renameRoomButtonEl}
+                  type="button"
+                  aria-label="Rename Room"
+                  title="Rename Room"
+                  onClick={startRoomRename}
+                  class="poker-icon-btn spring-press board-focus-ring"
+                >
+                  <LucideIcon icon={Pencil} class="size-3.5 shrink-0" strokeWidth={1.85} />
+                </Button>
+              </Show>
+            </div>
+          </Show>
           <PokerDeckSettings
             deck={props.room.deck}
             deckType={props.room.deckType}
@@ -137,9 +276,9 @@ export default function PokerWorkspace(props: {
 
       <p
         role="alert"
-        class={(closeError() || props.claimError) ? 'poker-error-text border-b border-border/60 px-4 py-2.5 text-sm font-medium sm:px-6' : 'sr-only'}
+        class={alertMessage() ? 'poker-error-text border-b border-border/60 px-4 py-2.5 text-sm font-medium sm:px-6' : 'sr-only'}
       >
-        {closeError() || props.claimError}
+        {alertMessage()}
       </p>
 
       <div class="poker-split">

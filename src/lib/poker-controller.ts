@@ -15,6 +15,7 @@ import {
 } from './poker-live';
 import {
   POKER_DECK_PRESETS,
+  POKER_DEFAULT_ROOM_NAME,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -105,6 +106,10 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
         activeStory.status = 'estimated';
         activeStory.acceptedEstimate = command.choice;
       }
+      break;
+    }
+    case 'rename-room': {
+      room.name = command.name.trim() || POKER_DEFAULT_ROOM_NAME;
       break;
     }
     case 'add-story':

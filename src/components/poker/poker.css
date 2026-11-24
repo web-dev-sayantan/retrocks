@@ -191,6 +191,22 @@
     text-wrap: balance;
   }
 
+  .poker-room-title-input {
+    inline-size: min(18rem, 60vi);
+    min-block-size: 2rem;
+    padding-inline: 0.625rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  @media (pointer: coarse) {
+    .poker-room-title-input {
+      min-block-size: var(--poker-target);
+      font-size: max(1rem, 1em);
+    }
+  }
+
   .poker-bar-chip {
     display: inline-flex;
     align-items: center;

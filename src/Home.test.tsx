@@ -106,7 +106,7 @@ it('shows Recent Boards and Recent Rooms only inside their matching tab view', a
     id: 'board_fedcba9876543210',
     title: 'Design Sprint Retro',
   }, now - 300_000);
-  recordRecentPokerRoom('room_1234567890abcdef1');
+  recordRecentPokerRoom('room_1234567890abcdef1', { name: 'Sprint 42 Sizing' });
 
   render(() => <App />);
 
@@ -136,7 +136,7 @@ it('shows Recent Boards and Recent Rooms only inside their matching tab view', a
   flush();
   const pokerPanel = screen.getByRole('tabpanel', { name: 'Poker' });
   const recentRooms = within(pokerPanel).getByRole('region', { name: 'Recent Rooms' });
-  expect(within(recentRooms).getByRole('link', { name: 'Room · room_123' })).toHaveAttribute(
+  expect(within(recentRooms).getByRole('link', { name: 'Sprint 42 Sizing' })).toHaveAttribute(
     'href',
     '/p/room_1234567890abcdef1',
   );

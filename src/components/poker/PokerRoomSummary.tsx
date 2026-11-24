@@ -29,7 +29,7 @@ export default function PokerRoomSummary(props: { room: PokerClosedRoomView; foc
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2.5">
             <h1 ref={heading} tabindex={-1} class="poker-entry-title board-focus-ring rounded">
-              Room summary
+              {props.room.name}
             </h1>
             <span class="rounded-full bg-surface-subtle px-2.5 py-0.5 text-xs font-medium text-text-muted">
               Closed

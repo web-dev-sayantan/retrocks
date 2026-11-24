@@ -1,4 +1,6 @@
 export const POKER_LIVE_VIEWER_HEADER = 'x-retrocks-poker-viewer';
+export const POKER_DEFAULT_ROOM_NAME = 'Poker Room';
+export const POKER_ROOM_NAME_LIMIT = 120;
 export const POKER_DISPLAY_NAME_LIMIT = 60;
 export const POKER_STORY_TITLE_LIMIT = 200;
 export const FIBONACCI_DECK = ['0', '1', '2', '3', '5', '8', '13', '21'] as const;
@@ -35,6 +37,7 @@ export type PokerRoundView =
 export interface PokerLiveRoomView {
   closed: false;
   id: string;
+  name: string;
   version: number;
   viewer: PokerParticipant | null;
   facilitatorLinkRevision?: number;
@@ -50,6 +53,7 @@ export interface PokerLiveRoomView {
 export interface PokerClosedRoomView {
   closed: true;
   id: string;
+  name: string;
   version: number;
   canDelete: boolean;
   stories: Omit<PokerStory, 'id'>[];
@@ -76,7 +80,12 @@ export type PokerVotingCommand =
   | { type: 'skip-story'; roundId: string }
   | { type: 'confirm-estimate'; roundId: string; choice: string };
 
-export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand | { type: 'close-room'; discardRoundId?: string };
+export type PokerRoomChange =
+  | PokerStoryCommand
+  | PokerVotingCommand
+  | PokerDeckCommand
+  | { type: 'rename-room'; name: string }
+  | { type: 'close-room'; discardRoundId?: string };
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
