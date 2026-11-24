@@ -17,7 +17,7 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, flush, onSettled } from 'solid-js';
+import { For, Show, createMemo, createSignal, createUniqueId, flush, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import type { InlineEditOutcome } from '../../lib/inline-edit';
@@ -126,6 +126,93 @@ function QuickAddStoryForm(props: {
   );
 }
 
+interface StoryDeleteSession {
+  storyId: string;
+}
+
+function StoryDeleteConfirmation(props: {
+  title: string;
+  busy: boolean;
+  discardRoundId?: string;
+  onDismiss: () => void;
+  onRestoreFocus: () => void;
+  onConfirm: () => void;
+}) {
+  let confirmGroup!: HTMLDivElement;
+  let cancelDeleteButton!: HTMLButtonElement;
+
+  function restoreFocus() {
+    props.onDismiss();
+    flush();
+    props.onRestoreFocus();
+  }
+
+  useShortcut('Escape', restoreFocus);
+
+  onSettled(() => {
+    const doc = confirmGroup.ownerDocument;
+    const dismissOutside = (event: Event) => {
+      if (event.composedPath().includes(confirmGroup)) return;
+      props.onDismiss();
+    };
+    doc.addEventListener('pointerdown', dismissOutside, true);
+    doc.addEventListener('click', dismissOutside, true);
+    doc.addEventListener('focusin', dismissOutside, true);
+    cancelDeleteButton.focus();
+
+    return () => {
+      doc.removeEventListener('pointerdown', dismissOutside, true);
+      doc.removeEventListener('click', dismissOutside, true);
+      doc.removeEventListener('focusin', dismissOutside, true);
+      props.onDismiss();
+    };
+  });
+
+  return (
+    <div
+      ref={confirmGroup}
+      class="poker-row-confirm"
+      role="group"
+      aria-label={`Confirm deleting ${props.title}`}
+    >
+      <span
+        class="poker-row-confirm-note"
+        data-warning={props.discardRoundId !== undefined ? 'true' : undefined}
+      >
+        {props.discardRoundId !== undefined
+          ? 'Delete? Active votes will be discarded.'
+          : 'Delete Story?'}
+      </span>
+      <div class="ms-auto flex items-center gap-1">
+        <Button
+          ref={cancelDeleteButton}
+          class="poker-row-btn board-focus-ring"
+          aria-label={`Cancel deleting ${props.title}`}
+          disabled={props.busy}
+          focusableWhenDisabled
+          onClick={restoreFocus}
+        >
+          Cancel
+        </Button>
+        <Button
+          class="poker-row-btn poker-row-btn-danger-solid board-focus-ring"
+          aria-label={`Confirm delete ${props.title}`}
+          data-agent-confirm={
+            props.discardRoundId !== undefined
+              ? 'Deletes this Story and discards the current Voting Round and its votes.'
+              : 'Deletes this Story from the queue.'
+          }
+          disabled={props.busy}
+          focusableWhenDisabled
+          onClick={props.onConfirm}
+        >
+          Confirm
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function PokerStoryQueue(props: {
   stories: PokerStory[];
   activeStoryId: string | null;
@@ -141,51 +228,16 @@ export default function PokerStoryQueue(props: {
   const [editingEstimate, setEditingEstimate] = createSignal<
     { storyId: string; expectedEstimate: string } | null
   >(null);
-  const [deletingStoryId, setDeletingStoryId] = createSignal<string | null>(null);
+  const [deletingStory, setDeletingStory] = createSignal<StoryDeleteSession | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
   const [announcement, setAnnouncement] = createSignal('');
   const [confirming, setConfirming] = createSignal(false);
   const [mobileOpen, setMobileOpen] = createSignal(false);
 
-  let activeConfirmGroup: HTMLElement | undefined;
-  let activeRestoreDeleteFocus: (() => void) | undefined;
-
-  function cancelDelete(restoreFocus = false) {
-    const restore = restoreFocus ? activeRestoreDeleteFocus : undefined;
-    activeConfirmGroup = undefined;
-    activeRestoreDeleteFocus = undefined;
-    setDeletingStoryId(null);
-    if (restore) {
-      flush();
-      restore();
-    }
+  function cancelDelete(session?: StoryDeleteSession) {
+    setDeletingStory((current) => session && session !== current ? current : null);
   }
-
-  useShortcut(
-    () => (deletingStoryId() !== null ? 'Escape' : null),
-    () => cancelDelete(true),
-  );
-
-  createEffect(
-    () => deletingStoryId() !== null,
-    (isDeleting) => {
-      if (!isDeleting || typeof document === 'undefined') return;
-      const onOutside = (event: Event) => {
-        const target = event.target;
-        if (target instanceof Node && activeConfirmGroup?.contains(target)) return;
-        cancelDelete(false);
-      };
-      document.addEventListener('pointerdown', onOutside, true);
-      document.addEventListener('click', onOutside, true);
-      document.addEventListener('focusin', onOutside, true);
-      return () => {
-        document.removeEventListener('pointerdown', onOutside, true);
-        document.removeEventListener('click', onOutside, true);
-        document.removeEventListener('focusin', onOutside, true);
-      };
-    },
-  );
 
   const estimatedCount = createMemo(() => props.stories.filter((story) => story.status === 'estimated').length);
   const activeStoryTitle = createMemo(() => props.stories.find((story) => story.id === props.activeStoryId)?.title);
@@ -208,7 +260,7 @@ export default function PokerStoryQueue(props: {
 
   async function addStory(title: string, makeActive: boolean) {
     if (busy() || confirming()) return false;
-    cancelDelete(false);
+    cancelDelete();
     if (!makeActive) {
       return Boolean(await change({ type: 'add-story', title }));
     }
@@ -237,7 +289,7 @@ export default function PokerStoryQueue(props: {
 
   async function selectStory(story: PokerStory) {
     if (story.locked || busy() || confirming()) return;
-    cancelDelete(false);
+    cancelDelete();
     const discardRoundId = props.discardRoundId;
     if (discardRoundId !== undefined) {
       setConfirming(true);
@@ -261,7 +313,7 @@ export default function PokerStoryQueue(props: {
 
   async function toggleStoryLock(story: PokerStory) {
     if (busy() || confirming()) return;
-    cancelDelete(false);
+    cancelDelete();
     const locking = !story.locked;
     const discardRoundId = locking && props.activeStoryId === story.id
       ? props.activeRoundWithVotesId
@@ -292,17 +344,17 @@ export default function PokerStoryQueue(props: {
   function startDelete(story: PokerStory) {
     if (story.locked || busy() || confirming()) return;
     if (editingEstimate()?.storyId === story.id) setEditingEstimate(null);
-    setDeletingStoryId(story.id);
+    setDeletingStory({ storyId: story.id });
   }
 
-  async function confirmDelete(story: PokerStory, discardRoundId?: string) {
+  async function confirmDelete(session: StoryDeleteSession, story: PokerStory, discardRoundId?: string) {
     if (story.locked || busy() || confirming()) return;
     const room = await change({
       type: 'delete-story',
       storyId: story.id,
       ...(discardRoundId === undefined ? {} : { discardRoundId }),
     });
-    cancelDelete(false);
+    cancelDelete(session);
     if (room) {
       setAnnouncement(`${story.title} deleted.`);
     }
@@ -314,7 +366,7 @@ export default function PokerStoryQueue(props: {
     discardRoundId?: string,
   ): Promise<InlineEditOutcome> {
     if (busy()) return false;
-    cancelDelete(false);
+    cancelDelete();
     setBusy(true);
     setError('');
     try {
@@ -334,7 +386,7 @@ export default function PokerStoryQueue(props: {
   }
 
   async function move(story: PokerStory, index: number, offset: -1 | 1, control: HTMLElement) {
-    cancelDelete(false);
+    cancelDelete();
     const target = props.stories[index + offset];
     if (!target) return;
     const doc = control.ownerDocument;
@@ -425,8 +477,6 @@ export default function PokerStoryQueue(props: {
                   let editTitleButton: HTMLButtonElement | undefined;
                   let editEstimateButton: HTMLButtonElement | undefined;
                   let deleteButton: HTMLButtonElement | undefined;
-                  let confirmGroup: HTMLDivElement | undefined;
-                  let cancelDeleteButton: HTMLButtonElement | undefined;
                   let titleEditor: PokerStoryTitleEditorHandle | undefined;
 
                   function finishEditingEstimate() {
@@ -442,7 +492,7 @@ export default function PokerStoryQueue(props: {
 
                   async function returnStory(control: HTMLElement) {
                     if (story().locked) return;
-                    cancelDelete(false);
+                    cancelDelete();
                     const doc = control.ownerDocument;
                     const hadFocus = doc.activeElement === control;
                     if (await change({ type: 'return-story', storyId: story().id })) {
@@ -451,31 +501,18 @@ export default function PokerStoryQueue(props: {
                   }
 
                   const locked = () => Boolean(story().locked);
-                  const confirmingDelete = () => deletingStoryId() === story().id && !locked();
+                  const deleteSession = () => {
+                    const session = deletingStory();
+                    return session?.storyId === story().id && !locked() ? session : undefined;
+                  };
                   const deleteDiscardRoundId = () => (active() ? props.activeRoundWithVotesId : undefined);
-
-                  createEffect(
-                    confirmingDelete,
-                    (isConfirming) => {
-                      if (!isConfirming) return;
-                      activeConfirmGroup = confirmGroup;
-                      activeRestoreDeleteFocus = () => deleteButton?.focus();
-                      cancelDeleteButton?.focus();
-                      return () => {
-                        if (activeConfirmGroup === confirmGroup) {
-                          activeConfirmGroup = undefined;
-                          activeRestoreDeleteFocus = undefined;
-                        }
-                      };
-                    },
-                  );
 
                   return (
                     <li
                       class="poker-story-row"
                       data-status={story().status}
                       data-locked={locked() ? 'true' : undefined}
-                      data-confirming-delete={confirmingDelete() ? 'true' : undefined}
+                      data-confirming-delete={deleteSession() ? 'true' : undefined}
                       aria-current={active() ? 'true' : undefined}
                     >
                       <div class="flex items-start gap-2.5">
@@ -545,7 +582,8 @@ export default function PokerStoryQueue(props: {
                       <Show when={props.canManage}>
                         <div class="poker-row-actions">
                           <Show
-                            when={confirmingDelete()}
+                            keyed
+                            when={deleteSession()}
                             fallback={
                               <>
                                 <Show
@@ -585,7 +623,7 @@ export default function PokerStoryQueue(props: {
                                   focusableWhenDisabled
                                   onClick={() => {
                                     if (!locked()) {
-                                      cancelDelete(false);
+                                      cancelDelete();
                                       setEditingEstimate(null);
                                       titleEditor?.start();
                                     }
@@ -606,7 +644,7 @@ export default function PokerStoryQueue(props: {
                                       focusableWhenDisabled
                                       onClick={() => {
                                         if (!locked()) {
-                                          cancelDelete(false);
+                                          cancelDelete();
                                           titleEditor?.cancel();
                                           setEditingEstimate({ storyId: story().id, expectedEstimate: estimate() });
                                         }
@@ -667,47 +705,16 @@ export default function PokerStoryQueue(props: {
                               </>
                             }
                           >
-                            <div
-                              ref={confirmGroup}
-                              class="poker-row-confirm"
-                              role="group"
-                              aria-label={`Confirm deleting ${story().title}`}
-                            >
-                              <span
-                                class="poker-row-confirm-note"
-                                data-warning={deleteDiscardRoundId() !== undefined ? 'true' : undefined}
-                              >
-                                {deleteDiscardRoundId() !== undefined
-                                  ? 'Delete? Active votes will be discarded.'
-                                  : 'Delete Story?'}
-                              </span>
-                              <div class="ms-auto flex items-center gap-1">
-                                <Button
-                                  ref={cancelDeleteButton}
-                                  class="poker-row-btn board-focus-ring"
-                                  aria-label={`Cancel deleting ${story().title}`}
-                                  disabled={busy()}
-                                  focusableWhenDisabled
-                                  onClick={() => cancelDelete(true)}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  class="poker-row-btn poker-row-btn-danger-solid board-focus-ring"
-                                  aria-label={`Confirm delete ${story().title}`}
-                                  data-agent-confirm={
-                                    deleteDiscardRoundId() !== undefined
-                                      ? 'Deletes this Story and discards the current Voting Round and its votes.'
-                                      : 'Deletes this Story from the queue.'
-                                  }
-                                  disabled={busy()}
-                                  focusableWhenDisabled
-                                  onClick={() => void confirmDelete(story(), deleteDiscardRoundId())}
-                                >
-                                  Confirm
-                                </Button>
-                              </div>
-                            </div>
+                            {(session) => (
+                              <StoryDeleteConfirmation
+                                title={story().title}
+                                busy={busy()}
+                                discardRoundId={deleteDiscardRoundId()}
+                                onDismiss={() => cancelDelete(session)}
+                                onRestoreFocus={() => deleteButton?.focus()}
+                                onConfirm={() => void confirmDelete(session, story(), deleteDiscardRoundId())}
+                              />
+                            )}
                           </Show>
                         </div>
 

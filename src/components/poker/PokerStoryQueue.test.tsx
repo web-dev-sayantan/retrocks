@@ -712,6 +712,33 @@ test('a Facilitator can delete an unlocked Story with inline confirmation, reset
 
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
   await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  const outside = screen.getByRole('textbox', { name: 'Story title' });
+  outside.focus();
+  await waitFor(() => expect(within(firstRow).queryByRole('group')).toBeNull());
+  expect(outside).toHaveFocus();
+
+  const beforeLock = untrack(room);
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  setRoom({ ...beforeLock, stories: beforeLock.stories.map((story) =>
+    story.id === 's1' ? { ...story, locked: true } : story) });
+  flush();
+  expect(within(firstRow).queryByRole('group')).toBeNull();
+  setRoom({ ...beforeLock });
+  flush();
+  expect(within(firstRow).queryByRole('group')).toBeNull();
+
+  fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
+  setRoom({ ...beforeLock, stories: beforeLock.stories.slice(1) });
+  flush();
+  expect(firstRow).not.toBeInTheDocument();
+  setRoom({ ...beforeLock });
+  flush();
+  const restoredRow = within(queue).getAllByRole('listitem')[0];
+  expect(within(restoredRow).queryByRole('group')).toBeNull();
+  fireEvent.click(within(restoredRow).getByRole('button', { name: 'Delete Checkout flow' }));
+  await within(restoredRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
   expect((await agent.act({ steps: [{ ref: 'Confirm delete Checkout flow', action: 'press' }] })).ok).toBe(false);
   expect(allow).toHaveBeenCalledWith(expect.objectContaining({
     confirm: 'Deletes this Story from the queue.',
