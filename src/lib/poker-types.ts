@@ -1,4 +1,6 @@
 export const POKER_LIVE_VIEWER_HEADER = 'x-retrocks-poker-viewer';
+export const POKER_DEFAULT_ROOM_NAME = 'Poker Room';
+export const POKER_ROOM_NAME_LIMIT = 120;
 export const POKER_DISPLAY_NAME_LIMIT = 60;
 export const POKER_STORY_TITLE_LIMIT = 200;
 export const FIBONACCI_DECK = ['0', '1', '2', '3', '5', '8', '13', '21'] as const;
@@ -13,6 +15,7 @@ export type PokerDeckType = PokerDeckPreset | 'custom';
 export type PokerDeckCommand = {
   type: 'set-deck';
   deck: { type: PokerDeckPreset } | { type: 'custom'; choices: string[] };
+  discardRoundId?: string;
 };
 
 export interface PokerParticipant {
@@ -26,6 +29,7 @@ export interface PokerStory {
   title: string;
   status: 'pending' | 'estimated' | 'skipped';
   acceptedEstimate?: string;
+  locked?: boolean;
 }
 
 export type PokerRoundView =
@@ -35,6 +39,7 @@ export type PokerRoundView =
 export interface PokerLiveRoomView {
   closed: false;
   id: string;
+  name: string;
   version: number;
   viewer: PokerParticipant | null;
   facilitatorLinkRevision?: number;
@@ -43,13 +48,13 @@ export interface PokerLiveRoomView {
   activeStoryId: string | null;
   deck: readonly string[];
   deckType: PokerDeckType;
-  deckLocked: boolean;
   round: PokerRoundView | null;
 }
 
 export interface PokerClosedRoomView {
   closed: true;
   id: string;
+  name: string;
   version: number;
   canDelete: boolean;
   stories: Omit<PokerStory, 'id'>[];
@@ -61,13 +66,22 @@ export function unresolvedPokerRoundId(round: Pick<PokerRoundView, 'id' | 'phase
   return round?.phase === 'open' || round?.phase === 'revealed' ? round.id : undefined;
 }
 
+export function unresolvedPokerRoundWithVotesId(round: PokerRoundView | null) {
+  if (!round) return undefined;
+  if (round.phase === 'open') return round.submittedParticipantIds.length > 0 ? round.id : undefined;
+  if (round.phase === 'revealed') return round.ballots.length > 0 ? round.id : undefined;
+  return undefined;
+}
+
 export type PokerStoryCommand =
-  | { type: 'add-story'; title: string }
-  | { type: 'edit-story'; storyId: string; title: string }
+  | { type: 'add-story'; title: string; makeActive?: boolean; discardRoundId?: string }
+  | { type: 'edit-story'; storyId: string; title: string; discardRoundId?: string }
   | { type: 'move-story'; storyId: string; targetId: string; placement: 'before' | 'after' }
   | { type: 'correct-estimate'; storyId: string; expectedEstimate: string; choice: string }
   | { type: 'return-story'; storyId: string }
-  | { type: 'select-story'; storyId: string; discardRoundId?: string };
+  | { type: 'select-story'; storyId: string; discardRoundId?: string }
+  | { type: 'set-story-lock'; storyId: string; locked: boolean; discardRoundId?: string }
+  | { type: 'delete-story'; storyId: string; discardRoundId?: string };
 
 export type PokerVotingCommand =
   | { type: 'vote'; roundId: string; choice: string | null }
@@ -76,11 +90,17 @@ export type PokerVotingCommand =
   | { type: 'skip-story'; roundId: string }
   | { type: 'confirm-estimate'; roundId: string; choice: string };
 
-export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand | { type: 'close-room'; discardRoundId?: string };
+export type PokerRoomChange =
+  | PokerStoryCommand
+  | PokerVotingCommand
+  | PokerDeckCommand
+  | { type: 'rename-room'; name: string }
+  | { type: 'close-room'; discardRoundId?: string }
+  | { type: 'reopen-room' };
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
-type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'ROOM_CLOSED'; message: string };
+type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'STORY_LOCKED' | 'ROOM_CLOSED'; message: string };
 
 export type PokerResult<T = PokerRoomView> = { ok: true; room: T } | PokerFailure;
 export type PokerDeleteResult = { ok: true } | PokerFailure;

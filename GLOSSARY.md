@@ -71,6 +71,10 @@ _Avoid_: Username, account name
 **Story**:
 A titled piece of work that a team estimates together in Pointing Poker.
 
+**Locked Story**:
+A Story in a Pointing Poker Room whose title, Accepted Estimate, and voting state are frozen until a Facilitator unlocks it.
+_Avoid_: Archived story, frozen story, finalized story
+
 **Deck**:
 The ordered set of choices a participant can vote for when estimating a Story.
 _Avoid_: Metric, voting options

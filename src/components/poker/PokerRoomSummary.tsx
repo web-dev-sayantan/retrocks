@@ -1,15 +1,23 @@
-import { CheckCircle2, Circle, CircleSlash } from 'lucide';
-import { For, Show, createMemo, onSettled, untrack } from 'solid-js';
+import { Button } from '@ui-sdk/solid/button';
+import { CheckCircle2, Circle, CircleSlash, RotateCcw } from 'lucide';
+import { For, Show, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 
 import { takeFacilitatorLinkToken } from '../../lib/facilitator-link';
 import { pokerRoomPath } from '../../lib/poker-routes';
-import type { PokerClosedRoomView } from '../../lib/poker-types';
+import type { PokerClosedRoomView, PokerResult } from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import './poker.css';
 
-export default function PokerRoomSummary(props: { room: PokerClosedRoomView; focusHeading?: boolean; onUnavailable: () => void }) {
+export default function PokerRoomSummary(props: {
+  room: PokerClosedRoomView;
+  focusHeading?: boolean;
+  onReopen: () => Promise<PokerResult>;
+  onUnavailable: () => void;
+}) {
   let heading!: HTMLHeadingElement;
+  const [reopening, setReopening] = createSignal(false);
+  const [reopenError, setReopenError] = createSignal('');
 
   const estimatedCount = createMemo(() => props.room.stories.filter((story) => story.status === 'estimated').length);
   const skippedCount = createMemo(() => props.room.stories.filter((story) => story.status === 'skipped').length);
@@ -23,13 +31,33 @@ export default function PokerRoomSummary(props: { room: PokerClosedRoomView; foc
     return () => window.removeEventListener('hashchange', scrubFragment);
   });
 
+  async function reopenRoom() {
+    if (reopening()) return;
+    setReopening(true);
+    setReopenError('');
+    try {
+      const result = await props.onReopen();
+      if (!result.ok) {
+        if (result.code === 'ROOM_NOT_FOUND') {
+          props.onUnavailable();
+          return;
+        }
+        setReopenError(result.message);
+      }
+    } catch {
+      setReopenError('Could not reopen the Room. Try again.');
+    } finally {
+      setReopening(false);
+    }
+  }
+
   return (
     <main class="poker-summary">
       <header class="flex flex-wrap items-start justify-between gap-4 border-b border-border/60 pb-5">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2.5">
             <h1 ref={heading} tabindex={-1} class="poker-entry-title board-focus-ring rounded">
-              Room summary
+              {props.room.name}
             </h1>
             <span class="rounded-full bg-surface-subtle px-2.5 py-0.5 text-xs font-medium text-text-muted">
               Closed
@@ -40,9 +68,24 @@ export default function PokerRoomSummary(props: { room: PokerClosedRoomView; foc
           </p>
         </div>
         <Show when={props.room.canDelete}>
-          <PokerRoomDeletion roomId={props.room.id} onUnavailable={props.onUnavailable} />
+          <div class="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              class="poker-secondary spring-press board-focus-ring"
+              disabled={reopening()}
+              focusableWhenDisabled
+              onClick={() => void reopenRoom()}
+            >
+              <LucideIcon icon={RotateCcw} class="size-3.5 shrink-0" strokeWidth={2} />
+              {reopening() ? 'Reopening Room…' : 'Reopen Room'}
+            </Button>
+            <PokerRoomDeletion roomId={props.room.id} onUnavailable={props.onUnavailable} />
+          </div>
         </Show>
       </header>
+      <p role="alert" class={reopenError() ? 'poker-error-text mt-3 text-sm font-medium' : 'sr-only'}>
+        {reopenError()}
+      </p>
 
       <section class="mt-6" aria-labelledby="poker-summary-stories">
         <div class="flex flex-wrap items-baseline justify-between gap-3">

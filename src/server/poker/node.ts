@@ -78,8 +78,8 @@ export async function openNodePokerRooms(dbPath: string) {
 
   return {
     read: (id: string, hash: string) => storage.read(id, hash),
-    create(id: string, hash: string, displayName: string) {
-      return projectPokerRoom(storage.create(id, hash, displayName), hash);
+    create(id: string, hash: string, displayName: string, name?: string) {
+      return projectPokerRoom(storage.create(id, hash, displayName, name), hash);
     },
     mutate(id: string, hash: string, command: PokerRoomCommand) {
       const result = storage.mutate(id, hash, command);

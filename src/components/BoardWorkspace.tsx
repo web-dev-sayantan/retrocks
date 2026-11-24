@@ -833,7 +833,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                         }
                         class={[
                           'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
-                          'focus:border-focus focus:outline-none',
+                          'board-focus-ring',
                         ]}
                       />
                       <button
@@ -1397,7 +1397,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     value={newColumnTitle()}
                     maxlength={MAX_COLUMN_TITLE_LENGTH}
                     onInput={(e) => setNewColumnTitle(e.currentTarget.value)}
-                    class="mt-1.5 min-h-11 w-full rounded-xl border border-border/85 bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none sm:min-h-10"
+                    class="mt-1.5 min-h-11 w-full rounded-xl border border-border/85 bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted board-focus-ring sm:min-h-10"
                   />
                 </div>
 
@@ -1539,7 +1539,7 @@ export default function BoardWorkspace(props: BoardWorkspaceProps) {
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
                       'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
-                      'placeholder:text-text-muted focus:border-focus focus:outline-none',
+                      'placeholder:text-text-muted board-focus-ring',
                     ]}
                   />
                   <button

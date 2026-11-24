@@ -359,7 +359,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     onFocusOut={(event) => ownerEdit.end('focus-out', event)}
                     class={[
                       'mt-1 min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text sm:min-h-9',
-                      'placeholder:text-text-muted focus:border-focus focus:outline-none disabled:opacity-50',
+                      'placeholder:text-text-muted board-focus-ring disabled:opacity-50',
                     ]}
                   />
                   <p class="mt-1 text-[11px] text-text-muted">
@@ -471,7 +471,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   onKeyDown={handleComposerKeyDown}
                   class={[
                     'w-full resize-none rounded-lg border border-border bg-canvas px-3 py-2 text-base text-text',
-                    'placeholder:text-text-muted focus:border-focus focus:outline-none',
+                    'placeholder:text-text-muted board-focus-ring',
                   ]}
                 />
                 <Show when={commentError()}>

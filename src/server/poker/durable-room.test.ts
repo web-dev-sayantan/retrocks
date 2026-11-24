@@ -101,3 +101,26 @@ test('deletion clears the Room alarm and publishes a terminal frame only after a
   expect(socket.send.mock.calls.map(([data]) => parsePokerLiveMessage(data))).toEqual([{ type: 'room:missing' }]);
   expect(socket.close).toHaveBeenCalledOnce();
 });
+
+test('reopening a closed Room resets the Durable Object alarm to 90 days from now', async () => {
+  clock.mockReturnValue(start + day);
+  expect(await room.mutate(id, 'facilitator', { type: 'close-room' })).toMatchObject({ ok: true, room: { closed: true } });
+  expect(setAlarm).toHaveBeenLastCalledWith(start + 91 * day);
+
+  setAlarm.mockClear();
+  clock.mockReturnValue(start + 30 * day);
+  expect(await room.mutate(id, 'facilitator', { type: 'reopen-room' })).toMatchObject({
+    ok: true,
+    room: { closed: false, viewer: null },
+  });
+  expect(setAlarm).toHaveBeenCalledExactlyOnceWith(start + 120 * day);
+
+  clock.mockReturnValue(start + 91 * day);
+  await room.alarm();
+  expect(setAlarm).toHaveBeenLastCalledWith(start + 120 * day);
+  expect(await room.read(id, 'facilitator')).toMatchObject({ closed: false, viewer: null });
+
+  clock.mockReturnValue(start + 120 * day);
+  await room.alarm();
+  expect(await room.read(id, 'facilitator')).toBeNull();
+});

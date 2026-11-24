@@ -15,6 +15,8 @@ import {
 } from './poker-live';
 import {
   POKER_DECK_PRESETS,
+  POKER_DEFAULT_ROOM_NAME,
+  unresolvedPokerRoundWithVotesId,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -43,6 +45,12 @@ function applyOptimisticVote(room: PokerLiveRoomView, roundId: string, choice: s
   }
 }
 
+function canDiscardActiveRound(room: PokerLiveRoomView, isActive: boolean, discardRoundId?: string): boolean {
+  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) return false;
+  if (isActive && unresolvedPokerRoundWithVotesId(room.round) !== undefined && discardRoundId === undefined) return false;
+  return true;
+}
+
 function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange): void {
   if (room.closed) return;
   switch (command.type) {
@@ -53,7 +61,9 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       const title = command.title.trim();
       if (!title) return;
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story) story.title = title;
+      if (!story || story.locked || story.title === title) return;
+      if (!canDiscardActiveRound(room, room.activeStoryId === story.id, command.discardRoundId)) return;
+      story.title = title;
       break;
     }
     case 'move-story': {
@@ -71,7 +81,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
     }
     case 'correct-estimate': {
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story && story.acceptedEstimate === command.expectedEstimate) {
+      if (story && !story.locked && story.acceptedEstimate === command.expectedEstimate) {
         story.status = 'estimated';
         story.acceptedEstimate = command.choice;
       }
@@ -79,13 +89,41 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
     }
     case 'return-story': {
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story && story.status === 'skipped') {
+      if (story && !story.locked && story.status === 'skipped') {
         story.status = 'pending';
       }
       break;
     }
+    case 'set-story-lock': {
+      const story = room.stories.find((item) => item.id === command.storyId);
+      if (!story) return;
+      if (command.locked) {
+        const isActive = room.activeStoryId === story.id;
+        if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+        if (isActive) {
+          room.activeStoryId = null;
+          room.round = null;
+        }
+      }
+      story.locked = command.locked;
+      break;
+    }
+    case 'delete-story': {
+      const index = room.stories.findIndex((item) => item.id === command.storyId);
+      if (index === -1) return;
+      const story = room.stories[index];
+      if (story.locked) return;
+      const isActive = room.activeStoryId === story.id;
+      if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+      if (isActive) {
+        room.activeStoryId = null;
+        room.round = null;
+      }
+      room.stories.splice(index, 1);
+      break;
+    }
     case 'set-deck': {
-      if (room.deckLocked) return;
+      if (!canDiscardActiveRound(room, room.activeStoryId !== null, command.discardRoundId)) return;
       if (command.deck.type === 'custom') {
         const choices = command.deck.choices.map((c) => c.trim()).filter(Boolean);
         if (choices.length < 2 || new Set(choices).size !== choices.length) return;
@@ -94,6 +132,19 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       } else {
         room.deckType = command.deck.type;
         room.deck = [...POKER_DECK_PRESETS[command.deck.type]];
+      }
+      if (command.discardRoundId !== undefined && room.round?.id === command.discardRoundId) {
+        if (room.round.phase === 'open') {
+          room.round.ownChoice = null;
+          room.round.submittedParticipantIds = [];
+        } else if (room.round.phase === 'revealed') {
+          room.round = {
+            id: room.round.id,
+            phase: 'open',
+            ownChoice: null,
+            submittedParticipantIds: [],
+          };
+        }
       }
       break;
     }
@@ -107,12 +158,17 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       }
       break;
     }
+    case 'rename-room': {
+      room.name = command.name.trim() || POKER_DEFAULT_ROOM_NAME;
+      break;
+    }
     case 'add-story':
     case 'select-story':
     case 'reveal':
     case 'restart-round':
     case 'skip-story':
     case 'close-room':
+    case 'reopen-room':
       break;
   }
 }
@@ -160,7 +216,7 @@ export function createPokerRoomController(
     setServerRoom((current) => {
       if (next.id !== current.id) return current;
       if (next.version < current.version) return current;
-      if (current.closed && !next.closed) return current;
+      if (current.closed && !next.closed && next.version === current.version) return current;
       return next;
     });
   }
@@ -177,7 +233,7 @@ export function createPokerRoomController(
   const liveRoomId = createMemo(() => {
     if (unavailable()) return null;
     const current = serverRoom();
-    return current.closed ? null : current.id;
+    return current.closed || !current.viewer ? null : current.id;
   });
 
   createEffect(liveRoomId, (roomId) => {

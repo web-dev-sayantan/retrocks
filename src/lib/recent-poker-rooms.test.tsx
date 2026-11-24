@@ -24,3 +24,15 @@ it('works when browser policy denies access to storage', () => {
   expect(() => recordRecentPokerRoom('a'.repeat(22))).not.toThrow();
   expect(readRecentPokerRooms()).toEqual([]);
 });
+
+it('stores and updates Room names and defaults legacy entries without a name to Poker Room', () => {
+  const id = 'a'.repeat(22);
+  localStorage.setItem('retrocks:recent-poker-rooms', JSON.stringify([{ id, lastVisitedAt: 1000 }]));
+  expect(readRecentPokerRooms()).toEqual([{ id, name: 'Poker Room', lastVisitedAt: 1000 }]);
+
+  recordRecentPokerRoom(id, { name: 'Sprint 14 Planning' });
+  expect(readRecentPokerRooms()[0]).toMatchObject({ id, name: 'Sprint 14 Planning' });
+
+  recordRecentPokerRoom(id, { name: '   ' });
+  expect(readRecentPokerRooms()[0]).toMatchObject({ id, name: 'Poker Room' });
+});

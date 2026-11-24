@@ -28,6 +28,7 @@ function makeLiveRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoom
   return {
     closed: false,
     id: ROOM_ID,
+    name: 'Poker Room',
     version: 1,
     viewer: { id: ALICE_ID, displayName: 'Alice', isFacilitator: true },
     facilitatorLinkRevision: 1,
@@ -42,7 +43,6 @@ function makeLiveRoom(overrides: Partial<PokerLiveRoomView> = {}): PokerLiveRoom
     activeStoryId: STORY_1_ID,
     deck: [...FIBONACCI_DECK],
     deckType: 'fibonacci',
-    deckLocked: false,
     round: {
       id: ROUND_1_ID,
       phase: 'open',
@@ -385,6 +385,7 @@ describe('createPokerRoomController', () => {
       type: 'edit-story',
       storyId: STORY_1_ID,
       title: 'Renamed story',
+      discardRoundId: ROUND_1_ID,
     });
     flush();
 
@@ -427,7 +428,7 @@ describe('createPokerRoomController', () => {
       expect(current.stories.map((s) => s.id)).toEqual([STORY_1_ID, STORY_2_ID]);
     }
 
-    // 3. Set deck optimistically, then reject with DECK_LOCKED -> reverts.
+    // 3. Set deck optimistically with discardRoundId, then reject with ROUND_CHANGED -> reverts.
     let resolveDeck!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -437,6 +438,7 @@ describe('createPokerRoomController', () => {
     const deckPromise = controller.changeRoom({
       type: 'set-deck',
       deck: { type: 't-shirt' },
+      discardRoundId: ROUND_1_ID,
     });
     flush();
     current = controller.room();
@@ -444,7 +446,7 @@ describe('createPokerRoomController', () => {
       expect(current.deckType).toBe('t-shirt');
       expect(current.deck).toEqual(['XS', 'S', 'M', 'L', 'XL']);
     }
-    resolveDeck({ ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked.' });
+    resolveDeck({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
     await deckPromise;
     flush();
     current = controller.room();
@@ -496,10 +498,204 @@ describe('createPokerRoomController', () => {
     }
   });
 
+  it('applies set-story-lock optimistically (clearing active stage when locking active Story), guards locked Story edits, and rolls back on rejection', async () => {
+    const initial = makeLiveRoom({
+      stories: [
+        { id: STORY_1_ID, title: 'First story', status: 'estimated', acceptedEstimate: '5', locked: false },
+        { id: STORY_2_ID, title: 'Second story', status: 'skipped', locked: true },
+      ],
+      activeStoryId: STORY_1_ID,
+      round: {
+        id: ROUND_1_ID,
+        phase: 'open',
+        submittedParticipantIds: [],
+        ownChoice: null,
+      },
+    });
+    const { controller, changeRoomSpy } = mountSession(initial);
+
+    let resolveEditLocked!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveEditLocked = resolve;
+      }),
+    );
+    const editLocked = controller.changeRoom({
+      type: 'edit-story',
+      storyId: STORY_2_ID,
+      title: 'Should not apply',
+    });
+    flush();
+    let current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[1]?.title).toBe('Second story');
+    }
+    resolveEditLocked({ ok: false, code: 'STORY_LOCKED', message: 'Unlock this Story before changing it.' });
+    await editLocked;
+    flush();
+
+    let resolveLock!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveLock = resolve;
+      }),
+    );
+    const lockPromise = controller.changeRoom({
+      type: 'set-story-lock',
+      storyId: STORY_1_ID,
+      locked: true,
+    });
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[0]?.locked).toBe(true);
+      expect(current.stories[0]?.status).toBe('estimated');
+      expect(current.stories[0]?.acceptedEstimate).toBe('5');
+      expect(current.activeStoryId).toBeNull();
+      expect(current.round).toBeNull();
+    }
+    resolveLock({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
+    await lockPromise;
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[0]?.locked).toBe(false);
+      expect(current.activeStoryId).toBe(STORY_1_ID);
+      expect(current.round?.id).toBe(ROUND_1_ID);
+    }
+
+    let resolveUnlock!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveUnlock = resolve;
+      }),
+    );
+    const unlockPromise = controller.changeRoom({
+      type: 'set-story-lock',
+      storyId: STORY_2_ID,
+      locked: false,
+    });
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[1]?.locked).toBe(false);
+    }
+    resolveUnlock({
+      ok: true,
+      room: makeLiveRoom({
+        version: 2,
+        stories: [
+          { id: STORY_1_ID, title: 'First story', status: 'estimated', acceptedEstimate: '5', locked: false },
+          { id: STORY_2_ID, title: 'Second story', status: 'skipped', locked: false },
+        ],
+      }),
+    });
+    await unlockPromise;
+    flush();
+    current = controller.room();
+    expect(current.version).toBe(2);
+    if (!current.closed) {
+      expect(current.stories[1]?.locked).toBe(false);
+    }
+  });
+
+  it('applies delete-story optimistically (clearing active stage), guards locked Stories, and reverts on rejection', async () => {
+    const initial = makeLiveRoom({
+      stories: [
+        { id: STORY_1_ID, title: 'First story', status: 'pending', locked: false },
+        { id: STORY_2_ID, title: 'Second story', status: 'estimated', acceptedEstimate: '5', locked: true },
+      ],
+      activeStoryId: STORY_1_ID,
+      round: {
+        id: ROUND_1_ID,
+        phase: 'open',
+        submittedParticipantIds: [ALICE_ID],
+        ownChoice: '5',
+      },
+    });
+    const { controller, changeRoomSpy } = mountSession(initial);
+
+    let resolveLocked!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveLocked = resolve;
+      }),
+    );
+    const lockedDelete = controller.changeRoom({ type: 'delete-story', storyId: STORY_2_ID });
+    flush();
+    let current = controller.room();
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_1_ID, STORY_2_ID]);
+    }
+    resolveLocked({ ok: false, code: 'STORY_LOCKED', message: 'Unlock this Story before changing it.' });
+    await lockedDelete;
+    flush();
+
+    let resolveDeleteReject!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveDeleteReject = resolve;
+      }),
+    );
+    const deleteReject = controller.changeRoom({
+      type: 'delete-story',
+      storyId: STORY_1_ID,
+      discardRoundId: ROUND_1_ID,
+    });
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_2_ID]);
+      expect(current.activeStoryId).toBeNull();
+      expect(current.round).toBeNull();
+    }
+    resolveDeleteReject({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
+    await deleteReject;
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_1_ID, STORY_2_ID]);
+      expect(current.activeStoryId).toBe(STORY_1_ID);
+      expect(current.round?.id).toBe(ROUND_1_ID);
+    }
+
+    let resolveDeleteOk!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveDeleteOk = resolve;
+      }),
+    );
+    const deleteOk = controller.changeRoom({
+      type: 'delete-story',
+      storyId: STORY_1_ID,
+      discardRoundId: ROUND_1_ID,
+    });
+    flush();
+    resolveDeleteOk({
+      ok: true,
+      room: makeLiveRoom({
+        version: 2,
+        stories: [{ id: STORY_2_ID, title: 'Second story', status: 'estimated', acceptedEstimate: '5', locked: true }],
+        activeStoryId: null,
+        round: null,
+      }),
+    });
+    await deleteOk;
+    flush();
+    current = controller.room();
+    expect(current.version).toBe(2);
+    if (!current.closed) {
+      expect(current.stories.map((s) => s.id)).toEqual([STORY_2_ID]);
+      expect(current.activeStoryId).toBeNull();
+      expect(current.round).toBeNull();
+    }
+  });
+
   it('disposes the live stream cleanly when a live snapshot or command closes the Room', async () => {
     const closedSnapshot: PokerClosedRoomView = {
       closed: true,
       id: ROOM_ID,
+      name: 'Poker Room',
       version: 3,
       canDelete: true,
       stories: [{ title: 'First story', status: 'estimated', acceptedEstimate: '5' }],
@@ -538,6 +734,51 @@ describe('createPokerRoomController', () => {
     expect(actionClose.controller.online()).toEqual([]);
     expect(actionClose.connections[0].closed).toBe(true);
     expect(actionClose.connections).toHaveLength(1);
+  });
+
+  it('transitions cleanly from closed back to open on newer versions without connecting while unjoined', async () => {
+    const closedSnapshot: PokerClosedRoomView = {
+      closed: true,
+      id: ROOM_ID,
+      name: 'Poker Room',
+      version: 3,
+      canDelete: true,
+      stories: [{ title: 'First story', status: 'estimated', acceptedEstimate: '5' }],
+    };
+    const reopenedSnapshot = makeLiveRoom({
+      version: 4,
+      viewer: null,
+      participants: [],
+      stories: [],
+      activeStoryId: null,
+      round: null,
+    });
+
+    const session = mountSession(makeLiveRoom({ version: 2 }));
+    expect(session.connections).toHaveLength(1);
+
+    session.connections[0].emit({ type: 'room:snapshot', room: closedSnapshot });
+    flush();
+    expect(session.controller.room().closed).toBe(true);
+    expect(session.connections[0].closed).toBe(true);
+
+    session.setRoomProp(makeLiveRoom({ version: 3 }));
+    flush();
+    expect(session.controller.room().closed).toBe(true);
+
+    session.changeRoomSpy.mockResolvedValueOnce({ ok: true, room: reopenedSnapshot });
+    const result = await session.controller.changeRoom({ type: 'reopen-room' });
+    flush();
+
+    expect(result).toEqual({ ok: true, room: reopenedSnapshot });
+    const current = session.controller.room();
+    expect(current.closed).toBe(false);
+    expect(current.version).toBe(4);
+    if (!current.closed) {
+      expect(current.viewer).toBeNull();
+      expect(current.participants).toEqual([]);
+    }
+    expect(session.connections).toHaveLength(1);
   });
 
   it('disposes the live stream and signals unavailable on live room:missing or ROOM_NOT_FOUND', async () => {
@@ -629,6 +870,7 @@ describe('createPokerRoomController', () => {
           room: {
             closed: true,
             id: ROOM_ID,
+            name: 'Poker Room',
             version: 5,
             canDelete: true,
             stories: [{ title: 'First story', status: 'pending' }],
@@ -640,5 +882,30 @@ describe('createPokerRoomController', () => {
       { scenario: 'poker-room-controller-live-and-optimistic-actions' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('optimistically renames the Room, defaults blank to Poker Room, and rolls back on failure', async () => {
+    const initial = makeLiveRoom({ name: 'Sprint 14' });
+    const { controller, changeRoomSpy } = mountSession(initial);
+
+    let resolveRename!: (value: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => { resolveRename = resolve; }),
+    );
+
+    const pending = controller.changeRoom({ type: 'rename-room', name: '  Payments Planning  ' });
+    flush();
+    expect(controller.room().name).toBe('Payments Planning');
+
+    resolveRename({ ok: true, room: makeLiveRoom({ name: 'Payments Planning', version: 2 }) });
+    await pending;
+    flush();
+    expect(controller.room().name).toBe('Payments Planning');
+
+    changeRoomSpy.mockResolvedValueOnce({ ok: false, code: 'FORBIDDEN', message: 'Facilitator access is required.' });
+    const rejected = await controller.changeRoom({ type: 'rename-room', name: '   ' });
+    flush();
+    expect(rejected).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(controller.room().name).toBe('Payments Planning');
   });
 });

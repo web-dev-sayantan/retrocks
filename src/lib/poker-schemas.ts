@@ -1,10 +1,22 @@
 import * as v from 'valibot';
 
-import { POKER_DISPLAY_NAME_LIMIT, POKER_STORY_TITLE_LIMIT } from './poker-types';
+import {
+  POKER_DEFAULT_ROOM_NAME,
+  POKER_DISPLAY_NAME_LIMIT,
+  POKER_ROOM_NAME_LIMIT,
+  POKER_STORY_TITLE_LIMIT,
+} from './poker-types';
 
 const PokerEntityId = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9_-]{22}$/));
 export const PokerRoomId = PokerEntityId;
 export const PokerDisplayName = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(POKER_DISPLAY_NAME_LIMIT));
+export const PokerRoomName = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(POKER_ROOM_NAME_LIMIT));
+export const PokerRoomNameInput = v.pipe(
+  v.string(),
+  v.trim(),
+  v.maxLength(POKER_ROOM_NAME_LIMIT),
+  v.transform((name) => name || POKER_DEFAULT_ROOM_NAME),
+);
 
 const PokerStoryTitle = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(POKER_STORY_TITLE_LIMIT));
 
@@ -22,8 +34,15 @@ const CustomDeckChoices = v.pipe(
 
 export const PokerCommand = v.variant('type', [
   v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
+  v.object({ type: v.literal('rename-room'), name: PokerRoomNameInput }),
   v.object({ type: v.literal('close-room'), discardRoundId: v.optional(PokerEntityId) }),
-  v.object({ type: v.literal('add-story'), title: PokerStoryTitle }),
+  v.object({ type: v.literal('reopen-room') }),
+  v.object({
+    type: v.literal('add-story'),
+    title: PokerStoryTitle,
+    makeActive: v.optional(v.boolean()),
+    discardRoundId: v.optional(PokerEntityId),
+  }),
   v.object({
     type: v.literal('correct-estimate'),
     storyId: PokerEntityId,
@@ -31,7 +50,12 @@ export const PokerCommand = v.variant('type', [
     choice: PokerDeckChoice,
   }),
   v.object({ type: v.literal('return-story'), storyId: PokerEntityId }),
-  v.object({ type: v.literal('edit-story'), storyId: PokerEntityId, title: PokerStoryTitle }),
+  v.object({
+    type: v.literal('edit-story'),
+    storyId: PokerEntityId,
+    title: PokerStoryTitle,
+    discardRoundId: v.optional(PokerEntityId),
+  }),
   v.object({
     type: v.literal('move-story'),
     storyId: PokerEntityId,
@@ -40,6 +64,17 @@ export const PokerCommand = v.variant('type', [
   }),
   v.object({
     type: v.literal('select-story'),
+    storyId: PokerEntityId,
+    discardRoundId: v.optional(PokerEntityId),
+  }),
+  v.object({
+    type: v.literal('set-story-lock'),
+    storyId: PokerEntityId,
+    locked: v.boolean(),
+    discardRoundId: v.optional(PokerEntityId),
+  }),
+  v.object({
+    type: v.literal('delete-story'),
     storyId: PokerEntityId,
     discardRoundId: v.optional(PokerEntityId),
   }),
@@ -55,6 +90,7 @@ export const PokerCommand = v.variant('type', [
       v.object({ type: v.literal('t-shirt') }),
       v.object({ type: v.literal('custom'), choices: CustomDeckChoices }),
     ]),
+    discardRoundId: v.optional(PokerEntityId),
   }),
 ]);
 
@@ -70,7 +106,7 @@ const StorySummary = v.object({
   acceptedEstimate: v.optional(v.string()),
 });
 
-const Story = v.object({ id: PokerEntityId, ...StorySummary.entries });
+const Story = v.object({ id: PokerEntityId, ...StorySummary.entries, locked: v.optional(v.boolean()) });
 
 const Round = v.variant('phase', [
   v.object({
@@ -95,6 +131,7 @@ const RoomVersion = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 const LiveRoom = v.object({
   closed: v.literal(false),
   id: PokerRoomId,
+  name: PokerRoomName,
   version: RoomVersion,
   viewer: v.nullable(Participant),
   facilitatorLinkRevision: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
@@ -103,13 +140,13 @@ const LiveRoom = v.object({
   activeStoryId: v.nullable(PokerEntityId),
   deck: v.array(v.string()),
   deckType: v.picklist(['fibonacci', 't-shirt', 'custom']),
-  deckLocked: v.boolean(),
   round: v.nullable(Round),
 });
 
 const ClosedRoom = v.object({
   closed: v.literal(true),
   id: PokerRoomId,
+  name: PokerRoomName,
   version: RoomVersion,
   canDelete: v.boolean(),
   stories: v.array(StorySummary),

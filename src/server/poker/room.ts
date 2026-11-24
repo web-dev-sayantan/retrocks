@@ -2,9 +2,10 @@ import 'server-only';
 
 import { safeParse } from 'valibot';
 
-import { PokerDisplayName } from '../../lib/poker-schemas';
+import { PokerDisplayName, PokerRoomNameInput } from '../../lib/poker-schemas';
 import {
   POKER_DECK_PRESETS,
+  POKER_DEFAULT_ROOM_NAME,
   unresolvedPokerRoundId,
   type PokerDeckType,
   type PokerDeleteResult,
@@ -66,6 +67,12 @@ const storyMissing = {
   message: 'That Story is no longer in the queue.',
 } as const;
 
+const storyLocked = {
+  ok: false,
+  code: 'STORY_LOCKED',
+  message: 'Unlock this Story before changing it.',
+} as const;
+
 const roundChanged = {
   ok: false,
   code: 'ROUND_CHANGED',
@@ -75,6 +82,26 @@ const discardRequired = {
   ok: false,
   code: 'ROUND_CHANGED',
   message: 'Confirm that you want to discard the current Voting Round before switching Stories.',
+} as const;
+const lockDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to discard the current Voting Round before locking this Story.',
+} as const;
+const deleteDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to discard the current Voting Round before deleting this Story.',
+} as const;
+const editDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to restart the current Voting Round before editing this Story title.',
+} as const;
+const deckDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to restart the current Voting Round before changing the Deck.',
 } as const;
 
 const invalidDeckChoice = {
@@ -93,12 +120,39 @@ function startVotingRound(): StoredVotingRound {
   return { id: generateEntityId(), phase: 'open', ballots: {} };
 }
 
+function validateActiveRoundDiscard(
+  room: StoredPokerRoom,
+  isActive: boolean,
+  discardRoundId: string | undefined,
+  requiredError:
+    | typeof discardRequired
+    | typeof lockDiscardRequired
+    | typeof deleteDiscardRequired
+    | typeof editDiscardRequired
+    | typeof deckDiscardRequired,
+) {
+  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) {
+    return roundChanged;
+  }
+  if (
+    isActive
+    && room.round
+    && unresolvedPokerRoundId(room.round) !== undefined
+    && Object.keys(room.round.ballots).length > 0
+    && discardRoundId === undefined
+  ) {
+    return requiredError;
+  }
+  return null;
+}
+
 interface StoredParticipant extends PokerParticipant {
   hash: string;
 }
 
 export interface StoredPokerRoom {
   id: string;
+  name: string;
   version: number;
   expiresAt: number;
   participants: StoredParticipant[];
@@ -110,7 +164,6 @@ export interface StoredPokerRoom {
   activeStoryId: string | null;
   deck: readonly string[];
   deckType: PokerDeckType;
-  deckLocked: boolean;
   round: StoredVotingRound | null;
 }
 
@@ -120,6 +173,12 @@ export function pokerDeckContains(room: StoredPokerRoom, choice: string): boolea
 
 export function pokerDisplayName(input: unknown): string | undefined {
   const parsed = safeParse(PokerDisplayName, input);
+  return parsed.success ? parsed.output : undefined;
+}
+
+export function pokerRoomName(input: unknown): string | undefined {
+  if (input === undefined || input === null) return POKER_DEFAULT_ROOM_NAME;
+  const parsed = safeParse(PokerRoomNameInput, input);
   return parsed.success ? parsed.output : undefined;
 }
 
@@ -166,6 +225,7 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     return {
       closed: true,
       id: room.id,
+      name: room.name,
       version: room.version,
       canDelete: pokerCanDeleteRoom(room, hash),
       stories: room.stories.map(({ title, status, acceptedEstimate }) => ({
@@ -178,6 +238,7 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
   return {
     closed: false,
     id: room.id,
+    name: room.name,
     version: room.version,
     viewer,
     ...(viewer?.isFacilitator && room.facilitatorCapability
@@ -188,7 +249,6 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
     activeStoryId: viewer ? room.activeStoryId : null,
     deck: viewer ? room.deck : [],
     deckType: viewer ? room.deckType : 'fibonacci',
-    deckLocked: viewer ? room.deckLocked : false,
     round: viewer ? projectRound(room, viewer.id) : null,
   };
 }
@@ -237,12 +297,12 @@ export class PokerRoomStorage {
     );
     if (!row) return null;
     const room = JSON.parse(row.data) as StoredPokerRoom;
+    room.name = typeof room.name === 'string' && room.name.trim() ? room.name.trim() : POKER_DEFAULT_ROOM_NAME;
     room.stories ??= [];
+    for (const story of room.stories) story.locked ??= false;
     room.activeStoryId ??= null;
     room.deck ??= POKER_DECK_PRESETS.fibonacci;
     room.deckType ??= 'fibonacci';
-    // Before the persisted lock, any Room that had started voting still had a round.
-    room.deckLocked ??= room.round != null;
     room.round ??= null;
     return room;
   }
@@ -252,10 +312,11 @@ export class PokerRoomStorage {
     return room && projectPokerRoom(room, hash);
   }
 
-  create(id: string, hash: string, displayName: string): StoredPokerRoom {
+  create(id: string, hash: string, displayName: string, name = POKER_DEFAULT_ROOM_NAME): StoredPokerRoom {
     this.ensureSchema();
     const room: StoredPokerRoom = {
       id,
+      name: name.trim() || POKER_DEFAULT_ROOM_NAME,
       version: 1,
       expiresAt: Date.now() + ROOM_TTL_MS,
       participants: [{ id: generateEntityId(), hash, displayName, isFacilitator: true }],
@@ -263,7 +324,6 @@ export class PokerRoomStorage {
       activeStoryId: null,
       deck: POKER_DECK_PRESETS.fibonacci,
       deckType: 'fibonacci',
-      deckLocked: false,
       round: null,
     };
     this.db.run(
@@ -283,16 +343,47 @@ export class PokerRoomStorage {
       if (!room) return notFound;
 
       if (room.closedAt !== undefined) {
-        if (command.type !== 'close-room') return roomClosed;
-        return pokerCanDeleteRoom(room, hash) ? { ok: true, room } : forbidden;
+        if (command.type === 'close-room') {
+          return pokerCanDeleteRoom(room, hash) ? { ok: true, room } : forbidden;
+        }
+        if (command.type !== 'reopen-room') return roomClosed;
+        if (!pokerCanDeleteRoom(room, hash)) return forbidden;
+        delete room.closedAt;
+        room.pendingFacilitatorClaims = [...new Set(room.closedFacilitatorHashes ?? [])];
+        delete room.closedFacilitatorHashes;
+        room.participants = [];
+        delete room.facilitatorCapability;
+        room.activeStoryId = null;
+        room.round = null;
+        for (const story of room.stories) story.locked = true;
+        room.expiresAt = now + ROOM_TTL_MS;
+        this.save(room);
+        return { ok: true, room, updated: true };
       }
 
       switch (command.type) {
+        case 'rename-room': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const nextName = command.name.trim() || POKER_DEFAULT_ROOM_NAME;
+          if (room.name === nextName) return { ok: true, room };
+          room.name = nextName;
+          break;
+        }
+        case 'reopen-room': {
+          const isAuthorized = pokerParticipant(room, hash)?.isFacilitator === true
+            || room.pendingFacilitatorClaims?.includes(hash) === true;
+          return isAuthorized ? { ok: true, room } : forbidden;
+        }
         case 'close-room': {
           if (!pokerCanDeleteRoom(room, hash)) return forbidden;
           if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;
           room.closedAt = now;
-          room.closedFacilitatorHashes = room.participants.filter((p) => p.isFacilitator).map((p) => p.hash);
+          room.closedFacilitatorHashes = [
+            ...new Set([
+              ...room.participants.filter((p) => p.isFacilitator).map((p) => p.hash),
+              ...(room.pendingFacilitatorClaims ?? []),
+            ]),
+          ];
           room.participants = [];
           delete room.facilitatorCapability;
           delete room.pendingFacilitatorClaims;
@@ -315,29 +406,54 @@ export class PokerRoomStorage {
         }
         case 'set-deck': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          if (room.deckLocked) {
-            return { ok: false, code: 'DECK_LOCKED', message: 'The Deck is locked once the first Voting Round opens.' };
-          }
           const { deck } = command;
           const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
           if (room.deckType === deck.type && room.deck.length === choices.length
             && room.deck.every((choice, index) => choice === choices[index])) return { ok: true, room };
+          const hasActiveStory = room.activeStoryId !== null;
+          const discardError = validateActiveRoundDiscard(room, hasActiveStory, command.discardRoundId, deckDiscardRequired);
+          if (discardError) return discardError;
           room.deckType = deck.type;
           room.deck = choices;
+          if (
+            hasActiveStory
+            && room.round
+            && unresolvedPokerRoundId(room.round) !== undefined
+            && Object.keys(room.round.ballots).length > 0
+          ) {
+            room.round = startVotingRound();
+          }
           break;
         }
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-          room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending' });
+          if (command.makeActive) {
+            const discardError = validateActiveRoundDiscard(room, true, command.discardRoundId, discardRequired);
+            if (discardError) return discardError;
+            if (room.activeStoryId) {
+              const previousStory = room.stories.find((entry) => entry.id === room.activeStoryId);
+              if (previousStory) previousStory.locked = true;
+            }
+            const story: PokerStory = { id: generateEntityId(), title: command.title, status: 'pending', locked: false };
+            room.stories.push(story);
+            room.activeStoryId = story.id;
+            room.round = startVotingRound();
+            break;
+          }
+          room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending', locked: false });
           break;
         }
         case 'edit-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.title === command.title) return { ok: true, room };
+          const isActive = room.activeStoryId === story.id;
+          const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, editDiscardRequired);
+          if (discardError) return discardError;
           story.title = command.title;
-          if (room.activeStoryId === story.id && unresolvedPokerRoundId(room.round) !== undefined) {
+          if (isActive && unresolvedPokerRoundId(room.round) !== undefined) {
             room.round = startVotingRound();
           }
           break;
@@ -359,6 +475,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.acceptedEstimate !== command.expectedEstimate) {
             return { ok: false, code: 'INVALID_INPUT', message: 'The Accepted Estimate changed. Reopen the editor and try again.' };
           }
@@ -371,6 +488,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories?.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.status === 'pending') return { ok: true, room };
           if (story.status !== 'skipped') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Choose a skipped Story.' };
@@ -382,6 +500,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const story = room.stories.find((entry) => entry.id === command.storyId);
           if (!story) return storyMissing;
+          if (story.locked) return storyLocked;
           if (story.status === 'skipped') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Return this Story to the queue before selecting it.' };
           }
@@ -393,8 +512,43 @@ export class PokerRoomStorage {
             return discardRequired;
           }
           room.activeStoryId = story.id;
-          room.deckLocked = true;
           room.round = startVotingRound();
+          break;
+        }
+        case 'set-story-lock': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const story = room.stories.find((entry) => entry.id === command.storyId);
+          if (!story) return storyMissing;
+          const isActive = room.activeStoryId === story.id;
+          if (command.locked) {
+            const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, lockDiscardRequired);
+            if (discardError) return discardError;
+            if (story.locked && !isActive) return { ok: true, room };
+            story.locked = true;
+            if (isActive) {
+              room.activeStoryId = null;
+              room.round = null;
+            }
+          } else {
+            if (!story.locked) return { ok: true, room };
+            story.locked = false;
+          }
+          break;
+        }
+        case 'delete-story': {
+          if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          const index = room.stories.findIndex((entry) => entry.id === command.storyId);
+          if (index < 0) return storyMissing;
+          const story = room.stories[index];
+          if (story.locked) return storyLocked;
+          const isActive = room.activeStoryId === story.id;
+          const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, deleteDiscardRequired);
+          if (discardError) return discardError;
+          room.stories.splice(index, 1);
+          if (isActive) {
+            room.activeStoryId = null;
+            room.round = null;
+          }
           break;
         }
         case 'vote': {

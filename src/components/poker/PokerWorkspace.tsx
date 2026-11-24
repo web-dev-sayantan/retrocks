@@ -1,14 +1,26 @@
 import { Button } from '@ui-sdk/solid/button';
-import { Check, SquareCheck } from 'lucide';
-import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
+import { usePrimitive } from '@ui-sdk/solid/primitive';
+import { Check, SquareCheck, Users, X } from 'lucide';
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
-import { unresolvedPokerRoundId, type PokerLiveRoomView, type PokerResult, type PokerRoomChange } from '../../lib/poker-types';
+import { createDoubleTap } from '../../lib/double-tap';
+import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import {
+  POKER_DEFAULT_ROOM_NAME,
+  POKER_ROOM_NAME_LIMIT,
+  unresolvedPokerRoundId,
+  unresolvedPokerRoundWithVotesId,
+  type PokerLiveRoomView,
+  type PokerResult,
+  type PokerRoomChange,
+} from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerStoryQueue from './PokerStoryQueue';
+import PokerStoryTitleEditor from './PokerStoryTitleEditor';
 import PokerVotingRound from './PokerVotingRound';
 import './poker.css';
 
@@ -50,6 +62,8 @@ export default function PokerWorkspace(props: {
     return props.room.participants.filter((participant) => !voted.has(participant.id));
   });
 
+  const onlineStatusLabel = createMemo(() => (props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'));
+
   const [closeError, setCloseError] = createSignal('');
   const [closing, setClosing] = createSignal(false);
   let closeInProgress = false;
@@ -60,12 +74,26 @@ export default function PokerWorkspace(props: {
     setCloseError('');
     const discardRoundId = unresolvedPokerRoundId(props.room.round);
     try {
-      if (discardRoundId !== undefined && !await confirmBoardAction({
-        title: 'Close Room?',
-        description: 'Closing discards the current Voting Round and its votes. Accepted Estimates stay in the read-only summary.',
-        confirmLabel: 'Close and discard votes',
-        agentConfirm: 'Closes the Room permanently and discards the current Voting Round and its votes.',
-      })) return;
+      const confirmed = await confirmBoardAction(
+        discardRoundId !== undefined
+          ? {
+              title: 'Close Room?',
+              description:
+                'Closing discards the current Voting Round and its votes while keeping Accepted Estimates in the summary. A Facilitator can reopen the Room later.',
+              confirmLabel: 'Close and discard votes',
+              agentConfirm:
+                'Closes the Room and discards the current Voting Round and its votes. Accepted Estimates stay in the summary, and a Facilitator can reopen the Room later.',
+            }
+          : {
+              title: 'Close Room?',
+              description:
+                'Closing moves the Room to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+              confirmLabel: 'Close Room',
+              agentConfirm:
+                'Closes the Room and moves it to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+            },
+      );
+      if (!confirmed) return;
 
       setClosing(true);
       const result = await props.onChange({ type: 'close-room', ...(discardRoundId === undefined ? {} : { discardRoundId }) });
@@ -78,34 +106,176 @@ export default function PokerWorkspace(props: {
     }
   }
 
+  async function editActiveStoryTitle(
+    storyId: string,
+    title: string,
+    discardRoundId?: string,
+  ): Promise<InlineEditOutcome> {
+    try {
+      const result = await props.onChange({
+        type: 'edit-story',
+        storyId,
+        title,
+        ...(discardRoundId === undefined ? {} : { discardRoundId }),
+      });
+      return result.ok ? true : result.message;
+    } catch {
+      return 'Could not update the Story title. Try again.';
+    }
+  }
+
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
+  let roomNameEditorEl: HTMLDivElement | undefined;
+  let roomNameInputEl: HTMLInputElement | undefined;
+
+  const canManage = () => props.room.viewer?.isFacilitator === true;
+
+  const roomNameField = usePrimitive(inlineEdit, () => ({
+    value: () => props.room.name,
+    commit: (text: string) => roomNameSave.commit(text),
+    disabled: () => !canManage(),
+  }));
+  const roomNameEdit = roomNameField.api.edit;
+  const roomNameSave = createInlineEditSave(saveRoomNameText, () => roomNameEdit.cancel());
+  const isRenamingRoom = () => roomNameField.present('input');
+  const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
+
+  function isRoomNameEditTarget(target: EventTarget | null): boolean {
+    if (!canManage()) return false;
+    return !(target instanceof Element && target.closest('button'));
+  }
+
+  function startRoomRename(): void {
+    roomNameTap.reset();
+    if (!canManage()) return;
+    roomNameEdit.start(props.room.id);
+  }
+
+  function handleRoomNameDoubleClick(event: MouseEvent): void {
+    if (!isRoomNameEditTarget(event.target)) return;
+    roomNameTap.reset();
+    startRoomRename();
+  }
+
+  function cancelRoomRename(): void {
+    roomNameTap.reset();
+    roomNameSave.resetError();
+    roomNameEdit.cancel();
+  }
+
+  async function saveRoomNameText(text: string): Promise<InlineEditOutcome> {
+    const nextName = text.trim() || POKER_DEFAULT_ROOM_NAME;
+    if (nextName === props.room.name) return true;
+    try {
+      const result = await props.onChange({ type: 'rename-room', name: nextName });
+      return result.ok ? true : result.message;
+    } catch {
+      return 'Could not rename the Room. Try again.';
+    }
+  }
+
+  createEffect(isRenamingRoom, (renaming) => {
+    if (renaming && roomNameInputEl) roomNameEdit.bindInput(roomNameInputEl);
+  });
+
+  createEffect(isRenamingRoom, (renaming, wasRenaming) => {
+    if (!renaming && wasRenaming && document.activeElement === document.body) {
+      heading?.focus();
+    }
+  });
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
   });
 
+  const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
+
   return (
     <main class="poker-workspace" data-deck-type={props.room.deckType}>
       <header class="poker-room-bar">
         <div class="flex min-w-0 flex-wrap items-center gap-2.5 sm:gap-3">
-          <h1 ref={heading} tabindex={-1} class="poker-room-bar-title board-focus-ring rounded">
-            Pointing Poker
-          </h1>
+          <Show
+            when={!isRenamingRoom()}
+            fallback={
+              <div ref={roomNameEditorEl} class="poker-room-title-wrap">
+                <input
+                  ref={roomNameInputEl}
+                  type="text"
+                  aria-label="Room name"
+                  placeholder={POKER_DEFAULT_ROOM_NAME}
+                  maxlength={POKER_ROOM_NAME_LIMIT}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
+                    roomNameEdit.inputKeydown(event);
+                  }}
+                  onFocusOut={(event) => {
+                    if (event.relatedTarget instanceof Node && roomNameEditorEl?.contains(event.relatedTarget)) return;
+                    roomNameEdit.end('focus-out', event);
+                  }}
+                  class="poker-input poker-room-title-input board-focus-ring"
+                />
+                <div class="poker-room-title-actions">
+                  <Button
+                    type="button"
+                    aria-label="Save Room name"
+                    title="Save Room name"
+                    disabled={roomNameSave.isSaving()}
+                    focusableWhenDisabled
+                    onClick={() => roomNameEdit.end()}
+                    class="poker-inline-action poker-inline-action-save spring-press board-focus-ring"
+                  >
+                    <LucideIcon icon={Check} class="size-3.5 shrink-0" strokeWidth={2.2} />
+                  </Button>
+                  <Button
+                    type="button"
+                    aria-label="Cancel Room rename"
+                    title="Cancel Room rename"
+                    onClick={cancelRoomRename}
+                    class="poker-inline-action spring-press board-focus-ring"
+                  >
+                    <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
+                  </Button>
+                </div>
+              </div>
+            }
+          >
+            <div
+              onDblClick={handleRoomNameDoubleClick}
+              onPointerDown={roomNameTap.onPointerDown}
+              onPointerUp={roomNameTap.onPointerUp}
+              onPointerCancel={roomNameTap.onPointerCancel}
+              class="poker-room-title-wrap"
+            >
+              <h1
+                ref={heading}
+                tabindex={-1}
+                title={canManage() ? `${props.room.name} — Double-click to rename` : props.room.name}
+                class={[
+                  'poker-room-bar-title board-focus-ring min-w-0 truncate rounded',
+                  canManage() && 'cursor-text touch-manipulation',
+                ]}
+              >
+                {props.room.name}
+              </h1>
+            </div>
+          </Show>
           <PokerDeckSettings
             deck={props.room.deck}
             deckType={props.room.deckType}
-            locked={props.room.deckLocked}
             canManage={props.room.viewer?.isFacilitator === true}
+            discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
             onChange={props.onChange}
           />
-          <p class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted tabular-nums" aria-live="polite">
-            <span
-              aria-hidden="true"
-              class="poker-presence-dot"
-              data-state={props.status === 'live' ? 'online' : 'reconnecting'}
-            />
-            <span>{props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'}</span>
+          <p
+            class="poker-bar-chip poker-online-pill tabular-nums"
+            data-state={props.status === 'live' ? 'online' : 'reconnecting'}
+            title={onlineStatusLabel()}
+            aria-live="polite"
+          >
+            <LucideIcon icon={Users} class="poker-online-icon size-3.5 shrink-0" strokeWidth={2} />
+            <span aria-hidden="true">{props.online.length}</span>
+            <span class="sr-only">{onlineStatusLabel()}</span>
           </p>
         </div>
 
@@ -123,9 +293,6 @@ export default function PokerWorkspace(props: {
               title="Close Room"
               disabled={closing()}
               focusableWhenDisabled
-              data-agent-confirm={unresolvedPokerRoundId(props.room.round) === undefined
-                ? 'Closes the Room permanently. Accepted Estimates remain in the read-only summary.'
-                : undefined}
               onClick={() => void closeRoom()}
             >
               <LucideIcon icon={SquareCheck} class="size-4 shrink-0" strokeWidth={1.85} />
@@ -137,9 +304,9 @@ export default function PokerWorkspace(props: {
 
       <p
         role="alert"
-        class={(closeError() || props.claimError) ? 'poker-error-text border-b border-border/60 px-4 py-2.5 text-sm font-medium sm:px-6' : 'sr-only'}
+        class={alertMessage() ? 'poker-error-text border-b border-border/60 px-4 py-2.5 text-sm font-medium sm:px-6' : 'sr-only'}
       >
-        {closeError() || props.claimError}
+        {alertMessage()}
       </p>
 
       <div class="poker-split">
@@ -150,6 +317,7 @@ export default function PokerWorkspace(props: {
           deck={props.room.deck}
           roundId={props.room.round?.id}
           discardRoundId={unresolvedPokerRoundId(props.room.round)}
+          activeRoundWithVotesId={unresolvedPokerRoundWithVotesId(props.room.round)}
           onChange={props.onChange}
         />
 
@@ -170,7 +338,7 @@ export default function PokerWorkspace(props: {
                   </p>
                   <p class="max-w-sm text-sm leading-relaxed text-text-muted [text-wrap:pretty]">
                     {props.room.stories.length === 0 && props.room.viewer?.isFacilitator
-                      ? 'Add your first Story in the queue on the left, or adjust the Deck in the top bar before round one starts.'
+                      ? 'Add your first Story in the queue on the left, or adjust the Deck in the top bar anytime.'
                       : 'Votes stay private until the Facilitator reveals them.'}
                   </p>
                 </div>
@@ -196,7 +364,13 @@ export default function PokerWorkspace(props: {
                     )}
                   </Show>
 
-                  <p class="poker-active-title">{story().title}</p>
+                  <PokerStoryTitleEditor
+                    story={story()}
+                    canEdit={props.room.viewer?.isFacilitator === true}
+                    discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
+                    variant="stage"
+                    onSave={(title, discardRoundId) => editActiveStoryTitle(story().id, title, discardRoundId)}
+                  />
 
                   <Show when={story().acceptedEstimate !== undefined}>
                     <p class="poker-accepted-pill" role="status">
@@ -245,13 +419,19 @@ export default function PokerWorkspace(props: {
                     <For each={props.room.participants} keyed={(participant) => participant.id}>
                       {(participant) => {
                         const isOnline = () => onlineSet().has(participant().id);
+                        const isSelf = () => participant().id === props.room.viewer?.id;
                         const hasVoted = () => submitted()?.has(participant().id) ?? false;
                         return (
-                          <li class="poker-seat" data-online={isOnline() ? 'true' : 'false'}>
+                          <li
+                            class="poker-seat"
+                            data-online={isOnline() ? 'true' : 'false'}
+                            data-self={isSelf() ? 'true' : undefined}
+                          >
                             <Show when={openRound()}>
                               <div
                                 class="poker-seat-card"
                                 data-seat-state={hasVoted() ? 'voted' : 'waiting'}
+                                data-self={isSelf() ? 'true' : undefined}
                                 aria-hidden="true"
                               >
                                 <Show when={hasVoted()}>
@@ -259,7 +439,7 @@ export default function PokerWorkspace(props: {
                                 </Show>
                               </div>
                             </Show>
-                            <span class="inline-flex max-w-full items-center gap-1.5 text-xs font-medium text-text">
+                            <span class="poker-seat-name inline-flex max-w-full items-center gap-1.5 text-xs">
                               <span
                                 aria-hidden="true"
                                 class="poker-presence-dot"
@@ -267,13 +447,13 @@ export default function PokerWorkspace(props: {
                               />
                               <span class="truncate">
                                 {participant().displayName}
-                                <Show when={participant().id === props.room.viewer?.id}> (you)</Show>
+                                <Show when={isSelf()}> (you)</Show>
                               </span>
                             </span>
                             <span class="sr-only">
                               {isOnline() ? 'Online' : 'Offline'}
                               <Show when={submitted()}>
-                                {(ids) => (ids().has(participant().id) ? ', Voted' : ', Awaiting vote')}
+                                {(ids) => <span>{ids().has(participant().id) ? ', Voted' : ', Awaiting vote'}</span>}
                               </Show>
                             </span>
                             <Show when={participant().isFacilitator}>
@@ -293,20 +473,29 @@ export default function PokerWorkspace(props: {
                     <For each={round().ballots} keyed={(ballot) => ballot.participantId}>
                       {(ballot) => {
                         const isOnline = () => onlineSet().has(ballot().participantId);
+                        const isSelf = () => ballot().participantId === props.room.viewer?.id;
                         const isConsensus = () => voteSpread()?.topChoices.has(ballot().choice) ?? false;
                         return (
-                          <li class="poker-seat grid justify-items-center" data-online={isOnline() ? 'true' : 'false'}>
-                            <span class="order-2 inline-flex max-w-full items-center gap-1.5 text-xs font-medium text-text">
+                          <li
+                            class="poker-seat grid justify-items-center"
+                            data-online={isOnline() ? 'true' : 'false'}
+                            data-self={isSelf() ? 'true' : undefined}
+                          >
+                            <span class="poker-seat-name order-2 inline-flex max-w-full items-center gap-1.5 text-xs">
                               <span
                                 aria-hidden="true"
                                 class="poker-presence-dot"
                                 data-state={isOnline() ? 'online' : 'offline'}
                               />
-                              <span class="truncate">{ballot().displayName}</span>
+                              <span class="truncate">
+                                {ballot().displayName}
+                                <Show when={isSelf()}> (you)</Show>
+                              </span>
                             </span>
                             <span
                               class="poker-seat-card order-1"
                               data-seat-state="revealed"
+                              data-self={isSelf() ? 'true' : undefined}
                               data-consensus={isConsensus() ? 'true' : undefined}
                             >
                               {ballot().choice}

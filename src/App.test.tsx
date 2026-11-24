@@ -79,6 +79,7 @@ it.each([
 
 const room: PokerLiveRoomView = {
   id: 'abcdefghijklmnopqrstuv',
+  name: 'Poker Room',
   closed: false,
   version: 1,
   viewer: null,
@@ -87,7 +88,6 @@ const room: PokerLiveRoomView = {
   activeStoryId: null,
   deck: FIBONACCI_DECK,
   deckType: 'fibonacci',
-  deckLocked: false,
   round: null,
 };
 
@@ -98,7 +98,7 @@ it.each(['p', 'P'])(
     window.history.replaceState(null, '', `/${segment}/${room.id}`);
     render(() => <App />);
 
-    expect(await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 }))
+    expect(await screen.findByRole('heading', { name: 'Join Poker Room', level: 1 }))
       .toBeInTheDocument();
     expect(readRecentPokerRooms()).toEqual([]);
     const header = within(screen.getByRole('banner'));
@@ -126,12 +126,12 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
     target: { value: 'Sam' },
   });
   fireEvent.submit(setup);
-  await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 });
+  await screen.findByRole('heading', { name: 'Poker Room', level: 1 });
   await waitFor(() => expect(window.location.pathname).toBe(`/p/${room.id}`));
   expect(poker).toHaveAttribute('aria-current', 'page');
 
   const home = screen.getByRole('link', { name: 'Retrocks' });
-  const label = 'Room · abcdefgh';
+  const label = 'Poker Room';
   const openSavedRoom = async () => {
     const list = await screen.findByRole('region', { name: 'Recent Rooms' });
     const link = within(list).getByRole('link', { name: label });
@@ -151,7 +151,7 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
   flush();
 
   const list = await screen.findByRole('region', { name: 'Recent Rooms' });
-  const remove = 'Remove Room · abcdefgh from Recent Rooms';
+  const remove = 'Remove Poker Room from Recent Rooms';
   expect(within(list).getByRole('button', { name: remove })).toBeEnabled();
   const agent = createAgent();
   expect(agent.snapshot().some((control) => control.label === remove)).toBe(true);
@@ -161,7 +161,7 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
 });
 
 it.each([
-  ['closed', { id: 'c'.repeat(22), version: 2, closed: true, canDelete: false, stories: [] }, 'Room summary', true],
+  ['closed', { id: 'c'.repeat(22), name: 'Closed Sizing', version: 2, closed: true, canDelete: false, stories: [] }, 'Closed Sizing', true],
   ['unavailable', null, 'Room unavailable', false],
 ] as const)('handles a saved Room that is %s', async (_, response, heading, saved) => {
   const id = response?.id ?? 'u'.repeat(22);
@@ -172,6 +172,45 @@ it.each([
 
   await screen.findByRole('heading', { name: heading, level: 1 });
   await waitFor(() => expect(readRecentPokerRooms().some((entry) => entry.id === id)).toBe(saved));
+});
+
+it('reopening a closed Room transitions directly to the join screen without reloading', async () => {
+  const id = 'r'.repeat(22);
+  const closedRoom = { id, name: 'Poker Room', version: 2, closed: true, canDelete: true, stories: [{ title: 'Checkout', status: 'estimated', acceptedEstimate: '5' }] };
+  const reopenedRoom: PokerLiveRoomView = {
+    id,
+    name: 'Poker Room',
+    version: 3,
+    closed: false,
+    viewer: null,
+    participants: [],
+    stories: [],
+    activeStoryId: null,
+    deck: [],
+    deckType: 'fibonacci',
+    round: null,
+  };
+  vi.stubGlobal('fetch', async (resource: string, init?: RequestInit) => {
+    if (!new URL(resource, window.location.origin).pathname.startsWith('/_server')) {
+      throw new Error(`Unexpected request: ${resource}`);
+    }
+    const payload = init?.method === 'POST' ? { ok: true, room: reopenedRoom } : closedRoom;
+    return Response.json(payload, {
+      status: 200,
+      headers: { 'X-Server-Function-Format': '8' },
+    });
+  });
+
+  window.history.replaceState(null, '', `/p/${id}`);
+  render(() => <App />);
+
+  await screen.findByRole('heading', { name: 'Poker Room', level: 1 });
+  const reopenButton = screen.getByRole('button', { name: 'Reopen Room' });
+  fireEvent.click(reopenButton);
+
+  const joinHeading = await screen.findByRole('heading', { name: 'Join Poker Room', level: 1 });
+  expect(joinHeading).toHaveFocus();
+  expect(screen.getByRole('textbox', { name: 'Display Name' })).toBeInTheDocument();
 });
 
 it('retains the Board masthead on a Board route', async () => {

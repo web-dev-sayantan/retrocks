@@ -188,7 +188,7 @@ function ActionItemRow(props: {
               onFocusOut={(event) => ownerEdit.end('focus-out', event)}
               class={[
                 'min-h-11 w-40 max-w-full rounded-md border border-control bg-surface px-2 py-1 text-base text-text sm:min-h-9 sm:text-sm',
-                'placeholder:text-text-muted focus:border-focus focus:outline-none read-only:opacity-50 disabled:opacity-50',
+                'placeholder:text-text-muted board-focus-ring read-only:opacity-50 disabled:opacity-50',
               ]}
             />
           </div>

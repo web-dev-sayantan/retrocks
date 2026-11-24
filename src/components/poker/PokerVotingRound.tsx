@@ -21,6 +21,7 @@ export default function PokerVotingRound(props: {
   const busy = () => pendingRound() !== undefined;
   const open = createMemo(() => (props.round.phase === 'open' ? props.round : null));
   const revealed = createMemo(() => (props.round.phase !== 'open' ? props.round : null));
+  const deckKey = createMemo(() => props.deck.join('\0'));
   const votedChoices = createMemo(() => {
     const current = revealed();
     if (!current) return undefined;
@@ -74,21 +75,25 @@ export default function PokerVotingRound(props: {
               </div>
             </Show>
 
-            <RadioGroup
-              class="poker-deck"
-              aria-labelledby={headingId}
-              value={round().ownChoice}
-              readOnly={busy()}
-              onValueChange={(choice) => void change({ type: 'vote', roundId: round().id, choice })}
-            >
-              <For each={props.deck}>
-                {(choice) => (
-                  <Radio class="poker-vote-tile spring-press board-focus-ring" value={choice}>
-                    {choice}
-                  </Radio>
-                )}
-              </For>
-            </RadioGroup>
+            <Show when={deckKey()} keyed>
+              {(_deckKey) => (
+                <RadioGroup
+                  class="poker-deck"
+                  aria-labelledby={headingId}
+                  value={round().ownChoice}
+                  readOnly={busy()}
+                  onValueChange={(choice) => void change({ type: 'vote', roundId: round().id, choice })}
+                >
+                  <For each={props.deck}>
+                    {(choice) => (
+                      <Radio class="poker-vote-tile spring-press board-focus-ring" value={choice}>
+                        {choice}
+                      </Radio>
+                    )}
+                  </For>
+                </RadioGroup>
+              )}
+            </Show>
 
             <div class="flex flex-wrap items-center justify-center gap-3 text-xs text-text-muted">
               <p role="status">

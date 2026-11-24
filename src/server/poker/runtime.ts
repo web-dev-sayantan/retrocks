@@ -14,7 +14,7 @@ export async function getPokerRoomAccess(id: string) {
     const room = namespace.getByName(id);
     return {
       read: (hash: string) => room.read(id, hash),
-      create: (hash: string, displayName: string) => room.create(id, hash, displayName),
+      create: (hash: string, displayName: string, name?: string) => room.create(id, hash, displayName, name),
       mutate: (hash: string, command: PokerRoomCommand) => room.mutate(id, hash, command),
       delete: (hash: string) => room.delete(id, hash),
       getFacilitatorCapability: (hash: string) => room.getFacilitatorCapability(id, hash),
@@ -34,7 +34,7 @@ export async function getPokerRoomAccess(id: string) {
   const rooms = await nodeRooms;
   return {
     read: (hash: string) => rooms.read(id, hash),
-    create: (hash: string, displayName: string) => rooms.create(id, hash, displayName),
+    create: (hash: string, displayName: string, name?: string) => rooms.create(id, hash, displayName, name),
     mutate: (hash: string, command: PokerRoomCommand) => rooms.mutate(id, hash, command),
     delete: (hash: string) => rooms.delete(id, hash),
     getFacilitatorCapability: (hash: string) => rooms.getFacilitatorCapability(id, hash),
