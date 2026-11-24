@@ -497,6 +497,110 @@ describe('createPokerRoomController', () => {
     }
   });
 
+  it('applies set-story-lock optimistically (clearing active stage when locking active Story), guards locked Story edits, and rolls back on rejection', async () => {
+    const initial = makeLiveRoom({
+      stories: [
+        { id: STORY_1_ID, title: 'First story', status: 'estimated', acceptedEstimate: '5', locked: false },
+        { id: STORY_2_ID, title: 'Second story', status: 'skipped', locked: true },
+      ],
+      activeStoryId: STORY_1_ID,
+      round: {
+        id: ROUND_1_ID,
+        phase: 'open',
+        submittedParticipantIds: [],
+        ownChoice: null,
+      },
+    });
+    const { controller, changeRoomSpy } = mountSession(initial);
+
+    // 1. Optimistic edits on an already locked Story do not mutate optimistic state.
+    let resolveEditLocked!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveEditLocked = resolve;
+      }),
+    );
+    const editLocked = controller.changeRoom({
+      type: 'edit-story',
+      storyId: STORY_2_ID,
+      title: 'Should not apply',
+    });
+    flush();
+    let current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[1]?.title).toBe('Second story');
+    }
+    resolveEditLocked({ ok: false, code: 'STORY_LOCKED', message: 'Unlock this Story before changing it.' });
+    await editLocked;
+    flush();
+
+    // 2. Locking the active Story with 0 cast votes optimistically locks it and clears the stage, then reverts on rejection.
+    let resolveLock!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveLock = resolve;
+      }),
+    );
+    const lockPromise = controller.changeRoom({
+      type: 'set-story-lock',
+      storyId: STORY_1_ID,
+      locked: true,
+    });
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[0]?.locked).toBe(true);
+      expect(current.stories[0]?.status).toBe('estimated');
+      expect(current.stories[0]?.acceptedEstimate).toBe('5');
+      expect(current.activeStoryId).toBeNull();
+      expect(current.round).toBeNull();
+    }
+    resolveLock({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
+    await lockPromise;
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[0]?.locked).toBe(false);
+      expect(current.activeStoryId).toBe(STORY_1_ID);
+      expect(current.round?.id).toBe(ROUND_1_ID);
+    }
+
+    // 3. Unlocking a locked Story optimistically unlocks it and commits on success.
+    let resolveUnlock!: (result: PokerResult) => void;
+    changeRoomSpy.mockImplementationOnce(
+      () => new Promise<PokerResult>((resolve) => {
+        resolveUnlock = resolve;
+      }),
+    );
+    const unlockPromise = controller.changeRoom({
+      type: 'set-story-lock',
+      storyId: STORY_2_ID,
+      locked: false,
+    });
+    flush();
+    current = controller.room();
+    if (!current.closed) {
+      expect(current.stories[1]?.locked).toBe(false);
+    }
+    resolveUnlock({
+      ok: true,
+      room: makeLiveRoom({
+        version: 2,
+        stories: [
+          { id: STORY_1_ID, title: 'First story', status: 'estimated', acceptedEstimate: '5', locked: false },
+          { id: STORY_2_ID, title: 'Second story', status: 'skipped', locked: false },
+        ],
+      }),
+    });
+    await unlockPromise;
+    flush();
+    current = controller.room();
+    expect(current.version).toBe(2);
+    if (!current.closed) {
+      expect(current.stories[1]?.locked).toBe(false);
+    }
+  });
+
   it('disposes the live stream cleanly when a live snapshot or command closes the Room', async () => {
     const closedSnapshot: PokerClosedRoomView = {
       closed: true,

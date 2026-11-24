@@ -26,6 +26,7 @@ export interface PokerStory {
   title: string;
   status: 'pending' | 'estimated' | 'skipped';
   acceptedEstimate?: string;
+  locked?: boolean;
 }
 
 export type PokerRoundView =
@@ -61,13 +62,21 @@ export function unresolvedPokerRoundId(round: Pick<PokerRoundView, 'id' | 'phase
   return round?.phase === 'open' || round?.phase === 'revealed' ? round.id : undefined;
 }
 
+export function unresolvedPokerRoundWithVotesId(round: PokerRoundView | null) {
+  if (!round) return undefined;
+  if (round.phase === 'open') return round.submittedParticipantIds.length > 0 ? round.id : undefined;
+  if (round.phase === 'revealed') return round.ballots.length > 0 ? round.id : undefined;
+  return undefined;
+}
+
 export type PokerStoryCommand =
   | { type: 'add-story'; title: string }
   | { type: 'edit-story'; storyId: string; title: string }
   | { type: 'move-story'; storyId: string; targetId: string; placement: 'before' | 'after' }
   | { type: 'correct-estimate'; storyId: string; expectedEstimate: string; choice: string }
   | { type: 'return-story'; storyId: string }
-  | { type: 'select-story'; storyId: string; discardRoundId?: string };
+  | { type: 'select-story'; storyId: string; discardRoundId?: string }
+  | { type: 'set-story-lock'; storyId: string; locked: boolean; discardRoundId?: string };
 
 export type PokerVotingCommand =
   | { type: 'vote'; roundId: string; choice: string | null }
@@ -80,7 +89,7 @@ export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeck
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 
-type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'ROOM_CLOSED'; message: string };
+type PokerFailure = { ok: false; code: 'ROOM_NOT_FOUND' | 'INVALID_INPUT' | 'FORBIDDEN' | 'RATE_LIMITED' | 'ROUND_CHANGED' | 'DECK_LOCKED' | 'STORY_LOCKED' | 'ROOM_CLOSED'; message: string };
 
 export type PokerResult<T = PokerRoomView> = { ok: true; room: T } | PokerFailure;
 export type PokerDeleteResult = { ok: true } | PokerFailure;

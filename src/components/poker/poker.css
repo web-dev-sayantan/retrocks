@@ -548,6 +548,17 @@
     text-decoration-color: color-mix(in oklab, var(--retrocks-border) 90%, transparent);
   }
 
+  .poker-lock-cue {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--retrocks-text-muted);
+  }
+
+  .poker-story-row[data-locked='true'] .poker-story-title {
+    color: var(--retrocks-text-muted);
+  }
+
   .poker-est-badge {
     display: inline-flex;
     align-items: center;
@@ -941,6 +952,10 @@
     .poker-story-row[aria-current='true'] {
       outline: 2px solid Highlight;
       outline-offset: -2px;
+    }
+
+    .poker-story-row[data-locked='true'] .poker-lock-cue {
+      color: CanvasText;
     }
 
     .poker-vote-tile[data-checked],

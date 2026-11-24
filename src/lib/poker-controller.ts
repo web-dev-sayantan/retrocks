@@ -15,6 +15,7 @@ import {
 } from './poker-live';
 import {
   POKER_DECK_PRESETS,
+  unresolvedPokerRoundWithVotesId,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -54,7 +55,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       const title = command.title.trim();
       if (!title) return;
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story) story.title = title;
+      if (story && !story.locked) story.title = title;
       break;
     }
     case 'move-story': {
@@ -72,7 +73,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
     }
     case 'correct-estimate': {
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story && story.acceptedEstimate === command.expectedEstimate) {
+      if (story && !story.locked && story.acceptedEstimate === command.expectedEstimate) {
         story.status = 'estimated';
         story.acceptedEstimate = command.choice;
       }
@@ -80,9 +81,21 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
     }
     case 'return-story': {
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story && story.status === 'skipped') {
+      if (story && !story.locked && story.status === 'skipped') {
         story.status = 'pending';
       }
+      break;
+    }
+    case 'set-story-lock': {
+      const story = room.stories.find((item) => item.id === command.storyId);
+      if (!story) return;
+      if (command.locked && room.activeStoryId === story.id) {
+        if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) return;
+        if (unresolvedPokerRoundWithVotesId(room.round) !== undefined && command.discardRoundId === undefined) return;
+        room.activeStoryId = null;
+        room.round = null;
+      }
+      story.locked = command.locked;
       break;
     }
     case 'set-deck': {
