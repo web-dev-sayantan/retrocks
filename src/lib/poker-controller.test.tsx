@@ -387,6 +387,7 @@ describe('createPokerRoomController', () => {
       type: 'edit-story',
       storyId: STORY_1_ID,
       title: 'Renamed story',
+      discardRoundId: ROUND_1_ID,
     });
     flush();
 
@@ -514,7 +515,6 @@ describe('createPokerRoomController', () => {
     });
     const { controller, changeRoomSpy } = mountSession(initial);
 
-    // 1. Optimistic edits on an already locked Story do not mutate optimistic state.
     let resolveEditLocked!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -535,7 +535,6 @@ describe('createPokerRoomController', () => {
     await editLocked;
     flush();
 
-    // 2. Locking the active Story with 0 cast votes optimistically locks it and clears the stage, then reverts on rejection.
     let resolveLock!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -566,7 +565,6 @@ describe('createPokerRoomController', () => {
       expect(current.round?.id).toBe(ROUND_1_ID);
     }
 
-    // 3. Unlocking a locked Story optimistically unlocks it and commits on success.
     let resolveUnlock!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -619,7 +617,6 @@ describe('createPokerRoomController', () => {
     });
     const { controller, changeRoomSpy } = mountSession(initial);
 
-    // 1. Locked Story does not mutate optimistic state on delete-story.
     let resolveLocked!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -636,7 +633,6 @@ describe('createPokerRoomController', () => {
     await lockedDelete;
     flush();
 
-    // 2. Deleting active Story with cast votes and matching discardRoundId optimistically removes it, clears stage, preserves deckLocked, and reverts on rejection.
     let resolveDeleteReject!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -666,7 +662,6 @@ describe('createPokerRoomController', () => {
       expect(current.round?.id).toBe(ROUND_1_ID);
     }
 
-    // 3. Commits deletion cleanly on server success.
     let resolveDeleteOk!: (result: PokerResult) => void;
     changeRoomSpy.mockImplementationOnce(
       () => new Promise<PokerResult>((resolve) => {
@@ -772,12 +767,10 @@ describe('createPokerRoomController', () => {
     expect(session.controller.room().closed).toBe(true);
     expect(session.connections[0].closed).toBe(true);
 
-    // Equal-version open snapshot must still be ignored while closed.
     session.setRoomProp(makeLiveRoom({ version: 3 }));
     flush();
     expect(session.controller.room().closed).toBe(true);
 
-    // Newer-version reopen-room result transitions back to open without opening a live stream for viewer === null.
     session.changeRoomSpy.mockResolvedValueOnce({ ok: true, room: reopenedSnapshot });
     const result = await session.controller.changeRoom({ type: 'reopen-room' });
     flush();

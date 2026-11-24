@@ -1153,7 +1153,8 @@
 
     .poker-vote-tile[data-checked],
     .poker-deck-option[data-checked],
-    .poker-quick-add-btn-primary {
+    .poker-quick-add-btn-primary,
+    .poker-inline-action-save {
       border: 2px solid Highlight;
       background: Highlight;
       color: HighlightText;

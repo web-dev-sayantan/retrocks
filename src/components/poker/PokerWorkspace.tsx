@@ -106,9 +106,18 @@ export default function PokerWorkspace(props: {
     }
   }
 
-  async function editActiveStoryTitle(storyId: string, title: string): Promise<InlineEditOutcome> {
+  async function editActiveStoryTitle(
+    storyId: string,
+    title: string,
+    discardRoundId?: string,
+  ): Promise<InlineEditOutcome> {
     try {
-      const result = await props.onChange({ type: 'edit-story', storyId, title });
+      const result = await props.onChange({
+        type: 'edit-story',
+        storyId,
+        title,
+        ...(discardRoundId === undefined ? {} : { discardRoundId }),
+      });
       return result.ok ? true : result.message;
     } catch {
       return 'Could not update the Story title. Try again.';
@@ -117,6 +126,7 @@ export default function PokerWorkspace(props: {
 
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
+  let roomNameEditorEl: HTMLDivElement | undefined;
   let roomNameInputEl: HTMLInputElement | undefined;
   let renameRoomButtonEl: HTMLButtonElement | undefined;
 
@@ -189,7 +199,7 @@ export default function PokerWorkspace(props: {
           <Show
             when={!isRenamingRoom()}
             fallback={
-              <div class="flex min-w-0 items-center gap-1.5">
+              <div ref={roomNameEditorEl} class="flex min-w-0 items-center gap-1.5">
                 <input
                   ref={roomNameInputEl}
                   type="text"
@@ -200,7 +210,10 @@ export default function PokerWorkspace(props: {
                     if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
                     roomNameEdit.inputKeydown(event);
                   }}
-                  onFocusOut={(event) => roomNameEdit.end('focus-out', event)}
+                  onFocusOut={(event) => {
+                    if (event.relatedTarget instanceof Node && roomNameEditorEl?.contains(event.relatedTarget)) return;
+                    roomNameEdit.end('focus-out', event);
+                  }}
                   class="poker-input poker-room-title-input board-focus-ring"
                 />
                 <Button
@@ -365,9 +378,9 @@ export default function PokerWorkspace(props: {
                   <PokerStoryTitleEditor
                     story={story()}
                     canEdit={props.room.viewer?.isFacilitator === true}
-                    confirmRestartVoting={unresolvedPokerRoundWithVotesId(props.room.round) !== undefined}
+                    discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
                     variant="stage"
-                    onSave={(title) => editActiveStoryTitle(story().id, title)}
+                    onSave={(title, discardRoundId) => editActiveStoryTitle(story().id, title, discardRoundId)}
                   />
 
                   <Show when={story().acceptedEstimate !== undefined}>

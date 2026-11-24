@@ -50,7 +50,12 @@ export const PokerCommand = v.variant('type', [
     choice: PokerDeckChoice,
   }),
   v.object({ type: v.literal('return-story'), storyId: PokerEntityId }),
-  v.object({ type: v.literal('edit-story'), storyId: PokerEntityId, title: PokerStoryTitle }),
+  v.object({
+    type: v.literal('edit-story'),
+    storyId: PokerEntityId,
+    title: PokerStoryTitle,
+    discardRoundId: v.optional(PokerEntityId),
+  }),
   v.object({
     type: v.literal('move-story'),
     storyId: PokerEntityId,

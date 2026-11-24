@@ -18,9 +18,9 @@ export interface PokerStoryTitleEditorHandle {
 export default function PokerStoryTitleEditor(props: {
   story: PokerStory;
   canEdit: boolean;
-  confirmRestartVoting?: boolean;
+  discardRoundId?: string;
   variant: 'queue' | 'stage';
-  onSave: (title: string) => Promise<InlineEditOutcome>;
+  onSave: (title: string, discardRoundId?: string) => Promise<InlineEditOutcome>;
   onHandle?: (handle: PokerStoryTitleEditorHandle) => void;
   fallbackFocus?: () => void;
 }) {
@@ -58,7 +58,8 @@ export default function PokerStoryTitleEditor(props: {
     const trimmed = text.trim();
     if (trimmed.length === 0) return 'Enter a Story title.';
     if (trimmed === props.story.title) return true;
-    if (props.confirmRestartVoting) {
+    const discardRoundId = props.discardRoundId;
+    if (discardRoundId !== undefined) {
       const confirmed = await confirmBoardAction({
         title: 'Change active Story title?',
         description: 'Changing the title restarts the current Voting Round with empty ballots.',
@@ -68,7 +69,7 @@ export default function PokerStoryTitleEditor(props: {
       });
       if (!confirmed) return true;
     }
-    return props.onSave(trimmed);
+    return props.onSave(trimmed, discardRoundId);
   }
 
   untrack(() => props.onHandle)?.({
@@ -177,6 +178,7 @@ export default function PokerStoryTitleEditor(props: {
             aria-label="Cancel Story title edit"
             title="Cancel"
             disabled={titleSave.isSaving()}
+            focusableWhenDisabled
             onClick={cancelEdit}
           >
             <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />

@@ -51,13 +51,11 @@ test('top bar shows a compact online pill with a users icon, numeric count, and 
   expect(pill).toHaveAttribute('data-state', 'online');
   expect(pill).toHaveAttribute('title', '2 online');
 
-  // No status dot inside the top bar online pill; uses a decorative users SVG icon instead.
   expect(pill?.querySelector('.poker-presence-dot')).toBeNull();
   const icon = pill?.querySelector('svg.poker-online-icon');
   expect(icon).not.toBeNull();
   expect(icon).toHaveAttribute('aria-hidden', 'true');
 
-  // Visible numeric count and screen-reader full status text.
   expect(within(pill as HTMLElement).getByText('2')).toHaveAttribute('aria-hidden', 'true');
   expect(within(pill as HTMLElement).getByText('2 online')).toHaveClass('sr-only');
 
@@ -93,7 +91,6 @@ test('marks the current Participant seat and card with data-self across waiting 
   const seats = within(screen.getByRole('list', { name: 'Participants' })).getAllByRole('listitem');
   const [selfSeat, otherSeat] = seats;
 
-  // Waiting state
   expect(selfSeat).toHaveAttribute('data-self', 'true');
   expect(selfSeat.querySelector('.poker-seat-card')).toHaveAttribute('data-seat-state', 'waiting');
   expect(selfSeat.querySelector('.poker-seat-card')).toHaveAttribute('data-self', 'true');
@@ -104,7 +101,6 @@ test('marks the current Participant seat and card with data-self across waiting 
   expect(otherSeat.querySelector('.poker-seat-card')).not.toHaveAttribute('data-self');
   expect(otherSeat.querySelector('.poker-seat-name')).toHaveTextContent('Priya');
 
-  // Voted state
   setRoom(makeRoom({
     version: 2,
     round: { id: 'r1', phase: 'open', submittedParticipantIds: ['alex', 'priya'], ownChoice: '5' },

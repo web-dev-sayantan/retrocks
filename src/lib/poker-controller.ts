@@ -46,6 +46,12 @@ function applyOptimisticVote(room: PokerLiveRoomView, roundId: string, choice: s
   }
 }
 
+function canDiscardActiveRound(room: PokerLiveRoomView, isActive: boolean, discardRoundId?: string): boolean {
+  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) return false;
+  if (isActive && unresolvedPokerRoundWithVotesId(room.round) !== undefined && discardRoundId === undefined) return false;
+  return true;
+}
+
 function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange): void {
   if (room.closed) return;
   switch (command.type) {
@@ -56,7 +62,9 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       const title = command.title.trim();
       if (!title) return;
       const story = room.stories.find((item) => item.id === command.storyId);
-      if (story && !story.locked) story.title = title;
+      if (!story || story.locked || story.title === title) return;
+      if (!canDiscardActiveRound(room, room.activeStoryId === story.id, command.discardRoundId)) return;
+      story.title = title;
       break;
     }
     case 'move-story': {
@@ -90,11 +98,13 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
     case 'set-story-lock': {
       const story = room.stories.find((item) => item.id === command.storyId);
       if (!story) return;
-      if (command.locked && room.activeStoryId === story.id) {
-        if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) return;
-        if (unresolvedPokerRoundWithVotesId(room.round) !== undefined && command.discardRoundId === undefined) return;
-        room.activeStoryId = null;
-        room.round = null;
+      if (command.locked) {
+        const isActive = room.activeStoryId === story.id;
+        if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+        if (isActive) {
+          room.activeStoryId = null;
+          room.round = null;
+        }
       }
       story.locked = command.locked;
       break;
@@ -104,9 +114,9 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       if (index === -1) return;
       const story = room.stories[index];
       if (story.locked) return;
-      if (room.activeStoryId === story.id) {
-        if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) return;
-        if (unresolvedPokerRoundWithVotesId(room.round) !== undefined && command.discardRoundId === undefined) return;
+      const isActive = room.activeStoryId === story.id;
+      if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+      if (isActive) {
         room.activeStoryId = null;
         room.round = null;
       }

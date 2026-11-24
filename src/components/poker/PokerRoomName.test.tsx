@@ -145,20 +145,17 @@ describe('Inplace top-bar Room name editing', () => {
     const heading = screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' });
     expect(screen.queryByRole('heading', { name: 'Pointing Poker' })).not.toBeInTheDocument();
 
-    // Double-click opens inplace editor
     fireEvent.dblClick(heading);
     flush();
     const input = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
     expect(input.value).toBe('Sprint 14 Planning');
 
-    // Escape cancels without saving
     fireEvent.input(input, { target: { value: 'Discarded' } });
     fireEvent.keyDown(input, { key: 'Escape' });
     flush();
     expect(change).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' })).toBeInTheDocument();
 
-    // Accessible edit trigger opens editor; IME Enter is ignored, normal Enter saves
     fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
     flush();
     const editInput = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
@@ -175,7 +172,6 @@ describe('Inplace top-bar Room name editing', () => {
     });
     expect(await screen.findByRole('heading', { level: 1, name: 'Payments Estimation' })).toBeInTheDocument();
 
-    // Clearing to blank and blurring resets to Poker Room
     fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
     flush();
     const resetInput = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
@@ -185,6 +181,31 @@ describe('Inplace top-bar Room name editing', () => {
       expect(change).toHaveBeenCalledWith({ type: 'rename-room', name: 'Poker Room' });
     });
     expect(await screen.findByRole('heading', { level: 1, name: 'Poker Room' })).toBeInTheDocument();
+  });
+
+  it('cancels Room rename without saving when focusing or clicking the Cancel button', () => {
+    const room = makeRoom({ name: 'Sprint 14 Planning' });
+    const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
+
+    render(() => (
+      <PokerWorkspace room={room} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Room' }));
+    flush();
+    const input = screen.getByRole('textbox', { name: 'Room name' }) as HTMLInputElement;
+    const cancelButton = screen.getByRole('button', { name: 'Cancel Room rename' });
+
+    fireEvent.input(input, { target: { value: 'Should not save' } });
+    fireEvent.focusOut(input, { relatedTarget: cancelButton });
+    flush();
+    expect(change).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Room name' })).toBeInTheDocument();
+
+    fireEvent.click(cancelButton);
+    flush();
+    expect(change).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { level: 1, name: 'Sprint 14 Planning' })).toBeInTheDocument();
   });
 
   it('lets a Facilitator open inplace editing via touch double-tap', () => {

@@ -75,16 +75,13 @@ test('shows Reopen Room for a pre-close Facilitator, stays focusable while pendi
   expect(reopenButton).toHaveFocus();
   expect(reopenButton).toHaveTextContent('Reopening Room…');
 
-  // Re-clicking while pending is a no-op.
   fireEvent.click(reopenButton);
   expect(onReopen).toHaveBeenCalledTimes(1);
 
-  // Non-terminal failure surfaces an inline alert and re-enables the button.
   resolveReopen({ ok: false, code: 'FORBIDDEN', message: 'Facilitator access is required.' });
   await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('Facilitator access is required.'));
   expect(reopenButton).not.toHaveAttribute('aria-disabled', 'true');
 
-  // ROOM_NOT_FOUND triggers onUnavailable.
   onReopen.mockResolvedValueOnce({
     ok: false,
     code: 'ROOM_NOT_FOUND',

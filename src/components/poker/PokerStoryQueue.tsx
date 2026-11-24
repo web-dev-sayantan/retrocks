@@ -141,7 +141,7 @@ export default function PokerStoryQueue(props: {
   const [editingEstimate, setEditingEstimate] = createSignal<
     { storyId: string; expectedEstimate: string } | null
   >(null);
-  const [deleting, setDeleting] = createSignal<{ storyId: string; discardRoundId?: string } | null>(null);
+  const [deletingStoryId, setDeletingStoryId] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
   const [announcement, setAnnouncement] = createSignal('');
@@ -155,7 +155,7 @@ export default function PokerStoryQueue(props: {
     const restore = restoreFocus ? activeRestoreDeleteFocus : undefined;
     activeConfirmGroup = undefined;
     activeRestoreDeleteFocus = undefined;
-    setDeleting(null);
+    setDeletingStoryId(null);
     if (restore) {
       flush();
       restore();
@@ -163,12 +163,12 @@ export default function PokerStoryQueue(props: {
   }
 
   useShortcut(
-    () => (deleting() !== null ? 'Escape' : null),
+    () => (deletingStoryId() !== null ? 'Escape' : null),
     () => cancelDelete(true),
   );
 
   createEffect(
-    () => deleting() !== null,
+    () => deletingStoryId() !== null,
     (isDeleting) => {
       if (!isDeleting || typeof document === 'undefined') return;
       const onOutside = (event: Event) => {
@@ -292,13 +292,7 @@ export default function PokerStoryQueue(props: {
   function startDelete(story: PokerStory) {
     if (story.locked || busy() || confirming()) return;
     if (editingEstimate()?.storyId === story.id) setEditingEstimate(null);
-    const discardRoundId = props.activeStoryId === story.id
-      ? props.activeRoundWithVotesId
-      : undefined;
-    setDeleting({
-      storyId: story.id,
-      ...(discardRoundId === undefined ? {} : { discardRoundId }),
-    });
+    setDeletingStoryId(story.id);
   }
 
   async function confirmDelete(story: PokerStory, discardRoundId?: string) {
@@ -314,13 +308,22 @@ export default function PokerStoryQueue(props: {
     }
   }
 
-  async function editStoryTitle(storyId: string, title: string): Promise<InlineEditOutcome> {
+  async function editStoryTitle(
+    storyId: string,
+    title: string,
+    discardRoundId?: string,
+  ): Promise<InlineEditOutcome> {
     if (busy()) return false;
     cancelDelete(false);
     setBusy(true);
     setError('');
     try {
-      const result = await props.onChange({ type: 'edit-story', storyId, title });
+      const result = await props.onChange({
+        type: 'edit-story',
+        storyId,
+        title,
+        ...(discardRoundId === undefined ? {} : { discardRoundId }),
+      });
       if (result.ok) return true;
       return result.message;
     } catch {
@@ -448,13 +451,11 @@ export default function PokerStoryQueue(props: {
                   }
 
                   const locked = () => Boolean(story().locked);
-                  const deleteConfirm = createMemo(() => {
-                    const current = deleting();
-                    return current && current.storyId === story().id && !locked() ? current : null;
-                  });
+                  const confirmingDelete = () => deletingStoryId() === story().id && !locked();
+                  const deleteDiscardRoundId = () => (active() ? props.activeRoundWithVotesId : undefined);
 
                   createEffect(
-                    () => Boolean(deleteConfirm()),
+                    confirmingDelete,
                     (isConfirming) => {
                       if (!isConfirming) return;
                       activeConfirmGroup = confirmGroup;
@@ -474,7 +475,7 @@ export default function PokerStoryQueue(props: {
                       class="poker-story-row"
                       data-status={story().status}
                       data-locked={locked() ? 'true' : undefined}
-                      data-confirming-delete={deleteConfirm() ? 'true' : undefined}
+                      data-confirming-delete={confirmingDelete() ? 'true' : undefined}
                       aria-current={active() ? 'true' : undefined}
                     >
                       <div class="flex items-start gap-2.5">
@@ -504,9 +505,9 @@ export default function PokerStoryQueue(props: {
                         <PokerStoryTitleEditor
                           story={story()}
                           canEdit={props.canManage}
-                          confirmRestartVoting={active() && props.activeRoundWithVotesId !== undefined}
+                          discardRoundId={deleteDiscardRoundId()}
                           variant="queue"
-                          onSave={(title) => editStoryTitle(story().id, title)}
+                          onSave={(title, discardRoundId) => editStoryTitle(story().id, title, discardRoundId)}
                           onHandle={(handle) => { titleEditor = handle; }}
                           fallbackFocus={() => editTitleButton?.focus()}
                         />
@@ -539,7 +540,7 @@ export default function PokerStoryQueue(props: {
                       <Show when={props.canManage}>
                         <div class="poker-row-actions">
                           <Show
-                            when={deleteConfirm()}
+                            when={confirmingDelete()}
                             fallback={
                               <>
                                 <Show
@@ -661,49 +662,47 @@ export default function PokerStoryQueue(props: {
                               </>
                             }
                           >
-                            {(pendingDelete) => (
-                              <div
-                                ref={confirmGroup}
-                                class="poker-row-confirm"
-                                role="group"
-                                aria-label={`Confirm deleting ${story().title}`}
+                            <div
+                              ref={confirmGroup}
+                              class="poker-row-confirm"
+                              role="group"
+                              aria-label={`Confirm deleting ${story().title}`}
+                            >
+                              <span
+                                class="poker-row-confirm-note"
+                                data-warning={deleteDiscardRoundId() !== undefined ? 'true' : undefined}
                               >
-                                <span
-                                  class="poker-row-confirm-note"
-                                  data-warning={pendingDelete().discardRoundId !== undefined ? 'true' : undefined}
+                                {deleteDiscardRoundId() !== undefined
+                                  ? 'Delete? Active votes will be discarded.'
+                                  : 'Delete Story?'}
+                              </span>
+                              <div class="ms-auto flex items-center gap-1">
+                                <Button
+                                  ref={cancelDeleteButton}
+                                  class="poker-row-btn board-focus-ring"
+                                  aria-label={`Cancel deleting ${story().title}`}
+                                  disabled={busy()}
+                                  focusableWhenDisabled
+                                  onClick={() => cancelDelete(true)}
                                 >
-                                  {pendingDelete().discardRoundId !== undefined
-                                    ? 'Delete? Active votes will be discarded.'
-                                    : 'Delete Story?'}
-                                </span>
-                                <div class="ms-auto flex items-center gap-1">
-                                  <Button
-                                    ref={cancelDeleteButton}
-                                    class="poker-row-btn board-focus-ring"
-                                    aria-label={`Cancel deleting ${story().title}`}
-                                    disabled={busy()}
-                                    focusableWhenDisabled
-                                    onClick={() => cancelDelete(true)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                  <Button
-                                    class="poker-row-btn poker-row-btn-danger-solid board-focus-ring"
-                                    aria-label={`Confirm delete ${story().title}`}
-                                    data-agent-confirm={
-                                      pendingDelete().discardRoundId !== undefined
-                                        ? 'Deletes this Story and discards the current Voting Round and its votes.'
-                                        : 'Deletes this Story from the queue.'
-                                    }
-                                    disabled={busy()}
-                                    focusableWhenDisabled
-                                    onClick={() => void confirmDelete(story(), pendingDelete().discardRoundId)}
-                                  >
-                                    Confirm
-                                  </Button>
-                                </div>
+                                  Cancel
+                                </Button>
+                                <Button
+                                  class="poker-row-btn poker-row-btn-danger-solid board-focus-ring"
+                                  aria-label={`Confirm delete ${story().title}`}
+                                  data-agent-confirm={
+                                    deleteDiscardRoundId() !== undefined
+                                      ? 'Deletes this Story and discards the current Voting Round and its votes.'
+                                      : 'Deletes this Story from the queue.'
+                                  }
+                                  disabled={busy()}
+                                  focusableWhenDisabled
+                                  onClick={() => void confirmDelete(story(), deleteDiscardRoundId())}
+                                >
+                                  Confirm
+                                </Button>
                               </div>
-                            )}
+                            </div>
                           </Show>
                         </div>
 

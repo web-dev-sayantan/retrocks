@@ -542,11 +542,9 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   const queue = screen.getByRole('list', { name: 'Story queue' });
   const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
 
-  // Locked skipped Story disables Return to queue and Edit title.
   expect(within(secondRow).getByRole('button', { name: 'Return Send receipt to queue' })).toHaveAttribute('aria-disabled', 'true');
   expect(within(secondRow).getByRole('button', { name: 'Edit title for Send receipt' })).toHaveAttribute('aria-disabled', 'true');
 
-  // Lock the estimated Story.
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Lock Checkout flow' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'set-story-lock', storyId: 's1', locked: true,
@@ -556,7 +554,6 @@ test('a Facilitator can lock and unlock Stories from row actions, disabling sele
   expect(within(firstRow).getByRole('button', { name: 'Edit title for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
   expect(within(firstRow).getByRole('button', { name: 'Edit estimate for Checkout flow' })).toHaveAttribute('aria-disabled', 'true');
 
-  // Unlock the estimated Story.
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Unlock Checkout flow' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'set-story-lock', storyId: 's1', locked: false,
@@ -612,7 +609,6 @@ test('locking the active Story confirms only when an unresolved Voting Round has
     </>
   ));
 
-  // 1. Open round with 0 votes: locks immediately without confirmation dialog.
   fireEvent.click(screen.getByRole('button', { name: 'Lock Save checkout' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'set-story-lock', storyId: 's1', locked: true,
@@ -620,7 +616,6 @@ test('locking the active Story confirms only when an unresolved Voting Round has
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(screen.getByText('Select a Story from the queue')).toBeVisible();
 
-  // 2. Open round with cast votes: confirms before discarding votes and clearing stage.
   setRoom({
     ...untrack(room),
     version: 3,
@@ -687,13 +682,11 @@ test('a Facilitator can delete an unlocked Story with inline confirmation, reset
   const queue = screen.getByRole('list', { name: 'Story queue' });
   const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
 
-  // Locked Story disables Delete and clicking does not open inline confirmation.
   const lockedDelete = within(secondRow).getByRole('button', { name: 'Delete Locked billing' });
   expect(lockedDelete).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(lockedDelete);
   expect(within(secondRow).queryByRole('group', { name: 'Confirm deleting Locked billing' })).toBeNull();
 
-  // Clicking Delete on an unlocked Story swaps into an inline confirmation without a modal dialog.
   const deleteBtn = within(firstRow).getByRole('button', { name: 'Delete Checkout flow' });
   fireEvent.click(deleteBtn);
   expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -701,26 +694,22 @@ test('a Facilitator can delete an unlocked Story with inline confirmation, reset
   const cancelBtn = within(confirmGroup).getByRole('button', { name: 'Cancel deleting Checkout flow' });
   await waitFor(() => expect(cancelBtn).toHaveFocus());
 
-  // Cancel resets inline confirmation and restores focus to Delete.
   fireEvent.click(cancelBtn);
   await waitFor(() => expect(within(firstRow).queryByRole('group', { name: 'Confirm deleting Checkout flow' })).toBeNull());
   await waitFor(() => expect(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' })).toHaveFocus());
 
-  // Escape resets inline confirmation and restores focus to Delete.
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
   await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(within(firstRow).queryByRole('group', { name: 'Confirm deleting Checkout flow' })).toBeNull());
   await waitFor(() => expect(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' })).toHaveFocus());
 
-  // Clicking elsewhere resets inline confirmation.
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
   await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
   fireEvent.pointerDown(secondRow);
   fireEvent.click(secondRow);
   await waitFor(() => expect(within(firstRow).queryByRole('group', { name: 'Confirm deleting Checkout flow' })).toBeNull());
 
-  // Confirm requires agent approval via data-agent-confirm and deletes the Story when approved.
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete Checkout flow' }));
   await within(firstRow).findByRole('group', { name: 'Confirm deleting Checkout flow' });
   expect((await agent.act({ steps: [{ ref: 'Confirm delete Checkout flow', action: 'press' }] })).ok).toBe(false);
@@ -788,6 +777,49 @@ test('deleting the active Story notes discarded votes when unresolved votes exis
   expect(screen.getByText('Add a Story to begin estimating')).toBeVisible();
 });
 
+test('inline Delete confirmation updates its warning and discardRoundId reactively if a vote lands while open', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    name: 'Poker Room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: false,
+    round: { id: 'round-live', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  });
+
+  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room: untrack(room) }));
+
+  render(() => <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />);
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const [row] = within(queue).getAllByRole('listitem');
+
+  fireEvent.click(within(row).getByRole('button', { name: 'Delete Save checkout' }));
+  const confirmGroup = await within(row).findByRole('group', { name: 'Confirm deleting Save checkout' });
+  expect(within(confirmGroup).getByText('Delete Story?')).toBeVisible();
+
+  setRoom({
+    ...untrack(room),
+    version: 2,
+    deckLocked: true,
+    round: { id: 'round-live', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
+  });
+  flush();
+
+  expect(within(confirmGroup).getByText('Delete? Active votes will be discarded.')).toBeVisible();
+  fireEvent.click(within(confirmGroup).getByRole('button', { name: 'Confirm delete Save checkout' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'delete-story', storyId: 's1', discardRoundId: 'round-live',
+  }));
+});
+
 test('quick-add provides Add to queue and Add & make active buttons with IME-safe Smart Enter', async () => {
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
   const [room, setRoom] = createSignal<PokerLiveRoomView>({
@@ -819,21 +851,18 @@ test('quick-add provides Add to queue and Add & make active buttons with IME-saf
   expect(screen.getByRole('button', { name: 'Add to queue' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Add & make active' })).toBeVisible();
 
-  // 1. IME composition Enter is ignored.
   fireEvent.input(input, { target: { value: 'Composing title' } });
   flush();
   fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
   fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
   expect(change).not.toHaveBeenCalled();
 
-  // 2. Empty stage: Smart Enter triggers Add & make active.
   fireEvent.keyDown(input, { key: 'Enter' });
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'add-story', title: 'Composing title', makeActive: true,
   }));
   await waitFor(() => expect(input.value).toBe(''));
 
-  // 3. Unresolved open round with 0 votes: Smart Enter triggers Add to queue; Add & make active works without prompt.
   setRoom({
     ...untrack(room),
     version: 2,
@@ -862,7 +891,6 @@ test('quick-add provides Add to queue and Add & make active buttons with IME-saf
   expect(screen.queryByRole('alertdialog')).toBeNull();
   await waitFor(() => expect(input.value).toBe(''));
 
-  // 4. After Accepted Estimate: Smart Enter triggers Add & make active without prompt.
   setRoom({
     ...untrack(room),
     version: 3,
@@ -882,7 +910,6 @@ test('quick-add provides Add to queue and Add & make active buttons with IME-saf
   expect(screen.queryByRole('alertdialog')).toBeNull();
   await waitFor(() => expect(input.value).toBe(''));
 
-  // All interactive controls remain labeled for agents.
   const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
   expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
 });
@@ -918,7 +945,6 @@ test('Add & make active confirms before discarding cast votes while Add to queue
   fireEvent.input(input, { target: { value: 'Urgent story' } });
   flush();
 
-  // Clicking Add & make active asks for confirmation and preserves the input if cancelled.
   fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
   const dialog = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
   const cancel = within(dialog).getByRole('button', { name: 'Keep voting' });
@@ -928,7 +954,6 @@ test('Add & make active confirms before discarding cast votes while Add to queue
   expect(change).not.toHaveBeenCalled();
   expect(input.value).toBe('Urgent story');
 
-  // Confirming sends makeActive + discardRoundId and clears the input.
   fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
   const reopened = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
   fireEvent.click(within(reopened).getByRole('button', { name: 'Lock previous & make active' }));
@@ -937,7 +962,6 @@ test('Add & make active confirms before discarding cast votes while Add to queue
   }));
   await waitFor(() => expect(input.value).toBe(''));
 
-  // Revealed round: Smart Enter still queues without prompt; Add & make active prompts.
   setRoom({
     ...untrack(room),
     version: 2,
@@ -1014,7 +1038,6 @@ test('a Facilitator can edit unlocked Story titles inplace from the sidebar via 
   const queue = screen.getByRole('list', { name: 'Story queue' });
   const [firstRow, secondRow] = within(queue).getAllByRole('listitem');
 
-  // 1. Double-click activates inplace editor; IME-composing Enter is ignored; real Enter saves.
   fireEvent.dblClick(within(firstRow).getByText('Save checkout'));
   const firstInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
   expect(firstInput).toHaveValue('Save checkout');
@@ -1036,7 +1059,6 @@ test('a Facilitator can edit unlocked Story titles inplace from the sidebar via 
   await waitFor(() => expect(within(firstRow).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull());
   expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
 
-  // 2. Pencil button activates the same inplace editor; Escape cancels without saving.
   change.mockClear();
   fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit title for Save express checkout' }));
   const pencilInput = await within(firstRow).findByRole('textbox', { name: 'Edit Story title' });
@@ -1047,7 +1069,6 @@ test('a Facilitator can edit unlocked Story titles inplace from the sidebar via 
   expect(change).not.toHaveBeenCalled();
   expect(within(firstRow).getByText('Save express checkout')).toBeVisible();
 
-  // 3. Touch double-tap activates inplace editor; blur saves.
   fireDoubleTap(within(secondRow).getByText('Send receipt'));
   const secondInput = await within(secondRow).findByRole('textbox', { name: 'Edit Story title' });
   fireEvent.input(secondInput, { target: { value: 'Email receipt' } });
@@ -1101,7 +1122,6 @@ test('a Facilitator can edit the active Story title inplace on the stage heading
 
   const stage = screen.getByRole('region', { name: 'Active Story' });
 
-  // Double-click stage heading, edit, press Enter (0 votes -> no confirmation dialog).
   fireEvent.dblClick(within(stage).getByText('Save checkout'));
   const input = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
   fireEvent.input(input, { target: { value: 'Save checkout v2' } });
@@ -1112,7 +1132,6 @@ test('a Facilitator can edit the active Story title inplace on the stage heading
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(await within(stage).findByText('Save checkout v2')).toBeVisible();
 
-  // Double-tap stage heading, edit, Escape cancels.
   change.mockClear();
   fireDoubleTap(within(stage).getByText('Save checkout v2'));
   const tapInput = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
@@ -1147,14 +1166,12 @@ test('Locked Stories and non-Facilitator Participants cannot activate inplace ti
 
   render(() => <PokerWorkspace room={room()} online={['alex', 'sam']} status="live" onUnavailable={vi.fn()} onChange={vi.fn()} />);
 
-  // Facilitator cannot inplace-edit a Locked Story.
   const queue = screen.getByRole('list', { name: 'Story queue' });
   const lockedTitle = within(queue).getByText('Locked Story');
   fireEvent.dblClick(lockedTitle);
   fireDoubleTap(lockedTitle);
   expect(screen.queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
 
-  // Non-Facilitator Participant cannot inplace-edit sidebar or stage titles.
   setViewer(sam);
   flush();
   const sidebarTitle = within(queue).getByText('Active unlocked');
@@ -1210,7 +1227,6 @@ test('editing the active Story title during an unresolved Voting Round with cast
 
   const stage = screen.getByRole('region', { name: 'Active Story' });
 
-  // 1. Edit from stage heading -> cancel confirmation keeps old title & votes intact.
   fireEvent.dblClick(within(stage).getByText('Save checkout'));
   const stageInput = await within(stage).findByRole('textbox', { name: 'Edit Story title' });
   fireEvent.input(stageInput, { target: { value: 'Renamed checkout' } });
@@ -1228,7 +1244,6 @@ test('editing the active Story title during an unresolved Voting Round with cast
   expect(await within(stage).findByText('Save checkout')).toBeVisible();
   expect(within(stage).getByText('1 of 1 voted')).toBeVisible();
 
-  // 2. Edit from sidebar -> confirm restarts voting with empty ballots.
   const queue = screen.getByRole('list', { name: 'Story queue' });
   fireEvent.dblClick(within(queue).getByText('Save checkout'));
   const queueInput = await within(queue).findByRole('textbox', { name: 'Edit Story title' });
@@ -1238,7 +1253,7 @@ test('editing the active Story title during an unresolved Voting Round with cast
   const reopened = await screen.findByRole('alertdialog', { name: 'Change active Story title?' });
   fireEvent.click(within(reopened).getByRole('button', { name: 'Save and restart voting' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
-    type: 'edit-story', storyId: 's1', title: 'Renamed checkout',
+    type: 'edit-story', storyId: 's1', title: 'Renamed checkout', discardRoundId: 'round-voted',
   }));
   await waitFor(() => expect(within(stage).getByText('Renamed checkout')).toBeVisible());
   expect(within(stage).getByText('0 of 1 voted')).toBeVisible();

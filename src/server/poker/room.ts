@@ -93,6 +93,11 @@ const deleteDiscardRequired = {
   code: 'ROUND_CHANGED',
   message: 'Confirm that you want to discard the current Voting Round before deleting this Story.',
 } as const;
+const editDiscardRequired = {
+  ok: false,
+  code: 'ROUND_CHANGED',
+  message: 'Confirm that you want to restart the current Voting Round before editing this Story title.',
+} as const;
 
 const invalidDeckChoice = {
   ok: false,
@@ -108,6 +113,31 @@ interface StoredVotingRound {
 
 function startVotingRound(): StoredVotingRound {
   return { id: generateEntityId(), phase: 'open', ballots: {} };
+}
+
+function validateActiveRoundDiscard(
+  room: StoredPokerRoom,
+  isActive: boolean,
+  discardRoundId: string | undefined,
+  requiredError:
+    | typeof discardRequired
+    | typeof lockDiscardRequired
+    | typeof deleteDiscardRequired
+    | typeof editDiscardRequired,
+) {
+  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) {
+    return roundChanged;
+  }
+  if (
+    isActive
+    && room.round
+    && unresolvedPokerRoundId(room.round) !== undefined
+    && Object.keys(room.round.ballots).length > 0
+    && discardRoundId === undefined
+  ) {
+    return requiredError;
+  }
+  return null;
 }
 
 interface StoredParticipant extends PokerParticipant {
@@ -347,7 +377,12 @@ export class PokerRoomStorage {
           if (!pokerCanDeleteRoom(room, hash)) return forbidden;
           if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;
           room.closedAt = now;
-          room.closedFacilitatorHashes = room.participants.filter((p) => p.isFacilitator).map((p) => p.hash);
+          room.closedFacilitatorHashes = [
+            ...new Set([
+              ...room.participants.filter((p) => p.isFacilitator).map((p) => p.hash),
+              ...(room.pendingFacilitatorClaims ?? []),
+            ]),
+          ];
           room.participants = [];
           delete room.facilitatorCapability;
           delete room.pendingFacilitatorClaims;
@@ -384,13 +419,8 @@ export class PokerRoomStorage {
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           if (command.makeActive) {
-            if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) {
-              return roundChanged;
-            }
-            if (room.round && unresolvedPokerRoundId(room.round) !== undefined
-              && Object.keys(room.round.ballots).length > 0 && command.discardRoundId === undefined) {
-              return discardRequired;
-            }
+            const discardError = validateActiveRoundDiscard(room, true, command.discardRoundId, discardRequired);
+            if (discardError) return discardError;
             if (room.activeStoryId) {
               const previousStory = room.stories.find((entry) => entry.id === room.activeStoryId);
               if (previousStory) previousStory.locked = true;
@@ -410,8 +440,11 @@ export class PokerRoomStorage {
           if (!story) return storyMissing;
           if (story.locked) return storyLocked;
           if (story.title === command.title) return { ok: true, room };
+          const isActive = room.activeStoryId === story.id;
+          const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, editDiscardRequired);
+          if (discardError) return discardError;
           story.title = command.title;
-          if (room.activeStoryId === story.id && unresolvedPokerRoundId(room.round) !== undefined) {
+          if (isActive && unresolvedPokerRoundId(room.round) !== undefined) {
             room.round = startVotingRound();
           }
           break;
@@ -479,13 +512,8 @@ export class PokerRoomStorage {
           if (!story) return storyMissing;
           const isActive = room.activeStoryId === story.id;
           if (command.locked) {
-            if (command.discardRoundId !== undefined && (!isActive || command.discardRoundId !== room.round?.id)) {
-              return roundChanged;
-            }
-            if (isActive && room.round && unresolvedPokerRoundId(room.round) !== undefined
-              && Object.keys(room.round.ballots).length > 0 && command.discardRoundId === undefined) {
-              return lockDiscardRequired;
-            }
+            const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, lockDiscardRequired);
+            if (discardError) return discardError;
             if (story.locked && !isActive) return { ok: true, room };
             story.locked = true;
             if (isActive) {
@@ -505,13 +533,8 @@ export class PokerRoomStorage {
           const story = room.stories[index];
           if (story.locked) return storyLocked;
           const isActive = room.activeStoryId === story.id;
-          if (command.discardRoundId !== undefined && (!isActive || command.discardRoundId !== room.round?.id)) {
-            return roundChanged;
-          }
-          if (isActive && room.round && unresolvedPokerRoundId(room.round) !== undefined
-            && Object.keys(room.round.ballots).length > 0 && command.discardRoundId === undefined) {
-            return deleteDiscardRequired;
-          }
+          const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, deleteDiscardRequired);
+          if (discardError) return discardError;
           room.stories.splice(index, 1);
           if (isActive) {
             room.activeStoryId = null;

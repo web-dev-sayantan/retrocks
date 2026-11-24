@@ -263,37 +263,31 @@ test('reopening a closed Room requires a pre-close Facilitator, locks prior Stor
       revision: 1,
     }).ok).toBe(true);
 
-    // Add three Stories covering estimated, skipped, and pending states.
     expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'Estimated Story' }).ok).toBe(true);
     expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'Skipped Story' }).ok).toBe(true);
     expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'Pending Story' }).ok).toBe(true);
     const [estimatedStory, skippedStory, pendingStory] = readLiveRoom('facilitator').stories;
 
-    // Estimate first Story (also locks the Deck).
     expect(rooms.mutate('room-a', 'facilitator', { type: 'select-story', storyId: estimatedStory.id }).ok).toBe(true);
     const round1 = readLiveRoom('facilitator').round!.id;
     expect(rooms.mutate('room-a', 'participant', { type: 'vote', roundId: round1, choice: 'Med' }).ok).toBe(true);
     expect(rooms.mutate('room-a', 'facilitator', { type: 'reveal', roundId: round1 }).ok).toBe(true);
     expect(rooms.mutate('room-a', 'facilitator', { type: 'confirm-estimate', roundId: round1, choice: 'Med' }).ok).toBe(true);
 
-    // Skip second Story.
     expect(rooms.mutate('room-a', 'facilitator', { type: 'select-story', storyId: skippedStory.id }).ok).toBe(true);
     const round2 = readLiveRoom('facilitator').round!.id;
     expect(rooms.mutate('room-a', 'participant', { type: 'vote', roundId: round2, choice: 'High' }).ok).toBe(true);
     expect(rooms.mutate('room-a', 'facilitator', { type: 'reveal', roundId: round2 }).ok).toBe(true);
     expect(rooms.mutate('room-a', 'facilitator', { type: 'skip-story', roundId: round2 }).ok).toBe(true);
 
-    // Close the Room on day 1.
     clock.mockReturnValue(createdAt + day);
     const closed = rooms.mutate('room-a', 'facilitator', { type: 'close-room' });
     expect(closed).toMatchObject({ ok: true, room: { closed: true, canDelete: true } });
 
-    // Non-Facilitators cannot reopen the closed Room.
     clock.mockReturnValue(createdAt + 40 * day);
     expect(rooms.mutate('room-a', 'participant', { type: 'reopen-room' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
     expect(rooms.mutate('room-a', 'visitor', { type: 'reopen-room' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
 
-    // Pre-close Facilitator reopens the Room on day 40.
     const reopened = rooms.mutate('room-a', 'facilitator', { type: 'reopen-room' });
     expect(reopened).toMatchObject({
       ok: true,
@@ -309,14 +303,11 @@ test('reopening a closed Room requires a pre-close Facilitator, locks prior Stor
     if (!reopened.ok || reopened.room.closed) throw new Error('Expected reopened Room.');
     const reopenedVersion = reopened.room.version;
 
-    // Idempotent reopen by pending Facilitator does not bump version; non-Facilitators are forbidden.
     expect(rooms.mutate('room-a', 'facilitator', { type: 'reopen-room' })).toEqual(reopened);
     expect(rooms.mutate('room-a', 'participant', { type: 'reopen-room' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
 
-    // Old Co-Facilitator Link was cleared on close and stays cleared on reopen.
     expect(rooms.claimFacilitator('room-a', 'visitor', 'old-hash')).toMatchObject({ ok: false, code: 'INVALID_LINK' });
 
-    // Returning Participant joins as non-Facilitator; returning Facilitator regains Facilitator role.
     expect(rooms.mutate('room-a', 'participant', { type: 'join', displayName: 'Sam again' }).ok).toBe(true);
     expect(readLiveRoom('participant').viewer).toMatchObject({ displayName: 'Sam again', isFacilitator: false });
 
@@ -334,7 +325,6 @@ test('reopening a closed Room requires a pre-close Facilitator, locks prior Stor
       { id: pendingStory.id, title: 'Pending Story', status: 'pending', locked: true },
     ]);
 
-    // Pre-close Stories stay locked until unlocked; newly added Stories start unlocked.
     expect(rooms.mutate('room-a', 'facilitator', {
       type: 'edit-story',
       storyId: pendingStory.id,
@@ -343,13 +333,11 @@ test('reopening a closed Room requires a pre-close Facilitator, locks prior Stor
     expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'New Story' }).ok).toBe(true);
     expect(readLiveRoom('facilitator').stories.at(-1)).toMatchObject({ title: 'New Story', locked: false });
 
-    // Idempotent reopen after joining does not re-lock the newly added Story.
     const repeat = rooms.mutate('room-a', 'facilitator', { type: 'reopen-room' });
     expect(repeat.ok).toBe(true);
     expect(readLiveRoom('facilitator').stories.at(-1)).toMatchObject({ title: 'New Story', locked: false });
     expect(reopenedVersion).toBeGreaterThan(1);
 
-    // 90-day expiry was reset from day 40 (reopen) -> expires on day 130, not day 91 (close + 90).
     clock.mockReturnValue(createdAt + 130 * day - 1);
     expect(rooms.read('room-a', 'facilitator')).not.toBeNull();
     clock.mockReturnValue(createdAt + 130 * day);
@@ -357,4 +345,31 @@ test('reopening a closed Room requires a pre-close Facilitator, locks prior Stor
   } finally {
     clock.mockRestore();
   }
+});
+
+test('re-closing a reopened Room preserves unjoined Co-Facilitator access to reopen or delete', () => {
+  rooms.create('room-a', 'facilitator-a', 'Alex');
+  expect(rooms.replaceFacilitatorCapability('room-a', 'facilitator-a', 0, {
+    hash: 'co-fac-hash',
+    encrypted: 'co-fac-encrypted',
+    revision: 1,
+  }).ok).toBe(true);
+  expect(rooms.claimFacilitator('room-a', 'facilitator-b', 'co-fac-hash').ok).toBe(true);
+  expect(rooms.mutate('room-a', 'facilitator-b', { type: 'join', displayName: 'Blair' }).ok).toBe(true);
+  expect(readLiveRoom('facilitator-b').viewer).toMatchObject({ displayName: 'Blair', isFacilitator: true });
+
+  expect(rooms.mutate('room-a', 'facilitator-a', { type: 'close-room' }).ok).toBe(true);
+  expect(rooms.mutate('room-a', 'facilitator-a', { type: 'reopen-room' }).ok).toBe(true);
+  expect(rooms.mutate('room-a', 'facilitator-a', { type: 'join', displayName: 'Alex' }).ok).toBe(true);
+  expect(rooms.mutate('room-a', 'facilitator-a', { type: 'close-room' }).ok).toBe(true);
+
+  expect(rooms.read('room-a', 'facilitator-b')).toMatchObject({ closed: true, canDelete: true });
+  expect(rooms.mutate('room-a', 'facilitator-b', { type: 'reopen-room' })).toMatchObject({
+    ok: true,
+    room: { closed: false, viewer: null },
+  });
+  expect(rooms.mutate('room-a', 'facilitator-b', { type: 'join', displayName: 'Blair' }).ok).toBe(true);
+  expect(readLiveRoom('facilitator-b').viewer).toMatchObject({ displayName: 'Blair', isFacilitator: true });
+  expect(rooms.mutate('room-a', 'facilitator-b', { type: 'close-room' }).ok).toBe(true);
+  expect(rooms.delete('room-a', 'facilitator-b')).toEqual({ ok: true });
 });

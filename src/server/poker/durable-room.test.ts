@@ -115,13 +115,11 @@ test('reopening a closed Room resets the Durable Object alarm to 90 days from no
   });
   expect(setAlarm).toHaveBeenCalledExactlyOnceWith(start + 120 * day);
 
-  // Firing the old alarm at day 91 must not purge the reopened Room.
   clock.mockReturnValue(start + 91 * day);
   await room.alarm();
   expect(setAlarm).toHaveBeenLastCalledWith(start + 120 * day);
   expect(await room.read(id, 'facilitator')).toMatchObject({ closed: false, viewer: null });
 
-  // Firing at day 120 purges the Room.
   clock.mockReturnValue(start + 120 * day);
   await room.alarm();
   expect(await room.read(id, 'facilitator')).toBeNull();
