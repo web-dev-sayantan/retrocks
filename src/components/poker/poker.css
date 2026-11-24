@@ -8,6 +8,9 @@
     --poker-hairline: color-mix(in oklab, var(--retrocks-border) 62%, transparent);
     --poker-accent-tint: color-mix(in oklab, var(--retrocks-accent) 10%, transparent);
     --poker-accent-border: color-mix(in oklab, var(--retrocks-accent) 48%, var(--retrocks-border));
+    --poker-self-accent: #3744a6;
+    --poker-self-tint: color-mix(in oklab, var(--poker-self-accent) 10%, transparent);
+    --poker-self-border: color-mix(in oklab, var(--poker-self-accent) 48%, var(--retrocks-border));
     --poker-target: 2.25rem;
     --poker-error-text: #a63a50;
   }
@@ -15,10 +18,20 @@
   :is([data-theme='dark'], [data-theme='retro']) :is(.poker-entry, .poker-workspace, .poker-summary) {
     --poker-rail: color-mix(in oklab, var(--retrocks-surface) 44%, var(--retrocks-canvas));
     --poker-accent-tint: color-mix(in oklab, var(--retrocks-accent) 12%, transparent);
+    --poker-self-tint: color-mix(in oklab, var(--poker-self-accent) 12%, transparent);
     --poker-error-text: var(--retrocks-col-rose);
   }
 
+  [data-theme='dark'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+    --poker-self-accent: #8db8ff;
+  }
+
+  [data-theme='retro'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+    --poker-self-accent: #67d4c4;
+  }
+
   [data-theme='parchment'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+    --poker-self-accent: #1e5f6b;
     --poker-error-text: #8f2d3f;
   }
 
@@ -276,6 +289,21 @@
     cursor: default;
   }
 
+  .poker-online-pill {
+    gap: 0.3125rem;
+    padding-inline: 0.5625rem;
+    color: var(--retrocks-text);
+  }
+
+  .poker-online-icon {
+    color: var(--retrocks-accent);
+    transition: color 140ms ease-out;
+  }
+
+  .poker-online-pill[data-state='reconnecting'] .poker-online-icon {
+    color: var(--retrocks-col-amber);
+  }
+
   .poker-presence-dot {
     inline-size: 0.4375rem;
     block-size: 0.4375rem;
@@ -287,10 +315,6 @@
   .poker-presence-dot[data-state='offline'] {
     background: transparent;
     border: 1.5px solid var(--retrocks-control);
-  }
-
-  .poker-presence-dot[data-state='reconnecting'] {
-    background: var(--retrocks-col-amber);
   }
 
   .poker-deck-types {
@@ -694,6 +718,16 @@
     opacity: 0.62;
   }
 
+  .poker-seat-name {
+    color: var(--retrocks-text);
+    font-weight: 500;
+  }
+
+  .poker-seat[data-self='true'] .poker-seat-name {
+    color: var(--poker-self-accent);
+    font-weight: 600;
+  }
+
   .poker-seat-card {
     display: grid;
     place-items: center;
@@ -724,11 +758,23 @@
     color: var(--retrocks-text-muted);
   }
 
+  .poker-seat-card[data-seat-state='waiting'][data-self='true'] {
+    border-color: var(--poker-self-border);
+    background: color-mix(in oklab, var(--poker-self-accent) 6%, transparent);
+    color: var(--poker-self-accent);
+  }
+
   .poker-seat-card[data-seat-state='voted'] {
     border: 1px solid var(--poker-accent-border);
     background: var(--poker-accent-tint);
     color: var(--retrocks-accent);
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 4px 12px -4px rgb(0 0 0 / 0.18);
+  }
+
+  .poker-seat-card[data-seat-state='voted'][data-self='true'] {
+    border-color: var(--poker-self-border);
+    background: var(--poker-self-tint);
+    color: var(--poker-self-accent);
   }
 
   .poker-seat-card[data-seat-state='revealed'] {
@@ -741,6 +787,16 @@
   .poker-seat-card[data-consensus='true'] {
     border-color: var(--retrocks-accent);
     color: var(--retrocks-accent);
+  }
+
+  .poker-seat-card[data-seat-state='revealed'][data-self='true'] {
+    border-color: var(--poker-self-border);
+    background: color-mix(in oklab, var(--poker-self-accent) 10%, var(--retrocks-surface));
+    color: var(--poker-self-accent);
+  }
+
+  .poker-seat-card[data-seat-state='revealed'][data-self='true'][data-consensus='true'] {
+    border-color: var(--poker-self-accent);
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -894,9 +950,18 @@
       color: HighlightText;
     }
 
+    .poker-online-pill {
+      border-color: ButtonBorder;
+    }
+
     .poker-seat-card[data-seat-state='voted'],
-    .poker-seat-card[data-consensus='true'] {
+    .poker-seat-card[data-consensus='true'],
+    .poker-seat-card[data-self='true'] {
       border: 2px solid Highlight;
+    }
+
+    .poker-seat-card[data-seat-state='waiting'][data-self='true'] {
+      border-style: dashed;
     }
   }
 }
