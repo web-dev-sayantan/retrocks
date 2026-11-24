@@ -645,6 +645,52 @@ describe('createPokerRoomController', () => {
     expect(actionClose.connections).toHaveLength(1);
   });
 
+  it('transitions cleanly from closed back to open on newer versions without connecting while unjoined', async () => {
+    const closedSnapshot: PokerClosedRoomView = {
+      closed: true,
+      id: ROOM_ID,
+      version: 3,
+      canDelete: true,
+      stories: [{ title: 'First story', status: 'estimated', acceptedEstimate: '5' }],
+    };
+    const reopenedSnapshot = makeLiveRoom({
+      version: 4,
+      viewer: null,
+      participants: [],
+      stories: [],
+      activeStoryId: null,
+      round: null,
+    });
+
+    const session = mountSession(makeLiveRoom({ version: 2 }));
+    expect(session.connections).toHaveLength(1);
+
+    session.connections[0].emit({ type: 'room:snapshot', room: closedSnapshot });
+    flush();
+    expect(session.controller.room().closed).toBe(true);
+    expect(session.connections[0].closed).toBe(true);
+
+    // Equal-version open snapshot must still be ignored while closed.
+    session.setRoomProp(makeLiveRoom({ version: 3 }));
+    flush();
+    expect(session.controller.room().closed).toBe(true);
+
+    // Newer-version reopen-room result transitions back to open without opening a live stream for viewer === null.
+    session.changeRoomSpy.mockResolvedValueOnce({ ok: true, room: reopenedSnapshot });
+    const result = await session.controller.changeRoom({ type: 'reopen-room' });
+    flush();
+
+    expect(result).toEqual({ ok: true, room: reopenedSnapshot });
+    const current = session.controller.room();
+    expect(current.closed).toBe(false);
+    expect(current.version).toBe(4);
+    if (!current.closed) {
+      expect(current.viewer).toBeNull();
+      expect(current.participants).toEqual([]);
+    }
+    expect(session.connections).toHaveLength(1);
+  });
+
   it('disposes the live stream and signals unavailable on live room:missing or ROOM_NOT_FOUND', async () => {
     // Case A: live room:missing
     const liveMissing = mountSession(makeLiveRoom());

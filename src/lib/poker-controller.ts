@@ -127,6 +127,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
     case 'restart-round':
     case 'skip-story':
     case 'close-room':
+    case 'reopen-room':
       break;
   }
 }
@@ -174,7 +175,7 @@ export function createPokerRoomController(
     setServerRoom((current) => {
       if (next.id !== current.id) return current;
       if (next.version < current.version) return current;
-      if (current.closed && !next.closed) return current;
+      if (current.closed && !next.closed && next.version === current.version) return current;
       return next;
     });
   }
@@ -191,7 +192,7 @@ export function createPokerRoomController(
   const liveRoomId = createMemo(() => {
     if (unavailable()) return null;
     const current = serverRoom();
-    return current.closed ? null : current.id;
+    return current.closed || !current.viewer ? null : current.id;
   });
 
   createEffect(liveRoomId, (roomId) => {

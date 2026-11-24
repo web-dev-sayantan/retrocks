@@ -2,7 +2,7 @@ import { Button } from '@ui-sdk/solid/button';
 import { Field, FieldDescription, FieldLabel } from '@ui-sdk/solid/field';
 import { Input } from '@ui-sdk/solid/input';
 import type { JSX } from '@solidjs/web';
-import { Show, createUniqueId, type ParentProps } from 'solid-js';
+import { Show, createUniqueId, onSettled, type ParentProps } from 'solid-js';
 
 import { POKER_DISPLAY_NAME_LIMIT } from '../../lib/poker-types';
 import './poker.css';
@@ -14,13 +14,26 @@ export default function RoomNameForm(props: ParentProps<{
   action: JSX.SerializableAttributeValue;
   error?: string;
   pending?: boolean;
+  focusHeading?: boolean;
   secondary?: JSX.Element;
 }>) {
   const headingId = createUniqueId();
+  let heading!: HTMLHeadingElement;
+
+  onSettled(() => {
+    if (props.focusHeading) heading.focus();
+  });
 
   return (
     <main class="poker-entry">
-      <h1 id={headingId} class="poker-entry-title">{props.heading}</h1>
+      <h1
+        ref={heading}
+        id={headingId}
+        tabindex={props.focusHeading ? -1 : undefined}
+        class="poker-entry-title board-focus-ring rounded"
+      >
+        {props.heading}
+      </h1>
       <Show when={props.description}>
         <p class="mt-2.5 text-sm leading-relaxed text-text-muted [text-wrap:pretty]">{props.description}</p>
       </Show>

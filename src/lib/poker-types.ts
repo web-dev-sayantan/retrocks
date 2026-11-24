@@ -85,7 +85,12 @@ export type PokerVotingCommand =
   | { type: 'skip-story'; roundId: string }
   | { type: 'confirm-estimate'; roundId: string; choice: string };
 
-export type PokerRoomChange = PokerStoryCommand | PokerVotingCommand | PokerDeckCommand | { type: 'close-room'; discardRoundId?: string };
+export type PokerRoomChange =
+  | PokerStoryCommand
+  | PokerVotingCommand
+  | PokerDeckCommand
+  | { type: 'close-room'; discardRoundId?: string }
+  | { type: 'reopen-room' };
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 

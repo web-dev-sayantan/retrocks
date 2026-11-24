@@ -174,6 +174,45 @@ it.each([
   await waitFor(() => expect(readRecentPokerRooms().some((entry) => entry.id === id)).toBe(saved));
 });
 
+it('reopening a closed Room transitions directly to the join screen without reloading', async () => {
+  const id = 'r'.repeat(22);
+  const closedRoom = { id, version: 2, closed: true, canDelete: true, stories: [{ title: 'Checkout', status: 'estimated', acceptedEstimate: '5' }] };
+  const reopenedRoom: PokerLiveRoomView = {
+    id,
+    version: 3,
+    closed: false,
+    viewer: null,
+    participants: [],
+    stories: [],
+    activeStoryId: null,
+    deck: [],
+    deckType: 'fibonacci',
+    deckLocked: false,
+    round: null,
+  };
+  vi.stubGlobal('fetch', async (resource: string, init?: RequestInit) => {
+    if (!new URL(resource, window.location.origin).pathname.startsWith('/_server')) {
+      throw new Error(`Unexpected request: ${resource}`);
+    }
+    const payload = init?.method === 'POST' ? { ok: true, room: reopenedRoom } : closedRoom;
+    return Response.json(payload, {
+      status: 200,
+      headers: { 'X-Server-Function-Format': '8' },
+    });
+  });
+
+  window.history.replaceState(null, '', `/p/${id}`);
+  render(() => <App />);
+
+  await screen.findByRole('heading', { name: 'Room summary', level: 1 });
+  const reopenButton = screen.getByRole('button', { name: 'Reopen Room' });
+  fireEvent.click(reopenButton);
+
+  const joinHeading = await screen.findByRole('heading', { name: 'Join Pointing Poker', level: 1 });
+  expect(joinHeading).toHaveFocus();
+  expect(screen.getByRole('textbox', { name: 'Display Name' })).toBeInTheDocument();
+});
+
 it('retains the Board masthead on a Board route', async () => {
   const board = makeBoardView({ isFacilitator: false });
   stubRouteResponse(board);

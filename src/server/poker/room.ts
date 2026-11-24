@@ -295,11 +295,30 @@ export class PokerRoomStorage {
       if (!room) return notFound;
 
       if (room.closedAt !== undefined) {
-        if (command.type !== 'close-room') return roomClosed;
-        return pokerCanDeleteRoom(room, hash) ? { ok: true, room } : forbidden;
+        if (command.type === 'close-room') {
+          return pokerCanDeleteRoom(room, hash) ? { ok: true, room } : forbidden;
+        }
+        if (command.type !== 'reopen-room') return roomClosed;
+        if (!pokerCanDeleteRoom(room, hash)) return forbidden;
+        delete room.closedAt;
+        room.pendingFacilitatorClaims = [...new Set(room.closedFacilitatorHashes ?? [])];
+        delete room.closedFacilitatorHashes;
+        room.participants = [];
+        delete room.facilitatorCapability;
+        room.activeStoryId = null;
+        room.round = null;
+        for (const story of room.stories) story.locked = true;
+        room.expiresAt = now + ROOM_TTL_MS;
+        this.save(room);
+        return { ok: true, room, updated: true };
       }
 
       switch (command.type) {
+        case 'reopen-room': {
+          const isAuthorized = pokerParticipant(room, hash)?.isFacilitator === true
+            || room.pendingFacilitatorClaims?.includes(hash) === true;
+          return isAuthorized ? { ok: true, room } : forbidden;
+        }
         case 'close-room': {
           if (!pokerCanDeleteRoom(room, hash)) return forbidden;
           if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;
