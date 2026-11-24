@@ -37,14 +37,14 @@ export default function Home() {
 
             <TabsTab value="retro" class={tabClass}>
               <TabsTabIcon class="home-tool-tab-icon inline-flex shrink-0">
-                <LucideIcon icon={Columns3} class="size-[18px]" strokeWidth={2} />
+                <LucideIcon icon={Columns3} class="size-4.5" strokeWidth={2} />
               </TabsTabIcon>
               <span>Retro</span>
             </TabsTab>
 
             <TabsTab value="poker" class={tabClass}>
               <TabsTabIcon class="home-tool-tab-icon inline-flex shrink-0">
-                <LucideIcon icon={Layers} class="size-[18px]" strokeWidth={2} />
+                <LucideIcon icon={Layers} class="size-4.5" strokeWidth={2} />
               </TabsTabIcon>
               <span>Poker</span>
             </TabsTab>

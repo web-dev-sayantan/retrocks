@@ -352,7 +352,7 @@ export default function PokerWorkspace(props: {
                       ? (props.room.viewer?.isFacilitator ? 'Add a Story to begin estimating' : 'Waiting for Stories')
                       : (props.room.viewer?.isFacilitator ? 'Select a Story from the queue' : 'Waiting for the Facilitator to select a Story')}
                   </p>
-                  <p class="max-w-sm text-sm leading-relaxed text-text-muted [text-wrap:pretty]">
+                  <p class="max-w-sm text-sm leading-relaxed text-text-muted text-pretty">
                     {props.room.stories.length === 0 && props.room.viewer?.isFacilitator
                       ? 'Add your first Story in the queue on the left, or adjust the Deck in the top bar anytime.'
                       : 'Votes stay private until the Facilitator reveals them.'}
@@ -534,7 +534,7 @@ export default function PokerWorkspace(props: {
 
           <Show when={props.room.round}>
             {(round) => (
-              <div class="w-full max-w-[44rem]">
+              <div class="w-full max-w-176">
                 <PokerVotingRound
                   round={round()}
                   deck={props.room.deck}

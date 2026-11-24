@@ -1349,7 +1349,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             >
               <div
                 aria-hidden="true"
-                class={['h-[3px] w-full transition-colors duration-200', COLUMN_ACCENT_STYLES[newColumnAccent()].bar]}
+                class={['h-0.75 w-full transition-colors duration-200', COLUMN_ACCENT_STYLES[newColumnAccent()].bar]}
               />
               <div
                 class={[
@@ -1514,7 +1514,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
               <div
                 data-print-hide="true"
                 ref={mobileComposerBarEl}
-                class="board-mobile-composer sticky bottom-[var(--keyboard-inset,0px)] z-20 border-t border-border px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden"
+                class="board-mobile-composer sticky bottom-(--keyboard-inset,0px) z-20 border-t border-border px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden"
               >
                 <Show when={mobileDrafts[targetCol().id]?.error}>
                   {(error) => <p role="alert" class="mb-2 text-sm text-rose-700 dark:text-rose-300">{error()}</p>}
@@ -1533,7 +1533,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     onValueChange={(value) => updateMobileDraft(targetCol().id, value)}
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
-                      'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-[9px] text-base leading-6 text-text',
+                      'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-2.25 text-base leading-6 text-text',
                       'placeholder:text-text-muted board-focus-ring',
                     ]}
                   />

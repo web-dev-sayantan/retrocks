@@ -395,7 +395,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                 <For each={props.card.comments}>
                   {(comment) => (
                     <li class="rounded-lg border border-border bg-canvas/60 p-3">
-                      <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-text">
+                      <p class="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-text">
                         {comment.content}
                       </p>
                       <div class="mt-2 flex flex-wrap items-center justify-between gap-2">

@@ -674,7 +674,7 @@ export default function PokerStoryQueue(props: {
 
                                 <div class="ms-auto flex items-center gap-0.5">
                                   <Button
-                                    class="poker-row-btn board-focus-ring !px-1.5"
+                                    class="poker-row-btn board-focus-ring px-1.5!"
                                     aria-label={`Move ${story().title} up`}
                                     title="Move up"
                                     disabled={index() === 0 || busy()}
@@ -684,7 +684,7 @@ export default function PokerStoryQueue(props: {
                                     <LucideIcon icon={ChevronUp} class="size-3.5" strokeWidth={2} />
                                   </Button>
                                   <Button
-                                    class="poker-row-btn board-focus-ring !px-1.5"
+                                    class="poker-row-btn board-focus-ring px-1.5!"
                                     aria-label={`Move ${story().title} down`}
                                     title="Move down"
                                     disabled={index() === props.stories.length - 1 || busy()}
@@ -731,7 +731,7 @@ export default function PokerStoryQueue(props: {
         </div>
 
         <p class="sr-only" role="status">{announcement()}</p>
-        <p class="poker-error-text px-4 text-xs font-medium [&:not(:empty)]:py-2" role="alert">{error()}</p>
+        <p class="poker-error-text px-4 text-xs font-medium `not-empty:py-2" role="alert">{error()}</p>
         <p class="poker-rail-foot">
           This Room expires 90 days after creation or its most recent vote or content change, whichever is later.
         </p>

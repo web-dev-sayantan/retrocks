@@ -242,7 +242,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           <div
             data-column-accent-bar="true"
             class={[
-              'h-[3px] w-full transition-colors duration-200',
+              'h-0.75 w-full transition-colors duration-200',
               COLUMN_ACCENT_STYLES[props.view.column.accent].bar,
             ]}
           />
@@ -254,7 +254,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
           />
         </div>
 
-        <div class="board-column-cap-row relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-[calc(0.625rem+3px)] pb-2.5">
+        <div class="board-column-cap-row relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-3.25 pb-2.5">
           <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={isRenaming() ? "" : undefined}>
             <Show
               when={!isRenaming()}

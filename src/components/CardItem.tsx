@@ -502,7 +502,7 @@ export default function CardItem(props: CardItemProps) {
               onToggleReaction={props.actions.toggleReaction}
             />
 
-            <div class="order-first flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-none sm:col-start-1">
+            <div class="order-first flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-0 sm:col-start-1">
               <Show when={props.card.isMine}>
                 <span class="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] font-medium">
                   You
