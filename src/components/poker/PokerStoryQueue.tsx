@@ -14,9 +14,10 @@ import {
   Plus,
   RotateCcw,
 } from 'lucide';
-import { For, Show, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
+import { For, Show, createMemo, createSignal, createUniqueId, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
+import type { InlineEditOutcome } from '../../lib/inline-edit';
 import {
   POKER_STORY_TITLE_LIMIT,
   type PokerResult,
@@ -25,6 +26,7 @@ import {
 } from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 import PokerEstimateForm from './PokerEstimateForm';
+import PokerStoryTitleEditor, { type PokerStoryTitleEditorHandle } from './PokerStoryTitleEditor';
 
 const storyStatuses = {
   pending: 'Pending',
@@ -32,30 +34,22 @@ const storyStatuses = {
   skipped: 'Skipped',
 };
 
-function StoryTitleForm(props: {
-  initialTitle?: string;
+function AddStoryForm(props: {
   busy: boolean;
   onSave: (title: string) => Promise<boolean>;
-  onCancel?: () => void;
 }) {
-  const [title, setTitle] = createSignal(untrack(() => props.initialTitle ?? ''));
-  const editing = () => Boolean(props.onCancel);
+  const [title, setTitle] = createSignal('');
   const [ready, setReady] = createSignal(false);
-  let input!: HTMLInputElement;
 
   onSettled(() => {
     setReady(true);
-    if (editing()) {
-      input.focus();
-      input.select();
-    }
   });
 
   return (
     <form
-      class={['poker-form', editing() ? 'mt-2.5 grid gap-2' : 'px-3 pb-2']}
+      class="poker-form px-3 pb-2"
       method="post"
-      aria-label={editing() ? 'Edit Story title' : 'Add a Story'}
+      aria-label="Add a Story"
       aria-busy={props.busy ? 'true' : 'false'}
       onSubmit={async (event) => {
         event.preventDefault();
@@ -66,42 +60,12 @@ function StoryTitleForm(props: {
         }
       }}
     >
-      <Show
-        when={editing()}
-        fallback={
-          <div class="poker-quick-add">
-            <Field name="title" class="min-w-0 flex-1">
-              <FieldLabel class="sr-only">Story title</FieldLabel>
-              <Input
-                ref={input}
-                class="poker-quick-add-input"
-                placeholder="Add a Story…"
-                value={title()}
-                onValueChange={(value) => setTitle(value)}
-                readonly={props.busy || !ready()}
-                required
-                maxlength={POKER_STORY_TITLE_LIMIT}
-                pattern={'.*\\S.*'}
-              />
-            </Field>
-            <Button
-              class="poker-quick-add-submit spring-press board-focus-ring"
-              type="submit"
-              aria-label="Add Story"
-              title="Add Story"
-              disabled={props.busy || !ready()}
-              focusableWhenDisabled={ready()}
-            >
-              <LucideIcon icon={Plus} class="size-4" strokeWidth={2.2} />
-            </Button>
-          </div>
-        }
-      >
-        <Field name="title" class="min-w-0">
-          <FieldLabel class="mb-1 block text-xs font-semibold text-text-muted">Story title</FieldLabel>
+      <div class="poker-quick-add">
+        <Field name="title" class="min-w-0 flex-1">
+          <FieldLabel class="sr-only">Story title</FieldLabel>
           <Input
-            ref={input}
-            class="poker-input board-focus-ring"
+            class="poker-quick-add-input"
+            placeholder="Add a Story…"
             value={title()}
             onValueChange={(value) => setTitle(value)}
             readonly={props.busy || !ready()}
@@ -110,25 +74,17 @@ function StoryTitleForm(props: {
             pattern={'.*\\S.*'}
           />
         </Field>
-        <div class="flex flex-wrap gap-1.5">
-          <Button
-            class="poker-primary spring-press board-focus-ring"
-            type="submit"
-            disabled={props.busy || !ready()}
-            focusableWhenDisabled={ready()}
-          >
-            Save title
-          </Button>
-          <Button
-            type="button"
-            class="poker-ghost spring-press board-focus-ring"
-            onClick={() => props.onCancel?.()}
-            disabled={props.busy}
-          >
-            Cancel
-          </Button>
-        </div>
-      </Show>
+        <Button
+          class="poker-quick-add-submit spring-press board-focus-ring"
+          type="submit"
+          aria-label="Add Story"
+          title="Add Story"
+          disabled={props.busy || !ready()}
+          focusableWhenDisabled={ready()}
+        >
+          <LucideIcon icon={Plus} class="size-4" strokeWidth={2.2} />
+        </Button>
+      </div>
     </form>
   );
 }
@@ -145,8 +101,8 @@ export default function PokerStoryQueue(props: {
 }) {
   const headingId = createUniqueId();
   const listPanelId = createUniqueId();
-  const [editing, setEditing] = createSignal<
-    { storyId: string; type: 'title' } | { storyId: string; type: 'estimate'; expectedEstimate: string } | null
+  const [editingEstimate, setEditingEstimate] = createSignal<
+    { storyId: string; expectedEstimate: string } | null
   >(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
@@ -220,13 +176,28 @@ export default function PokerStoryQueue(props: {
         setConfirming(false);
       }
     }
-    if (locking && editing()?.storyId === story.id) setEditing(null);
+    if (locking && editingEstimate()?.storyId === story.id) setEditingEstimate(null);
     await change({
       type: 'set-story-lock',
       storyId: story.id,
       locked: locking,
       ...(discardRoundId === undefined ? {} : { discardRoundId }),
     });
+  }
+
+  async function editStoryTitle(storyId: string, title: string): Promise<InlineEditOutcome> {
+    if (busy()) return false;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await props.onChange({ type: 'edit-story', storyId, title });
+      if (result.ok) return true;
+      return result.message;
+    } catch {
+      return 'Could not update the Story title. Try again.';
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function move(story: PokerStory, index: number, offset: -1 | 1, control: HTMLElement) {
@@ -291,7 +262,7 @@ export default function PokerStoryQueue(props: {
         </div>
 
         <Show when={props.canManage}>
-          <StoryTitleForm busy={busy()} onSave={addStory} />
+          <AddStoryForm busy={busy()} onSave={addStory} />
         </Show>
 
         <div class="poker-queue-scroll">
@@ -308,33 +279,23 @@ export default function PokerStoryQueue(props: {
                 {(story, index) => {
                   const active = () => props.activeStoryId === story().id;
                   const selected = () => active() && props.roundId !== undefined;
-                  const editor = createMemo(() => {
-                    const current = editing();
-                    return current?.storyId === story().id ? current : null;
-                  });
                   const estimateEditor = createMemo(() => {
-                    const current = editor();
-                    return current?.type === 'estimate' ? current : undefined;
+                    const current = editingEstimate();
+                    return current?.storyId === story().id ? current : undefined;
                   });
                   let selectButton: HTMLButtonElement | undefined;
                   let editTitleButton: HTMLButtonElement | undefined;
                   let editEstimateButton: HTMLButtonElement | undefined;
+                  let titleEditor: PokerStoryTitleEditorHandle | undefined;
 
-                  function finishEditing() {
-                    const trigger = editor()?.type === 'estimate' ? editEstimateButton : editTitleButton;
-                    setEditing(null);
-                    trigger?.focus();
-                  }
-
-                  async function saveTitle(title: string) {
-                    const room = await change({ type: 'edit-story', storyId: story().id, title });
-                    if (room) finishEditing();
-                    return Boolean(room);
+                  function finishEditingEstimate() {
+                    setEditingEstimate(null);
+                    editEstimateButton?.focus();
                   }
 
                   async function saveEstimate(expectedEstimate: string, choice: string) {
                     if (await change({ type: 'correct-estimate', storyId: story().id, expectedEstimate, choice })) {
-                      finishEditing();
+                      finishEditingEstimate();
                     }
                   }
 
@@ -380,7 +341,15 @@ export default function PokerStoryQueue(props: {
                           </Show>
                         </span>
 
-                        <p class="poker-story-title min-w-0 flex-1">{story().title}</p>
+                        <PokerStoryTitleEditor
+                          story={story()}
+                          canEdit={props.canManage}
+                          confirmRestartVoting={active() && props.activeRoundWithVotesId !== undefined}
+                          variant="queue"
+                          onSave={(title) => editStoryTitle(story().id, title)}
+                          onHandle={(handle) => { titleEditor = handle; }}
+                          fallbackFocus={() => editTitleButton?.focus()}
+                        />
 
                         <span class="flex shrink-0 items-center gap-1.5">
                           <Show when={locked()}>
@@ -441,11 +410,14 @@ export default function PokerStoryQueue(props: {
                             class="poker-row-btn board-focus-ring"
                             aria-label={`Edit title for ${story().title}`}
                             title="Edit title"
-                            aria-expanded={editor()?.type === 'title' ? 'true' : 'false'}
+                            aria-expanded={titleEditor?.isEditing() ? 'true' : 'false'}
                             disabled={locked() || busy()}
                             focusableWhenDisabled
                             onClick={() => {
-                              if (!locked()) setEditing({ storyId: story().id, type: 'title' });
+                              if (!locked()) {
+                                setEditingEstimate(null);
+                                titleEditor?.start();
+                              }
                             }}
                           >
                             <LucideIcon icon={Pencil} class="size-3" strokeWidth={2} />
@@ -458,12 +430,13 @@ export default function PokerStoryQueue(props: {
                                 ref={editEstimateButton}
                                 class="poker-row-btn board-focus-ring"
                                 aria-label={`Edit estimate for ${story().title}`}
-                                aria-expanded={editor()?.type === 'estimate' ? 'true' : 'false'}
+                                aria-expanded={estimateEditor() ? 'true' : 'false'}
                                 disabled={locked() || busy()}
                                 focusableWhenDisabled
                                 onClick={() => {
                                   if (!locked()) {
-                                    setEditing({ storyId: story().id, type: 'estimate', expectedEstimate: estimate() });
+                                    titleEditor?.cancel();
+                                    setEditingEstimate({ storyId: story().id, expectedEstimate: estimate() });
                                   }
                                 }}
                               >
@@ -508,14 +481,6 @@ export default function PokerStoryQueue(props: {
                           </div>
                         </div>
 
-                        <Show when={editor()?.type === 'title' && !locked()}>
-                          <StoryTitleForm
-                            initialTitle={story().title}
-                            busy={busy()}
-                            onSave={saveTitle}
-                            onCancel={finishEditing}
-                          />
-                        </Show>
                         <Show when={!locked() ? estimateEditor() : undefined} keyed>
                           {(edit) => (
                             <PokerEstimateForm
@@ -523,7 +488,7 @@ export default function PokerStoryQueue(props: {
                               busy={busy()}
                               initialChoice={edit.expectedEstimate}
                               onSave={(choice) => void saveEstimate(edit.expectedEstimate, choice)}
-                              onCancel={finishEditing}
+                              onCancel={finishEditingEstimate}
                             />
                           )}
                         </Show>
