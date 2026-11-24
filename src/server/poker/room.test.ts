@@ -246,3 +246,115 @@ test('only a Facilitator can rename a Room, blank resets to Poker Room, and live
     connection.abort();
   }
 });
+
+test('reopening a closed Room requires a pre-close Facilitator, locks prior Stories, preserves Deck state, resets 90-day expiry, and restores Facilitator claims on rejoin', () => {
+  const createdAt = Date.UTC(2026, 0, 1);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(createdAt);
+  try {
+    rooms.create('room-a', 'facilitator', 'Alex');
+    expect(rooms.mutate('room-a', 'facilitator', {
+      type: 'set-deck',
+      deck: { type: 'custom', choices: ['Low', 'Med', 'High'] },
+    }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'participant', { type: 'join', displayName: 'Sam' }).ok).toBe(true);
+    expect(rooms.replaceFacilitatorCapability('room-a', 'facilitator', 0, {
+      hash: 'old-hash',
+      encrypted: 'old-encrypted',
+      revision: 1,
+    }).ok).toBe(true);
+
+    // Add three Stories covering estimated, skipped, and pending states.
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'Estimated Story' }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'Skipped Story' }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'Pending Story' }).ok).toBe(true);
+    const [estimatedStory, skippedStory, pendingStory] = readLiveRoom('facilitator').stories;
+
+    // Estimate first Story (also locks the Deck).
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'select-story', storyId: estimatedStory.id }).ok).toBe(true);
+    const round1 = readLiveRoom('facilitator').round!.id;
+    expect(rooms.mutate('room-a', 'participant', { type: 'vote', roundId: round1, choice: 'Med' }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'reveal', roundId: round1 }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'confirm-estimate', roundId: round1, choice: 'Med' }).ok).toBe(true);
+
+    // Skip second Story.
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'select-story', storyId: skippedStory.id }).ok).toBe(true);
+    const round2 = readLiveRoom('facilitator').round!.id;
+    expect(rooms.mutate('room-a', 'participant', { type: 'vote', roundId: round2, choice: 'High' }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'reveal', roundId: round2 }).ok).toBe(true);
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'skip-story', roundId: round2 }).ok).toBe(true);
+
+    // Close the Room on day 1.
+    clock.mockReturnValue(createdAt + day);
+    const closed = rooms.mutate('room-a', 'facilitator', { type: 'close-room' });
+    expect(closed).toMatchObject({ ok: true, room: { closed: true, canDelete: true } });
+
+    // Non-Facilitators cannot reopen the closed Room.
+    clock.mockReturnValue(createdAt + 40 * day);
+    expect(rooms.mutate('room-a', 'participant', { type: 'reopen-room' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(rooms.mutate('room-a', 'visitor', { type: 'reopen-room' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+
+    // Pre-close Facilitator reopens the Room on day 40.
+    const reopened = rooms.mutate('room-a', 'facilitator', { type: 'reopen-room' });
+    expect(reopened).toMatchObject({
+      ok: true,
+      room: {
+        closed: false,
+        id: 'room-a',
+        viewer: null,
+        participants: [],
+        activeStoryId: null,
+        round: null,
+      },
+    });
+    if (!reopened.ok || reopened.room.closed) throw new Error('Expected reopened Room.');
+    const reopenedVersion = reopened.room.version;
+
+    // Idempotent reopen by pending Facilitator does not bump version; non-Facilitators are forbidden.
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'reopen-room' })).toEqual(reopened);
+    expect(rooms.mutate('room-a', 'participant', { type: 'reopen-room' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+
+    // Old Co-Facilitator Link was cleared on close and stays cleared on reopen.
+    expect(rooms.claimFacilitator('room-a', 'visitor', 'old-hash')).toMatchObject({ ok: false, code: 'INVALID_LINK' });
+
+    // Returning Participant joins as non-Facilitator; returning Facilitator regains Facilitator role.
+    expect(rooms.mutate('room-a', 'participant', { type: 'join', displayName: 'Sam again' }).ok).toBe(true);
+    expect(readLiveRoom('participant').viewer).toMatchObject({ displayName: 'Sam again', isFacilitator: false });
+
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'join', displayName: 'Alex again' }).ok).toBe(true);
+    const rejoined = readLiveRoom('facilitator');
+    expect(rejoined.viewer).toMatchObject({ displayName: 'Alex again', isFacilitator: true });
+    expect(rejoined.deckType).toBe('custom');
+    expect(rejoined.deck).toEqual(['Low', 'Med', 'High']);
+    expect(rejoined.deckLocked).toBe(true);
+    expect(rejoined.facilitatorLinkRevision).toBeUndefined();
+    expect(rooms.getFacilitatorCapability('room-a', 'facilitator')).toEqual({ ok: true, value: null });
+    expect(rejoined.stories).toEqual([
+      { id: estimatedStory.id, title: 'Estimated Story', status: 'estimated', acceptedEstimate: 'Med', locked: true },
+      { id: skippedStory.id, title: 'Skipped Story', status: 'skipped', locked: true },
+      { id: pendingStory.id, title: 'Pending Story', status: 'pending', locked: true },
+    ]);
+
+    // Pre-close Stories stay locked until unlocked; newly added Stories start unlocked.
+    expect(rooms.mutate('room-a', 'facilitator', {
+      type: 'edit-story',
+      storyId: pendingStory.id,
+      title: 'Blocked edit',
+    })).toMatchObject({ ok: false, code: 'STORY_LOCKED' });
+    expect(rooms.mutate('room-a', 'facilitator', { type: 'add-story', title: 'New Story' }).ok).toBe(true);
+    expect(readLiveRoom('facilitator').stories.at(-1)).toMatchObject({ title: 'New Story', locked: false });
+
+    // Idempotent reopen after joining does not re-lock the newly added Story.
+    const repeat = rooms.mutate('room-a', 'facilitator', { type: 'reopen-room' });
+    expect(repeat.ok).toBe(true);
+    expect(readLiveRoom('facilitator').stories.at(-1)).toMatchObject({ title: 'New Story', locked: false });
+    expect(reopenedVersion).toBeGreaterThan(1);
+
+    // 90-day expiry was reset from day 40 (reopen) -> expires on day 130, not day 91 (close + 90).
+    clock.mockReturnValue(createdAt + 130 * day - 1);
+    expect(rooms.read('room-a', 'facilitator')).not.toBeNull();
+    clock.mockReturnValue(createdAt + 130 * day);
+    expect(rooms.read('room-a', 'facilitator')).toBeNull();
+  } finally {
+    clock.mockRestore();
+  }
+});

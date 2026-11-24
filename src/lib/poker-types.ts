@@ -95,7 +95,8 @@ export type PokerRoomChange =
   | PokerVotingCommand
   | PokerDeckCommand
   | { type: 'rename-room'; name: string }
-  | { type: 'close-room'; discardRoundId?: string };
+  | { type: 'close-room'; discardRoundId?: string }
+  | { type: 'reopen-room' };
 
 export type PokerRoomCommand = { type: 'join'; displayName: string } | PokerRoomChange;
 

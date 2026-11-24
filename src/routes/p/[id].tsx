@@ -46,7 +46,13 @@ function RoomUnavailable(props: { roomId?: string; focusHeading?: boolean }) {
   );
 }
 
-function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; claimError: string; onUnavailable: () => void }) {
+function JoinedRoom(props: {
+  room: PokerLiveRoomView;
+  focusHeading: boolean;
+  claimError: string;
+  onReopened: (room: PokerLiveRoomView) => void;
+  onUnavailable: () => void;
+}) {
   const controller = createPokerRoomController({
     room: () => props.room,
     changeRoom: changePokerRoom,
@@ -70,12 +76,25 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
     return current.closed ? undefined : current;
   };
 
+  async function reopenRoom() {
+    const result = await controller.changeRoom({ type: 'reopen-room' });
+    if (result.ok && !result.room.closed) props.onReopened(result.room);
+    return result;
+  }
+
   return (
     <>
       <Title>{`${controller.room().name} — Retrocks`}</Title>
       <Show when={openRoom()} fallback={
         <Show when={closedRoom()}>
-          {(summary) => <PokerRoomSummary room={summary()} onUnavailable={props.onUnavailable} focusHeading />}
+          {(summary) => (
+            <PokerRoomSummary
+              room={summary()}
+              onReopen={reopenRoom}
+              onUnavailable={props.onUnavailable}
+              focusHeading
+            />
+          )}
         </Show>
       }>
         {(current) => (
@@ -94,7 +113,12 @@ function JoinedRoom(props: { room: PokerLiveRoomView; focusHeading: boolean; cla
   );
 }
 
-function LiveRoomPage(props: { initialRoom: PokerLiveRoomView; onUnavailable: () => void }) {
+function LiveRoomPage(props: {
+  initialRoom: PokerLiveRoomView;
+  focusJoinHeading: boolean;
+  onReopened: (room: PokerLiveRoomView) => void;
+  onUnavailable: () => void;
+}) {
   const [claimedRoom, setClaimedRoom] = createSignal<PokerLiveRoomView>();
   const [claimError, setClaimError] = createSignal('');
   const [claimPending, setClaimPending] = createSignal(false);
@@ -155,30 +179,53 @@ function LiveRoomPage(props: { initialRoom: PokerLiveRoomView; onUnavailable: ()
           submitLabel="Join Room"
           action={submit}
           pending={claimPending()}
+          focusHeading={props.focusJoinHeading}
           error={latest()?.result?.message ?? (latest()?.error ? 'Could not join the Room. Try again.' : claimError())}
         />
       </>
     }>
-      <JoinedRoom room={room()} focusHeading={focusHeading()} claimError={claimError()} onUnavailable={props.onUnavailable} />
+      <JoinedRoom
+        room={room()}
+        focusHeading={focusHeading()}
+        claimError={claimError()}
+        onReopened={props.onReopened}
+        onUnavailable={props.onUnavailable}
+      />
     </Show>
   );
 }
 
 function RoomPage(props: { initialRoom: PokerRoomView }) {
   const [unavailable, setUnavailable] = createSignal(false);
+  const [reopenedRoom, setReopenedRoom] = createSignal<PokerLiveRoomView>();
+  const [focusJoinHeading, setFocusJoinHeading] = createSignal(false);
   const onUnavailable = () => setUnavailable(true);
+  const onReopened = (room: PokerLiveRoomView) => {
+    setFocusJoinHeading(true);
+    setReopenedRoom((current) => !current || room.version >= current.version ? room : current);
+  };
   onSettled(() => {
     const room = props.initialRoom;
     if (room.closed) recordRecentPokerRoom(room.id, { name: room.name, onlyIfSaved: true });
   });
+  const currentRoom = () => {
+    const reopened = reopenedRoom();
+    return reopened && reopened.version >= props.initialRoom.version ? reopened : props.initialRoom;
+  };
   const openRoom = () => {
-    const current = props.initialRoom;
+    const current = currentRoom();
     return current.closed ? undefined : current;
   };
   const closedRoom = () => {
-    const current = props.initialRoom;
+    const current = currentRoom();
     return current.closed ? current : undefined;
   };
+
+  async function reopenClosedRoom() {
+    const result = await changePokerRoom(props.initialRoom.id, { type: 'reopen-room' });
+    if (result.ok && !result.room.closed) onReopened(result.room);
+    return result;
+  }
 
   return (
     <Show when={!unavailable()} fallback={<RoomUnavailable roomId={props.initialRoom.id} focusHeading />}>
@@ -187,12 +234,23 @@ function RoomPage(props: { initialRoom: PokerRoomView }) {
           {(summary) => (
             <>
               <Title>{`${summary().name} — Retrocks`}</Title>
-              <PokerRoomSummary room={summary()} onUnavailable={onUnavailable} />
+              <PokerRoomSummary
+                room={summary()}
+                onReopen={reopenClosedRoom}
+                onUnavailable={onUnavailable}
+              />
             </>
           )}
         </Show>
       }>
-        {(room) => <LiveRoomPage initialRoom={room()} onUnavailable={onUnavailable} />}
+        {(room) => (
+          <LiveRoomPage
+            initialRoom={room()}
+            focusJoinHeading={focusJoinHeading()}
+            onReopened={onReopened}
+            onUnavailable={onUnavailable}
+          />
+        )}
       </Show>
     </Show>
   );

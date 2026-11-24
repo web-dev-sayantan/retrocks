@@ -104,7 +104,7 @@ describe('Room name display surfaces', () => {
       canDelete: false,
       stories: [],
     };
-    render(() => <PokerRoomSummary room={closed} onUnavailable={vi.fn()} />);
+    render(() => <PokerRoomSummary room={closed} onReopen={vi.fn()} onUnavailable={vi.fn()} />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'Q4 Roadmap Sizing' })).toBeInTheDocument();
   });

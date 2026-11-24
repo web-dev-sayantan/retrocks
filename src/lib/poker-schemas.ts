@@ -36,6 +36,7 @@ export const PokerCommand = v.variant('type', [
   v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
   v.object({ type: v.literal('rename-room'), name: PokerRoomNameInput }),
   v.object({ type: v.literal('close-room'), discardRoundId: v.optional(PokerEntityId) }),
+  v.object({ type: v.literal('reopen-room') }),
   v.object({
     type: v.literal('add-story'),
     title: PokerStoryTitle,
