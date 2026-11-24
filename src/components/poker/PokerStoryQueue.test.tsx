@@ -41,7 +41,7 @@ test('a Facilitator can add and move a Story by named controls while keeping its
 
   const added = await agent.act({ steps: [
     { ref: 'Story title', action: 'setValue', args: [second.title] },
-    { ref: 'Add Story', action: 'press' },
+    { ref: 'Add to queue', action: 'press' },
   ] });
   expect(added.ok, added.error?.message).toBe(true);
   await screen.findByText(second.title);
@@ -641,4 +641,179 @@ test('locking the active Story confirms only when an unresolved Voting Round has
     type: 'set-story-lock', storyId: 's1', locked: true, discardRoundId: 'round-voted',
   }));
   expect(screen.getByText('Select a Story from the queue')).toBeVisible();
+});
+
+test('quick-add provides Add to queue and Add & make active buttons with IME-safe Smart Enter', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [],
+    activeStoryId: null,
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: false,
+    round: null,
+  });
+
+  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room: untrack(room) }));
+
+  render(() => (
+    <>
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+  flush();
+
+  const input = screen.getByRole('textbox', { name: 'Story title' }) as HTMLInputElement;
+  expect(screen.getByRole('button', { name: 'Add to queue' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add & make active' })).toBeVisible();
+
+  // 1. IME composition Enter is ignored.
+  fireEvent.input(input, { target: { value: 'Composing title' } });
+  flush();
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+  expect(change).not.toHaveBeenCalled();
+
+  // 2. Empty stage: Smart Enter triggers Add & make active.
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Composing title', makeActive: true,
+  }));
+  await waitFor(() => expect(input.value).toBe(''));
+
+  // 3. Unresolved open round with 0 votes: Smart Enter triggers Add to queue; Add & make active works without prompt.
+  setRoom({
+    ...untrack(room),
+    version: 2,
+    stories: [{ id: 's1', title: 'Composing title', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    round: { id: 'round-zero', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  });
+  flush();
+  change.mockClear();
+
+  fireEvent.input(input, { target: { value: 'Queued by Enter' } });
+  flush();
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Queued by Enter',
+  }));
+  await waitFor(() => expect(input.value).toBe(''));
+
+  change.mockClear();
+  fireEvent.input(input, { target: { value: 'Active immediately' } });
+  flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Active immediately', makeActive: true,
+  }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  await waitFor(() => expect(input.value).toBe(''));
+
+  // 4. After Accepted Estimate: Smart Enter triggers Add & make active without prompt.
+  setRoom({
+    ...untrack(room),
+    version: 3,
+    stories: [{ id: 's1', title: 'Composing title', status: 'estimated', acceptedEstimate: '5', locked: false }],
+    activeStoryId: 's1',
+    round: { id: 'round-accepted', phase: 'accepted', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
+  });
+  flush();
+  change.mockClear();
+
+  fireEvent.input(input, { target: { value: 'Next after accept' } });
+  flush();
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Next after accept', makeActive: true,
+  }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  await waitFor(() => expect(input.value).toBe(''));
+
+  // All interactive controls remain labeled for agents.
+  const controls = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== 'more');
+  expect(controls.every((entry) => Boolean(entry.label))).toBe(true);
+});
+
+test('Add & make active confirms before discarding cast votes while Add to queue does not', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
+    closed: false,
+    id: 'room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+    activeStoryId: 's1',
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    deckLocked: true,
+    round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
+  });
+
+  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room: untrack(room) }));
+
+  render(() => (
+    <>
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <BoardConfirmDialog />
+    </>
+  ));
+  flush();
+
+  const input = screen.getByRole('textbox', { name: 'Story title' }) as HTMLInputElement;
+  fireEvent.input(input, { target: { value: 'Urgent story' } });
+  flush();
+
+  // Clicking Add & make active asks for confirmation and preserves the input if cancelled.
+  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  const dialog = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
+  const cancel = within(dialog).getByRole('button', { name: 'Keep voting' });
+  await waitFor(() => expect(cancel).toHaveFocus());
+  fireEvent.click(cancel);
+  await waitFor(() => expect(dialog).not.toBeVisible());
+  expect(change).not.toHaveBeenCalled();
+  expect(input.value).toBe('Urgent story');
+
+  // Confirming sends makeActive + discardRoundId and clears the input.
+  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  const reopened = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
+  fireEvent.click(within(reopened).getByRole('button', { name: 'Lock previous & make active' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Urgent story', makeActive: true, discardRoundId: 'round-voted',
+  }));
+  await waitFor(() => expect(input.value).toBe(''));
+
+  // Revealed round: Smart Enter still queues without prompt; Add & make active prompts.
+  setRoom({
+    ...untrack(room),
+    version: 2,
+    round: { id: 'round-revealed', phase: 'revealed', ballots: [{ participantId: 'alex', displayName: 'Alex', choice: '5' }] },
+  });
+  flush();
+  change.mockClear();
+
+  fireEvent.input(input, { target: { value: 'Queued during reveal' } });
+  flush();
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Queued during reveal',
+  }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+
+  change.mockClear();
+  fireEvent.input(input, { target: { value: 'Active after reveal' } });
+  flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Add & make active' }));
+  const revealDialog = await screen.findByRole('alertdialog', { name: 'Make new Story active?' });
+  fireEvent.click(within(revealDialog).getByRole('button', { name: 'Lock previous & make active' }));
+  await waitFor(() => expect(change).toHaveBeenCalledWith({
+    type: 'add-story', title: 'Active after reveal', makeActive: true, discardRoundId: 'round-revealed',
+  }));
 });

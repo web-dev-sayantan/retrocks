@@ -898,3 +898,72 @@ test('locking the active Story requires discard confirmation only when an unreso
     },
   });
 });
+
+test('add-story supports queueing and atomic makeActive with previous Story locking and vote discard checks', async () => {
+  const { participant, mutate } = await openRoom();
+
+  // 1. Add & make active on an empty stage creates the Story and opens a Voting Round.
+  const first = await mutate({ type: 'add-story', title: 'Checkout flow', makeActive: true });
+  if (!first.ok) throw new Error('Could not add and activate first Story.');
+  expect(first.room.stories).toHaveLength(1);
+  const firstStory = first.room.stories[0];
+  expect(first.room.activeStoryId).toBe(firstStory.id);
+  expect(first.room.round).toMatchObject({ phase: 'open', submittedParticipantIds: [] });
+
+  // 2. Add to queue while active leaves activeStoryId, round, and previous Story lock untouched.
+  const queued = await mutate({ type: 'add-story', title: 'Queued Story' });
+  if (!queued.ok) throw new Error('Could not queue Story.');
+  expect(queued.room.stories).toHaveLength(2);
+  expect(queued.room.stories[1]).toMatchObject({ title: 'Queued Story', status: 'pending', locked: false });
+  expect(queued.room.activeStoryId).toBe(firstStory.id);
+  expect(queued.room.round?.id).toBe(first.room.round?.id);
+  expect(queued.room.stories[0].locked).toBe(false);
+
+  // 3. Add & make active when active Story has 0 votes locks previous Story and activates new Story without discardRoundId.
+  const second = await mutate({ type: 'add-story', title: 'Zero-vote replacement', makeActive: true });
+  if (!second.ok) throw new Error('Could not replace zero-vote active Story.');
+  const secondStory = second.room.stories[2];
+  expect(second.room.activeStoryId).toBe(secondStory.id);
+  expect(second.room.round?.phase).toBe('open');
+  expect(second.room.round?.id).not.toBe(first.room.round?.id);
+  expect(second.room.stories[0]).toMatchObject({ id: firstStory.id, status: 'pending', locked: true });
+  expect(second.room.stories[2]).toMatchObject({ id: secondStory.id, status: 'pending', locked: false });
+
+  // 4. Add & make active when active Story has cast votes requires matching discardRoundId.
+  const votedRoundId = second.room.round!.id;
+  await mutate({ type: 'vote', roundId: votedRoundId, choice: '5' }, participant);
+  expect(await mutate({ type: 'add-story', title: 'Blocked while voted', makeActive: true }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutate({ type: 'add-story', title: 'Blocked stale round', makeActive: true, discardRoundId: first.room.round!.id }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+
+  const third = await mutate({ type: 'add-story', title: 'Confirmed replacement', makeActive: true, discardRoundId: votedRoundId });
+  if (!third.ok) throw new Error('Could not replace voted Story with matching discardRoundId.');
+  const thirdStory = third.room.stories[3];
+  expect(third.room.activeStoryId).toBe(thirdStory.id);
+  expect(third.room.round).toMatchObject({ phase: 'open', submittedParticipantIds: [] });
+  expect(third.room.stories[2]).toMatchObject({ id: secondStory.id, status: 'pending', locked: true });
+  expect(third.room.stories[3]).toMatchObject({ id: thirdStory.id, status: 'pending', locked: false });
+
+  // 5. Add & make active when active Story has a revealed round also requires matching discardRoundId.
+  const revealedRoundId = third.room.round!.id;
+  await mutate({ type: 'vote', roundId: revealedRoundId, choice: '8' }, participant);
+  await mutate({ type: 'reveal', roundId: revealedRoundId });
+  expect(await mutate({ type: 'add-story', title: 'Blocked while revealed', makeActive: true }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+
+  // 6. Once Accepted Estimate is confirmed, Add & make active locks previous Story (preserving estimate) without discardRoundId.
+  await mutate({ type: 'confirm-estimate', roundId: revealedRoundId, choice: '8' });
+  const fourth = await mutate({ type: 'add-story', title: 'After accepted estimate', makeActive: true });
+  if (!fourth.ok) throw new Error('Could not add and activate Story after accepted estimate.');
+  const fourthStory = fourth.room.stories[4];
+  expect(fourth.room.activeStoryId).toBe(fourthStory.id);
+  expect(fourth.room.round).toMatchObject({ phase: 'open', submittedParticipantIds: [] });
+  expect(fourth.room.stories[3]).toMatchObject({
+    id: thirdStory.id,
+    status: 'estimated',
+    acceptedEstimate: '8',
+    locked: true,
+  });
+  expect(fourth.room.stories[4]).toMatchObject({ id: fourthStory.id, status: 'pending', locked: false });
+});

@@ -340,6 +340,24 @@ export class PokerRoomStorage {
         }
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
+          if (command.makeActive) {
+            if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) {
+              return roundChanged;
+            }
+            if (room.round && unresolvedPokerRoundId(room.round) !== undefined
+              && Object.keys(room.round.ballots).length > 0 && command.discardRoundId === undefined) {
+              return discardRequired;
+            }
+            if (room.activeStoryId) {
+              const previousStory = room.stories.find((entry) => entry.id === room.activeStoryId);
+              if (previousStory) previousStory.locked = true;
+            }
+            const story: PokerStory = { id: generateEntityId(), title: command.title, status: 'pending', locked: false };
+            room.stories.push(story);
+            room.activeStoryId = story.id;
+            room.round = startVotingRound();
+            break;
+          }
           room.stories.push({ id: generateEntityId(), title: command.title, status: 'pending', locked: false });
           break;
         }

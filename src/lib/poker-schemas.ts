@@ -23,7 +23,12 @@ const CustomDeckChoices = v.pipe(
 export const PokerCommand = v.variant('type', [
   v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
   v.object({ type: v.literal('close-room'), discardRoundId: v.optional(PokerEntityId) }),
-  v.object({ type: v.literal('add-story'), title: PokerStoryTitle }),
+  v.object({
+    type: v.literal('add-story'),
+    title: PokerStoryTitle,
+    makeActive: v.optional(v.boolean()),
+    discardRoundId: v.optional(PokerEntityId),
+  }),
   v.object({
     type: v.literal('correct-estimate'),
     storyId: PokerEntityId,
