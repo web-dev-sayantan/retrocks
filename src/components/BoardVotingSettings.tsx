@@ -18,11 +18,14 @@ import { For, Show, createMemo, createSignal, createUniqueId, untrack } from 'so
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { canControlFacilitation } from '../lib/board-permissions';
-import type { UpdateVotingSettingsInput } from '../lib/voting-schemas';
+import type { BoardCommand } from '../lib/schemas';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import LucideIcon from './LucideIcon';
 
-export type VotingSettingsPatch = Omit<UpdateVotingSettingsInput, 'boardId'>;
+export type VotingSettingsPatch = Omit<
+  Extract<BoardCommand, { type: 'voting:configure' }>,
+  'type'
+>;
 
 const buttonClass = [
   'inline-flex board-touch-target cursor-pointer items-center justify-center rounded-md px-3 py-1.5 text-xs font-medium',

@@ -46,10 +46,14 @@ import type {
   ReactionEmoji,
 } from './board-types';
 import type { ServerClockSample } from './timer';
-import type { AddColumnInput, BoardCommand, TimerChange } from './schemas';
-import type { ChangeVoteInput, UpdateVotingSettingsInput } from './voting-schemas';
+import type { BoardCommand, TimerChange } from './schemas';
 
-type VoteDelta = ChangeVoteInput['delta'];
+type AddColumnPayload = Omit<Extract<BoardCommand, { type: 'column:add' }>, 'type'>;
+type VoteDelta = Extract<BoardCommand, { type: 'vote:change' }>['delta'];
+type VotingSettingsPatch = Omit<
+  Extract<BoardCommand, { type: 'voting:configure' }>,
+  'type'
+>;
 
 /**
  * Optimistic voting view state consumed by VoteControls; the controller derives
@@ -105,10 +109,10 @@ export interface BoardController extends BoardMutations {
   isSavingColumn(): boolean;
   changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse>;
   renameBoard(title: string): Promise<boolean>;
-  addColumn(input: Omit<AddColumnInput, 'boardId'>): Promise<ColumnDTO | null>;
+  addColumn(input: AddColumnPayload): Promise<ColumnDTO | null>;
   togglePrivateMode(dramaticRequested: boolean): Promise<PrivateModeOutcome>;
   changeVote(targetType: 'card' | 'group', targetId: string, delta: VoteDelta): Promise<void>;
-  saveVotingSettings(patch: Omit<UpdateVotingSettingsInput, 'boardId'>): Promise<string | null>;
+  saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null>;
   resetAllVotes(): Promise<string | null>;
   toggleBoardLock(isLocked: boolean): Promise<string | null>;
   deleteCurrentBoard(): Promise<string | null>;
@@ -844,7 +848,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     return outcome.ok ? null : outcome.message ?? 'Could not delete comment. Try again.';
   }
 
-  async function addColumn(input: Omit<AddColumnInput, 'boardId'>): Promise<ColumnDTO | null> {
+  async function addColumn(input: AddColumnPayload): Promise<ColumnDTO | null> {
     const board = store.board;
     if (!board || input.title.trim().length === 0 || isSavingColumn()) return null;
     setIsSavingColumn(true);
@@ -975,7 +979,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       : outcome.message ?? 'Could not update Voting. Try again.';
   }
 
-  function saveVotingSettings(patch: Omit<UpdateVotingSettingsInput, 'boardId'>): Promise<string | null> {
+  function saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null> {
     return runVotingSettingsMutation({ type: 'voting:configure', ...patch });
   }
 
