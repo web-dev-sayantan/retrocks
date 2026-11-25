@@ -26,5 +26,3 @@ export const UpdateVotingSettingsInputSchema = v.object({
 export type UpdateVotingSettingsInput = v.InferInput<typeof UpdateVotingSettingsInputSchema>;
 
 export const ResetVotesInputSchema = v.object({ boardId: BoardIdSchema });
-
-export type ResetVotesInput = v.InferInput<typeof ResetVotesInputSchema>;

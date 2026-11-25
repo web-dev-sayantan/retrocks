@@ -2,12 +2,15 @@ import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { createEffect, createRoot, createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { BoardWorkspaceActions } from './board-actions';
 import type { BoardLiveMessage } from './board-live-protocol';
 import type { BoardLiveTransport } from './board-live';
-import { createBoardController, type BoardController } from './board-controller';
 import {
-  createFakeActions,
+  createBoardController,
+  type BoardCommandDispatcher,
+  type BoardController,
+} from './board-controller';
+import {
+  createFakeBoardDispatcher,
   makeBoardView,
   makeCard,
 } from './board-fixtures';
@@ -15,7 +18,7 @@ import type { BoardMutationResponse, BoardViewDTO } from './board-types';
 
 // The controller seam under test: one reactive controller owning the Board store,
 // live stream application, server clock, and mutation handlers. No workspace
-// DOM is rendered — the createFakeActions double is the server.
+// DOM is rendered — the single dispatchCommand double is the server.
 
 interface FakeConnection {
   path: string;
@@ -58,8 +61,7 @@ interface SessionHarness {
   setBoardProp: (board: BoardViewDTO | null) => void;
   setLiveReconnectKey: (key: number) => void;
   connections: FakeConnection[];
-  actions: BoardWorkspaceActions;
-  spies: Record<keyof BoardWorkspaceActions, ReturnType<typeof vi.fn>>;
+  dispatchCommand: ReturnType<typeof vi.fn<BoardCommandDispatcher>>;
   dispose: () => void;
 }
 
@@ -67,14 +69,14 @@ const mounted: SessionHarness[] = [];
 
 function mountSession(initialBoard: BoardViewDTO | null): SessionHarness {
   const { transport, connections } = createFakeLiveTransport();
-  const { actions, spies } = createFakeActions(initialBoard ?? makeBoardView());
+  const { dispatchCommand } = createFakeBoardDispatcher(initialBoard ?? makeBoardView());
   let harness!: SessionHarness;
   const dispose = createRoot((disposeRoot) => {
     const [boardProp, setBoardProp] = createSignal<BoardViewDTO | null>(initialBoard);
     const [liveReconnectKey, setLiveReconnectKey] = createSignal(0);
     const controller = createBoardController({
       board: boardProp,
-      actions: () => actions,
+      dispatchCommand,
       liveTransport: transport,
       liveReconnectKey,
     });
@@ -83,8 +85,7 @@ function mountSession(initialBoard: BoardViewDTO | null): SessionHarness {
       setBoardProp,
       setLiveReconnectKey,
       connections,
-      actions,
-      spies,
+      dispatchCommand,
       dispose: disposeRoot,
     };
     return disposeRoot;
@@ -218,10 +219,10 @@ describe('createBoardController', () => {
 
   it('creates Cards optimistically, reconciles on success, and rolls back on failure', async () => {
     const board = makeBoardView({ cards: [], columns: [{ id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 0 }] });
-    const { controller, spies } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
     const serverCard = makeCard({ id: 'card_server', columnId: 'col_1', content: 'Hello' });
-    spies.createCard.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{ type: 'card:upserted', version: 2, card: serverCard }],
@@ -234,8 +235,8 @@ describe('createBoardController', () => {
     expect(optimistic[0].pending).toBe(true);
     expect(optimistic[0].isMine).toBe(true);
     expect(controller.board()?.columns[0]?.cardCount).toBe(1);
-    expect(spies.createCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:create',
       columnId: 'col_1',
       content: 'Hello',
     });
@@ -246,7 +247,7 @@ describe('createBoardController', () => {
     expect(controller.board()?.version).toBe(2);
     expect(controller.board()?.columns[0]?.cardCount).toBe(1);
 
-    spies.createCard.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: false,
       code: 'LIMIT_EXCEEDED',
       message: 'Board card limit reached.',
@@ -264,9 +265,9 @@ describe('createBoardController', () => {
   it('toggles Reactions optimistically and inverts the delta on failure', async () => {
     const card = makeCard({ id: 'card_react', reactions: { '👍': 1 }, myReactions: [] });
     const board = makeBoardView({ cards: [card] });
-    const { controller, spies } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
-    spies.toggleReaction.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{ type: 'reaction:updated', version: 2, cardId: card.id, counts: { '👍': 2 }, myReactions: ['👍'] }],
@@ -275,11 +276,16 @@ describe('createBoardController', () => {
     flush();
     expect(controller.board()?.cards[0]?.reactions['👍']).toBe(2);
     expect(controller.board()?.cards[0]?.myReactions).toEqual(['👍']);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'reaction:toggle',
+      cardId: card.id,
+      emoji: '👍',
+    });
     await added;
     flush();
     expect(controller.board()?.cards[0]?.reactions['👍']).toBe(2);
 
-    spies.toggleReaction.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: false,
       code: 'RATE_LIMITED',
       message: 'Slow down reactions.',
@@ -298,10 +304,10 @@ describe('createBoardController', () => {
   it('derives Vote pending state with isPending and surfaces optimistic balances', async () => {
     const card = makeCard({ id: 'card_v', votes: 0, myVotes: 0 });
     const board = makeBoardView({ cards: [card], isFacilitator: false, voteLimit: 5, remainingVotes: 5 });
-    const { controller, spies } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
     const pending = Promise.withResolvers<BoardMutationResponse>();
-    spies.changeVote.mockReturnValueOnce(pending.promise);
+    dispatchCommand.mockReturnValueOnce(pending.promise);
 
     const votePromise = controller.changeVote('card', card.id, 1);
     flush();
@@ -313,7 +319,13 @@ describe('createBoardController', () => {
     // A second cast while one is in flight is dropped, not queued.
     void controller.changeVote('card', card.id, 1);
     flush();
-    expect(spies.changeVote.mock.calls).toHaveLength(1);
+    expect(dispatchCommand).toHaveBeenCalledTimes(1);
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'vote:change',
+      targetType: 'card',
+      targetId: card.id,
+      delta: 1,
+    });
 
     pending.resolve({
       ok: true,
@@ -326,7 +338,7 @@ describe('createBoardController', () => {
     expect(controller.board()?.cards[0]?.myVotes).toBe(1);
     expect(controller.voting().remainingVotes).toBe(4);
 
-    spies.changeVote.mockRejectedValueOnce(new Error('offline'));
+    dispatchCommand.mockRejectedValueOnce(new Error('offline'));
     await controller.changeVote('card', card.id, -1);
     flush();
     expect(controller.errorMessage()).toBe('Could not update your Vote. Try again.');
@@ -343,10 +355,10 @@ describe('createBoardController', () => {
       actionOwner: '',
     });
     const board = makeBoardView({ cards: [card] });
-    const { controller, spies } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
     const pending = Promise.withResolvers<BoardMutationResponse>();
-    spies.updateActionItem.mockReturnValueOnce(pending.promise);
+    dispatchCommand.mockReturnValueOnce(pending.promise);
     const update = controller.updateActionItem(card.id, {
       actionDone: true,
       actionOwner: 'Platform',
@@ -355,6 +367,12 @@ describe('createBoardController', () => {
     expect(controller.board()?.cards[0]?.actionDone).toBe(true);
     expect(controller.board()?.cards[0]?.actionOwner).toBe('Platform');
     expect(controller.isActionItemPending(card.id)).toBe(true);
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:set-action',
+      cardId: card.id,
+      actionDone: true,
+      actionOwner: 'Platform',
+    });
 
     pending.resolve({
       ok: true,
@@ -371,7 +389,7 @@ describe('createBoardController', () => {
     expect(controller.board()?.cards[0]?.actionDone).toBe(true);
     expect(controller.board()?.cards[0]?.actionOwner).toBe('Platform');
 
-    spies.updateActionItem.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: false,
       code: 'RATE_LIMITED',
       message: 'Slow down.',
@@ -387,20 +405,17 @@ describe('createBoardController', () => {
     const card = makeCard({ id: 'card_guard' });
     const participant = makeBoardView({ cards: [card], isFacilitator: false });
     const harness = mountSession(participant);
-    const { controller, spies } = harness;
+    const { controller, dispatchCommand } = harness;
 
     expect(await controller.renameBoard('Nope')).toBe(false);
-    expect(spies.renameBoard).not.toHaveBeenCalled();
     expect(await controller.saveVotingSettings({ voteLimit: 3 })).toBe(
       'Voting settings are unavailable.',
     );
-    expect(spies.updateVotingSettings).not.toHaveBeenCalled();
     expect(await controller.toggleBoardLock(true)).toBe(
       'Only a Facilitator can Lock or Unlock the Board.',
     );
-    expect(spies.setBoardLock).not.toHaveBeenCalled();
     expect(await controller.deleteColumn('col_1')).toBe(false);
-    expect(spies.deleteColumn).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalled();
 
     const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
     const lockedHarness = mountSession(locked);
@@ -410,16 +425,15 @@ describe('createBoardController', () => {
     expect(await lockedHarness.controller.createCard('col_1', 'Nope')).toBe(
       'This Board is not accepting new Cards.',
     );
-    expect(lockedHarness.spies.updateCard).not.toHaveBeenCalled();
-    expect(lockedHarness.spies.createCard).not.toHaveBeenCalled();
+    expect(lockedHarness.dispatchCommand).not.toHaveBeenCalled();
   });
 
   it('drops stale mutation responses and resyncs on a version gap', async () => {
     const card = makeCard({ id: 'card_version', columnId: 'col_1' });
     const board = makeBoardView({ cards: [card], version: 3 });
-    const { controller, spies, connections } = mountSession(board);
+    const { controller, dispatchCommand, connections } = mountSession(board);
 
-    spies.moveCard.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 3,
       events: [{
@@ -433,7 +447,7 @@ describe('createBoardController', () => {
     expect(controller.board()?.version).toBe(3);
     expect(controller.board()?.cards[0]?.columnId).toBe('col_1');
 
-    spies.moveCard.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 9,
       events: [{
@@ -453,13 +467,13 @@ describe('createBoardController', () => {
   it('funnels mutation responses through the versioned-events seam', async () => {
     const card = makeCard({ id: 'card_m', columnId: 'col_1' });
     const board = makeBoardView({ cards: [card] });
-    const { controller, spies } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
     const moved = await controller.moveCard(card.id, 'col_2');
     flush();
     expect(moved).toBe(true);
-    expect(spies.moveCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:move',
       cardId: card.id,
       targetColumnId: 'col_2',
     });
@@ -474,19 +488,20 @@ describe('createBoardController', () => {
 
   it('clears the board when the current Board is deleted', async () => {
     const board = makeBoardView();
-    const { controller } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
     const message = await controller.deleteCurrentBoard();
     flush();
     expect(message).toBeNull();
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, { type: 'board:delete' });
     expect(controller.board()).toBeNull();
   });
 
   it('applies countdown changes and syncs the server clock from timer events', async () => {
     const board = makeBoardView();
-    const { controller, spies } = mountSession(board);
+    const { controller, dispatchCommand } = mountSession(board);
 
-    spies.updateTimer.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{
@@ -499,8 +514,191 @@ describe('createBoardController', () => {
     const response = await controller.changeCountdown(board.id, { action: 'start', minutes: 1 });
     flush();
     expect(response.ok).toBe(true);
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'timer:update',
+      change: { action: 'start', minutes: 1 },
+    });
     expect(controller.board()?.timer.remainingMs).toBe(60000);
     expect(controller.timerClock()?.serverNow).toBe(9090);
+  });
+
+  it('dispatches discriminated Board commands for facilitation, Columns, Comments, and Card Groups', async () => {
+    const cardA = makeCard({
+      id: 'card_a',
+      columnId: 'col_1',
+      content: 'Card A',
+      comments: [{ id: 'cm_1', cardId: 'card_a', content: 'Old note', isMine: true, createdAt: 100 }],
+      commentCount: 1,
+    });
+    const cardB = makeCard({ id: 'card_b', columnId: 'col_1', content: 'Card B' });
+    const board = makeBoardView({ cards: [cardA, cardB] });
+    const { controller, dispatchCommand } = mountSession(board);
+
+    expect(await controller.renameBoard('  Sprint 43  ')).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'board:rename',
+      title: 'Sprint 43',
+    });
+
+    expect(await controller.updateCard(cardA.id, 'Updated A')).toBeNull();
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:update',
+      cardId: cardA.id,
+      content: 'Updated A',
+    });
+
+    expect(await controller.groupCard(cardA.id, 'card', cardB.id)).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'group:merge',
+      cardId: cardA.id,
+      targetType: 'card',
+      targetId: cardB.id,
+    });
+    flush();
+    const groupId = controller.board()?.groups[0]?.id;
+    expect(groupId).toBeDefined();
+
+    expect(await controller.renameCardGroup(groupId!, 'Cluster')).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'group:rename',
+      groupId: groupId!,
+      title: 'Cluster',
+    });
+
+    expect(await controller.moveCardGroup(groupId!, 'col_2')).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'group:move',
+      groupId: groupId!,
+      targetColumnId: 'col_2',
+    });
+
+    expect(await controller.ungroupCard(cardA.id)).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'group:ungroup',
+      cardId: cardA.id,
+    });
+
+    expect(await controller.groupCard(cardA.id, 'card', cardB.id)).toBe(true);
+    flush();
+    const nextGroupId = controller.board()?.groups[0]?.id;
+    expect(await controller.dissolveCardGroup(nextGroupId!)).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'group:dissolve',
+      groupId: nextGroupId!,
+    });
+
+    expect(await controller.deleteCard(cardB.id)).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:delete',
+      cardId: cardB.id,
+    });
+
+    const added = await controller.addColumn({ title: 'Kudos', accent: 'amber', isActionColumn: false });
+    expect(added?.title).toBe('Kudos');
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'column:add',
+      title: 'Kudos',
+      accent: 'amber',
+      isActionColumn: false,
+    });
+
+    expect(await controller.updateColumn(added!.id, { title: 'Shoutouts' })).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'column:update',
+      columnId: added!.id,
+      title: 'Shoutouts',
+    });
+
+    expect(await controller.moveColumn(added!.id, -1)).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'column:reorder',
+      columnIds: ['col_1', 'col_2', added!.id, 'col_3'],
+    });
+
+    expect(await controller.deleteColumn(added!.id)).toBe(true);
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'column:delete',
+      columnId: added!.id,
+    });
+
+    const nextVersion = () => (controller.board()?.version ?? 0) + 1;
+
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: nextVersion(),
+      events: [{ type: 'board:updated', version: nextVersion(), patch: { isBlurred: true } }],
+    });
+    expect(await controller.togglePrivateMode(false)).toBe('applied');
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'board:set-private-mode',
+      isBlurred: true,
+    });
+
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: nextVersion(),
+      events: [{ type: 'board:updated', version: nextVersion(), patch: { isBlurred: false } }],
+    });
+    expect(await controller.togglePrivateMode(true)).toBe('revealed');
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'board:set-private-mode',
+      isBlurred: false,
+    });
+
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: nextVersion(),
+      events: [{
+        type: 'comment:created',
+        version: nextVersion(),
+        cardId: cardA.id,
+        comment: { id: 'cm_2', cardId: cardA.id, content: 'Nice!', isMine: true, createdAt: 200 },
+      }],
+    });
+    expect(await controller.createComment(cardA.id, 'Nice!')).toBeNull();
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'comment:create',
+      cardId: cardA.id,
+      content: 'Nice!',
+    });
+
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: nextVersion(),
+      events: [{ type: 'comment:deleted', version: nextVersion(), cardId: cardA.id, commentId: 'cm_1' }],
+    });
+    expect(await controller.deleteComment(cardA.id, 'cm_1')).toBeNull();
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'comment:delete',
+      cardId: cardA.id,
+      commentId: 'cm_1',
+    });
+
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: nextVersion(),
+      events: [{ type: 'board:updated', version: nextVersion(), patch: { blindVoting: true } }],
+    });
+    expect(await controller.saveVotingSettings({ blindVoting: true })).toBeNull();
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'voting:configure',
+      blindVoting: true,
+    });
+
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: nextVersion(),
+      events: [{
+        type: 'board:snapshot',
+        version: nextVersion(),
+        serverNow: Date.now(),
+        board: { ...controller.board()!, version: nextVersion(), remainingVotes: 5 },
+      }],
+    });
+    expect(await controller.resetAllVotes()).toBeNull();
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'voting:reset',
+    });
   });
 
   it('applies in-place Facilitator claims and reconnects the live stream without diagnostics', async () => {
@@ -564,7 +762,7 @@ describe('createBoardController', () => {
       async () => {
         const card = makeCard({ id: 'card_diag' });
         const board = makeBoardView({ cards: [card] });
-        const { controller, setBoardProp, connections, spies } = mountSession(board);
+        const { controller, setBoardProp, connections, dispatchCommand } = mountSession(board);
 
         connections[0].emit({
           type: 'board:mutation',
@@ -578,7 +776,7 @@ describe('createBoardController', () => {
         flush();
         expect(controller.board()?.title).toBe('Reconciled');
 
-        spies.toggleReaction.mockResolvedValueOnce({
+        dispatchCommand.mockResolvedValueOnce({
           ok: true,
           version: 4,
           events: [{ type: 'reaction:updated', version: 4, cardId: card.id, counts: { '🎉': 1 }, myReactions: ['🎉'] }],
@@ -614,7 +812,7 @@ describe('createBoardController', () => {
           ],
           cards: [cardA, cardB],
         });
-        const { controller, connections, spies } = mountSession(board);
+        const { controller, connections, dispatchCommand } = mountSession(board);
 
         let cardARuns = 0;
         let cardBRuns = 0;
@@ -736,7 +934,7 @@ describe('createBoardController', () => {
           expect(col2Runs).toBe(1);
 
           // 4. Optimistic + committed mutation on card_a (add and then remove one of two reactions)
-          spies.toggleReaction.mockResolvedValueOnce({
+          dispatchCommand.mockResolvedValueOnce({
             ok: true,
             version: 5,
             events: [
@@ -755,7 +953,7 @@ describe('createBoardController', () => {
           expect(cardBRuns).toBe(1);
           expect(col2Runs).toBe(1);
 
-          spies.toggleReaction.mockResolvedValueOnce({
+          dispatchCommand.mockResolvedValueOnce({
             ok: true,
             version: 6,
             events: [
@@ -775,7 +973,7 @@ describe('createBoardController', () => {
           expect(col2Runs).toBe(1);
 
           // 5. Facilitation toggle (board:updated) leaves unrelated Card and Column readers untouched
-          spies.setBoardLock.mockResolvedValueOnce({
+          dispatchCommand.mockResolvedValueOnce({
             ok: true,
             version: 7,
             events: [{ type: 'board:updated', version: 7, patch: { isLocked: true } }],
@@ -806,10 +1004,10 @@ describe('createBoardController', () => {
           remainingVotes: 5,
           cards: [cardA, cardB],
         });
-        const { controller, connections, spies } = mountSession(board);
+        const { controller, connections, dispatchCommand } = mountSession(board);
 
         const pendingVote = Promise.withResolvers<BoardMutationResponse>();
-        spies.changeVote.mockReturnValueOnce(pendingVote.promise);
+        dispatchCommand.mockReturnValueOnce(pendingVote.promise);
 
         // Start optimistic vote on card_a
         const votePromise = controller.changeVote('card', 'card_a', 1);
