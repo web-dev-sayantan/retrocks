@@ -410,4 +410,121 @@ describe('createInlineEditSession', () => {
     expect(h.fallbackFocus).not.toHaveBeenCalled();
     expect(outside).toHaveFocus();
   });
+
+  it('supports alwaysMounted inputs with lazy start, idle live sync, Escape pass-through, IME guard, and target invalidation', async () => {
+    const pending = Promise.withResolvers<InlineEditOutcome>();
+    let call = 0;
+    const [value, setValue] = createSignal('Platform');
+    const [target, setTarget] = createSignal<string | undefined>('card_1');
+    const [disabled, setDisabled] = createSignal(false);
+    const save = vi.fn(async (text: string, _isCurrent: () => boolean): Promise<InlineEditOutcome> => {
+      call += 1;
+      if (call === 1) return pending.promise;
+      setValue(text);
+      return true;
+    });
+    let session!: InlineEditSession;
+
+    render(() => {
+      session = createInlineEditSession({
+        value,
+        target,
+        disabled,
+        save,
+        alwaysMounted: true,
+      });
+      return (
+        <div>
+          <input
+            ref={session.inputRef}
+            type="text"
+            aria-label="Owner"
+            defaultValue={value()}
+            readonly={session.isSaving()}
+            {...session.inputProps}
+          />
+          <Show when={session.error()}>
+            {(message) => <p role="alert">{message()}</p>}
+          </Show>
+        </div>
+      );
+    });
+    flush();
+
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Owner' });
+    expect(input).toHaveValue('Platform');
+
+    // Live updates sync while idle
+    setValue('Infra');
+    flush();
+    expect(input).toHaveValue('Infra');
+
+    // Escape while idle bubbles without preventDefault
+    const parentKeyDown = vi.fn();
+    document.body.addEventListener('keydown', parentKeyDown);
+    try {
+      const idleEsc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      input.dispatchEvent(idleEsc);
+      flush();
+      expect(idleEsc.defaultPrevented).toBe(false);
+      expect(parentKeyDown).toHaveBeenCalledTimes(1);
+
+      // Typing starts the session and preserves draft/caret across live updates
+      input.focus();
+      fireEvent.input(input, { target: { value: 'API squad' } });
+      input.setSelectionRange(3, 3);
+      flush();
+      setValue('SRE');
+      flush();
+      expect(input).toHaveValue('API squad');
+      expect(input.selectionStart).toBe(3);
+
+      // IME Enter is ignored
+      fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+      fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+      flush();
+      expect(save).not.toHaveBeenCalled();
+
+      // Escape while editing stops propagation and restores committed value
+      parentKeyDown.mockClear();
+      const editEsc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      input.dispatchEvent(editEsc);
+      flush();
+      expect(editEsc.defaultPrevented).toBe(true);
+      expect(parentKeyDown).not.toHaveBeenCalled();
+      expect(input).toHaveValue('SRE');
+
+      // In-flight save is invalidated when target changes
+      fireEvent.input(input, { target: { value: 'Core' } });
+      flush();
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(session.saving()).toBeDefined();
+      const isCurrent = save.mock.calls[0]?.[1];
+      expect(isCurrent?.()).toBe(true);
+
+      setValue('Mobile');
+      setTarget('card_2');
+      flush();
+      expect(isCurrent?.()).toBe(false);
+      expect(input).toHaveValue('Mobile');
+
+      pending.resolve('Stale error');
+      await pending.promise;
+      await Promise.resolve();
+      flush();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(input).toHaveValue('Mobile');
+
+      // Disabled prevents starting a new edit
+      setDisabled(true);
+      flush();
+      fireEvent.input(input, { target: { value: 'Blocked' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      flush();
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
+      document.body.removeEventListener('keydown', parentKeyDown);
+    }
+  });
 });

@@ -24,8 +24,6 @@ async function request<T>(
 
 async function setup(options: Record<string, unknown> = {}) {
   const boardService = await import('./board-service');
-  const grouping = await import('./grouping-service');
-  const voting = await import('./voting-service');
   const origin = 'https://retrocks.app';
   const created = await request(origin, {}, () => boardService.createBoardForRequest(options));
   const board = created.result;
@@ -45,20 +43,17 @@ async function setup(options: Record<string, unknown> = {}) {
   const participant = await join();
   const otherParticipant = await join();
 
-  const as = <T>(cookie: Cookie, run: () => Promise<T>) =>
-    request(boardUrl, { cookie }, run).then(({ result }) => result);
+  const dispatch = (command: unknown, cookie: Cookie = facilitator) =>
+    request(boardUrl, { cookie }, () =>
+      boardService.dispatchBoardCommandForRequest(board.id, command),
+    ).then(({ result }) => result);
 
   const createCard = async (
     content: string,
     cookie: Cookie = facilitator,
     columnId: string = board.columns[0].id,
   ) => {
-    const result = await as(cookie, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId,
-        content,
-      }));
+    const result = await dispatch({ type: 'card:create', columnId, content }, cookie);
     const event = result.events[0];
     if (event?.type !== 'card:upserted') throw new Error('Expected a new Card');
     return event.card.id;
@@ -69,14 +64,7 @@ async function setup(options: Record<string, unknown> = {}) {
     targetType: 'card' | 'group',
     targetId: string,
     cookie: Cookie = facilitator,
-  ) =>
-    as(cookie, () =>
-      grouping.groupCardsForRequest({
-        boardId: board.id,
-        cardId,
-        targetType,
-        targetId,
-      }));
+  ) => dispatch({ type: 'group:merge', cardId, targetType, targetId }, cookie);
 
   const groupIdFrom = (events: { type: string; group?: { id: string } }[]) => {
     const event = events.find((item) => item.type === 'group:upserted');
@@ -85,62 +73,38 @@ async function setup(options: Record<string, unknown> = {}) {
   };
 
   const renameGroup = (groupId: string, title: string, cookie: Cookie = facilitator) =>
-    as(cookie, () =>
-      grouping.renameCardGroupForRequest({ boardId: board.id, groupId, title }));
+    dispatch({ type: 'group:rename', groupId, title }, cookie);
 
   const ungroup = (cardId: string, cookie: Cookie = facilitator) =>
-    as(cookie, () =>
-      grouping.ungroupCardForRequest({ boardId: board.id, cardId }));
+    dispatch({ type: 'group:ungroup', cardId }, cookie);
 
   const dissolve = (groupId: string, cookie: Cookie = facilitator) =>
-    as(cookie, () =>
-      grouping.dissolveCardGroupForRequest({ boardId: board.id, groupId }));
+    dispatch({ type: 'group:dissolve', groupId }, cookie);
 
   const moveGroup = (
     groupId: string,
     targetColumnId: string,
     cookie: Cookie = facilitator,
-  ) =>
-    as(cookie, () =>
-      grouping.moveCardGroupForRequest({
-        boardId: board.id,
-        groupId,
-        targetColumnId,
-      }));
+  ) => dispatch({ type: 'group:move', groupId, targetColumnId }, cookie);
 
   const vote = (
     targetType: 'card' | 'group',
     targetId: string,
     delta: 1 | -1,
     cookie: Cookie = participant,
-  ) =>
-    as(cookie, () =>
-      voting.changeVoteForRequest({
-        boardId: board.id,
-        targetType,
-        targetId,
-        delta,
-      }));
+  ) => dispatch({ type: 'vote:change', targetType, targetId, delta }, cookie);
 
   const settings = (patch: Record<string, unknown>, cookie: Cookie = facilitator) =>
-    as(cookie, () =>
-      voting.updateVotingSettingsForRequest({ boardId: board.id, ...patch }));
+    dispatch({ type: 'voting:configure', ...patch }, cookie);
 
   const deleteCard = (cardId: string, cookie: Cookie = facilitator) =>
-    as(cookie, () =>
-      boardService.deleteCardForRequest({ boardId: board.id, cardId }));
+    dispatch({ type: 'card:delete', cardId }, cookie);
 
   const moveCard = (
     cardId: string,
     targetColumnId: string,
     cookie: Cookie = facilitator,
-  ) =>
-    as(cookie, () =>
-      boardService.moveCardForRequest({
-        boardId: board.id,
-        cardId,
-        targetColumnId,
-      }));
+  ) => dispatch({ type: 'card:move', cardId, targetColumnId }, cookie);
 
   return {
     board,

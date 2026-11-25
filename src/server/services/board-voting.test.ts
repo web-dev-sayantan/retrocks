@@ -4,7 +4,6 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 async function setup(options: Record<string, unknown> = {}) {
   const boardService = await import('./board-service');
-  const voting = await import('./voting-service');
   const origin = 'https://retrocks.app';
   const created = await request(origin, {}, () => boardService.createBoardForRequest(options));
   const board = created.result;
@@ -15,21 +14,25 @@ async function setup(options: Record<string, unknown> = {}) {
     boardService.getBoardForRequest(board.id));
   const participant = (await read()).cookie;
   if (!participant) throw new Error('Expected a Participant session');
+  const dispatch = (command: unknown, cookie?: string) =>
+    request(boardUrl, { cookie }, () =>
+      boardService.dispatchBoardCommandForRequest(board.id, command));
   async function createCard(content: string, cookie = facilitator) {
-    const { result } = await request(boardUrl, { cookie }, () =>
-      boardService.createCardForRequest({ boardId: board.id, columnId: board.columns[0].id, content }));
+    const { result } = await dispatch(
+      { type: 'card:create', columnId: board.columns[0].id, content },
+      cookie,
+    );
     const event = result.events[0];
     if (event.type !== 'card:upserted') throw new Error('Expected a new Card');
     return event.card.id;
   }
   const vote = (targetId: string, delta: 1 | -1, cookie = participant) =>
-    request(boardUrl, { cookie }, () =>
-      voting.changeVoteForRequest({ boardId: board.id, targetType: 'card', targetId, delta }));
+    dispatch({ type: 'vote:change', targetType: 'card', targetId, delta }, cookie);
 
   const settings = (patch: Record<string, unknown>, cookie = facilitator) =>
-    request(boardUrl, { cookie }, () => voting.updateVotingSettingsForRequest({ boardId: board.id, ...patch }));
+    dispatch({ type: 'voting:configure', ...patch }, cookie);
 
-  return { board, boardUrl, facilitator, participant, read, createCard, vote, voting, settings, boardService };
+  return { board, boardUrl, facilitator, participant, read, dispatch, createCard, vote, settings };
 }
 
 async function request<T>(
@@ -121,13 +124,12 @@ it('lets Facilitators change custom and unlimited budgets and single-Vote caps w
 });
 
 it('lets a Facilitator reset everyone’s Votes and restores each Participant’s budget', async () => {
-  const { board, boardUrl, facilitator, participant, read, createCard, vote, voting } = await setup();
+  const { facilitator, participant, read, dispatch, createCard, vote } = await setup();
   const card = await createCard('Helpful release notes');
   await vote(card, 1);
   await vote(card, 1, facilitator);
 
-  const reset = (cookie?: string) => request(boardUrl, { cookie }, () =>
-    voting.resetVotesForRequest({ boardId: board.id }));
+  const reset = (cookie?: string) => dispatch({ type: 'voting:reset' }, cookie);
   await expect(reset(participant)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   await expect(reset(facilitator)).resolves.toMatchObject({
     result: { events: [{
@@ -142,21 +144,25 @@ it('lets a Facilitator reset everyone’s Votes and restores each Participant’
 });
 
 it('publishes the refunded Vote budget when Cards or Columns are deleted', async () => {
-  const { board, boardUrl, facilitator, createCard, vote, boardService } = await setup();
+  const { board, facilitator, dispatch, createCard, vote } = await setup();
   const firstCard = await createCard('Preserve the changelog');
   const secondCard = await createCard('Improve onboarding');
   await vote(firstCard, 1, facilitator);
   await vote(secondCard, 1, facilitator);
 
-  const { result } = await request(boardUrl, { cookie: facilitator }, () =>
-    boardService.deleteCardForRequest({ boardId: board.id, cardId: firstCard }));
+  const { result } = await dispatch(
+    { type: 'card:delete', cardId: firstCard },
+    facilitator,
+  );
   expect(result.events).toMatchObject([
     { type: 'card:deleted', cardId: firstCard },
     { type: 'vote:balance', remainingVotes: 4 },
   ]);
 
-  const { result: removedColumn } = await request(boardUrl, { cookie: facilitator }, () =>
-    boardService.deleteColumnForRequest({ boardId: board.id, columnId: board.columns[0].id }));
+  const { result: removedColumn } = await dispatch(
+    { type: 'column:delete', columnId: board.columns[0].id },
+    facilitator,
+  );
   expect(removedColumn.events).toMatchObject([
     { type: 'column:deleted', columnId: board.columns[0].id },
     { type: 'vote:balance', remainingVotes: 5 },

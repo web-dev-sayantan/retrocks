@@ -1,10 +1,6 @@
 import { httpStatus, respond } from '@solidjs/web';
 
-import type {
-  ActionError,
-  BoardMutationResponse,
-  BoardMutationSuccess,
-} from './board-types';
+import type { ActionError } from './board-types';
 
 export async function respondToServerAction<T extends { ok: true }>(
   run: () => Promise<T>,
@@ -22,10 +18,4 @@ export async function respondToServerAction<T extends { ok: true }>(
     }
     throw error;
   }
-}
-
-export function respondToBoardMutation(
-  run: () => Promise<BoardMutationSuccess>,
-): Promise<BoardMutationResponse> {
-  return respondToServerAction(run);
 }
