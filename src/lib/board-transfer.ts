@@ -120,6 +120,23 @@ function planBoardDrop(
   return { kind: 'group-with-card', cardId: item.card.id, targetCardId: target.id };
 }
 
+// A Card dropped back on itself or on a Card in its own Group is a no-op, not
+// a rejected destination. The plan reports it as false to keep the old
+// drop-target eligibility; release handling must not surface an error for it.
+function isNoOpDrop(
+  board: BoardViewDTO | null,
+  itemKey: string,
+  targetKey: string,
+): boolean {
+  if (!targetKey.startsWith(BOARD_TARGET_PREFIX)) return false;
+  const item = findTransferTarget(board, itemKey);
+  const landing = findTransferTarget(board, targetKey.slice(BOARD_TARGET_PREFIX.length));
+  if (!item || item.kind !== 'card' || !landing) return false;
+  if (landing.kind === 'group') return landing.group.cardIds.includes(item.card.id);
+  return landing.card.id === item.card.id
+    || (landing.card.groupId !== null && landing.card.groupId === item.card.groupId);
+}
+
 export function acceptsBoardDrop(
   board: BoardViewDTO | null,
   itemKey: string,
@@ -239,7 +256,7 @@ export const boardTransfer = definePrimitive({
         const options = read();
         const list = release?.key === details.key ? release.list : details.to;
         const move = planBoardDrop(options.board(), details.key, list);
-        if (move === false) options.onRejectedDrop();
+        if (move === false && !isNoOpDrop(options.board(), details.key, list)) options.onRejectedDrop();
         if (!move) return false;
         announcedSave = true;
         options.commit(move);
@@ -307,7 +324,7 @@ export const boardTransfer = definePrimitive({
         const move = planBoardDrop(read().board(), key, landing.key);
         if (!move) {
           transfer.cancel();
-          if (move === false) read().onRejectedDrop();
+          if (move === false && !isNoOpDrop(read().board(), key, landing.key)) read().onRejectedDrop();
           return;
         }
         release = { key, list: landing.key };

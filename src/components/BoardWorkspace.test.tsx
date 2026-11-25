@@ -1623,6 +1623,48 @@ describe('<BoardWorkspace />', () => {
       .toHaveTextContent('The first Card could not be moved.'));
   });
 
+  it('does not report an error when a grouped Card is released over its own Group', async () => {
+    const member = makeCard({
+      id: 'card_member',
+      columnId: 'col_1',
+      content: 'Existing member',
+      groupId: 'group_keep',
+      isMine: true,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      cards: [member],
+      groups: [{
+        id: 'group_keep',
+        columnId: 'col_1',
+        title: 'Keep going',
+        cardIds: ['card_member'],
+        votes: 0,
+        myVotes: 0,
+        createdAt: 1_760_000_005_000,
+      }],
+      allowParticipantGroup: true,
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const column = view.getByRole('region', { name: 'Went Well' });
+    const group = within(column).getByText('Keep going').closest('article')!;
+    const card = within(column).getByText('Existing member').closest('article')!;
+    stubRect(column, [0, 0, 300, 600]);
+    stubRect(group, [10, 60, 290, 560]);
+    stubRect(card, [20, 120, 280, 200]);
+
+    pointerDrag(card, [{ x: 100, y: 160 }, { x: 105, y: 100 }]);
+    await flushPromises();
+
+    expect(dispatchCommand).not.toHaveBeenCalled();
+    expect(view.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
+  });
+
   it('groups Cards when one is dropped onto another Card or onto a Card Group', async () => {
     const loose = makeCard({
       id: 'card_loose',
