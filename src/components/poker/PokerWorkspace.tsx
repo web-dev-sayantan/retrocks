@@ -6,7 +6,7 @@ import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'so
 import { projectedDeckRoundChange } from '../../lib/poker-deck-policy';
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
-import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import { createInlineEditSession, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
 import {
   POKER_DEFAULT_ROOM_NAME,
   POKER_ROOM_NAME_LIMIT,
@@ -142,14 +142,17 @@ export default function PokerWorkspace(props: {
     disabled: () => !canManage(),
   }));
   const roomNameEdit = roomNameField.api.edit;
-  let editingRoomId: string | undefined;
-  let disposed = false;
-  const roomNameSave = createInlineEditSave(
-    saveRoomNameText,
-    () => roomNameEdit.cancel(),
-    () => !disposed && canManage() && editingRoomId === props.room.id,
-  );
   const isRenamingRoom = () => roomNameField.present('input');
+  const roomNameSave = createInlineEditSession({
+    target: () => canManage() ? props.room.id : undefined,
+    isEditing: isRenamingRoom,
+    start: (id) => roomNameEdit.start(id),
+    close: () => {
+      roomNameTap.reset();
+      roomNameEdit.cancel();
+    },
+    save: saveRoomNameText,
+  });
   const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
 
   function isRoomNameEditTarget(target: EventTarget | null): boolean {
@@ -159,21 +162,13 @@ export default function PokerWorkspace(props: {
 
   function startRoomRename(): void {
     roomNameTap.reset();
-    if (!canManage() || isRenamingRoom()) return;
-    editingRoomId = props.room.id;
-    roomNameEdit.start(editingRoomId);
+    roomNameSave.start();
   }
 
   function handleRoomNameDoubleClick(event: MouseEvent): void {
     if (!isRoomNameEditTarget(event.target)) return;
     roomNameTap.reset();
     startRoomRename();
-  }
-
-  function cancelRoomRename(): void {
-    roomNameTap.reset();
-    roomNameSave.reset();
-    roomNameEdit.cancel();
   }
 
   async function saveRoomNameText(text: string): Promise<InlineEditOutcome> {
@@ -187,13 +182,6 @@ export default function PokerWorkspace(props: {
     }
   }
 
-  createEffect(
-    () => canManage() ? props.room.id : undefined,
-    (roomId, previousRoomId) => {
-      if (previousRoomId !== undefined && roomId !== previousRoomId) cancelRoomRename();
-    },
-  );
-
   createEffect(isRenamingRoom, (renaming, wasRenaming) => {
     if (!renaming && wasRenaming && document.activeElement === document.body) {
       heading?.focus();
@@ -202,7 +190,6 @@ export default function PokerWorkspace(props: {
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
-    return () => { disposed = true; };
   });
 
   const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
@@ -225,7 +212,11 @@ export default function PokerWorkspace(props: {
                       maxlength={POKER_ROOM_NAME_LIMIT}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
-                        if (event.key === 'Escape') roomNameSave.reset();
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          roomNameSave.cancel();
+                          return;
+                        }
                         roomNameEdit.inputKeydown(event);
                       }}
                       onFocusOut={(event) => {
@@ -252,7 +243,7 @@ export default function PokerWorkspace(props: {
                     type="button"
                     aria-label="Cancel Room rename"
                     title="Cancel Room rename"
-                    onClick={cancelRoomRename}
+                    onClick={roomNameSave.cancel}
                     class="poker-inline-action spring-press board-focus-ring"
                   >
                     <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />

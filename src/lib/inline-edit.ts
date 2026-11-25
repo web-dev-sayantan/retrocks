@@ -1,5 +1,5 @@
 import { createInlineEdit, definePrimitive } from '@ui-sdk/core';
-import { createSignal } from 'solid-js';
+import { createEffect, createSignal, onCleanup } from 'solid-js';
 
 /** What a save reports back: `true` saved, `false` keeps the editor open silently, a string keeps it open as the error message. */
 export type InlineEditOutcome = true | false | string;
@@ -106,5 +106,44 @@ export function createInlineEditSave(
       setError(null);
     },
     saving: () => pending,
+  };
+}
+
+interface InlineEditSessionOptions {
+  target: () => string | undefined;
+  isEditing: () => boolean;
+  start: (id: string) => boolean;
+  close: () => void;
+  save: (text: string, isCurrent: () => boolean) => Promise<InlineEditOutcome>;
+}
+
+export function createInlineEditSession(options: InlineEditSessionOptions) {
+  let target: string | undefined;
+  let disposed = false;
+  const save = createInlineEditSave(
+    options.save,
+    cancel,
+    () => !disposed && options.isEditing() && target !== undefined && options.target() === target,
+  );
+
+  function cancel() {
+    target = undefined;
+    save.reset();
+    options.close();
+  }
+
+  createEffect(options.target, (current, previous) => {
+    if (previous !== undefined && current !== previous && (target === undefined || target !== current)) cancel();
+  });
+  onCleanup(() => { disposed = true; });
+
+  return {
+    ...save,
+    start() {
+      const next = options.target();
+      if (disposed || next === undefined || options.isEditing()) return;
+      if (options.start(next)) target = next;
+    },
+    cancel,
   };
 }
