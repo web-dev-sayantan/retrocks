@@ -3,6 +3,7 @@ import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, SquareCheck, Users, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
+import { projectedPokerDiscardPrompt } from '../../lib/poker-discard-policy';
 import { projectedDeckRoundChange } from '../../lib/poker-deck-policy';
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
@@ -10,8 +11,6 @@ import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../
 import {
   POKER_DEFAULT_ROOM_NAME,
   POKER_ROOM_NAME_LIMIT,
-  unresolvedPokerRoundId,
-  unresolvedPokerRoundWithVotesId,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -78,7 +77,7 @@ export default function PokerWorkspace(props: {
     if (closeInProgress) return;
     closeInProgress = true;
     setCloseError('');
-    const discardRoundId = unresolvedPokerRoundId(props.room.round);
+    const discardRoundId = projectedPokerDiscardPrompt('close-room', true, props.room.round);
     try {
       const confirmed = await confirmBoardAction(
         discardRoundId !== undefined
@@ -336,9 +335,7 @@ export default function PokerWorkspace(props: {
           activeStoryId={props.room.activeStoryId}
           canManage={props.room.viewer?.isFacilitator === true}
           deck={props.room.deck}
-          roundId={props.room.round?.id}
-          discardRoundId={unresolvedPokerRoundId(props.room.round)}
-          activeRoundWithVotesId={unresolvedPokerRoundWithVotesId(props.room.round)}
+          round={props.room.round}
           onChange={props.onChange}
         />
 
@@ -388,7 +385,7 @@ export default function PokerWorkspace(props: {
                   <PokerStoryTitleEditor
                     story={story()}
                     canEdit={props.room.viewer?.isFacilitator === true}
-                    discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
+                    discardRoundId={projectedPokerDiscardPrompt('edit-story', true, props.room.round)}
                     variant="stage"
                     onSave={editActiveStoryTitle}
                     fallbackFocus={() => activeHeading.focus()}

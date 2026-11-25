@@ -2,7 +2,8 @@ import 'server-only';
 
 import { safeParse } from 'valibot';
 
-import { deckRoundChange, isSamePokerDeck } from '../../lib/poker-deck-policy';
+import { pokerDiscardDecision, type PokerDiscardIntent } from '../../lib/poker-discard-policy';
+import { isSamePokerDeck } from '../../lib/poker-deck-policy';
 import { PokerDisplayName, PokerRoomNameInput } from '../../lib/poker-schemas';
 import {
   POKER_DECK_PRESETS,
@@ -121,28 +122,30 @@ function startVotingRound(): StoredVotingRound {
   return { id: generateEntityId(), phase: 'open', ballots: {} };
 }
 
+function storedDiscardDecision(
+  room: StoredPokerRoom,
+  intent: PokerDiscardIntent,
+  targetsActiveRound: boolean,
+  confirmedRoundId?: string,
+) {
+  const round = room.round;
+  return pokerDiscardDecision(intent, targetsActiveRound, round && {
+    id: round.id,
+    phase: round.phase,
+    hasVotes: Object.keys(round.ballots).length > 0,
+  }, confirmedRoundId);
+}
+
 function validateActiveRoundDiscard(
   room: StoredPokerRoom,
-  isActive: boolean,
-  discardRoundId: string | undefined,
-  requiredError:
-    | typeof discardRequired
-    | typeof lockDiscardRequired
-    | typeof deleteDiscardRequired
-    | typeof editDiscardRequired,
+  command: { type: PokerDiscardIntent; discardRoundId?: string },
+  targetsActiveRound: boolean,
+  requiredError: typeof roundChanged | typeof discardRequired | typeof lockDiscardRequired
+    | typeof deleteDiscardRequired | typeof editDiscardRequired,
 ) {
-  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) {
-    return roundChanged;
-  }
-  if (
-    isActive
-    && room.round
-    && unresolvedPokerRoundId(room.round) !== undefined
-    && Object.keys(room.round.ballots).length > 0
-    && discardRoundId === undefined
-  ) {
-    return requiredError;
-  }
+  const decision = storedDiscardDecision(room, command.type, targetsActiveRound, command.discardRoundId);
+  if (decision.type === 'stale') return roundChanged;
+  if (decision.type === 'confirm') return requiredError;
   return null;
 }
 
@@ -376,7 +379,8 @@ export class PokerRoomStorage {
         }
         case 'close-room': {
           if (!pokerCanDeleteRoom(room, hash)) return forbidden;
-          if (command.discardRoundId !== unresolvedPokerRoundId(room.round)) return roundChanged;
+          const discardError = validateActiveRoundDiscard(room, command, true, roundChanged);
+          if (discardError) return discardError;
           room.closedAt = now;
           room.closedFacilitatorHashes = [
             ...new Set([
@@ -409,23 +413,18 @@ export class PokerRoomStorage {
           const { deck } = command;
           const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
           if (isSamePokerDeck(room, deck.type, choices)) return { ok: true, room };
-          const round = room.round;
-          const change = deckRoundChange(
-            room.activeStoryId === null ? undefined : round?.id,
-            round && Object.keys(round.ballots).length > 0 ? unresolvedPokerRoundId(round) : undefined,
-            command.discardRoundId,
-          );
+          const change = storedDiscardDecision(room, command.type, room.activeStoryId !== null, command.discardRoundId);
           if (change.type === 'stale') return roundChanged;
           if (change.type === 'confirm') return deckDiscardRequired;
           room.deckType = deck.type;
           room.deck = choices;
-          if (change.type === 'restart') room.round = startVotingRound();
+          if (change.type === 'discard') room.round = startVotingRound();
           break;
         }
         case 'add-story': {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           if (command.makeActive) {
-            const discardError = validateActiveRoundDiscard(room, true, command.discardRoundId, discardRequired);
+            const discardError = validateActiveRoundDiscard(room, command, true, discardRequired);
             if (discardError) return discardError;
             if (room.activeStoryId) {
               const previousStory = room.stories.find((entry) => entry.id === room.activeStoryId);
@@ -447,7 +446,7 @@ export class PokerRoomStorage {
           if (story.locked) return storyLocked;
           if (story.title === command.title) return { ok: true, room };
           const isActive = room.activeStoryId === story.id;
-          const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, editDiscardRequired);
+          const discardError = validateActiveRoundDiscard(room, command, isActive, editDiscardRequired);
           if (discardError) return discardError;
           story.title = command.title;
           if (isActive && unresolvedPokerRoundId(room.round) !== undefined) {
@@ -501,13 +500,10 @@ export class PokerRoomStorage {
           if (story.status === 'skipped') {
             return { ok: false, code: 'INVALID_INPUT', message: 'Return this Story to the queue before selecting it.' };
           }
-          if (command.discardRoundId !== undefined && command.discardRoundId !== room.round?.id) {
-            return roundChanged;
-          }
+          const decision = storedDiscardDecision(room, command.type, true, command.discardRoundId);
+          if (decision.type === 'stale') return roundChanged;
           if (room.round && room.activeStoryId === story.id) return { ok: true, room };
-          if (room.round && room.round.phase !== 'accepted' && command.discardRoundId === undefined) {
-            return discardRequired;
-          }
+          if (decision.type === 'confirm') return discardRequired;
           room.activeStoryId = story.id;
           room.round = startVotingRound();
           break;
@@ -518,7 +514,7 @@ export class PokerRoomStorage {
           if (!story) return storyMissing;
           const isActive = room.activeStoryId === story.id;
           if (command.locked) {
-            const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, lockDiscardRequired);
+            const discardError = validateActiveRoundDiscard(room, command, isActive, lockDiscardRequired);
             if (discardError) return discardError;
             if (story.locked && !isActive) return { ok: true, room };
             story.locked = true;
@@ -539,7 +535,7 @@ export class PokerRoomStorage {
           const story = room.stories[index];
           if (story.locked) return storyLocked;
           const isActive = room.activeStoryId === story.id;
-          const discardError = validateActiveRoundDiscard(room, isActive, command.discardRoundId, deleteDiscardRequired);
+          const discardError = validateActiveRoundDiscard(room, command, isActive, deleteDiscardRequired);
           if (discardError) return discardError;
           room.stories.splice(index, 1);
           if (isActive) {
