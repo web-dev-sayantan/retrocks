@@ -300,73 +300,77 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         method: 'POST',
         headers: { cookie },
       }), handler).then(({ result }) => result);
-    const created = await as(author, () => service.createCardForRequest({
-      boardId: board.id,
+    const dispatch = (cookie: string, command: unknown) =>
+      as(cookie, () => service.dispatchBoardCommandForRequest(board.id, command));
+    const created = await dispatch(author, {
+      type: 'card:create',
       columnId: board.columns[0].id,
       content: 'Discuss our deployment workflow',
-    }));
+    });
     const event = created.events[0];
     if (event?.type !== 'card:upserted') throw new Error('Expected a Card');
     return {
       service,
       as,
+      dispatch,
       author,
       reader,
       facilitatorCookie,
-      target: { boardId: board.id, cardId: event.card.id },
+      boardId: board.id,
+      cardId: event.card.id,
     };
   }
 
   it('toggles each Participant’s reaction independently and returns viewer-scoped totals', async () => {
-    const { service, as, author, reader, target } = await createDiscussionFixture();
-    const input = { ...target, emoji: '🎉' };
-    await expect(as(author, () => service.toggleReactionForRequest(input)))
+    const { dispatch, author, reader, cardId } = await createDiscussionFixture();
+    const command = { type: 'reaction:toggle', cardId, emoji: '🎉' };
+    await expect(dispatch(author, command))
       .resolves.toMatchObject({
         events: [{ type: 'reaction:updated', counts: { '🎉': 1 }, myReactions: ['🎉'] }],
       });
-    await expect(as(reader, () => service.toggleReactionForRequest(input)))
+    await expect(dispatch(reader, command))
       .resolves.toMatchObject({
         events: [{ type: 'reaction:updated', counts: { '🎉': 2 }, myReactions: ['🎉'] }],
       });
-    await expect(as(author, () => service.toggleReactionForRequest(input)))
+    await expect(dispatch(author, command))
       .resolves.toMatchObject({
         events: [{ type: 'reaction:updated', counts: { '🎉': 1 }, myReactions: [] }],
       });
-    await expect(as(reader, () => service.toggleReactionForRequest(input)))
+    await expect(dispatch(reader, command))
       .resolves.toMatchObject({
         events: [{ type: 'reaction:updated', counts: {}, myReactions: [] }],
       });
-    await expect(as(author, () => service.toggleReactionForRequest({ ...target, emoji: '🙃' })))
+    await expect(dispatch(author, { type: 'reaction:toggle', cardId, emoji: '🙃' }))
       .rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
   it('limits plain-text comments to 500 characters and 50 comments per Card', async () => {
-    const { service, as, author, reader, target } = await createDiscussionFixture();
+    const { service, as, dispatch, author, reader, boardId, cardId } = await createDiscussionFixture();
     const { createBoardWriteRateLimiter, setBoardWriteRateLimiterForTests } =
       await import('../rate-limit');
     setBoardWriteRateLimiterForTests(createBoardWriteRateLimiter({ limit: 100, windowMs: 60_000 }));
 
     for (const content of ['   ', 'a'.repeat(501)]) {
-      await expect(as(reader, () => service.createCommentForRequest({ ...target, content })))
+      await expect(dispatch(reader, { type: 'comment:create', cardId, content }))
         .rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     }
 
     const plainText = '<b>Discussion</b>'.padEnd(500, '.');
-    await expect(as(reader, () => service.createCommentForRequest({ ...target, content: plainText })))
+    await expect(dispatch(reader, { type: 'comment:create', cardId, content: plainText }))
       .resolves.toMatchObject({
         events: [{
           type: 'comment:created',
-          cardId: target.cardId,
+          cardId,
           comment: { content: plainText, isMine: true },
         }],
       });
     for (let number = 2; number <= 50; number++) {
-      await as(reader, () => service.createCommentForRequest({ ...target, content: `Comment ${number}` }));
+      await dispatch(reader, { type: 'comment:create', cardId, content: `Comment ${number}` });
     }
-    await expect(as(author, () => service.createCommentForRequest({ ...target, content: 'One more' })))
+    await expect(dispatch(author, { type: 'comment:create', cardId, content: 'One more' }))
       .rejects.toMatchObject({ code: 'LIMIT_EXCEEDED' });
 
-    const snapshot = await as(author, () => service.getBoardForRequest(target.boardId));
+    const snapshot = await as(author, () => service.getBoardForRequest(boardId));
     const card = snapshot?.cards[0];
     expect(card?.commentCount).toBe(50);
     expect(card?.comments.map(({ content }) => content)).toEqual([
@@ -375,7 +379,7 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
     ]);
     expect(card?.comments[0]).toEqual({
       id: expect.any(String),
-      cardId: target.cardId,
+      cardId,
       content: plainText,
       isMine: false,
       createdAt: expect.any(Number),
@@ -383,55 +387,58 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
   });
 
   it('lets comment authors and Facilitators delete comments only on Cards they can see', async () => {
-    const { service, as, author, reader, facilitatorCookie, target } =
+    const { service, as, dispatch, author, reader, facilitatorCookie, boardId, cardId } =
       await createDiscussionFixture();
     const comment = async (content: string) => {
-      const { events: [event] } = await as(reader, () =>
-        service.createCommentForRequest({ ...target, content }));
+      const { events: [event] } = await dispatch(reader, {
+        type: 'comment:create',
+        cardId,
+        content,
+      });
       if (event?.type !== 'comment:created') throw new Error('Expected a comment');
-      return { ...target, commentId: event.comment.id };
+      return { cardId, commentId: event.comment.id };
     };
     const remove = await comment('Author deletion');
     const moderate = await comment('Facilitator deletion');
-    await expect(as(author, () => service.deleteCommentForRequest(remove)))
+    await expect(dispatch(author, { type: 'comment:delete', ...remove }))
       .rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(as(reader, () => service.deleteCommentForRequest(remove)))
+    await expect(dispatch(reader, { type: 'comment:delete', ...remove }))
       .resolves.toMatchObject({
-        events: [{ type: 'comment:deleted', cardId: target.cardId, commentId: remove.commentId }],
+        events: [{ type: 'comment:deleted', cardId, commentId: remove.commentId }],
       });
 
-    await as(facilitatorCookie, () => service.setPrivateModeForRequest({
-      boardId: target.boardId,
+    await dispatch(facilitatorCookie, {
+      type: 'board:set-private-mode',
       isBlurred: true,
-    }));
-    for (const [cookie, attempt] of [
-      [reader, () => service.deleteCommentForRequest(moderate)],
-      [facilitatorCookie, () => service.deleteCommentForRequest(moderate)],
-      [reader, () => service.toggleReactionForRequest({ ...target, emoji: '👍' })],
-      [reader, () => service.createCommentForRequest({ ...target, content: 'Hidden' })],
+    });
+    for (const [cookie, command] of [
+      [reader, { type: 'comment:delete', ...moderate }],
+      [facilitatorCookie, { type: 'comment:delete', ...moderate }],
+      [reader, { type: 'reaction:toggle', cardId, emoji: '👍' }],
+      [reader, { type: 'comment:create', cardId, content: 'Hidden' }],
     ] as const) {
-      await expect(as(cookie, attempt)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(dispatch(cookie, command)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     }
-    const hidden = await as(reader, () => service.getBoardForRequest(target.boardId));
+    const hidden = await as(reader, () => service.getBoardForRequest(boardId));
     expect(hidden?.cards[0]).toMatchObject({
       redacted: true, reactions: {}, myReactions: [], commentCount: 0, comments: [],
     });
-    await expect(as(author, () => service.createCommentForRequest({ ...target, content: 'My Card' })))
+    await expect(dispatch(author, { type: 'comment:create', cardId, content: 'My Card' }))
       .resolves.toMatchObject({ events: [{ type: 'comment:created' }] });
-    await expect(as(author, () => service.toggleReactionForRequest({ ...target, emoji: '👍' })))
+    await expect(dispatch(author, { type: 'reaction:toggle', cardId, emoji: '👍' }))
       .resolves.toMatchObject({ events: [{ type: 'reaction:updated' }] });
 
-    await as(facilitatorCookie, () => service.setPrivateModeForRequest({
-      boardId: target.boardId,
+    await dispatch(facilitatorCookie, {
+      type: 'board:set-private-mode',
       isBlurred: false,
-    }));
-    await expect(as(facilitatorCookie, () => service.deleteCommentForRequest(moderate)))
+    });
+    await expect(dispatch(facilitatorCookie, { type: 'comment:delete', ...moderate }))
       .resolves.toMatchObject({
-        events: [{ type: 'comment:deleted', cardId: target.cardId, commentId: moderate.commentId }],
+        events: [{ type: 'comment:deleted', cardId, commentId: moderate.commentId }],
       });
-    await expect(as(reader, () => service.deleteCommentForRequest(remove)))
+    await expect(dispatch(reader, { type: 'comment:delete', ...remove }))
       .rejects.toMatchObject({ code: 'NOT_FOUND' });
-    const revealed = await as(reader, () => service.getBoardForRequest(target.boardId));
+    const revealed = await as(reader, () => service.getBoardForRequest(boardId));
     expect(revealed?.cards[0].comments.map(({ content }) => content)).toEqual(['My Card']);
   });
 
@@ -450,8 +457,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: participantCookie },
       }),
       () =>
-        service.createCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:create',
           columnId: col0.id,
           content: 'Great deploy speed\nSee https://example.com and `pnpm test`',
         }),
@@ -472,8 +479,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: participantCookie },
       }),
       () =>
-        service.createCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:create',
           columnId: actionCol.id,
           content: 'Automate canary rollback',
         }),
@@ -491,8 +498,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: participantCookie },
       }),
       () =>
-        service.updateCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:update',
           cardId,
           content: 'Updated card text',
         }),
@@ -509,8 +516,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: participantCookie },
       }),
       () =>
-        service.moveCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:move',
           cardId,
           targetColumnId: col1.id,
         }),
@@ -527,8 +534,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: participantCookie },
       }),
       () =>
-        service.deleteCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:delete',
           cardId,
         }),
     );
@@ -556,8 +563,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: alice },
       }),
       () =>
-        service.createCardForRequest({
-          boardId: openBoard.id,
+        service.dispatchBoardCommandForRequest(openBoard.id, {
+          type: 'card:create',
           columnId: openBoard.columns[0].id,
           content: 'Alice feedback',
         }),
@@ -568,24 +575,10 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         : '';
 
     // Bob cannot edit, move, or delete Alice's Card
-    for (const attempt of [
-      () =>
-        service.updateCardForRequest({
-          boardId: openBoard.id,
-          cardId: aliceCardId,
-          content: 'Hijacked',
-        }),
-      () =>
-        service.moveCardForRequest({
-          boardId: openBoard.id,
-          cardId: aliceCardId,
-          targetColumnId: openBoard.columns[1].id,
-        }),
-      () =>
-        service.deleteCardForRequest({
-          boardId: openBoard.id,
-          cardId: aliceCardId,
-        }),
+    for (const command of [
+      { type: 'card:update', cardId: aliceCardId, content: 'Hijacked' },
+      { type: 'card:move', cardId: aliceCardId, targetColumnId: openBoard.columns[1].id },
+      { type: 'card:delete', cardId: aliceCardId },
     ]) {
       await runRequest(
         new Request(`https://retrocks.app/b/${openBoard.id}`, {
@@ -593,7 +586,9 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
           headers: { cookie: bob },
         }),
         async () => {
-          await expect(attempt()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+          await expect(
+            service.dispatchBoardCommandForRequest(openBoard.id, command),
+          ).rejects.toMatchObject({ code: 'FORBIDDEN' });
         },
       );
     }
@@ -605,8 +600,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: openFac },
       }),
       () =>
-        service.updateCardForRequest({
-          boardId: openBoard.id,
+        service.dispatchBoardCommandForRequest(openBoard.id, {
+          type: 'card:update',
           cardId: aliceCardId,
           content: 'Clarified by facilitator',
         }),
@@ -617,8 +612,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: openFac },
       }),
       () =>
-        service.moveCardForRequest({
-          boardId: openBoard.id,
+        service.dispatchBoardCommandForRequest(openBoard.id, {
+          type: 'card:move',
           cardId: aliceCardId,
           targetColumnId: openBoard.columns[1].id,
         }),
@@ -629,8 +624,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: openFac },
       }),
       () =>
-        service.deleteCardForRequest({
-          boardId: openBoard.id,
+        service.dispatchBoardCommandForRequest(openBoard.id, {
+          type: 'card:delete',
           cardId: aliceCardId,
         }),
     );
@@ -647,8 +642,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: carol },
       }),
       () =>
-        service.createCardForRequest({
-          boardId: privateBoard.id,
+        service.dispatchBoardCommandForRequest(privateBoard.id, {
+          type: 'card:create',
           columnId: privateBoard.columns[0].id,
           content: 'Secret reflection',
         }),
@@ -658,24 +653,10 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         ? carolCardRes.result.events[0].card.id
         : '';
 
-    for (const attempt of [
-      () =>
-        service.updateCardForRequest({
-          boardId: privateBoard.id,
-          cardId: carolCardId,
-          content: 'Facilitator edit attempt',
-        }),
-      () =>
-        service.moveCardForRequest({
-          boardId: privateBoard.id,
-          cardId: carolCardId,
-          targetColumnId: privateBoard.columns[1].id,
-        }),
-      () =>
-        service.deleteCardForRequest({
-          boardId: privateBoard.id,
-          cardId: carolCardId,
-        }),
+    for (const command of [
+      { type: 'card:update', cardId: carolCardId, content: 'Facilitator edit attempt' },
+      { type: 'card:move', cardId: carolCardId, targetColumnId: privateBoard.columns[1].id },
+      { type: 'card:delete', cardId: carolCardId },
     ]) {
       await runRequest(
         new Request(`https://retrocks.app/b/${privateBoard.id}`, {
@@ -683,7 +664,9 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
           headers: { cookie: privFac },
         }),
         async () => {
-          await expect(attempt()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+          await expect(
+            service.dispatchBoardCommandForRequest(privateBoard.id, command),
+          ).rejects.toMatchObject({ code: 'FORBIDDEN' });
         },
       );
     }
@@ -694,10 +677,12 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: privFac },
       }),
       async () => {
-        await expect(service.deleteColumnForRequest({
-          boardId: privateBoard.id,
-          columnId: privateBoard.columns[0].id,
-        })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        await expect(
+          service.dispatchBoardCommandForRequest(privateBoard.id, {
+            type: 'column:delete',
+            columnId: privateBoard.columns[0].id,
+          }),
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       },
     );
 
@@ -708,8 +693,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: carol },
       }),
       () =>
-        service.updateCardForRequest({
-          boardId: privateBoard.id,
+        service.dispatchBoardCommandForRequest(privateBoard.id, {
+          type: 'card:update',
           cardId: carolCardId,
           content: 'Carol revised her own card',
         }),
@@ -720,8 +705,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: carol },
       }),
       () =>
-        service.moveCardForRequest({
-          boardId: privateBoard.id,
+        service.dispatchBoardCommandForRequest(privateBoard.id, {
+          type: 'card:move',
           cardId: carolCardId,
           targetColumnId: privateBoard.columns[1].id,
         }),
@@ -732,8 +717,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: carol },
       }),
       () =>
-        service.deleteCardForRequest({
-          boardId: privateBoard.id,
+        service.dispatchBoardCommandForRequest(privateBoard.id, {
+          type: 'card:delete',
           cardId: carolCardId,
         }),
     );
@@ -754,14 +739,14 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       }),
       async () => {
         await expect(
-          service.renameBoardForRequest({
-            boardId: board.id,
+          service.dispatchBoardCommandForRequest(board.id, {
+            type: 'board:rename',
             title: 'Participant Rename',
           }),
         ).rejects.toMatchObject({ code: 'FORBIDDEN' });
         await expect(
-          service.addColumnForRequest({
-            boardId: board.id,
+          service.dispatchBoardCommandForRequest(board.id, {
+            type: 'column:add',
             title: 'Sneaky',
             accent: 'amber',
           }),
@@ -776,8 +761,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: facilitatorCookie },
       }),
       () =>
-        service.renameBoardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'board:rename',
           title: 'Sprint 44 — Renamed',
         }),
     );
@@ -793,8 +778,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: facilitatorCookie },
       }),
       () =>
-        service.addColumnForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'column:add',
           title: 'Kudos',
           accent: 'violet',
         }),
@@ -816,8 +801,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: facilitatorCookie },
       }),
       () =>
-        service.updateColumnForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'column:update',
           columnId: kudosId,
           title: 'Shoutouts',
           accent: 'coral',
@@ -841,8 +826,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: facilitatorCookie },
       }),
       () =>
-        service.reorderColumnsForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'column:reorder',
           columnIds: newOrder,
         }),
     );
@@ -858,8 +843,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: facilitatorCookie },
       }),
       () =>
-        service.createCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:create',
           columnId: kudosId,
           content: 'Thanks team!',
         }),
@@ -871,8 +856,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: facilitatorCookie },
       }),
       () =>
-        service.deleteColumnForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'column:delete',
           columnId: kudosId,
         }),
     );
@@ -918,8 +903,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       }),
       async () => {
         await expect(
-          service.createCardForRequest({
-            boardId: board.id,
+          service.dispatchBoardCommandForRequest(board.id, {
+            type: 'card:create',
             columnId: board.columns[0].id,
             content: 'a'.repeat(1001),
           }),
@@ -935,8 +920,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       }),
       async () => {
         await expect(
-          service.addColumnForRequest({
-            boardId: board.id,
+          service.dispatchBoardCommandForRequest(board.id, {
+            type: 'column:add',
             title: 'Col 11',
             accent: 'sage',
           }),
@@ -957,8 +942,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       }),
       async () => {
         await expect(
-          service.deleteColumnForRequest({
-            boardId: singleColBoard.id,
+          service.dispatchBoardCommandForRequest(singleColBoard.id, {
+            type: 'column:delete',
             columnId: singleColBoard.columns[0].id,
           }),
         ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
@@ -990,8 +975,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       }),
       async () => {
         await expect(
-          service.createCardForRequest({
-            boardId: singleColBoard.id,
+          service.dispatchBoardCommandForRequest(singleColBoard.id, {
+            type: 'card:create',
             columnId: singleColBoard.columns[0].id,
             content: 'Card 501',
           }),
@@ -1016,8 +1001,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
           headers: { cookie: p1, 'x-forwarded-for': '203.0.113.77' },
         }),
         () =>
-          service.createCardForRequest({
-            boardId: board.id,
+          service.dispatchBoardCommandForRequest(board.id, {
+            type: 'card:create',
             columnId: board.columns[0].id,
             content: `Write ${i + 1}`,
           }),
@@ -1032,8 +1017,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
       }),
       async () => {
         await expect(
-          service.createCardForRequest({
-            boardId: board.id,
+          service.dispatchBoardCommandForRequest(board.id, {
+            type: 'card:create',
             columnId: board.columns[0].id,
             content: 'Write 3 blocked',
           }),
@@ -1048,8 +1033,8 @@ describe('BoardService (Card & Column authoring, permissions, limits & rate limi
         headers: { cookie: p2, 'x-forwarded-for': '203.0.113.77' },
       }),
       () =>
-        service.createCardForRequest({
-          boardId: board.id,
+        service.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:create',
           columnId: board.columns[0].id,
           content: 'P2 succeeds',
         }),
@@ -1090,14 +1075,14 @@ describe('BoardService (Action Items)', () => {
         }),
         handler,
       ).then(({ result }) => result);
+    const dispatch = (cookie: string, command: unknown) =>
+      as(cookie, () => service.dispatchBoardCommandForRequest(board.id, command));
     const createCard = async (
       cookie: string,
       columnId: string,
       content: string,
     ) => {
-      const result = await as(cookie, () =>
-        service.createCardForRequest({ boardId: board.id, columnId, content }),
-      );
+      const result = await dispatch(cookie, { type: 'card:create', columnId, content });
       const event = result.events[0];
       if (event?.type !== 'card:upserted') throw new Error('Expected a Card');
       return event.card;
@@ -1109,12 +1094,13 @@ describe('BoardService (Action Items)', () => {
       author,
       reader,
       as,
+      dispatch,
       createCard,
     };
   }
 
   it('auto-flags Action Column Cards and lets any Participant flag, complete, tag, and unflag a revealed Card', async () => {
-    const { service, board, author, reader, as, createCard } =
+    const { service, board, author, reader, as, dispatch, createCard } =
       await createActionFixture();
 
     const autoFlagged = await createCard(
@@ -1136,13 +1122,11 @@ describe('BoardService (Action Items)', () => {
     expect(card.isActionItem).toBe(false);
 
     // Any Participant can flag another Participant's revealed Card.
-    const flagged = await as(reader, () =>
-      service.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: card.id,
-        isActionItem: true,
-      }),
-    );
+    const flagged = await dispatch(reader, {
+      type: 'card:set-action',
+      cardId: card.id,
+      isActionItem: true,
+    });
     expect(flagged.events[0]).toMatchObject({
       type: 'card:upserted',
       card: {
@@ -1153,14 +1137,12 @@ describe('BoardService (Action Items)', () => {
       },
     });
 
-    const completed = await as(reader, () =>
-      service.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: card.id,
-        actionDone: true,
-        actionOwner: '  Platform  ',
-      }),
-    );
+    const completed = await dispatch(reader, {
+      type: 'card:set-action',
+      cardId: card.id,
+      actionDone: true,
+      actionOwner: '  Platform  ',
+    });
     expect(completed.events[0]).toMatchObject({
       type: 'card:upserted',
       card: {
@@ -1180,13 +1162,11 @@ describe('BoardService (Action Items)', () => {
       actionOwner: 'Platform',
     });
 
-    const unflagged = await as(reader, () =>
-      service.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: card.id,
-        isActionItem: false,
-      }),
-    );
+    const unflagged = await dispatch(reader, {
+      type: 'card:set-action',
+      cardId: card.id,
+      isActionItem: false,
+    });
     expect(unflagged.events[0]).toMatchObject({
       type: 'card:upserted',
       card: {
@@ -1199,16 +1179,17 @@ describe('BoardService (Action Items)', () => {
   });
 
   it('rejects Action Item changes on another Participant’s redacted Card while Private Mode is ON', async () => {
-    const { service, board, facilitatorCookie, author, reader, as, createCard } =
+    const { board, facilitatorCookie, author, reader, dispatch, createCard } =
       await createActionFixture();
     const card = await createCard(
       author,
       board.columns[0].id,
       'Secret reflection',
     );
-    await as(facilitatorCookie, () =>
-      service.setPrivateModeForRequest({ boardId: board.id, isBlurred: true }),
-    );
+    await dispatch(facilitatorCookie, {
+      type: 'board:set-private-mode',
+      isBlurred: true,
+    });
 
     for (const cookie of [reader, facilitatorCookie]) {
       for (const patch of [
@@ -1217,43 +1198,38 @@ describe('BoardService (Action Items)', () => {
         { actionOwner: 'Platform' },
       ]) {
         await expect(
-          as(cookie, () =>
-            service.updateActionItemForRequest({
-              boardId: board.id,
-              cardId: card.id,
-              ...patch,
-            }),
-          ),
+          dispatch(cookie, {
+            type: 'card:set-action',
+            cardId: card.id,
+            ...patch,
+          }),
         ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       }
     }
 
     // The author can still manage their own Card while Private Mode is ON.
     await expect(
-      as(author, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: card.id,
-          isActionItem: true,
-        }),
-      ),
+      dispatch(author, {
+        type: 'card:set-action',
+        cardId: card.id,
+        isActionItem: true,
+      }),
     ).resolves.toMatchObject({
       events: [
         { type: 'card:upserted', card: { id: card.id, isActionItem: true } },
       ],
     });
 
-    await as(facilitatorCookie, () =>
-      service.setPrivateModeForRequest({ boardId: board.id, isBlurred: false }),
-    );
+    await dispatch(facilitatorCookie, {
+      type: 'board:set-private-mode',
+      isBlurred: false,
+    });
     await expect(
-      as(reader, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: card.id,
-          actionOwner: 'API squad',
-        }),
-      ),
+      dispatch(reader, {
+        type: 'card:set-action',
+        cardId: card.id,
+        actionOwner: 'API squad',
+      }),
     ).resolves.toMatchObject({
       events: [
         { type: 'card:upserted', card: { actionOwner: 'API squad' } },
@@ -1262,72 +1238,60 @@ describe('BoardService (Action Items)', () => {
   });
 
   it('validates owner length and blank owners, and edits action fields only on Action Items', async () => {
-    const { service, board, author, as, createCard } =
+    const { board, author, dispatch, createCard } =
       await createActionFixture();
     const card = await createCard(author, board.columns[0].id, 'Follow-up');
 
     await expect(
-      as(author, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: card.id,
-          isActionItem: true,
-          actionOwner: 'a'.repeat(41),
-        }),
-      ),
+      dispatch(author, {
+        type: 'card:set-action',
+        cardId: card.id,
+        isActionItem: true,
+        actionOwner: 'a'.repeat(41),
+      }),
     ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
       message: expect.stringContaining('40'),
     });
     await expect(
-      as(author, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: card.id,
-        }),
-      ),
+      dispatch(author, {
+        type: 'card:set-action',
+        cardId: card.id,
+      }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     await expect(
-      as(author, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: card.id,
-          actionDone: true,
-        }),
-      ),
+      dispatch(author, {
+        type: 'card:set-action',
+        cardId: card.id,
+        actionDone: true,
+      }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
 
-    const flagged = await as(author, () =>
-      service.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: card.id,
-        isActionItem: true,
-        actionOwner: 'x'.repeat(40),
-      }),
-    );
+    const flagged = await dispatch(author, {
+      type: 'card:set-action',
+      cardId: card.id,
+      isActionItem: true,
+      actionOwner: 'x'.repeat(40),
+    });
     expect(flagged.events[0]).toMatchObject({
       card: { actionOwner: 'x'.repeat(40) },
     });
 
-    const blankOwner = await as(author, () =>
-      service.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: card.id,
-        actionOwner: '   ',
-      }),
-    );
+    const blankOwner = await dispatch(author, {
+      type: 'card:set-action',
+      cardId: card.id,
+      actionOwner: '   ',
+    });
     expect(blankOwner.events[0]).toMatchObject({
       card: { actionOwner: '' },
     });
 
     await expect(
-      as(author, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: 'missing_card',
-          isActionItem: true,
-        }),
-      ),
+      dispatch(author, {
+        type: 'card:set-action',
+        cardId: 'missing_card',
+        isActionItem: true,
+      }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
@@ -1353,7 +1317,7 @@ describe('BoardService (shared Countdown Timer)', () => {
       async changeTimer(change: unknown, cookie = facilitatorCookie) {
         return (await runRequest(
           new Request(boardUrl, { method: 'POST', headers: { cookie } }),
-          () => service.updateTimerForRequest({ boardId, change }),
+          () => service.dispatchBoardCommandForRequest(boardId, { type: 'timer:update', change }),
         )).result;
       },
       async readTimer() {
@@ -1449,8 +1413,6 @@ describe('BoardService (shared Countdown Timer)', () => {
 describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
   async function createLifecycleFixture() {
     const service = await import('./board-service');
-    const voting = await import('./voting-service');
-    const grouping = await import('./grouping-service');
     const { createBoardWriteRateLimiter, setBoardWriteRateLimiterForTests } =
       await import('../rate-limit');
     setBoardWriteRateLimiterForTests(
@@ -1472,22 +1434,20 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
     };
     const author = await join();
     const reader = await join();
-    const as = <T>(cookie: string, handler: () => Promise<T>) =>
+    const dispatch = (cookie: string, command: unknown) =>
       runRequest(
         new Request(`https://retrocks.app/b/${board.id}`, {
           method: 'POST',
           headers: { cookie },
         }),
-        handler,
+        () => service.dispatchBoardCommandForRequest(board.id, command),
       ).then(({ result }) => result);
     const createCard = async (
       cookie: string,
       columnId: string,
       content: string,
     ) => {
-      const result = await as(cookie, () =>
-        service.createCardForRequest({ boardId: board.id, columnId, content }),
-      );
+      const result = await dispatch(cookie, { type: 'card:create', columnId, content });
       const event = result.events[0];
       if (event?.type !== 'card:upserted') throw new Error('Expected a Card');
       return event.card;
@@ -1508,44 +1468,36 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
       board.columns[0].id,
       'Split slow e2e suite',
     );
-    const grouped = await as(facilitatorCookie, () =>
-      grouping.groupCardsForRequest({
-        boardId: board.id,
-        cardId: secondCard.id,
-        targetType: 'card',
-        targetId: normalCard.id,
-      }),
-    );
+    const grouped = await dispatch(facilitatorCookie, {
+      type: 'group:merge',
+      cardId: secondCard.id,
+      targetType: 'card',
+      targetId: normalCard.id,
+    });
     const groupEvent = grouped.events.find((ev) => ev.type === 'group:upserted');
     if (groupEvent?.type !== 'group:upserted') {
       throw new Error('Expected a Card Group');
     }
-    const comment = await as(author, () =>
-      service.createCommentForRequest({
-        boardId: board.id,
-        cardId: normalCard.id,
-        content: 'Existing discussion',
-      }),
-    );
+    const comment = await dispatch(author, {
+      type: 'comment:create',
+      cardId: normalCard.id,
+      content: 'Existing discussion',
+    });
     const commentEvent = comment.events[0];
     if (commentEvent?.type !== 'comment:created') {
       throw new Error('Expected a comment');
     }
 
     const lock = () =>
-      as(facilitatorCookie, () =>
-        service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
-      );
+      dispatch(facilitatorCookie, { type: 'board:set-lock', isLocked: true });
 
     return {
       service,
-      voting,
-      grouping,
       board,
       facilitatorCookie,
       author,
       reader,
-      as,
+      dispatch,
       actionCard,
       normalCard,
       secondCard,
@@ -1556,18 +1508,17 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
   }
 
   it('lets only the Facilitator lock and unlock the Board', async () => {
-    const { service, board, facilitatorCookie, reader, as } =
+    const { service, board, facilitatorCookie, reader, dispatch } =
       await createLifecycleFixture();
 
     await expect(
-      as(reader, () =>
-        service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
-      ),
+      dispatch(reader, { type: 'board:set-lock', isLocked: true }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
-    const locked = await as(facilitatorCookie, () =>
-      service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
-    );
+    const locked = await dispatch(facilitatorCookie, {
+      type: 'board:set-lock',
+      isLocked: true,
+    });
     expect(locked).toMatchObject({
       ok: true,
       events: [
@@ -1586,14 +1537,13 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
     expect(lockedRead.result?.isLocked).toBe(true);
 
     await expect(
-      as(reader, () =>
-        service.setBoardLockForRequest({ boardId: board.id, isLocked: false }),
-      ),
+      dispatch(reader, { type: 'board:set-lock', isLocked: false }),
     ).rejects.toMatchObject({ code: 'BOARD_LOCKED' });
 
-    const unlocked = await as(facilitatorCookie, () =>
-      service.setBoardLockForRequest({ boardId: board.id, isLocked: false }),
-    );
+    const unlocked = await dispatch(facilitatorCookie, {
+      type: 'board:set-lock',
+      isLocked: false,
+    });
     expect(unlocked).toMatchObject({
       ok: true,
       events: [
@@ -1607,13 +1557,10 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
 
   it('rejects every write while Locked with BOARD_LOCKED except Facilitator Action Item updates and Unlock', async () => {
     const {
-      service,
-      voting,
-      grouping,
       board,
       facilitatorCookie,
       reader,
-      as,
+      dispatch,
       actionCard,
       normalCard,
       groupId,
@@ -1623,263 +1570,66 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
     await lock();
 
     const col = board.columns[0];
-    const participantWrites = [
-      () =>
-        service.createCardForRequest({
-          boardId: board.id,
-          columnId: col.id,
-          content: 'Blocked',
-        }),
-      () =>
-        service.updateCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          content: 'Blocked edit',
-        }),
-      () =>
-        service.moveCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          targetColumnId: board.columns[1].id,
-        }),
-      () =>
-        service.deleteCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-        }),
-      () =>
-        voting.changeVoteForRequest({
-          boardId: board.id,
-          targetType: 'card',
-          targetId: normalCard.id,
-          delta: 1,
-        }),
-      () =>
-        voting.updateVotingSettingsForRequest({
-          boardId: board.id,
-          voteLimit: 3,
-        }),
-      () => voting.resetVotesForRequest({ boardId: board.id }),
-      () =>
-        service.renameBoardForRequest({
-          boardId: board.id,
-          title: 'Blocked rename',
-        }),
-      () =>
-        service.updateTimerForRequest({
-          boardId: board.id,
-          change: { action: 'start', minutes: 5 },
-        }),
-      () =>
-        service.setPrivateModeForRequest({
-          boardId: board.id,
-          isBlurred: true,
-        }),
-      () =>
-        service.addColumnForRequest({
-          boardId: board.id,
-          title: 'Blocked column',
-        }),
-      () =>
-        service.updateColumnForRequest({
-          boardId: board.id,
-          columnId: col.id,
-          title: 'Blocked column edit',
-        }),
-      () =>
-        service.reorderColumnsForRequest({
-          boardId: board.id,
-          columnIds: board.columns.map(({ id }) => id).reverse(),
-        }),
-      () =>
-        service.deleteColumnForRequest({
-          boardId: board.id,
-          columnId: col.id,
-        }),
-      () =>
-        service.toggleReactionForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          emoji: '👍',
-        }),
-      () =>
-        service.createCommentForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          content: 'Blocked comment',
-        }),
-      () =>
-        service.deleteCommentForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          commentId,
-        }),
-      () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: actionCard.id,
-          isActionItem: false,
-        }),
-      () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: actionCard.id,
-          actionDone: true,
-          actionOwner: 'Blocked',
-        }),
-      () =>
-        service.setBoardLockForRequest({
-          boardId: board.id,
-          isLocked: false,
-        }),
-      () =>
-        service.deleteBoardForRequest({
-          boardId: board.id,
-        }),
+    const participantWrites: unknown[] = [
+      { type: 'card:create', columnId: col.id, content: 'Blocked' },
+      { type: 'card:update', cardId: normalCard.id, content: 'Blocked edit' },
+      { type: 'card:move', cardId: normalCard.id, targetColumnId: board.columns[1].id },
+      { type: 'card:delete', cardId: normalCard.id },
+      { type: 'vote:change', targetType: 'card', targetId: normalCard.id, delta: 1 },
+      { type: 'voting:configure', voteLimit: 3 },
+      { type: 'voting:reset' },
+      { type: 'board:rename', title: 'Blocked rename' },
+      { type: 'timer:update', change: { action: 'start', minutes: 5 } },
+      { type: 'board:set-private-mode', isBlurred: true },
+      { type: 'column:add', title: 'Blocked column' },
+      { type: 'column:update', columnId: col.id, title: 'Blocked column edit' },
+      { type: 'column:reorder', columnIds: board.columns.map(({ id }) => id).reverse() },
+      { type: 'column:delete', columnId: col.id },
+      { type: 'reaction:toggle', cardId: normalCard.id, emoji: '👍' },
+      { type: 'comment:create', cardId: normalCard.id, content: 'Blocked comment' },
+      { type: 'comment:delete', cardId: normalCard.id, commentId },
+      { type: 'card:set-action', cardId: actionCard.id, isActionItem: false },
+      { type: 'card:set-action', cardId: actionCard.id, actionDone: true, actionOwner: 'Blocked' },
+      { type: 'board:set-lock', isLocked: false },
+      { type: 'board:delete' },
     ];
 
-    for (const attempt of participantWrites) {
-      await expect(as(reader, attempt)).rejects.toMatchObject({
+    for (const command of participantWrites) {
+      await expect(dispatch(reader, command)).rejects.toMatchObject({
         code: 'BOARD_LOCKED',
         status: 403,
       });
     }
 
-    const facilitatorWrites = [
-      () =>
-        service.createCardForRequest({
-          boardId: board.id,
-          columnId: col.id,
-          content: 'Facilitator blocked card',
-        }),
-      () =>
-        service.updateCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          content: 'Facilitator blocked edit',
-        }),
-      () =>
-        service.moveCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          targetColumnId: board.columns[1].id,
-        }),
-      () =>
-        service.deleteCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-        }),
-      () =>
-        voting.changeVoteForRequest({
-          boardId: board.id,
-          targetType: 'card',
-          targetId: normalCard.id,
-          delta: 1,
-        }),
-      () =>
-        voting.updateVotingSettingsForRequest({
-          boardId: board.id,
-          voteLimit: 3,
-        }),
-      () => voting.resetVotesForRequest({ boardId: board.id }),
-      () =>
-        service.renameBoardForRequest({
-          boardId: board.id,
-          title: 'Facilitator blocked rename',
-        }),
-      () =>
-        service.updateTimerForRequest({
-          boardId: board.id,
-          change: { action: 'start', minutes: 5 },
-        }),
-      () =>
-        service.setPrivateModeForRequest({
-          boardId: board.id,
-          isBlurred: true,
-        }),
-      () =>
-        service.addColumnForRequest({
-          boardId: board.id,
-          title: 'Facilitator blocked column',
-        }),
-      () =>
-        service.updateColumnForRequest({
-          boardId: board.id,
-          columnId: col.id,
-          title: 'Facilitator blocked column edit',
-        }),
-      () =>
-        service.reorderColumnsForRequest({
-          boardId: board.id,
-          columnIds: board.columns.map(({ id }) => id).reverse(),
-        }),
-      () =>
-        service.deleteColumnForRequest({
-          boardId: board.id,
-          columnId: col.id,
-        }),
-      () =>
-        service.toggleReactionForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          emoji: '🎉',
-        }),
-      () =>
-        service.createCommentForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          content: 'Facilitator blocked comment',
-        }),
-      () =>
-        service.deleteCommentForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          commentId,
-        }),
-      () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: actionCard.id,
-          isActionItem: false,
-        }),
-      () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          isActionItem: true,
-        }),
-      () =>
-        grouping.renameCardGroupForRequest({
-          boardId: board.id,
-          groupId,
-          title: 'Blocked group rename',
-        }),
-      () =>
-        grouping.ungroupCardForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-        }),
-      () =>
-        grouping.dissolveCardGroupForRequest({
-          boardId: board.id,
-          groupId,
-        }),
-      () =>
-        grouping.moveCardGroupForRequest({
-          boardId: board.id,
-          groupId,
-          targetColumnId: board.columns[1].id,
-        }),
-      () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: normalCard.id,
-          actionDone: true,
-        }),
+    const facilitatorWrites: unknown[] = [
+      { type: 'card:create', columnId: col.id, content: 'Facilitator blocked card' },
+      { type: 'card:update', cardId: normalCard.id, content: 'Facilitator blocked edit' },
+      { type: 'card:move', cardId: normalCard.id, targetColumnId: board.columns[1].id },
+      { type: 'card:delete', cardId: normalCard.id },
+      { type: 'vote:change', targetType: 'card', targetId: normalCard.id, delta: 1 },
+      { type: 'voting:configure', voteLimit: 3 },
+      { type: 'voting:reset' },
+      { type: 'board:rename', title: 'Facilitator blocked rename' },
+      { type: 'timer:update', change: { action: 'start', minutes: 5 } },
+      { type: 'board:set-private-mode', isBlurred: true },
+      { type: 'column:add', title: 'Facilitator blocked column' },
+      { type: 'column:update', columnId: col.id, title: 'Facilitator blocked column edit' },
+      { type: 'column:reorder', columnIds: board.columns.map(({ id }) => id).reverse() },
+      { type: 'column:delete', columnId: col.id },
+      { type: 'reaction:toggle', cardId: normalCard.id, emoji: '🎉' },
+      { type: 'comment:create', cardId: normalCard.id, content: 'Facilitator blocked comment' },
+      { type: 'comment:delete', cardId: normalCard.id, commentId },
+      { type: 'card:set-action', cardId: actionCard.id, isActionItem: false },
+      { type: 'card:set-action', cardId: normalCard.id, isActionItem: true },
+      { type: 'group:rename', groupId, title: 'Blocked group rename' },
+      { type: 'group:ungroup', cardId: normalCard.id },
+      { type: 'group:dissolve', groupId },
+      { type: 'group:move', groupId, targetColumnId: board.columns[1].id },
+      { type: 'card:set-action', cardId: normalCard.id, actionDone: true },
     ];
 
-    for (const attempt of facilitatorWrites) {
-      await expect(as(facilitatorCookie, attempt)).rejects.toMatchObject({
+    for (const command of facilitatorWrites) {
+      await expect(dispatch(facilitatorCookie, command)).rejects.toMatchObject({
         code: 'BOARD_LOCKED',
         status: 403,
       });
@@ -1887,14 +1637,12 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
 
     // The three Locked exceptions: Action Item completion/owner and Unlock.
     await expect(
-      as(facilitatorCookie, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: actionCard.id,
-          actionDone: true,
-          actionOwner: 'Platform',
-        }),
-      ),
+      dispatch(facilitatorCookie, {
+        type: 'card:set-action',
+        cardId: actionCard.id,
+        actionDone: true,
+        actionOwner: 'Platform',
+      }),
     ).resolves.toMatchObject({
       events: [
         {
@@ -1908,9 +1656,10 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
       ],
     });
 
-    const unlocked = await as(facilitatorCookie, () =>
-      service.setBoardLockForRequest({ boardId: board.id, isLocked: false }),
-    );
+    const unlocked = await dispatch(facilitatorCookie, {
+      type: 'board:set-lock',
+      isLocked: false,
+    });
     expect(unlocked.events[0]).toMatchObject({
       type: 'board:updated',
       patch: { isLocked: false },
@@ -1918,33 +1667,27 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
 
     // Once unlocked, ordinary writes work again.
     await expect(
-      as(reader, () =>
-        service.updateActionItemForRequest({
-          boardId: board.id,
-          cardId: actionCard.id,
-          actionDone: false,
-        }),
-      ),
+      dispatch(reader, {
+        type: 'card:set-action',
+        cardId: actionCard.id,
+        actionDone: false,
+      }),
     ).resolves.toMatchObject({
       events: [{ type: 'card:upserted', card: { id: actionCard.id, actionDone: false } }],
     });
   });
 
   it('permanently deletes a Locked Board for the Facilitator and erases its storage', async () => {
-    const { service, board, facilitatorCookie, reader, as, normalCard, lock } =
+    const { service, board, facilitatorCookie, reader, dispatch, normalCard, lock } =
       await createLifecycleFixture();
 
     await expect(
-      as(reader, () =>
-        service.deleteBoardForRequest({ boardId: board.id }),
-      ),
+      dispatch(reader, { type: 'board:delete' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(await store.getBoardSnapshot(board.id)).not.toBeNull();
 
     await lock();
-    const deleted = await as(facilitatorCookie, () =>
-      service.deleteBoardForRequest({ boardId: board.id }),
-    );
+    const deleted = await dispatch(facilitatorCookie, { type: 'board:delete' });
     expect(deleted).toMatchObject({
       ok: true,
       events: [{ type: 'board:deleted' }],
@@ -1964,15 +1707,12 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
 
     // Subsequent delete returns BOARD_NOT_FOUND (404)
     await expect(
-      as(facilitatorCookie, () =>
-        service.deleteBoardForRequest({ boardId: board.id }),
-      ),
+      dispatch(facilitatorCookie, { type: 'board:delete' }),
     ).rejects.toMatchObject({ code: 'BOARD_NOT_FOUND', status: 404 });
   });
 
   it('sets HTTP 403 status from server actions on BOARD_LOCKED and allows deleting an unlocked Board', async () => {
     const actions = await import('../../lib/board-actions');
-    const votingActions = await import('../../lib/voting-actions');
     const { board, facilitatorCookie, reader, normalCard, lock } =
       await createLifecycleFixture();
 
@@ -1984,8 +1724,8 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
         headers: { cookie: reader },
       }),
       () =>
-        actions.createCard({
-          boardId: board.id,
+        actions.dispatchBoardCommand(board.id, {
+          type: 'card:create',
           columnId: board.columns[0].id,
           content: 'Blocked over server action',
         }),
@@ -2002,8 +1742,8 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
         headers: { cookie: reader },
       }),
       () =>
-        votingActions.changeVote({
-          boardId: board.id,
+        actions.dispatchBoardCommand(board.id, {
+          type: 'vote:change',
           targetType: 'card',
           targetId: normalCard.id,
           delta: 1,
@@ -2020,7 +1760,11 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
         method: 'POST',
         headers: { cookie: facilitatorCookie },
       }),
-      () => actions.setBoardLock({ boardId: board.id, isLocked: false }),
+      () =>
+        actions.dispatchBoardCommand(board.id, {
+          type: 'board:set-lock',
+          isLocked: false,
+        }),
     );
     expect(unlocked.response.status).toBe(200);
     expect(unlocked.result).toMatchObject({
@@ -2033,7 +1777,7 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
         method: 'POST',
         headers: { cookie: facilitatorCookie },
       }),
-      () => actions.deleteBoard({ boardId: board.id }),
+      () => actions.dispatchBoardCommand(board.id, { type: 'board:delete' }),
     );
     expect(deleted.response.status).toBe(200);
     expect(deleted.result).toMatchObject({

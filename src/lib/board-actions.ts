@@ -1,20 +1,14 @@
 import { query } from '@solidjs/router';
 import { httpStatus, redirect, respond } from '@solidjs/web';
 
-import { respondToBoardMutation } from './action-response';
+import { respondToServerAction } from './action-response';
 
 import type {
   ActionError,
   BoardMutationResponse,
   BoardViewDTO,
 } from './board-types';
-import type {
-  BoardCommand,
-  CreateBoardInput,
-  CreateCardInput,
-  DeleteBoardInput,
-  SetBoardLockInput,
-} from './schemas';
+import type { BoardCommand, CreateBoardInput } from './schemas';
 
 /**
  * Loads a viewer-projected Board snapshot for `/b/:id`.
@@ -76,37 +70,7 @@ export async function dispatchBoardCommand(
   const { dispatchBoardCommandForRequest } = await import(
     '../server/services/board-service'
   );
-  return respondToBoardMutation(() =>
+  return respondToServerAction(() =>
     dispatchBoardCommandForRequest(boardId, command),
   );
-}
-
-export async function setBoardLock(
-  input: SetBoardLockInput,
-): Promise<BoardMutationResponse> {
-  'use server';
-  const { setBoardLockForRequest } = await import(
-    '../server/services/board-service'
-  );
-  return respondToBoardMutation(() => setBoardLockForRequest(input));
-}
-
-export async function deleteBoard(
-  input: DeleteBoardInput,
-): Promise<BoardMutationResponse> {
-  'use server';
-  const { deleteBoardForRequest } = await import(
-    '../server/services/board-service'
-  );
-  return respondToBoardMutation(() => deleteBoardForRequest(input));
-}
-
-export async function createCard(
-  input: CreateCardInput,
-): Promise<BoardMutationResponse> {
-  'use server';
-  const { createCardForRequest } = await import(
-    '../server/services/board-service'
-  );
-  return respondToBoardMutation(() => createCardForRequest(input));
 }

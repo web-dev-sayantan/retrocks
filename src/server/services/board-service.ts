@@ -9,26 +9,9 @@ import type {
   BoardViewDTO,
 } from '../../lib/board-types';
 import {
-  AddColumnInputSchema,
   BoardCommandSchema,
   BoardIdSchema,
   CreateBoardInputSchema,
-  CreateCardInputSchema,
-  CreateCommentInputSchema,
-  DeleteBoardInputSchema,
-  DeleteCardInputSchema,
-  DeleteCommentInputSchema,
-  DeleteColumnInputSchema,
-  MoveCardInputSchema,
-  RenameBoardInputSchema,
-  ReorderColumnsInputSchema,
-  SetBoardLockInputSchema,
-  SetPrivateModeInputSchema,
-  ToggleReactionInputSchema,
-  UpdateActionItemInputSchema,
-  UpdateCardInputSchema,
-  UpdateColumnInputSchema,
-  UpdateTimerInputSchema,
 } from '../../lib/schemas';
 import {
   formatDefaultBoardTitle,
@@ -59,7 +42,7 @@ import {
   isFacilitatorForBoard,
 } from '../session';
 
-export function httpStatusForBoardError(code: BoardErrorCode): number {
+function httpStatusForBoardError(code: BoardErrorCode): number {
   switch (code) {
     case 'BOARD_LOCKED':
     case 'FORBIDDEN':
@@ -205,7 +188,7 @@ export async function getBoardForRequest(
   return projectBoardForViewer(rawSnapshot, viewerParticipantHash, isFacilitator);
 }
 
-export function parseMutationInput<
+function parseMutationInput<
   TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>,
 >(schema: TSchema, rawInput: unknown): v.InferOutput<TSchema> {
   const parsed = v.safeParse(schema, rawInput);
@@ -265,47 +248,6 @@ export async function executeBoardMutation(
     version: outcome.version,
     events,
   };
-}
-
-export async function renameBoardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(RenameBoardInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'board:rename',
-    title: input.title,
-    ...(input.subtitle !== undefined ? { subtitle: input.subtitle } : {}),
-  });
-}
-
-export async function updateTimerForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(UpdateTimerInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'timer:update',
-    change: input.change,
-  });
-}
-
-export async function setPrivateModeForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(SetPrivateModeInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'board:set-private-mode',
-    isBlurred: input.isBlurred,
-  });
-}
-
-export async function setBoardLockForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(SetBoardLockInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'board:set-lock',
-    isLocked: input.isLocked,
-  });
 }
 
 async function deleteBoardById(boardId: string): Promise<BoardMutationSuccess> {
@@ -404,157 +346,4 @@ export async function dispatchBoardCommandForRequest(
     return deleteBoardById(boardId);
   }
   return executeBoardMutation(boardId, toStoreMutationCommand(command));
-}
-
-export async function deleteBoardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  requireRequest();
-  const input = parseMutationInput(DeleteBoardInputSchema, rawInput);
-  return deleteBoardById(input.boardId);
-}
-
-export async function createCardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(CreateCardInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'card:create',
-    id: generateEntityId(),
-    columnId: input.columnId,
-    content: input.content,
-  });
-}
-
-export async function updateCardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(UpdateCardInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'card:update',
-    cardId: input.cardId,
-    content: input.content,
-  });
-}
-
-export async function updateActionItemForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(UpdateActionItemInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'card:set-action',
-    cardId: input.cardId,
-    ...(input.isActionItem !== undefined
-      ? { isActionItem: input.isActionItem }
-      : {}),
-    ...(input.actionDone !== undefined
-      ? { actionDone: input.actionDone }
-      : {}),
-    ...(input.actionOwner !== undefined
-      ? { actionOwner: input.actionOwner }
-      : {}),
-  });
-}
-
-export async function moveCardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(MoveCardInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'card:move',
-    cardId: input.cardId,
-    targetColumnId: input.targetColumnId,
-  });
-}
-
-export async function deleteCardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(DeleteCardInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'card:delete',
-    cardId: input.cardId,
-  });
-}
-
-export async function toggleReactionForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(ToggleReactionInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'reaction:toggle',
-    cardId: input.cardId,
-    emoji: input.emoji,
-  });
-}
-
-export async function createCommentForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(CreateCommentInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'comment:create',
-    id: generateEntityId(),
-    cardId: input.cardId,
-    content: input.content,
-  });
-}
-
-export async function deleteCommentForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(DeleteCommentInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'comment:delete',
-    cardId: input.cardId,
-    commentId: input.commentId,
-  });
-}
-
-export async function addColumnForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(AddColumnInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'column:add',
-    id: generateEntityId(),
-    title: input.title,
-    accent: input.accent,
-    isActionColumn: input.isActionColumn,
-  });
-}
-
-export async function updateColumnForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(UpdateColumnInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'column:update',
-    columnId: input.columnId,
-    ...(input.title !== undefined ? { title: input.title } : {}),
-    ...(input.accent !== undefined ? { accent: input.accent } : {}),
-    ...(input.isActionColumn !== undefined
-      ? { isActionColumn: input.isActionColumn }
-      : {}),
-  });
-}
-
-export async function reorderColumnsForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(ReorderColumnsInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'column:reorder',
-    columnIds: input.columnIds,
-  });
-}
-
-export async function deleteColumnForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
-  const input = parseMutationInput(DeleteColumnInputSchema, rawInput);
-  return executeBoardMutation(input.boardId, {
-    type: 'column:delete',
-    columnId: input.columnId,
-  });
 }
