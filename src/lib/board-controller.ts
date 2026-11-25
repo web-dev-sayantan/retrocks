@@ -14,7 +14,6 @@ import {
   untrack,
 } from 'solid-js';
 
-import type { BoardWorkspaceActions } from './board-actions';
 import { boardLivePath, type BoardLiveMessage } from './board-live-protocol';
 import { createLiveStream, type LiveTransport } from './live-stream';
 import { parseBoardLiveMessage } from './wire-schemas';
@@ -47,7 +46,7 @@ import type {
   ReactionEmoji,
 } from './board-types';
 import type { ServerClockSample } from './timer';
-import type { AddColumnInput, TimerChange } from './schemas';
+import type { AddColumnInput, BoardCommand, TimerChange } from './schemas';
 import type { ChangeVoteInput, UpdateVotingSettingsInput } from './voting-schemas';
 
 type VoteDelta = ChangeVoteInput['delta'];
@@ -115,11 +114,16 @@ export interface BoardController extends BoardMutations {
   deleteCurrentBoard(): Promise<string | null>;
 }
 
+export type BoardCommandDispatcher = (
+  boardId: string,
+  command: BoardCommand,
+) => Promise<BoardMutationResponse>;
+
 export interface BoardControllerOptions {
   /** Route-provided Board snapshot; the controller reconciles it into the store on change. */
   board: () => BoardViewDTO | null;
-  /** Server-action surface; production passes the 'use server' callers, tests the fake. */
-  actions: () => BoardWorkspaceActions;
+  /** Single command-dispatch seam; production passes `dispatchBoardCommand`, tests inject a fake. */
+  dispatchCommand: BoardCommandDispatcher;
   /** Injectable live transport; defaults to SSE/WebSocket. */
   liveTransport?: LiveTransport;
   /** Bumped when the viewer's session role changes (e.g. Co-Facilitator Link claim) to reconnect live updates. */
@@ -293,7 +297,7 @@ const GENERIC_FAILURE = 'Could not update the Board. Try again.';
  * `authorizeMutation`, before an action opens.
  */
 export function createBoardController(options: BoardControllerOptions): BoardController {
-  const getActions = options.actions;
+  const { dispatchCommand } = options;
 
   // Authoritative server state: the route snapshot, live events, and mutation
   // responses patch `serverStore` incrementally. `createOptimisticStore` chains
@@ -544,7 +548,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   ): Promise<BoardMutationResponse> {
     const outcome = await runGuardedMutation({
       gate: { kind: 'control-facilitation' },
-      send: () => getActions().updateTimer({ boardId, change }),
+      send: () => dispatchCommand(boardId, { type: 'timer:update', change }),
       failureMessage: 'Could not update the Timer. Try again.',
     });
     return outcome.ok
@@ -564,7 +568,11 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     try {
       const outcome = await runGuardedMutation({
         gate: { kind: 'control-facilitation' },
-        send: () => getActions().setPrivateMode({ boardId: board.id, isBlurred: !board.isBlurred }),
+        send: () =>
+          dispatchCommand(board.id, {
+            type: 'board:set-private-mode',
+            isBlurred: !board.isBlurred,
+          }),
         beforeCommit: () => {
           if (revealed) options.onDramaticReveal?.();
         },
@@ -586,7 +594,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     try {
       const outcome = await runGuardedMutation({
         gate: { kind: 'control-facilitation' },
-        send: () => getActions().renameBoard({ boardId: board.id, title: trimmed }),
+        send: () => dispatchCommand(board.id, { type: 'board:rename', title: trimmed }),
         failureMessage: 'Could not rename the Board. Try again.',
         reportFailure: true,
       });
@@ -632,7 +640,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         const col = draft.columns.find((item) => item.id === columnId);
         if (col) col.cardCount += 1;
       },
-      send: () => getActions().createCard({ boardId: board.id, columnId, content }),
+      send: () => dispatchCommand(board.id, { type: 'card:create', columnId, content }),
       failureMessage: 'Could not create Card. Try again.',
     });
     if (!outcome.ok) return outcome.message ?? 'Could not create Card. Try again.';
@@ -645,7 +653,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return 'This Card can no longer be edited.';
     const outcome = await runGuardedMutation({
       gate: { kind: 'update-card', cardId },
-      send: () => getActions().updateCard({ boardId: board.id, cardId, content }),
+      send: () => dispatchCommand(board.id, { type: 'card:update', cardId, content }),
       failureMessage: 'Could not save the Card. Try again.',
     });
     return outcome.ok ? null : outcome.message ?? 'Could not save the Card. Try again.';
@@ -681,7 +689,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         if (patch.actionDone !== undefined) affects(card, 'actionDone');
         if (patch.actionOwner !== undefined) affects(card, 'actionOwner');
       },
-      send: () => getActions().updateActionItem({ boardId: board.id, cardId, ...patch }),
+      send: () => dispatchCommand(board.id, { type: 'card:set-action', cardId, ...patch }),
       failureMessage: 'Could not update the Action Item. Try again.',
     });
     return outcome.ok;
@@ -692,7 +700,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'move-card', cardId },
-      send: () => getActions().moveCard({ boardId: board.id, cardId, targetColumnId }),
+      send: () => dispatchCommand(board.id, { type: 'card:move', cardId, targetColumnId }),
       failureMessage: 'Could not move the Card. Try again.',
       reportFailure: true,
     });
@@ -704,7 +712,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'delete-card', cardId },
-      send: () => getActions().deleteCard({ boardId: board.id, cardId }),
+      send: () => dispatchCommand(board.id, { type: 'card:delete', cardId }),
       failureMessage: 'Could not delete the Card. Try again.',
       reportFailure: true,
     });
@@ -724,7 +732,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         cardIds: targetType === 'card' ? [cardId, targetId] : [cardId],
         groupId: targetType === 'group' ? targetId : undefined,
       },
-      send: () => getActions().groupCards({ boardId: board.id, cardId, targetType, targetId }),
+      send: () =>
+        dispatchCommand(board.id, { type: 'group:merge', cardId, targetType, targetId }),
       failureMessage: 'Could not group the Card. Try again.',
       reportFailure: true,
     });
@@ -736,7 +745,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'grouping', groupId },
-      send: () => getActions().renameCardGroup({ boardId: board.id, groupId, title }),
+      send: () => dispatchCommand(board.id, { type: 'group:rename', groupId, title }),
       failureMessage: 'Could not rename the Card Group. Try again.',
       reportFailure: true,
     });
@@ -748,7 +757,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'grouping', cardIds: [cardId] },
-      send: () => getActions().ungroupCard({ boardId: board.id, cardId }),
+      send: () => dispatchCommand(board.id, { type: 'group:ungroup', cardId }),
       failureMessage: 'Could not ungroup the Card. Try again.',
       reportFailure: true,
     });
@@ -760,7 +769,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'grouping', groupId },
-      send: () => getActions().dissolveCardGroup({ boardId: board.id, groupId }),
+      send: () => dispatchCommand(board.id, { type: 'group:dissolve', groupId }),
       failureMessage: 'Could not dissolve the Card Group. Try again.',
       reportFailure: true,
     });
@@ -772,7 +781,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'grouping', groupId },
-      send: () => getActions().moveCardGroup({ boardId: board.id, groupId, targetColumnId }),
+      send: () => dispatchCommand(board.id, { type: 'group:move', groupId, targetColumnId }),
       failureMessage: 'Could not move the Card Group. Try again.',
       reportFailure: true,
     });
@@ -805,7 +814,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         affects(card, 'reactions');
         affects(card, 'myReactions');
       },
-      send: () => getActions().toggleReaction({ boardId: board.id, cardId, emoji }),
+      send: () => dispatchCommand(board.id, { type: 'reaction:toggle', cardId, emoji }),
       failureMessage: 'Could not update reaction. Try again.',
     });
     return outcome.ok ? null : outcome.message ?? 'Could not update reaction. Try again.';
@@ -816,7 +825,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return 'This Card can no longer receive comments.';
     const outcome = await runGuardedMutation({
       gate: { kind: 'create-comment', cardId },
-      send: () => getActions().createComment({ boardId: board.id, cardId, content }),
+      send: () => dispatchCommand(board.id, { type: 'comment:create', cardId, content }),
       failureMessage: 'Could not post comment. Try again.',
     });
     if (!outcome.ok) return outcome.message ?? 'Could not post comment. Try again.';
@@ -829,7 +838,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return 'This comment can no longer be deleted.';
     const outcome = await runGuardedMutation({
       gate: { kind: 'delete-comment', cardId, commentId },
-      send: () => getActions().deleteComment({ boardId: board.id, cardId, commentId }),
+      send: () => dispatchCommand(board.id, { type: 'comment:delete', cardId, commentId }),
       failureMessage: 'Could not delete comment. Try again.',
     });
     return outcome.ok ? null : outcome.message ?? 'Could not delete comment. Try again.';
@@ -843,12 +852,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       const outcome = await runGuardedMutation(
         {
           gate: { kind: 'add-column' },
-          send: () => getActions().addColumn({
-            boardId: board.id,
-            title: input.title,
-            accent: input.accent,
-            isActionColumn: input.isActionColumn,
-          }),
+          send: () =>
+            dispatchCommand(board.id, {
+              type: 'column:add',
+              title: input.title,
+              accent: input.accent,
+              isActionColumn: input.isActionColumn,
+            }),
           failureMessage: 'Could not add the Column. Try again.',
           reportFailure: true,
         },
@@ -871,7 +881,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'update-column' },
-      send: () => getActions().updateColumn({ boardId: board.id, columnId, ...patch }),
+      send: () => dispatchCommand(board.id, { type: 'column:update', columnId, ...patch }),
       failureMessage: 'Could not update the Column. Try again.',
       reportFailure: true,
     });
@@ -892,7 +902,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     reordered.splice(nextIndex, 0, moved);
     const outcome = await runGuardedMutation({
       gate: { kind: 'move-column' },
-      send: () => getActions().reorderColumns({ boardId: board.id, columnIds: reordered }),
+      send: () => dispatchCommand(board.id, { type: 'column:reorder', columnIds: reordered }),
       failureMessage: 'Could not move the Column. Try again.',
       reportFailure: true,
     });
@@ -904,7 +914,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return false;
     const outcome = await runGuardedMutation({
       gate: { kind: 'delete-column', columnId },
-      send: () => getActions().deleteColumn({ boardId: board.id, columnId }),
+      send: () => dispatchCommand(board.id, { type: 'column:delete', columnId }),
       failureMessage: 'Could not delete the Column. Try again.',
       reportFailure: true,
     });
@@ -942,20 +952,21 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         }
         if (draft.remainingVotes !== null) affects(draft, 'remainingVotes');
       },
-      send: () => getActions().changeVote({ boardId: board.id, targetType, targetId, delta }),
+      send: () =>
+        dispatchCommand(board.id, { type: 'vote:change', targetType, targetId, delta }),
       failureMessage: 'Could not update your Vote. Try again.',
       reportFailure: true,
     });
   }
 
   async function runVotingSettingsMutation(
-    mutate: (boardId: string) => Promise<BoardMutationResponse>,
+    command: Extract<BoardCommand, { type: 'voting:configure' | 'voting:reset' }>,
   ): Promise<string | null> {
     const board = store.board;
     if (!board) return 'Voting settings are unavailable.';
     const outcome = await runGuardedMutation({
       gate: { kind: 'control-facilitation' },
-      send: () => mutate(board.id),
+      send: () => dispatchCommand(board.id, command),
       failureMessage: 'Could not update Voting. Try again.',
     });
     if (outcome.ok) return null;
@@ -965,13 +976,11 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   }
 
   function saveVotingSettings(patch: Omit<UpdateVotingSettingsInput, 'boardId'>): Promise<string | null> {
-    const update = getActions().updateVotingSettings;
-    return runVotingSettingsMutation((boardId) => update({ boardId, ...patch }));
+    return runVotingSettingsMutation({ type: 'voting:configure', ...patch });
   }
 
   function resetAllVotes(): Promise<string | null> {
-    const reset = getActions().resetVotes;
-    return runVotingSettingsMutation((boardId) => reset({ boardId }));
+    return runVotingSettingsMutation({ type: 'voting:reset' });
   }
 
   async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
@@ -979,7 +988,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return 'Only a Facilitator can Lock or Unlock the Board.';
     const outcome = await runGuardedMutation({
       gate: { kind: 'facilitate' },
-      send: () => getActions().setBoardLock({ boardId: board.id, isLocked }),
+      send: () => dispatchCommand(board.id, { type: 'board:set-lock', isLocked }),
       failureMessage: 'Could not update Board lock state. Try again.',
     });
     if (outcome.ok) return null;
@@ -993,7 +1002,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     if (!board) return 'Only a Facilitator can delete this Board.';
     const outcome = await runGuardedMutation({
       gate: { kind: 'facilitate' },
-      send: () => getActions().deleteBoard({ boardId: board.id }),
+      send: () => dispatchCommand(board.id, { type: 'board:delete' }),
       failureMessage: 'Could not delete this Board. Try again.',
     });
     if (outcome.ok) return null;

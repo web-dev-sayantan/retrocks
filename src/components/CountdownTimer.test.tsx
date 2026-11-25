@@ -4,7 +4,7 @@ import { shortcuts } from '@ui-sdk/solid/shortcuts';
 import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { defaultBoardWorkspaceActions } from '../lib/board-actions';
+import type { BoardCommandDispatcher } from '../lib/board-controller';
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import type { BoardViewDTO } from '../lib/board-types';
 import BoardWorkspace from './BoardWorkspace';
@@ -125,7 +125,7 @@ describe('Board Countdown Timer', () => {
 
   it('opens Facilitator controls with T and submits a selected preset', async () => {
     const board = makeBoard({ isFacilitator: true });
-    const updateTimer = vi.fn<typeof defaultBoardWorkspaceActions.updateTimer>(async () => ({
+    const dispatchCommand = vi.fn<BoardCommandDispatcher>(async () => ({
       ok: true,
       version: 2,
       events: [{
@@ -139,7 +139,7 @@ describe('Board Countdown Timer', () => {
       <BoardWorkspace
         board={board}
         boardId={board.id}
-        actions={{ ...defaultBoardWorkspaceActions, updateTimer }}
+        dispatchCommand={dispatchCommand}
       />
     ));
     try {
@@ -165,8 +165,9 @@ describe('Board Countdown Timer', () => {
       await Promise.resolve();
       await Promise.resolve();
       flush();
-      expect(updateTimer).toHaveBeenCalledWith({
-        boardId: board.id, change: { action: 'start', minutes: 10 },
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+        type: 'timer:update',
+        change: { action: 'start', minutes: 10 },
       });
       expect(view.getByText('10:00')).toBeVisible();
 
