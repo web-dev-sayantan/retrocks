@@ -99,9 +99,12 @@ function PokerRoomSessionPage(props: { roomId: string; initialRoom: PokerRoomVie
                 room={room()}
                 online={session.online()}
                 status={session.status()}
+                busy={session.busy()}
+                error={session.error()}
                 focusHeading={joinSubmitted() || session.hasTransitionedPhase()}
                 claimError={session.claimError()}
                 onChange={session.changeRoom}
+                onClearError={session.clearError}
                 onUnavailable={session.markUnavailable}
               />
             </Show>

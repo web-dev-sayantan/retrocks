@@ -2,6 +2,7 @@ import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { createEffect, createMemo, createRoot, createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardConfirmation } from './board-confirm';
 import {
   createPokerRoomController,
   type PokerFragmentAdapter,
@@ -137,6 +138,7 @@ interface SessionHarness {
   connections: FakeConnection[];
   changeRoomSpy: ReturnType<typeof vi.fn<(id: string, command: PokerRoomChange) => Promise<PokerResult>>>;
   claimLinkSpy: ReturnType<typeof vi.fn<(id: string, token: string) => Promise<PokerSharingResult<PokerRoomView>>>>;
+  confirmSpy: ReturnType<typeof vi.fn<(options: BoardConfirmation) => Promise<boolean>>>;
   fragment: FakeFragmentHarness;
   recentRooms: {
     record: ReturnType<typeof vi.fn<PokerRecentRoomsAdapter['record']>>;
@@ -150,12 +152,19 @@ const mounted: SessionHarness[] = [];
 
 function mountSession(
   initialRoom: PokerRoomView | null = makeLiveRoom(),
-  options: { roomId?: string; initialFragmentToken?: string | null } = {},
+  options: {
+    roomId?: string;
+    initialFragmentToken?: string | null;
+    confirm?: (options: BoardConfirmation) => Promise<boolean>;
+  } = {},
 ): SessionHarness {
   const { transport, connections } = createFakeLiveTransport();
   const changeRoomSpy = vi.fn<(id: string, command: PokerRoomChange) => Promise<PokerResult>>();
   const claimLinkSpy = vi.fn<(id: string, token: string) => Promise<PokerSharingResult<PokerRoomView>>>(
     () => new Promise<PokerSharingResult<PokerRoomView>>(() => {}),
+  );
+  const confirmSpy = vi.fn<(options: BoardConfirmation) => Promise<boolean>>(
+    options.confirm ?? (async () => true),
   );
   const fragment = createFakeFragmentAdapter(options.initialFragmentToken ?? null);
   const recentRooms = {
@@ -171,6 +180,7 @@ function mountSession(
       room: roomProp,
       changeRoom: changeRoomSpy,
       claimFacilitatorLink: claimLinkSpy,
+      confirm: confirmSpy,
       liveTransport: transport,
       fragment: fragment.adapter,
       recentRooms,
@@ -182,6 +192,7 @@ function mountSession(
       connections,
       changeRoomSpy,
       claimLinkSpy,
+      confirmSpy,
       fragment,
       recentRooms,
       onUnavailable,
@@ -452,9 +463,15 @@ describe('createPokerRoomController', () => {
     }
 
     rejectNetwork(new Error('Network down'));
-    await expect(failingVote).rejects.toThrow('Network down');
+    await expect(failingVote).resolves.toEqual({
+      ok: false,
+      reason: 'network',
+      message: 'Could not update the Voting Round. Try again.',
+    });
     flush();
 
+    expect(controller.error()).toBe('Could not update the Voting Round. Try again.');
+    expect(controller.busy()).toBe(false);
     const afterNetworkRollback = controller.room();
     if (afterNetworkRollback && !afterNetworkRollback.closed && afterNetworkRollback.round?.phase === 'open') {
       expect(afterNetworkRollback.round.ownChoice).toBe('5');
@@ -1293,5 +1310,203 @@ describe('createPokerRoomController', () => {
     flush();
     expect(live.controller.phase()).toBe('unavailable');
     expect(live.onUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes concurrent cross-panel mutations through one single-flight coordinator with shared busy and error state', async () => {
+    const { controller, changeRoomSpy } = mountSession(makeLiveRoom());
+    expect(controller.busy()).toBe(false);
+    expect(controller.error()).toBe('');
+
+    const firstPending = Promise.withResolvers<PokerResult>();
+    changeRoomSpy.mockReturnValueOnce(firstPending.promise);
+
+    // 1. Start a Story queue move mutation.
+    const movePromise = controller.changeRoom({
+      type: 'move-story',
+      storyId: STORY_2_ID,
+      targetId: STORY_1_ID,
+      placement: 'before',
+    });
+    flush();
+    expect(controller.busy()).toBe(true);
+    expect(changeRoomSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Concurrent mutations from Deck settings, Voting Round, and Room rename are rejected as busy.
+    const concurrentDeck = await controller.changeRoom({ type: 'set-deck', deck: { type: 't-shirt' } });
+    const concurrentVote = await controller.changeRoom({ type: 'vote', roundId: ROUND_1_ID, choice: '5' });
+    const concurrentRename = await controller.changeRoom({ type: 'rename-room', name: 'Renamed' });
+    expect(concurrentDeck).toEqual({ ok: false, reason: 'busy' });
+    expect(concurrentVote).toEqual({ ok: false, reason: 'busy' });
+    expect(concurrentRename).toEqual({ ok: false, reason: 'busy' });
+    expect(changeRoomSpy).toHaveBeenCalledTimes(1);
+
+    // 3. First mutation fails -> busy clears and shared error is surfaced.
+    firstPending.resolve({ ok: false, code: 'RATE_LIMITED', message: 'Too many requests.' });
+    expect(await movePromise).toEqual({ ok: false, code: 'RATE_LIMITED', message: 'Too many requests.' });
+    flush();
+    expect(controller.busy()).toBe(false);
+    expect(controller.error()).toBe('Too many requests.');
+
+    // 4. Subsequent mutation clears the previous error and runs cleanly.
+    const nextRoom = makeLiveRoom({ version: 2, deckType: 't-shirt', deck: ['XS', 'S', 'M', 'L', 'XL'] });
+    changeRoomSpy.mockResolvedValueOnce({ ok: true, room: nextRoom });
+    const deckResult = await controller.changeRoom({ type: 'set-deck', deck: { type: 't-shirt' } });
+    flush();
+    expect(deckResult).toEqual({ ok: true, room: nextRoom });
+    expect(controller.busy()).toBe(false);
+    expect(controller.error()).toBe('');
+    expect(changeRoomSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('orchestrates modal discard confirmations via injectable adapter, blocks concurrent actions while confirming, and preserves stale-confirmation rollback', async () => {
+    const votedRoom = makeLiveRoom({
+      version: 1,
+      round: {
+        id: ROUND_1_ID,
+        phase: 'open',
+        submittedParticipantIds: [ALICE_ID],
+        ownChoice: '5',
+      },
+    });
+    const session = mountSession(votedRoom);
+
+    // 1. Cancelled confirmation does not emit a command, clears busy, and leaves error empty.
+    const firstModal = Promise.withResolvers<boolean>();
+    session.confirmSpy.mockReturnValueOnce(firstModal.promise);
+
+    const switchPromise = session.controller.changeRoom({ type: 'select-story', storyId: STORY_2_ID });
+    flush();
+    expect(session.controller.busy()).toBe(true);
+    expect(session.confirmSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Switch Stories?' }));
+
+    // Concurrent action while modal is open is dropped as busy.
+    expect(await session.controller.changeRoom({ type: 'vote', roundId: ROUND_1_ID, choice: '8' })).toEqual({
+      ok: false,
+      reason: 'busy',
+    });
+
+    firstModal.resolve(false);
+    expect(await switchPromise).toEqual({ ok: false, reason: 'cancelled' });
+    flush();
+    expect(session.controller.busy()).toBe(false);
+    expect(session.controller.error()).toBe('');
+    expect(session.changeRoomSpy).not.toHaveBeenCalled();
+
+    // 2. Confirmed Deck change sends captured discardRoundId, clears round optimistically, and rolls back on stale ROUND_CHANGED.
+    const deckModal = Promise.withResolvers<boolean>();
+    const deckServer = Promise.withResolvers<PokerResult>();
+    session.confirmSpy.mockReturnValueOnce(deckModal.promise);
+    session.changeRoomSpy.mockReturnValueOnce(deckServer.promise);
+
+    const onBeforeConfirm = vi.fn();
+    const onAfterConfirm = vi.fn();
+    const deckPromise = session.controller.changeRoom(
+      { type: 'set-deck', deck: { type: 't-shirt' } },
+      { onBeforeConfirm, onAfterConfirm },
+    );
+    flush();
+    expect(onBeforeConfirm).toHaveBeenCalledTimes(1);
+    expect(session.confirmSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: 'Change Deck and restart voting?' }),
+    );
+
+    deckModal.resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(onAfterConfirm).toHaveBeenCalledWith(true);
+    expect(session.changeRoomSpy).toHaveBeenCalledWith(ROOM_ID, {
+      type: 'set-deck',
+      deck: { type: 't-shirt' },
+      discardRoundId: ROUND_1_ID,
+    });
+    // Optimistic restart safety: round is cleared while waiting for replacement round ID.
+    const optimisticDeck = session.controller.liveRoom();
+    expect(optimisticDeck?.deckType).toBe('t-shirt');
+    expect(optimisticDeck?.round).toBeNull();
+
+    deckServer.resolve({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
+    expect(await deckPromise).toEqual({
+      ok: false,
+      code: 'ROUND_CHANGED',
+      message: 'The Voting Round has changed.',
+    });
+    flush();
+    expect(session.controller.liveRoom()?.deckType).toBe('fibonacci');
+    expect(session.controller.liveRoom()?.round?.id).toBe(ROUND_1_ID);
+    expect(session.controller.error()).toBe('The Voting Round has changed.');
+
+    // 3. Stale confirmation: round changes while Close Room modal is open -> still sends originally reviewed discardRoundId.
+    const closeModal = Promise.withResolvers<boolean>();
+    session.confirmSpy.mockReturnValueOnce(closeModal.promise);
+    session.changeRoomSpy.mockResolvedValueOnce({
+      ok: false,
+      code: 'ROUND_CHANGED',
+      message: 'The Voting Round has changed.',
+    });
+
+    const closePromise = session.controller.changeRoom({ type: 'close-room' });
+    flush();
+    expect(session.confirmSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: 'Close Room?', confirmLabel: 'Close and discard votes' }),
+    );
+    session.connections[0].emit({
+      type: 'room:snapshot',
+      room: makeLiveRoom({
+        version: 2,
+        round: { id: 'round_2_12345678901234', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+      }),
+    });
+    flush();
+
+    closeModal.resolve(true);
+    await closePromise;
+    flush();
+    expect(session.changeRoomSpy).toHaveBeenLastCalledWith(ROOM_ID, {
+      type: 'close-room',
+      discardRoundId: ROUND_1_ID,
+    });
+
+    // 4. shouldContinue returning false after confirmation aborts without calling changeRoom.
+    session.connections[0].emit({
+      type: 'room:snapshot',
+      room: makeLiveRoom({
+        version: 3,
+        round: { id: 'round_3_12345678901234', phase: 'open', submittedParticipantIds: [ALICE_ID], ownChoice: '5' },
+      }),
+    });
+    flush();
+    session.changeRoomSpy.mockClear();
+    session.confirmSpy.mockResolvedValueOnce(true);
+    const abortedEdit = await session.controller.changeRoom(
+      { type: 'edit-story', storyId: STORY_1_ID, title: 'Renamed' },
+      { shouldContinue: () => false },
+    );
+    expect(abortedEdit).toEqual({ ok: false, reason: 'cancelled' });
+    expect(session.changeRoomSpy).not.toHaveBeenCalled();
+
+    // 5. Inline delete-story does not invoke modal confirm and forwards its submission-time discardRoundId.
+    session.confirmSpy.mockClear();
+    session.changeRoomSpy.mockResolvedValueOnce({
+      ok: true,
+      room: makeLiveRoom({
+        version: 4,
+        stories: [{ id: STORY_2_ID, title: 'Second story', status: 'pending' }],
+        activeStoryId: null,
+        round: null,
+      }),
+    });
+    const deleteResult = await session.controller.changeRoom({
+      type: 'delete-story',
+      storyId: STORY_1_ID,
+      discardRoundId: 'round_3_12345678901234',
+    });
+    expect(deleteResult.ok).toBe(true);
+    expect(session.confirmSpy).not.toHaveBeenCalled();
+    expect(session.changeRoomSpy).toHaveBeenCalledWith(ROOM_ID, {
+      type: 'delete-story',
+      storyId: STORY_1_ID,
+      discardRoundId: 'round_3_12345678901234',
+    });
   });
 });

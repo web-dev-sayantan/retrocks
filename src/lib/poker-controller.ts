@@ -9,10 +9,15 @@ import {
   untrack,
 } from 'solid-js';
 
+import { confirmBoardAction, type BoardConfirmation } from './board-confirm';
 import { takeFacilitatorLinkToken } from './facilitator-link';
 import { createLiveStream, type LiveStatus, type LiveTransport } from './live-stream';
 import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
-import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
+import {
+  projectedPokerDiscardDecision,
+  projectedPokerDiscardPrompt,
+  type PokerDiscardIntent,
+} from './poker-discard-policy';
 import { pokerRoomPath } from './poker-routes';
 import { parsePokerLiveMessage } from './poker-schemas';
 import type { PokerSharingResult } from './poker-sharing-types';
@@ -176,6 +181,216 @@ function applyOptimisticRoomChange(room: PokerRoomView | null, command: PokerRoo
 
 export type PokerRoomPhase = 'unjoined' | 'live' | 'closed' | 'reopening' | 'unavailable';
 
+export interface PokerChangeOptions {
+  /** Called right before opening a modal confirmation dialog. */
+  onBeforeConfirm?: () => void;
+  /** Called right after a modal confirmation dialog closes. */
+  onAfterConfirm?: (confirmed: boolean) => void;
+  /** Checked after confirmation; returning false aborts before sending the command. */
+  shouldContinue?: () => boolean;
+}
+
+export type PokerChangeOutcome =
+  | PokerResult
+  | { ok: false; reason: 'busy' | 'cancelled' }
+  | { ok: false; reason: 'network'; message: string };
+
+interface PendingConfirmation {
+  discardRoundId: string | undefined;
+  prompt: BoardConfirmation;
+}
+
+function resolveConfirmation(
+  room: PokerLiveRoomView,
+  command: PokerRoomChange,
+): PendingConfirmation | null {
+  if ('discardRoundId' in command && command.discardRoundId !== undefined) {
+    return null;
+  }
+
+  switch (command.type) {
+    case 'select-story': {
+      const discardRoundId = projectedPokerDiscardPrompt('select-story', true, room.round);
+      if (discardRoundId === undefined) return null;
+      return {
+        discardRoundId,
+        prompt: {
+          title: 'Switch Stories?',
+          description: 'Switching Stories discards the current Voting Round and its votes.',
+          cancelLabel: 'Stay with this Story',
+          confirmLabel: 'Switch Story',
+        },
+      };
+    }
+    case 'add-story': {
+      if (!command.makeActive) return null;
+      const discardRoundId = projectedPokerDiscardPrompt('add-story', true, room.round);
+      if (discardRoundId === undefined) return null;
+      return {
+        discardRoundId,
+        prompt: {
+          title: 'Make new Story active?',
+          description:
+            'Making this Story active discards the current Voting Round and its votes, then locks the previous Story.',
+          cancelLabel: 'Keep voting',
+          confirmLabel: 'Lock previous & make active',
+          agentConfirm:
+            'Discards the current Voting Round and its votes, locks the previous Story, and makes the new Story active.',
+        },
+      };
+    }
+    case 'edit-story': {
+      const trimmed = command.title.trim();
+      const story = room.stories.find((item) => item.id === command.storyId);
+      if (!trimmed || !story || story.locked || story.title === trimmed) return null;
+      const discardRoundId = projectedPokerDiscardPrompt(
+        'edit-story',
+        room.activeStoryId === story.id,
+        room.round,
+      );
+      if (discardRoundId === undefined) return null;
+      return {
+        discardRoundId,
+        prompt: {
+          title: 'Change active Story title?',
+          description: 'Changing the title restarts the current Voting Round with empty ballots.',
+          cancelLabel: 'Keep current title',
+          confirmLabel: 'Save and restart voting',
+          agentConfirm:
+            'Changes the active Story title and restarts the current Voting Round with empty ballots.',
+        },
+      };
+    }
+    case 'set-story-lock': {
+      if (!command.locked) return null;
+      const discardRoundId = projectedPokerDiscardPrompt(
+        'set-story-lock',
+        room.activeStoryId === command.storyId,
+        room.round,
+      );
+      if (discardRoundId === undefined) return null;
+      return {
+        discardRoundId,
+        prompt: {
+          title: 'Lock active Story?',
+          description:
+            'Locking this Story discards the current Voting Round and its votes, then clears the stage.',
+          cancelLabel: 'Keep voting',
+          confirmLabel: 'Lock and discard votes',
+          agentConfirm: 'Locks the active Story and discards the current Voting Round and its votes.',
+        },
+      };
+    }
+    case 'set-deck': {
+      const { deck } = command;
+      const choices = deck.type === 'custom'
+        ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
+        : POKER_DECK_PRESETS[deck.type];
+      if (isSamePokerDeck(room, deck.type, choices)) return null;
+      if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) {
+        return null;
+      }
+      const change = projectedDeckRoundChange(room);
+      if (change.type !== 'confirm') return null;
+      return {
+        discardRoundId: change.roundId,
+        prompt: {
+          title: 'Change Deck and restart voting?',
+          description:
+            'Changing the Deck discards the current Voting Round and its votes. Existing Accepted Estimates stay as they are.',
+          cancelLabel: 'Keep current Deck',
+          confirmLabel: 'Change Deck & restart',
+          agentConfirm:
+            'Changes the Deck, discards the current Voting Round and its votes, and keeps existing Accepted Estimates.',
+        },
+      };
+    }
+    case 'close-room': {
+      const discardRoundId = projectedPokerDiscardPrompt('close-room', true, room.round);
+      return {
+        discardRoundId,
+        prompt: discardRoundId !== undefined
+          ? {
+              title: 'Close Room?',
+              description:
+                'Closing discards the current Voting Round and its votes while keeping Accepted Estimates in the summary. A Facilitator can reopen the Room later.',
+              confirmLabel: 'Close and discard votes',
+              agentConfirm:
+                'Closes the Room and discards the current Voting Round and its votes. Accepted Estimates stay in the summary, and a Facilitator can reopen the Room later.',
+            }
+          : {
+              title: 'Close Room?',
+              description:
+                'Closing moves the Room to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+              confirmLabel: 'Close Room',
+              agentConfirm:
+                'Closes the Room and moves it to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
+            },
+      };
+    }
+    case 'delete-story':
+    case 'vote':
+    case 'reveal':
+    case 'confirm-estimate':
+    case 'restart-round':
+    case 'skip-story':
+    case 'move-story':
+    case 'correct-estimate':
+    case 'return-story':
+    case 'rename-room':
+    case 'reopen-room':
+      return null;
+  }
+}
+
+function withDiscardRoundId(
+  command: PokerRoomChange,
+  discardRoundId: string | undefined,
+): PokerRoomChange {
+  if (discardRoundId === undefined) return command;
+  switch (command.type) {
+    case 'select-story':
+    case 'add-story':
+    case 'edit-story':
+    case 'set-story-lock':
+    case 'delete-story':
+    case 'set-deck':
+    case 'close-room':
+      return { ...command, discardRoundId };
+    default:
+      return command;
+  }
+}
+
+function fallbackErrorMessage(command: PokerRoomChange): string {
+  switch (command.type) {
+    case 'close-room':
+      return 'Could not close the Room. Try again.';
+    case 'reopen-room':
+      return 'Could not reopen the Room. Try again.';
+    case 'rename-room':
+      return 'Could not rename the Room. Try again.';
+    case 'set-deck':
+      return 'Could not save the Deck. Try again.';
+    case 'edit-story':
+      return 'Could not update the Story title. Try again.';
+    case 'vote':
+    case 'reveal':
+    case 'confirm-estimate':
+    case 'restart-round':
+    case 'skip-story':
+      return 'Could not update the Voting Round. Try again.';
+    case 'add-story':
+    case 'select-story':
+    case 'move-story':
+    case 'correct-estimate':
+    case 'return-story':
+    case 'set-story-lock':
+    case 'delete-story':
+      return 'Could not update the Story queue. Try again.';
+  }
+}
+
 export interface PokerFragmentAdapter {
   /** Reads and scrubs any `#f=<token>` fragment for `roomPath` from the current URL. */
   takeToken(roomPath: string): string | null;
@@ -211,6 +426,8 @@ export interface PokerRoomControllerOptions {
   changeRoom: (id: string, command: PokerRoomChange) => Promise<PokerResult>;
   /** Co-Facilitator Link claim adapter; production passes `claimPokerFacilitatorLink`, tests inject a double. */
   claimFacilitatorLink?: (id: string, token: string) => Promise<PokerSharingResult<PokerRoomView>>;
+  /** Injectable modal confirmation adapter; defaults to `confirmBoardAction`. */
+  confirm?: (options: BoardConfirmation) => Promise<boolean>;
   /** Injectable live transport; defaults to SSE/WebSocket. */
   liveTransport?: LiveTransport;
   /** Injectable URL fragment adapter for `#f=` reading/scrubbing; defaults to browser `window.location`/`history`. */
@@ -240,9 +457,15 @@ export interface PokerRoomController {
   claimError(): string;
   /** Error message from the most recent failed Room reopen attempt. */
   reopenError(): string;
+  /** True while any Room mutation or modal discard confirmation is in flight. */
+  busy(): boolean;
+  /** Error message from the most recent failed Room mutation. */
+  error(): string;
+  /** Clears the current Room mutation error message. */
+  clearError(): void;
   /** True once the session has transitioned across lifecycle phases after initial mount (focus hint). */
   hasTransitionedPhase(): boolean;
-  changeRoom(command: PokerRoomChange): Promise<PokerResult>;
+  changeRoom(command: PokerRoomChange, options?: PokerChangeOptions): Promise<PokerChangeOutcome>;
   /** Unified single-flight Room reopen flow (ADR-0004). Returns `null` on unexpected network error. */
   reopenRoom(): Promise<PokerResult | null>;
   /** Transitions the session to `'unavailable'`, disposes live transport, and removes from recent rooms. */
@@ -281,6 +504,7 @@ export function createPokerRoomController(
 ): PokerRoomController {
   const initialRoom = untrack(() => options.room());
   const roomId = options.roomId ?? initialRoom?.id ?? '';
+  const confirmAction = options.confirm ?? confirmBoardAction;
   const fragment = options.fragment ?? browserPokerFragmentAdapter;
   const recentRooms = options.recentRooms ?? browserRecentRoomsAdapter;
 
@@ -293,6 +517,8 @@ export function createPokerRoomController(
 
   const [online, setOnline] = createSignal<string[]>([]);
   const [unavailable, setUnavailable] = createSignal(initialRoom === null);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal('');
   const [reopening, setReopening] = createSignal(false);
   const [reopenError, setReopenError] = createSignal('');
   const [claimPending, setClaimPending] = createSignal(false);
@@ -311,6 +537,7 @@ export function createPokerRoomController(
     setServerRoom(next);
     if (prevPhase !== nextPhase) {
       setHasTransitionedPhase(true);
+      setError('');
       if (nextPhase !== 'closed') setReopenError('');
       if (nextPhase !== 'unjoined') setHasPendingFacilitatorClaim(false);
     }
@@ -470,10 +697,15 @@ export function createPokerRoomController(
     return result;
   });
 
-  async function changeRoom(command: PokerRoomChange): Promise<PokerResult> {
-    // Commit caller-owned process flags written in this tick before the action
-    // opens; the action's transaction would otherwise hold them until it settles.
-    flush();
+  let mutationInFlight = false;
+
+  async function changeRoom(
+    command: PokerRoomChange,
+    changeOptions?: PokerChangeOptions,
+  ): Promise<PokerChangeOutcome> {
+    if (mutationInFlight) {
+      return { ok: false, reason: 'busy' };
+    }
     const current = untrack(serverRoom);
     if (untrack(unavailable) || !current) {
       return {
@@ -482,14 +714,56 @@ export function createPokerRoomController(
         message: 'This Room is no longer available.',
       };
     }
+
+    mutationInFlight = true;
+    setBusy(true);
+    setError('');
+
     try {
-      return await performChange(current.id, command);
-    } catch (error) {
-      if (error instanceof PokerChangeRejected) {
-        if (error.result.code === 'ROOM_NOT_FOUND') markUnavailable();
-        return error.result;
+      let effectiveCommand = command;
+      if (!current.closed) {
+        const confirmation = resolveConfirmation(current, command);
+        if (confirmation) {
+          changeOptions?.onBeforeConfirm?.();
+          let confirmed = false;
+          try {
+            confirmed = await confirmAction(confirmation.prompt);
+          } finally {
+            changeOptions?.onAfterConfirm?.(confirmed);
+          }
+          if (!confirmed) {
+            return { ok: false, reason: 'cancelled' };
+          }
+          if (changeOptions?.shouldContinue && !changeOptions.shouldContinue()) {
+            return { ok: false, reason: 'cancelled' };
+          }
+          const latest = untrack(serverRoom);
+          if (untrack(unavailable) || !latest || latest.closed) {
+            return { ok: false, reason: 'cancelled' };
+          }
+          effectiveCommand = withDiscardRoundId(command, confirmation.discardRoundId);
+        }
       }
-      throw error;
+
+      // Commit process flags (busy/error and caller state) before the action
+      // opens; the action's transaction would otherwise hold them until it settles.
+      flush();
+      return await performChange(current.id, effectiveCommand);
+    } catch (caught) {
+      if (caught instanceof PokerChangeRejected) {
+        if (caught.result.code === 'ROOM_NOT_FOUND') {
+          markUnavailable();
+        } else {
+          setError(caught.result.message);
+        }
+        return caught.result;
+      }
+      const message = fallbackErrorMessage(command);
+      setError(message);
+      return { ok: false, reason: 'network', message };
+    } finally {
+      mutationInFlight = false;
+      setBusy(false);
     }
   }
 
@@ -515,13 +789,18 @@ export function createPokerRoomController(
           if (!result.room.closed) {
             setClaimError('');
           }
-        } else if (result.code !== 'ROOM_NOT_FOUND') {
+          return result;
+        }
+        if ('reason' in result) {
+          if (result.reason === 'network') {
+            setReopenError(result.message);
+          }
+          return null;
+        }
+        if (result.code !== 'ROOM_NOT_FOUND') {
           setReopenError(result.message);
         }
         return result;
-      } catch {
-        setReopenError('Could not reopen the Room. Try again.');
-        return null;
       } finally {
         activeReopen = null;
         setReopening(false);
@@ -542,6 +821,9 @@ export function createPokerRoomController(
     hasPendingFacilitatorClaim,
     claimError,
     reopenError,
+    busy,
+    error,
+    clearError: () => setError(''),
     hasTransitionedPhase,
     changeRoom,
     reopenRoom,

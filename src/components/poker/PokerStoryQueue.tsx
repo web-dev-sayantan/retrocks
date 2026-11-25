@@ -18,12 +18,11 @@ import {
 } from 'lucide';
 import { For, Show, createMemo, createSignal, createUniqueId, flush, onSettled } from 'solid-js';
 
-import { confirmBoardAction } from '../../lib/board-confirm';
 import { projectedPokerDiscardPrompt } from '../../lib/poker-discard-policy';
 import type { InlineEditOutcome } from '../../lib/inline-edit';
+import type { PokerChangeOptions, PokerChangeOutcome } from '../../lib/poker-controller';
 import {
   POKER_STORY_TITLE_LIMIT,
-  type PokerResult,
   type PokerRoundView,
   type PokerStory,
   type PokerStoryCommand,
@@ -221,7 +220,8 @@ export default function PokerStoryQueue(props: {
   canManage: boolean;
   deck: readonly string[];
   round?: PokerRoundView | null;
-  onChange: (command: PokerStoryCommand) => Promise<PokerResult>;
+  busy?: boolean;
+  onChange: (command: PokerStoryCommand, options?: PokerChangeOptions) => Promise<PokerChangeOutcome>;
 }) {
   const headingId = createUniqueId();
   const listPanelId = createUniqueId();
@@ -229,11 +229,9 @@ export default function PokerStoryQueue(props: {
     { storyId: string; expectedEstimate: string } | null
   >(null);
   const [deletingStory, setDeletingStory] = createSignal<StoryDeleteSession | null>(null);
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal('');
   const [announcement, setAnnouncement] = createSignal('');
-  const [confirming, setConfirming] = createSignal(false);
   const [mobileOpen, setMobileOpen] = createSignal(false);
+  const isBusy = () => Boolean(props.busy);
 
   function cancelDelete(session?: StoryDeleteSession) {
     setDeletingStory((current) => session && session !== current ? current : null);
@@ -242,122 +240,48 @@ export default function PokerStoryQueue(props: {
   const estimatedCount = createMemo(() => props.stories.filter((story) => story.status === 'estimated').length);
   const activeStoryTitle = createMemo(() => props.stories.find((story) => story.id === props.activeStoryId)?.title);
 
-  async function change(command: PokerStoryCommand) {
-    if (busy()) return null;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await props.onChange(command);
-      if (result.ok) return result.room.closed ? null : result.room;
-      setError(result.message);
-    } catch {
-      setError('Could not update the Story queue. Try again.');
-    } finally {
-      setBusy(false);
-    }
-    return null;
-  }
-
   const switchDiscardRoundId = () => projectedPokerDiscardPrompt('select-story', true, props.round ?? null);
 
   async function addStory(title: string, makeActive: boolean) {
-    if (busy() || confirming()) return false;
+    if (isBusy()) return false;
     cancelDelete();
-    if (!makeActive) {
-      return Boolean(await change({ type: 'add-story', title }));
-    }
-    const discardRoundId = projectedPokerDiscardPrompt('add-story', true, props.round ?? null);
-    if (discardRoundId !== undefined) {
-      setConfirming(true);
-      try {
-        if (!await confirmBoardAction({
-          title: 'Make new Story active?',
-          description: 'Making this Story active discards the current Voting Round and its votes, then locks the previous Story.',
-          cancelLabel: 'Keep voting',
-          confirmLabel: 'Lock previous & make active',
-          agentConfirm: 'Discards the current Voting Round and its votes, locks the previous Story, and makes the new Story active.',
-        })) return false;
-      } finally {
-        setConfirming(false);
-      }
-    }
-    return Boolean(await change({
-      type: 'add-story',
-      title,
-      makeActive: true,
-      ...(discardRoundId === undefined ? {} : { discardRoundId }),
-    }));
+    const result = await props.onChange(
+      makeActive ? { type: 'add-story', title, makeActive: true } : { type: 'add-story', title },
+    );
+    return result.ok;
   }
 
-  async function selectStory(story: PokerStory) {
-    if (story.locked || busy() || confirming()) return;
+  function selectStory(story: PokerStory) {
+    if (story.locked || isBusy()) return;
     cancelDelete();
-    const discardRoundId = switchDiscardRoundId();
-    if (discardRoundId !== undefined) {
-      setConfirming(true);
-      try {
-        if (!await confirmBoardAction({
-          title: 'Switch Stories?',
-          description: 'Switching Stories discards the current Voting Round and its votes.',
-          cancelLabel: 'Stay with this Story',
-          confirmLabel: 'Switch Story',
-        })) return;
-      } finally {
-        setConfirming(false);
-      }
-    }
-    await change({
-      type: 'select-story',
-      storyId: story.id,
-      ...(discardRoundId === undefined ? {} : { discardRoundId }),
-    });
+    void props.onChange({ type: 'select-story', storyId: story.id });
   }
 
   async function toggleStoryLock(story: PokerStory) {
-    if (busy() || confirming()) return;
+    if (isBusy()) return;
     cancelDelete();
     const locking = !story.locked;
-    const discardRoundId = projectedPokerDiscardPrompt(
-      'set-story-lock', locking && props.activeStoryId === story.id, props.round ?? null,
-    );
-    if (discardRoundId !== undefined) {
-      setConfirming(true);
-      try {
-        if (!await confirmBoardAction({
-          title: 'Lock active Story?',
-          description: 'Locking this Story discards the current Voting Round and its votes, then clears the stage.',
-          cancelLabel: 'Keep voting',
-          confirmLabel: 'Lock and discard votes',
-          agentConfirm: 'Locks the active Story and discards the current Voting Round and its votes.',
-        })) return;
-      } finally {
-        setConfirming(false);
-      }
+    const result = await props.onChange({ type: 'set-story-lock', storyId: story.id, locked: locking });
+    if (result.ok && locking && editingEstimate()?.storyId === story.id) {
+      setEditingEstimate(null);
     }
-    if (locking && editingEstimate()?.storyId === story.id) setEditingEstimate(null);
-    await change({
-      type: 'set-story-lock',
-      storyId: story.id,
-      locked: locking,
-      ...(discardRoundId === undefined ? {} : { discardRoundId }),
-    });
   }
 
   function startDelete(story: PokerStory) {
-    if (story.locked || busy() || confirming()) return;
+    if (story.locked || isBusy()) return;
     if (editingEstimate()?.storyId === story.id) setEditingEstimate(null);
     setDeletingStory({ storyId: story.id });
   }
 
   async function confirmDelete(session: StoryDeleteSession, story: PokerStory, discardRoundId?: string) {
-    if (story.locked || busy() || confirming()) return;
-    const room = await change({
+    if (story.locked || isBusy()) return;
+    const result = await props.onChange({
       type: 'delete-story',
       storyId: story.id,
       ...(discardRoundId === undefined ? {} : { discardRoundId }),
     });
     cancelDelete(session);
-    if (room) {
+    if (result.ok) {
       setAnnouncement(`${story.title} deleted.`);
     }
   }
@@ -365,44 +289,39 @@ export default function PokerStoryQueue(props: {
   async function editStoryTitle(
     storyId: string,
     title: string,
-    discardRoundId?: string,
+    isCurrent: () => boolean,
   ): Promise<InlineEditOutcome> {
-    if (busy()) return false;
+    if (isBusy()) return false;
     cancelDelete();
-    setBusy(true);
-    setError('');
-    try {
-      const result = await props.onChange({
-        type: 'edit-story',
-        storyId,
-        title,
-        ...(discardRoundId === undefined ? {} : { discardRoundId }),
-      });
-      if (result.ok) return true;
-      return result.message;
-    } catch {
-      return 'Could not update the Story title. Try again.';
-    } finally {
-      setBusy(false);
+    const result = await props.onChange(
+      { type: 'edit-story', storyId, title },
+      { shouldContinue: isCurrent },
+    );
+    if (result.ok) return true;
+    if ('reason' in result) {
+      if (result.reason === 'network') return result.message;
+      return result.reason === 'cancelled';
     }
+    return result.message;
   }
 
   async function move(story: PokerStory, index: number, offset: -1 | 1, control: HTMLElement) {
+    if (isBusy()) return;
     cancelDelete();
     const target = props.stories[index + offset];
     if (!target) return;
     const doc = control.ownerDocument;
     const hadFocus = doc.activeElement === control;
-    const room = await change({
+    const result = await props.onChange({
       type: 'move-story',
       storyId: story.id,
       targetId: target.id,
       placement: offset < 0 ? 'before' : 'after',
     });
-    if (!room) return;
-    const position = room.stories.findIndex((entry) => entry.id === story.id);
+    if (!result.ok || result.room.closed) return;
+    const position = result.room.stories.findIndex((entry) => entry.id === story.id);
     if (position >= 0 && position !== index) {
-      setAnnouncement(`${story.title} moved to position ${position + 1} of ${room.stories.length}.`);
+      setAnnouncement(`${story.title} moved to position ${position + 1} of ${result.room.stories.length}.`);
     }
     if (hadFocus && doc.activeElement === doc.body && control.isConnected) {
       control.focus({ preventScroll: true });
@@ -451,7 +370,7 @@ export default function PokerStoryQueue(props: {
 
         <Show when={props.canManage}>
           <QuickAddStoryForm
-            busy={busy() || confirming()}
+            busy={isBusy()}
             smartEnterMakesActive={switchDiscardRoundId() === undefined}
             onAdd={addStory}
           />
@@ -486,18 +405,25 @@ export default function PokerStoryQueue(props: {
                   }
 
                   async function saveEstimate(expectedEstimate: string, choice: string) {
-                    if (await change({ type: 'correct-estimate', storyId: story().id, expectedEstimate, choice })) {
+                    const result = await props.onChange({
+                      type: 'correct-estimate',
+                      storyId: story().id,
+                      expectedEstimate,
+                      choice,
+                    });
+                    if (result.ok) {
                       finishEditingEstimate();
                     }
                   }
 
                   async function returnStory(control: HTMLElement) {
-                    if (story().locked) return;
+                    if (story().locked || isBusy()) return;
                     cancelDelete();
                     const doc = control.ownerDocument;
                     const hadFocus = doc.activeElement === control;
-                    if (await change({ type: 'return-story', storyId: story().id })) {
-                      if (hadFocus && !control.isConnected && doc.activeElement === doc.body) selectButton?.focus();
+                    const result = await props.onChange({ type: 'return-story', storyId: story().id });
+                    if (result.ok && hadFocus && !control.isConnected && doc.activeElement === doc.body) {
+                      selectButton?.focus();
                     }
                   }
 
@@ -512,7 +438,7 @@ export default function PokerStoryQueue(props: {
                   function bindSelectButton(el: HTMLButtonElement) {
                     selectButton = el;
                     el.addEventListener('click', () => {
-                      if (locked() && !busy() && !confirming()) lockWiggle.trigger();
+                      if (locked() && !isBusy()) lockWiggle.trigger();
                     });
                   }
 
@@ -551,7 +477,7 @@ export default function PokerStoryQueue(props: {
                         <PokerStoryTitleEditor
                           story={story()}
                           canEdit={props.canManage}
-                          discardRoundId={projectedPokerDiscardPrompt('edit-story', active(), props.round ?? null)}
+                          busy={isBusy()}
                           variant="queue"
                           onSave={editStoryTitle}
                           onHandle={(handle) => { titleEditor = handle; }}
@@ -600,7 +526,7 @@ export default function PokerStoryQueue(props: {
                                     <Button
                                       class="poker-row-btn poker-row-btn-primary board-focus-ring"
                                       aria-label={`Return ${story().title} to queue`}
-                                      disabled={locked() || busy()}
+                                      disabled={locked() || isBusy()}
                                       focusableWhenDisabled
                                       onClick={(event) => void returnStory(event.currentTarget)}
                                     >
@@ -613,7 +539,7 @@ export default function PokerStoryQueue(props: {
                                     ref={bindSelectButton}
                                     class="poker-row-btn poker-row-btn-primary board-focus-ring"
                                     aria-label={`${selected() ? 'Selected' : story().status === 'estimated' ? 'Reconsider' : 'Select'} ${story().title}`}
-                                    disabled={locked() || selected() || busy() || confirming()}
+                                    disabled={locked() || selected() || isBusy()}
                                     focusableWhenDisabled
                                     onClick={() => selectStory(story())}
                                   >
@@ -628,7 +554,7 @@ export default function PokerStoryQueue(props: {
                                       class="poker-row-btn board-focus-ring"
                                       aria-label={`Edit estimate for ${story().title}`}
                                       aria-expanded={estimateEditor() ? 'true' : 'false'}
-                                      disabled={locked() || busy()}
+                                      disabled={locked() || isBusy()}
                                       focusableWhenDisabled
                                       onClick={() => {
                                         if (!locked()) {
@@ -650,7 +576,7 @@ export default function PokerStoryQueue(props: {
                                   onAnimationEnd={lockWiggle.onAnimationEnd}
                                   aria-label={locked() ? `Unlock ${story().title}` : `Lock ${story().title}`}
                                   title={locked() ? 'Unlock Story' : 'Lock Story'}
-                                  disabled={busy() || confirming()}
+                                  disabled={isBusy()}
                                   focusableWhenDisabled
                                   onClick={() => {
                                     lockWiggle.cancel();
@@ -666,7 +592,7 @@ export default function PokerStoryQueue(props: {
                                   class="poker-row-btn poker-row-btn-danger board-focus-ring"
                                   aria-label={`Delete ${story().title}`}
                                   title={locked() ? 'Unlock Story to delete' : 'Delete Story'}
-                                  disabled={locked() || busy() || confirming()}
+                                  disabled={locked() || isBusy()}
                                   focusableWhenDisabled
                                   onClick={() => startDelete(story())}
                                 >
@@ -679,7 +605,7 @@ export default function PokerStoryQueue(props: {
                                     class="poker-row-btn board-focus-ring px-1.5!"
                                     aria-label={`Move ${story().title} up`}
                                     title="Move up"
-                                    disabled={index() === 0 || busy()}
+                                    disabled={index() === 0 || isBusy()}
                                     focusableWhenDisabled
                                     onClick={(event) => move(story(), index(), -1, event.currentTarget)}
                                   >
@@ -689,7 +615,7 @@ export default function PokerStoryQueue(props: {
                                     class="poker-row-btn board-focus-ring px-1.5!"
                                     aria-label={`Move ${story().title} down`}
                                     title="Move down"
-                                    disabled={index() === props.stories.length - 1 || busy()}
+                                    disabled={index() === props.stories.length - 1 || isBusy()}
                                     focusableWhenDisabled
                                     onClick={(event) => move(story(), index(), 1, event.currentTarget)}
                                   >
@@ -702,7 +628,7 @@ export default function PokerStoryQueue(props: {
                             {(session) => (
                               <StoryDeleteConfirmation
                                 title={story().title}
-                                busy={busy()}
+                                busy={isBusy()}
                                 discardRoundId={deleteDiscardRoundId()}
                                 onDismiss={() => cancelDelete(session)}
                                 onRestoreFocus={() => deleteButton?.focus()}
@@ -716,7 +642,7 @@ export default function PokerStoryQueue(props: {
                           {(edit) => (
                             <PokerEstimateForm
                               deck={props.deck}
-                              busy={busy()}
+                              busy={isBusy()}
                               initialChoice={edit.expectedEstimate}
                               onSave={(choice) => void saveEstimate(edit.expectedEstimate, choice)}
                               onCancel={finishEditingEstimate}
@@ -733,7 +659,6 @@ export default function PokerStoryQueue(props: {
         </div>
 
         <p class="sr-only" role="status">{announcement()}</p>
-        <p class="poker-error-text px-4 text-xs font-medium `not-empty:py-2" role="alert">{error()}</p>
         <p class="poker-rail-foot">
           This Room expires 90 days after creation or its most recent vote or content change, whichever is later.
         </p>

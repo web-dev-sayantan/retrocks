@@ -2,7 +2,6 @@ import { Button } from '@ui-sdk/solid/button';
 import { Check, X } from 'lucide';
 import { Show, untrack } from 'solid-js';
 
-import { confirmBoardAction } from '../../lib/board-confirm';
 import { createInlineEditSession, type InlineEditOutcome } from '../../lib/inline-edit';
 import { POKER_STORY_TITLE_LIMIT, type PokerStory } from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
@@ -16,9 +15,9 @@ export interface PokerStoryTitleEditorHandle {
 export default function PokerStoryTitleEditor(props: {
   story: PokerStory;
   canEdit: boolean;
-  discardRoundId?: string;
+  busy?: boolean;
   variant: 'queue' | 'stage';
-  onSave: (storyId: string, title: string, discardRoundId?: string) => Promise<InlineEditOutcome>;
+  onSave: (storyId: string, title: string, isCurrent: () => boolean) => Promise<InlineEditOutcome>;
   onHandle?: (handle: PokerStoryTitleEditorHandle) => void;
   fallbackFocus?: () => void;
 }) {
@@ -32,23 +31,13 @@ export default function PokerStoryTitleEditor(props: {
     fallbackFocus: () => props.fallbackFocus?.(),
   });
 
+  const saving = () => titleEdit.isSaving() || Boolean(props.busy);
+
   async function saveTitleText(text: string, isCurrent: () => boolean): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return 'Enter a Story title.';
     if (trimmed === props.story.title) return true;
-    const storyId = props.story.id;
-    const discardRoundId = props.discardRoundId;
-    if (discardRoundId !== undefined) {
-      const confirmed = await confirmBoardAction({
-        title: 'Change active Story title?',
-        description: 'Changing the title restarts the current Voting Round with empty ballots.',
-        cancelLabel: 'Keep current title',
-        confirmLabel: 'Save and restart voting',
-        agentConfirm: 'Changes the active Story title and restarts the current Voting Round with empty ballots.',
-      });
-      if (!confirmed || !isCurrent()) return true;
-    }
-    return props.onSave(storyId, trimmed, discardRoundId);
+    return props.onSave(props.story.id, trimmed, isCurrent);
   }
 
   untrack(() => props.onHandle)?.({
@@ -82,7 +71,7 @@ export default function PokerStoryTitleEditor(props: {
             aria-label="Edit Story title"
             aria-invalid={titleEdit.error() ? 'true' : undefined}
             maxlength={POKER_STORY_TITLE_LIMIT}
-            readonly={titleEdit.isSaving()}
+            readonly={saving()}
             {...titleEdit.inputProps}
             class={
               props.variant === 'stage'
@@ -97,7 +86,7 @@ export default function PokerStoryTitleEditor(props: {
             ]}
             aria-label="Save Story title"
             title="Save title"
-            disabled={titleEdit.isSaving() || !titleEdit.hasText()}
+            disabled={saving() || !titleEdit.hasText()}
             focusableWhenDisabled
             onClick={titleEdit.submit}
           >
@@ -110,7 +99,7 @@ export default function PokerStoryTitleEditor(props: {
             ]}
             aria-label="Cancel Story title edit"
             title="Cancel"
-            disabled={titleEdit.isSaving()}
+            disabled={saving()}
             focusableWhenDisabled
             onClick={titleEdit.cancel}
           >
