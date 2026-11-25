@@ -4859,7 +4859,7 @@ describe('<BoardWorkspace />', () => {
           const wentWell = view.getByRole('region', { name: 'Went Well' });
           const accentBar = wentWell.querySelector('[data-column-accent-bar="true"]') as HTMLElement;
           expect(accentBar).toBeInTheDocument();
-          expect(accentBar.className).toContain('h-[3px]');
+          expect(accentBar.className).toContain('h-0.75');
           expect(accentBar.className).toContain('bg-col-sage');
           expect(wentWell.querySelector('.bg-col-sage-tint')).toBeInTheDocument();
 

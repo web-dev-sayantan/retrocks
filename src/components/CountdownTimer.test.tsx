@@ -406,7 +406,7 @@ describe('Board Countdown Timer', () => {
           sendSnapshot(board, SERVER_TIME);
 
           const trigger = view.getByRole('button', { name: 'Countdown Timer' });
-          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'board-touch-target', 'min-w-[5.75rem]');
+          expect(trigger).toHaveClass('rounded-full', 'spring-press', 'board-touch-target', 'min-w-23');
           expect(trigger).toHaveAttribute('data-timer-state', 'idle');
 
           // Transition to running
