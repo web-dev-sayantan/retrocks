@@ -2,17 +2,24 @@ import { Button } from '@ui-sdk/solid/button';
 import { ArrowUpRight, Clock } from 'lucide';
 import { For, Show, createSignal, createUniqueId, onSettled } from 'solid-js';
 
-import { formatRelativeTime, type RecentBoardEntry } from '../lib/recent-boards';
+import { formatRelativeTime } from '../lib/relative-time';
 import LucideIcon from './LucideIcon';
+
+interface RecentLinkEntry {
+  id: string;
+  title: string;
+  lastVisitedAt: number;
+  isFacilitator?: boolean;
+}
 
 export default function RecentLinksList(props: {
   heading: string;
-  read: () => RecentBoardEntry[];
-  remove: (id: string) => RecentBoardEntry[];
+  read: () => RecentLinkEntry[];
+  remove: (id: string) => RecentLinkEntry[];
   href: (id: string) => string;
 }) {
   const headingId = createUniqueId();
-  const [entries, setEntries] = createSignal<RecentBoardEntry[]>([]);
+  const [entries, setEntries] = createSignal<RecentLinkEntry[]>([]);
 
   onSettled(() => {
     setEntries(props.read());
