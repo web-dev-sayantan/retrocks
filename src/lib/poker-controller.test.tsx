@@ -445,6 +445,7 @@ describe('createPokerRoomController', () => {
     if (!current.closed) {
       expect(current.deckType).toBe('t-shirt');
       expect(current.deck).toEqual(['XS', 'S', 'M', 'L', 'XL']);
+      expect(current.round).toBeNull();
     }
     resolveDeck({ ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed.' });
     await deckPromise;
@@ -453,6 +454,7 @@ describe('createPokerRoomController', () => {
     if (!current.closed) {
       expect(current.deckType).toBe('fibonacci');
       expect(current.deck).toEqual([...FIBONACCI_DECK]);
+      expect(current.round).toEqual(initial.round);
     }
 
     // 4. Confirm estimate optimistically, then commit on success.

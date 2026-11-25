@@ -546,6 +546,16 @@ test('a Facilitator can change the Deck at any time, confirming to restart activ
   expect(restarted.room.round.id).not.toBe(roundId);
   const secondRoundId = restarted.room.round.id;
 
+  expect(await mutate({
+    type: 'set-deck',
+    deck: { type: 't-shirt' },
+    discardRoundId: roundId,
+  })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await read(participant)).toMatchObject({
+    deckType: 'fibonacci',
+    round: { id: secondRoundId, phase: 'open', submittedParticipantIds: [] },
+  });
+
   // Vote, reveal, and confirm an Accepted Estimate under Fibonacci.
   expect(await mutate({ type: 'vote', roundId: secondRoundId, choice: '5' }, participant)).toMatchObject({
     ok: true, room: { round: { ownChoice: '5' } },

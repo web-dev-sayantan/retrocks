@@ -3,6 +3,7 @@ import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, SquareCheck, Users, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
+import { projectedDeckRoundChange } from '../../lib/poker-deck-policy';
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
@@ -36,6 +37,10 @@ export default function PokerWorkspace(props: {
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
   const onlineSet = createMemo(() => new Set(props.online));
+  const deckDiscardRoundId = createMemo(() => {
+    const change = projectedDeckRoundChange(props.room);
+    return change.type === 'confirm' ? change.roundId : undefined;
+  });
   const openRound = createMemo(() => (props.room.round?.phase === 'open' ? props.room.round : null));
   const revealedRound = createMemo(() => (props.room.round && props.room.round.phase !== 'open' ? props.room.round : null));
   const submitted = createMemo(() => {
@@ -280,7 +285,7 @@ export default function PokerWorkspace(props: {
             deck={props.room.deck}
             deckType={props.room.deckType}
             canManage={props.room.viewer?.isFacilitator === true}
-            discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
+            discardRoundId={deckDiscardRoundId()}
             onChange={props.onChange}
           />
           <p

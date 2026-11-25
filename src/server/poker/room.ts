@@ -2,6 +2,7 @@ import 'server-only';
 
 import { safeParse } from 'valibot';
 
+import { deckRoundChange } from '../../lib/poker-deck-policy';
 import { PokerDisplayName, PokerRoomNameInput } from '../../lib/poker-schemas';
 import {
   POKER_DECK_PRESETS,
@@ -128,8 +129,7 @@ function validateActiveRoundDiscard(
     | typeof discardRequired
     | typeof lockDiscardRequired
     | typeof deleteDiscardRequired
-    | typeof editDiscardRequired
-    | typeof deckDiscardRequired,
+    | typeof editDiscardRequired,
 ) {
   if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) {
     return roundChanged;
@@ -410,19 +410,17 @@ export class PokerRoomStorage {
           const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
           if (room.deckType === deck.type && room.deck.length === choices.length
             && room.deck.every((choice, index) => choice === choices[index])) return { ok: true, room };
-          const hasActiveStory = room.activeStoryId !== null;
-          const discardError = validateActiveRoundDiscard(room, hasActiveStory, command.discardRoundId, deckDiscardRequired);
-          if (discardError) return discardError;
+          const round = room.round;
+          const change = deckRoundChange(
+            room.activeStoryId === null ? undefined : round?.id,
+            round && Object.keys(round.ballots).length > 0 ? unresolvedPokerRoundId(round) : undefined,
+            command.discardRoundId,
+          );
+          if (change.type === 'stale') return roundChanged;
+          if (change.type === 'confirm') return deckDiscardRequired;
           room.deckType = deck.type;
           room.deck = choices;
-          if (
-            hasActiveStory
-            && room.round
-            && unresolvedPokerRoundId(room.round) !== undefined
-            && Object.keys(room.round.ballots).length > 0
-          ) {
-            room.round = startVotingRound();
-          }
+          if (change.type === 'restart') room.round = startVotingRound();
           break;
         }
         case 'add-story': {

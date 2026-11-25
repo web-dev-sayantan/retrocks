@@ -8,6 +8,7 @@ import {
   untrack,
 } from 'solid-js';
 
+import { projectedDeckRoundChange } from './poker-deck-policy';
 import {
   createPokerLive,
   type PokerLiveStatus,
@@ -123,29 +124,20 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       break;
     }
     case 'set-deck': {
-      if (!canDiscardActiveRound(room, room.activeStoryId !== null, command.discardRoundId)) return;
-      if (command.deck.type === 'custom') {
-        const choices = command.deck.choices.map((c) => c.trim()).filter(Boolean);
-        if (choices.length < 2 || new Set(choices).size !== choices.length) return;
-        room.deckType = 'custom';
-        room.deck = choices;
-      } else {
-        room.deckType = command.deck.type;
-        room.deck = [...POKER_DECK_PRESETS[command.deck.type]];
-      }
-      if (command.discardRoundId !== undefined && room.round?.id === command.discardRoundId) {
-        if (room.round.phase === 'open') {
-          room.round.ownChoice = null;
-          room.round.submittedParticipantIds = [];
-        } else if (room.round.phase === 'revealed') {
-          room.round = {
-            id: room.round.id,
-            phase: 'open',
-            ownChoice: null,
-            submittedParticipantIds: [],
-          };
-        }
-      }
+      const { deck } = command;
+      const choices = deck.type === 'custom'
+        ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
+        : POKER_DECK_PRESETS[deck.type];
+      if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) return;
+      if (room.deckType === deck.type && room.deck.length === choices.length
+        && room.deck.every((choice, index) => choice === choices[index])) return;
+
+      const change = projectedDeckRoundChange(room, command.discardRoundId);
+      if (change.type === 'confirm' || change.type === 'stale') return;
+      room.deckType = deck.type;
+      room.deck = [...choices];
+      // A replacement round becomes actionable once its authoritative ID arrives.
+      if (change.type === 'restart') room.round = null;
       break;
     }
     case 'confirm-estimate': {
