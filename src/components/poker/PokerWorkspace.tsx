@@ -268,7 +268,7 @@ export default function PokerWorkspace(props: {
                 tabindex={-1}
                 title={canManage() ? `${props.room.name} — Double-click to rename` : props.room.name}
                 class={[
-                  'poker-room-bar-title board-focus-ring min-w-0 truncate rounded',
+                  'poker-room-bar-title board-focus-ring min-w-0 truncate rounded-sm',
                   canManage() && 'cursor-text touch-manipulation',
                 ]}
               >

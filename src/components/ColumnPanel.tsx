@@ -223,7 +223,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       data-column-id={props.view.column.id}
       onFocusIn={() => props.onActivateColumn?.(props.view.column.id)}
       class={[
-        'board-column-rail flex-col rounded-2xl border transition-shadow',
+        'board-column-rail flex-col rounded-lg border transition-shadow',
         {
           flex: props.isMobileActive,
           'hidden sm:flex': !props.isMobileActive,
@@ -234,10 +234,10 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       ]}
     >
       {/* Rounded-top accent & tint cap stays pointer-events-none so floating popovers inside the rail never clip. */}
-      <div class="board-column-cap relative rounded-t-[calc(1rem-1px)] border-b border-border/60">
+      <div class="board-column-cap relative rounded-t-lg border-b border-border/60">
         <div
           aria-hidden="true"
-          class="pointer-events-none absolute inset-0 hidden overflow-hidden rounded-t-[calc(1rem-1px)] sm:block"
+          class="pointer-events-none absolute inset-0 hidden overflow-hidden rounded-t-lg sm:block"
         >
           <div
             data-column-accent-bar="true"
@@ -273,7 +273,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                           setHasTitleText(e.currentTarget.value.trim().length > 0)
                         }
                         class={[
-                          'min-w-0 flex-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
+                          'min-w-0 flex-1 rounded-md border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
                           'board-focus-ring',
                         ]}
                       />
@@ -284,7 +284,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     aria-label="Save column title"
                     disabled={titleSave.isSaving() || !hasTitleText()}
                     onClick={() => columnEdit.end()}
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:min-h-8 sm:min-w-8"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={Check} class="size-3.5" strokeWidth={2.2} />
                   </button>
@@ -292,7 +292,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     type="button"
                     aria-label="Cancel column rename"
                     onClick={cancelRename}
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-text-muted hover:text-text sm:min-h-8 sm:min-w-8"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />
                   </button>
@@ -356,7 +356,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   <MenuTrigger
                     aria-label={`Column options for ${props.view.column.title}`}
                     class={[
-                      'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-lg sm:border-transparent sm:bg-transparent',
+                      'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-text-muted sm:min-h-8 sm:min-w-8 sm:rounded-md sm:border-transparent sm:bg-transparent',
                       'transition-colors hover:bg-surface/80 hover:text-text data-open:bg-surface data-open:text-text',
                       'board-focus-ring',
                     ]}
@@ -367,12 +367,12 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   <BoardMenuContent
                     finalFocus={isRenaming() ? 'none' : undefined}
                     aria-label={`Options for ${props.view.column.title}`}
-                    class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-2 text-text shadow-lg"
+                    class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text shadow-lg"
                   >
                     <MenuItem
                       value="rename"
                       onSelect={startRename}
-                      class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-9"
+                      class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-9"
                     >
                       <LucideIcon icon={Pencil} class="size-3.5 text-text-muted" strokeWidth={1.85} />
                       <span>Rename column</span>
@@ -383,7 +383,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         value="move-left"
                         disabled={!canMoveLeft()}
                         onSelect={() => void handleReorder(-1)}
-                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
+                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-sm border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
                       >
                         <LucideIcon icon={ChevronLeft} class="size-3.5" strokeWidth={2} />
                         <span>Move left</span>
@@ -392,7 +392,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                         value="move-right"
                         disabled={!canMoveRight()}
                         onSelect={() => void handleReorder(1)}
-                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
+                        class="spring-press inline-flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-sm border border-border/85 bg-surface px-2 py-1 text-xs font-medium text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 sm:min-h-9"
                       >
                         <span>Move right</span>
                         <LucideIcon icon={ChevronRight} class="size-3.5" strokeWidth={2} />
@@ -417,7 +417,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                               aria-label={`Accent ${COLUMN_ACCENT_STYLES[accent].label}`}
                               closeOnSelect
                               class={[
-                                'spring-press flex min-h-11 cursor-pointer items-center justify-center rounded-lg border transition-colors sm:min-h-8',
+                                'spring-press flex min-h-11 cursor-pointer items-center justify-center rounded-sm border transition-colors sm:min-h-8',
                                 {
                                   'border-border bg-surface-subtle':
                                     props.view.column.accent === accent,
@@ -449,7 +449,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       disabled={!canDeleteColumn()}
                       title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
                       onSelect={() => void requestDeleteColumn()}
-                      class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
+                      class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
                     >
                       <LucideIcon icon={Trash2} class="size-3.5" strokeWidth={1.85} />
                       <span>Delete column</span>
@@ -466,7 +466,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         <div data-print-hide="true" class="hidden px-3 pt-3 sm:block">
           <div
             class={[
-              'relative flex items-end gap-1.5 rounded-xl border bg-surface px-3 py-1.5 transition-colors',
+              'relative flex items-end gap-1.5 rounded-md border bg-surface px-3 py-1.5 transition-colors',
               'hover:border-control/70 focus-within:border-focus focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-focus',
               cardError()
                 ? 'border-col-rose/75 focus-within:border-col-rose'
@@ -505,7 +505,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
               disabled={isCreatingCard() || cardDraft().trim().length === 0}
               onClick={() => void submitNewCard()}
               class={[
-                'spring-press mb-0.5 inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-lg px-2.5 text-xs font-semibold transition-colors',
+                'spring-press mb-0.5 inline-flex h-7 shrink-0 cursor-pointer items-center justify-center rounded-sm px-2.5 text-xs font-semibold transition-colors',
                 'board-focus-ring',
                 cardDraft().trim().length > 0 && !isCreatingCard()
                   ? 'bg-accent text-accent-contrast hover:opacity-90'
@@ -526,7 +526,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       </Show>
 
       <Show when={props.isLocked}>
-        <p data-print-hide="true" class="mx-3 mt-3 hidden rounded-xl bg-surface/75 px-3 py-2 text-xs text-text-muted sm:block">
+        <p data-print-hide="true" class="mx-3 mt-3 hidden rounded-md bg-surface/75 px-3 py-2 text-xs text-text-muted sm:block">
           This Board is Locked. You can still read and search Cards.
         </p>
       </Show>
@@ -539,18 +539,18 @@ export default function ColumnPanel(props: ColumnPanelProps) {
             <Show
               when={props.hasActiveFilter && props.view.cards.length > 0}
               fallback={
-                <p class="rounded-xl border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
+                <p class="rounded-md border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
                   No Cards yet
                 </p>
               }
             >
-              <div class="rounded-xl border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
+              <div class="rounded-md border border-dashed border-border/80 px-3 py-6 text-center text-sm text-text-muted">
                 <p>No matching Cards in this Column</p>
                 <button
                   type="button"
                   onClick={() => props.onResetFilters()}
                   class={[
-                    'spring-press mt-2.5 inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
+                    'spring-press mt-2.5 inline-flex min-h-11 cursor-pointer items-center rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text sm:min-h-8',
                     'transition-colors hover:bg-surface-subtle',
                     'board-focus-ring',
                   ]}

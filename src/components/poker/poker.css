@@ -97,7 +97,7 @@
     inline-size: 100%;
     padding-inline: 0.75rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-surface);
     color: var(--retrocks-text);
     font: inherit;
@@ -134,7 +134,7 @@
     gap: 0.375rem;
     min-block-size: var(--poker-target);
     padding-inline: 0.9375rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     font: inherit;
     font-size: 0.875rem;
     font-weight: 600;
@@ -240,7 +240,7 @@
     gap: 0.25rem;
     padding: 0.25rem;
     border: 1px solid var(--poker-hairline);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-surface);
     box-shadow: 0 8px 20px -8px color-mix(in oklab, var(--retrocks-text) 24%, transparent);
   }
@@ -265,7 +265,7 @@
     min-block-size: 1.875rem;
     padding-inline: 0.625rem;
     border: 1px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: color-mix(in oklab, var(--retrocks-surface-subtle) 75%, transparent);
     color: var(--retrocks-text-muted);
     font-size: 0.8125rem;
@@ -301,7 +301,7 @@
     min-block-size: var(--poker-target);
     padding-inline: 0.875rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--retrocks-surface);
     color: var(--retrocks-text);
     font-size: 0.8125rem;
@@ -321,7 +321,7 @@
     min-inline-size: var(--poker-target);
     min-block-size: var(--poker-target);
     border: 1px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: transparent;
     color: var(--retrocks-text-muted);
     cursor: pointer;
@@ -361,7 +361,7 @@
   .poker-presence-dot {
     inline-size: 0.4375rem;
     block-size: 0.4375rem;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--retrocks-accent);
     flex-shrink: 0;
   }
@@ -384,7 +384,7 @@
     min-block-size: var(--poker-target);
     padding-inline: 0.5rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 85%, transparent);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-canvas);
     color: var(--retrocks-text);
     font-size: 0.8125rem;
@@ -492,7 +492,7 @@
     min-block-size: var(--poker-target);
     padding-inline: 0.625rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 82%, transparent);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-canvas);
     color: var(--retrocks-text);
     font: inherit;
@@ -531,7 +531,7 @@
     min-block-size: 2rem;
     padding: 0.375rem 0.625rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 85%, transparent);
-    border-radius: 0.4375rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-surface);
     color: var(--retrocks-text);
     font: inherit;
@@ -607,7 +607,7 @@
     inset-inline-start: 0;
     inset-block: 0.375rem;
     inline-size: 2.5px;
-    border-radius: 0 2px 2px 0;
+    border-radius: 0 var(--radius-full) var(--radius-full) 0;
     background: var(--retrocks-accent);
   }
 
@@ -625,7 +625,7 @@
   .poker-story-title[data-editable='true'] {
     cursor: text;
     touch-action: manipulation;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
   }
 
   .poker-story-inline-editor {
@@ -640,7 +640,7 @@
     margin-inline-start: calc(-0.3125rem - 1px);
     padding: calc(0.25rem - 1px) 0.3125rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-surface);
     color: var(--retrocks-text);
     font: inherit;
@@ -656,7 +656,7 @@
     min-inline-size: 1.75rem;
     min-block-size: 1.75rem;
     border: 1px solid var(--poker-hairline);
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-surface);
     color: var(--retrocks-text-muted);
     cursor: pointer;
@@ -688,7 +688,7 @@
   .poker-inline-action-stage {
     min-inline-size: var(--poker-target);
     min-block-size: var(--poker-target);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
   }
 
   @media (pointer: coarse) {
@@ -726,7 +726,7 @@
     justify-content: center;
     min-inline-size: 1.5rem;
     padding: 0.125rem 0.4375rem;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--retrocks-surface-subtle);
     color: var(--retrocks-text);
     font-size: 0.75rem;
@@ -768,7 +768,7 @@
     min-block-size: 1.75rem;
     padding-inline: 0.5rem;
     border: 1px solid transparent;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--retrocks-text-muted);
     font-size: 0.75rem;
@@ -886,7 +886,7 @@
   .poker-active-title[data-editable='true'] {
     cursor: text;
     touch-action: manipulation;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-sm);
   }
 
   .poker-active-title-editor {
@@ -902,7 +902,7 @@
     min-block-size: var(--poker-target);
     padding: calc(0.25rem - 1px) 0.75rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     background: var(--retrocks-surface);
     color: var(--retrocks-text);
     font: inherit;
@@ -928,7 +928,7 @@
     gap: 0.4375rem;
     padding: 0.3125rem 0.75rem;
     border: 1px solid var(--poker-accent-border);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--poker-accent-tint);
     color: var(--retrocks-text);
     font-size: 0.8125rem;
@@ -977,7 +977,7 @@
     inline-size: 2.625rem;
     block-size: 3.625rem;
     padding: 0.25rem;
-    border-radius: 0.5625rem;
+    border-radius: var(--radius-md);
     corner-shape: squircle;
     font-size: 1rem;
     font-weight: 700;
@@ -1067,7 +1067,7 @@
     gap: 0.375rem 0.625rem;
     padding: 0.3125rem 0.75rem;
     border: 1px solid var(--poker-hairline);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--retrocks-surface);
     font-size: 0.8125rem;
     color: var(--retrocks-text-muted);
@@ -1106,7 +1106,7 @@
     min-block-size: 4.125rem;
     padding: 0.5rem 0.625rem;
     border: 1px solid color-mix(in oklab, var(--retrocks-border) 95%, transparent);
-    border-radius: 0.6875rem;
+    border-radius: var(--radius-md);
     corner-shape: squircle;
     background: var(--retrocks-surface);
     color: var(--retrocks-text);
@@ -1129,7 +1129,7 @@
     min-inline-size: 2.625rem;
     min-block-size: var(--poker-target);
     padding: 0.375rem 0.625rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-md);
     font-size: 0.875rem;
   }
 

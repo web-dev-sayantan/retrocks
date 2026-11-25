@@ -104,7 +104,7 @@ function AppShell(props: ParentProps) {
         toast={{
           align: 'center',
           children: () => (
-            <Toast class="board-toast rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text shadow-lg">
+            <Toast class="board-toast rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text shadow-lg">
               <ToastTitle />
               <ToastDescription />
             </Toast>

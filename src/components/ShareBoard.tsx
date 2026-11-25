@@ -16,7 +16,7 @@ import BoardOverlayHeader from './BoardOverlayHeader';
 import LucideIcon from './LucideIcon';
 
 const buttonClass = [
-  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium',
+  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border px-3 py-2 text-sm font-medium',
   'transition-colors board-focus-ring aria-disabled:cursor-wait aria-disabled:opacity-60',
 ];
 const secondaryButtonClass = [buttonClass, 'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle'];
@@ -82,11 +82,11 @@ function ParticipantQrCode(props: { link: string }) {
   });
 
   return (
-    <figure class="flex items-center gap-3 rounded-2xl bg-surface-subtle p-3 sm:gap-4">
+    <figure class="flex items-center gap-3 rounded-md bg-surface-subtle p-2.5 sm:gap-4">
       <svg
         role="img"
         aria-label="Participant Link QR code"
-        class="aspect-square w-28 max-w-[45%] shrink-0 rounded-lg bg-white sm:w-32"
+        class="aspect-square w-28 max-w-[45%] shrink-0 rounded-sm bg-white sm:w-32"
         viewBox={`0 0 ${qr().size} ${qr().size}`}
         shape-rendering="crispEdges"
       >
@@ -184,7 +184,7 @@ function FacilitatorSharing(props: { boardId: string }) {
           Rotate Link
         </button>
       </div>
-      <p role="alert" class={error() ? 'rounded-lg border border-col-rose bg-col-rose-tint p-3 text-sm text-text' : 'sr-only'}>
+      <p role="alert" class={error() ? 'rounded-md border border-col-rose bg-col-rose-tint p-3 text-sm text-text' : 'sr-only'}>
         {error()}
       </p>
     </section>
@@ -220,7 +220,7 @@ export default function ShareBoard(props: {
       <DialogContent
         data-board-overlay="true"
         data-print-hide="true"
-        class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
+        class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-lg border border-border bg-surface text-text shadow-2xl"
       >
         <BoardOverlayHeader
           closeLabel="Close Share"

@@ -46,7 +46,7 @@
     inline-size: 2.5rem;
     margin-inline: auto;
     border-block-end: 2.5px solid var(--retrocks-accent);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
   }
 
   .home-tool-tab[data-selected] .home-tool-tab-icon {
@@ -88,7 +88,7 @@
     align-items: center;
     gap: 0.25rem;
     padding: 0.1875rem 0.5rem;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--retrocks-surface-subtle);
     color: var(--retrocks-text-muted);
     font-size: 0.6875rem;
@@ -116,7 +116,7 @@
     min-inline-size: 0;
     overflow-wrap: anywhere;
     border: 1px solid var(--retrocks-border);
-    border-radius: 0.375rem;
+    border-radius: var(--radius-sm);
     padding: 0.375rem 0.5rem;
     background: var(--retrocks-surface);
   }
@@ -177,7 +177,7 @@
 
   .home-poker-row-active {
     position: relative;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-sm);
     background: color-mix(in oklab, var(--retrocks-accent) 12%, transparent);
     border-block-end-color: transparent;
   }

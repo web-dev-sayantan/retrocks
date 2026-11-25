@@ -170,14 +170,14 @@ export default function PokerDeckSettings(props: {
           align="start"
           sideOffset={8}
           collisionPadding={12}
-          class="board-popover z-40 w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl p-4 text-text"
+          class="board-popover z-40 w-[min(22rem,calc(100vw-1.5rem))] rounded-lg p-4 text-text"
         >
           <PopoverTitle class="text-sm font-semibold">Deck settings</PopoverTitle>
           <PopoverDescription class="mt-0.5 text-xs text-text-muted">
             Changing the Deck during a round with votes restarts voting. Existing estimates stay as they are.
           </PopoverDescription>
           <p
-            class="mt-2.5 rounded-lg bg-surface-subtle/70 px-2.5 py-1.5 text-xs text-text-muted [overflow-wrap:anywhere]"
+            class="mt-2.5 rounded-md bg-surface-subtle/70 px-2.5 py-1.5 text-xs text-text-muted [overflow-wrap:anywhere]"
             role="status"
           >
             <span class="font-semibold text-text">{deckName[selectedType()]}</span>{' · '}

@@ -7,7 +7,7 @@ export default function PageMessage(props: ParentProps<{
 }>) {
   return (
     <main class="mx-auto grid min-h-[60dvh] w-full max-w-xl flex-1 place-items-center px-4 py-12 sm:px-6">
-      <div class="w-full space-y-4 rounded-2xl border border-border bg-surface p-6 sm:p-8">
+      <div class="w-full space-y-4 rounded-lg border border-border bg-surface p-6 sm:p-8">
         <h1
           ref={(element) => props.headingRef?.(element)}
           tabindex={props.headingRef ? -1 : undefined}

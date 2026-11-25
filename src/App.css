@@ -117,6 +117,15 @@
   }
 }
 
+@theme static {
+  /* Strict 4-token border-radius hierarchy — emitted on :root and locked as the only radius utilities */
+  --radius-*: initial;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+}
+
 @theme inline {
   /* Core surfaces, borders, text, and interactive focus */
   --color-canvas: var(--retrocks-canvas);
@@ -195,7 +204,7 @@
   }
 
   .page-message-action {
-    @apply inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
+    @apply inline-flex min-h-11 cursor-pointer items-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
   }
 
   /* One toast surface, centered at the region's bottom stack; text stays
@@ -205,7 +214,7 @@
   }
 
   .board-menu-item {
-    @apply flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus sm:min-h-9;
+    @apply flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left text-[13px] font-medium text-text transition-colors hover:bg-surface-subtle active:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus sm:min-h-9;
   }
 }
 
@@ -266,7 +275,7 @@
     min-height: 48px;
     margin: max(0.5rem, env(safe-area-inset-top, 0px)) 0.75rem 0.25rem;
     padding-inline: 0.25rem;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
   }
 
   /* The pill carries the Board's identity; the bare title row only reappears as the rename form. */
@@ -408,7 +417,7 @@
     min-height: 52px;
     margin-block-start: 12px;
     padding-inline: 8px;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
   }
 
   .board-masthead-toolbar {
@@ -828,7 +837,7 @@
 
 .board-modal-field {
   border: 1px solid color-mix(in srgb, var(--retrocks-border) 85%, transparent);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   background: var(--retrocks-canvas);
   color: var(--retrocks-text);
 }
@@ -863,7 +872,7 @@
   width: 100%;
   max-height: 85dvh;
   border-width: 1px 0 0;
-  border-radius: 1rem 1rem 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .board-drawer-panel[data-side='right'] {
@@ -977,7 +986,7 @@
     left: min(65%, 19rem);
     width: 0.32rem;
     height: 0.32rem;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--dot-accent) 55%, var(--retrocks-surface));
     animation: secret-search-burst 550ms ease-out both;
   }

@@ -21,7 +21,7 @@ import LucideIcon from './LucideIcon';
 const MUTE_STORAGE_KEY = TIMER_MUTE_STORAGE_KEY;
 const presets = [3, 5, 10, 15];
 const controlClass =
-  'spring-press board-touch-target cursor-pointer rounded-lg border border-border/80 bg-surface px-2.5 text-xs font-medium text-text hover:bg-surface-subtle board-focus-ring disabled:cursor-not-allowed disabled:opacity-50';
+  'spring-press board-touch-target cursor-pointer rounded-md border border-border/80 bg-surface px-2.5 text-xs font-medium text-text hover:bg-surface-subtle board-focus-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 function formatCountdown(remainingMs: number): string {
   const totalSeconds = Math.ceil(remainingMs / 1_000);
@@ -309,7 +309,7 @@ export default function CountdownTimer(props: {
           initialFocus="content"
           finalFocus="trigger"
           data-board-overlay="true"
-          class="board-popover max-h-[calc(100dvh-4rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl p-4 text-text focus:outline-none"
+          class="board-popover max-h-[calc(100dvh-4rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg p-4 text-text focus:outline-none"
         >
           <div class="flex items-center justify-between gap-2">
             <PopoverTitle class="text-sm font-semibold tracking-tight text-text">
@@ -340,18 +340,18 @@ export default function CountdownTimer(props: {
                 onValueChange={(next) => {
                   if (next) setMinutesDraft(Number(next));
                 }}
-                class="segmented-track relative isolate grid grid-cols-4 gap-1 rounded-xl border border-border/75 p-1"
+                class="segmented-track relative isolate grid grid-cols-4 gap-1 rounded-md border border-border/75 p-1"
               >
                 <SegmentedControlIndicator
                   aria-hidden="true"
-                  class="segmented-thumb pointer-events-none rounded-lg"
+                  class="segmented-thumb pointer-events-none rounded-sm"
                 />
                 <For each={presets}>
                   {(minutes) => (
                     <SegmentedControlItem
                       value={String(minutes)}
                       class={[
-                        'spring-press board-touch-target min-w-11 cursor-pointer rounded-lg text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-w-0',
+                        'spring-press board-touch-target min-w-11 cursor-pointer rounded-sm text-xs font-medium text-text-muted tabular-nums transition-colors sm:min-w-0',
                         'hover:text-text board-focus-ring data-checked:font-semibold data-checked:text-text',
                       ]}
                     >
@@ -374,13 +374,13 @@ export default function CountdownTimer(props: {
                       ref={durationInput}
                       id={durationId}
                       required
-                      class="mt-1 min-h-11 w-full rounded-lg border border-border/85 bg-canvas px-2.5 text-sm tabular-nums board-focus-ring sm:min-h-9"
+                      class="mt-1 min-h-11 w-full rounded-md border border-border/85 bg-canvas px-2.5 text-sm tabular-nums board-focus-ring sm:min-h-9"
                     />
                   </NumberInput>
                 </div>
                 <button
                   type="submit"
-                  class="spring-press min-h-11 cursor-pointer rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-contrast hover:opacity-92 board-focus-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
+                  class="spring-press min-h-11 cursor-pointer rounded-md bg-accent px-3.5 text-xs font-semibold text-accent-contrast hover:opacity-92 board-focus-ring disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                   disabled={pending() || !validMinutes()}
                 >
                   {hasTimeLeft() ? 'Restart' : 'Start'}

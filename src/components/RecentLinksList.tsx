@@ -22,7 +22,7 @@ export default function RecentLinksList(props: {
     <Show when={entries().length > 0}>
       <section
         aria-labelledby={headingId}
-        class="min-w-0 rounded-2xl border border-border/80 bg-surface/85 p-4 sm:p-5"
+        class="min-w-0 rounded-lg border border-border/80 bg-surface/85 p-4 sm:p-5"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
@@ -52,7 +52,7 @@ export default function RecentLinksList(props: {
                   aria-labelledby={`${headingId}-title-${entry().id}`}
                   aria-describedby={`${headingId}-details-${entry().id}`}
                   class={[
-                    'spring-press group flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-xl px-2.5 py-2 [overflow-wrap:anywhere]',
+                    'spring-press group flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-2.5 py-2 [overflow-wrap:anywhere]',
                     'hover:bg-surface-subtle/80 active:bg-surface-subtle',
                     'board-focus-ring',
                   ]}
@@ -87,7 +87,7 @@ export default function RecentLinksList(props: {
                   onClick={() => setEntries(props.remove(entry().id))}
                   aria-label={`Remove ${entry().title} from ${props.heading}`}
                   class={[
-                    'spring-press min-h-10 min-w-10 shrink-0 cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-muted',
+                    'spring-press min-h-10 min-w-10 shrink-0 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium text-text-muted',
                     'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
                     'board-focus-ring',
                   ]}

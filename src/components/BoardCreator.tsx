@@ -59,8 +59,8 @@ export interface BoardCreatorProps {
 }
 
 const focusClass = 'board-focus-ring';
-const inputClass = `h-11 w-full rounded-xl border border-control/75 bg-surface px-3.5 text-base text-text placeholder:text-text-muted/80 transition-colors hover:border-control ${focusClass}`;
-const compactInputClass = `h-10 w-full rounded-lg border border-border bg-canvas/55 px-3 text-sm font-medium text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:bg-surface ${focusClass}`;
+const inputClass = `h-11 w-full rounded-md border border-control/75 bg-surface px-3.5 text-base text-text placeholder:text-text-muted/80 transition-colors hover:border-control ${focusClass}`;
+const compactInputClass = `h-10 w-full rounded-md border border-border bg-canvas/55 px-3 text-sm font-medium text-text placeholder:text-text-muted/80 transition-colors hover:border-control focus-visible:bg-surface ${focusClass}`;
 const columnCommandClass = `spring-press inline-flex size-10 cursor-pointer items-center justify-center bg-surface text-text-muted hover:bg-surface-subtle hover:text-text active:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-35 ${focusClass}`;
 
 function HiddenTemplateSuggestion(props: {
@@ -69,7 +69,7 @@ function HiddenTemplateSuggestion(props: {
   onDismiss: () => void;
 }) {
   return (
-    <div class="disclosure-reveal flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/30 bg-surface px-3 py-2 text-sm text-text-muted">
+    <div class="disclosure-reveal flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/30 bg-surface px-3 py-2 text-sm text-text-muted">
       <span class="inline-flex min-w-0 items-center gap-2">
         <LucideIcon icon={Sparkles} class="size-4 shrink-0 text-accent" strokeWidth={1.85} />
         <span class="truncate font-medium text-text">Try {props.name}</span>
@@ -77,14 +77,14 @@ function HiddenTemplateSuggestion(props: {
       <div class="flex items-center gap-1">
         <button
           type="button"
-          class={`spring-press min-h-9 cursor-pointer rounded-lg bg-surface-subtle px-2.5 py-1 text-xs font-semibold text-text hover:bg-border/45 ${focusClass}`}
+          class={`spring-press min-h-9 cursor-pointer rounded-md bg-surface-subtle px-2.5 py-1 text-xs font-semibold text-text hover:bg-border/45 ${focusClass}`}
           onClick={() => props.onApply()}
         >
           Apply
         </button>
         <button
           type="button"
-          class={`spring-press min-h-9 cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text ${focusClass}`}
+          class={`spring-press min-h-9 cursor-pointer rounded-md px-2 py-1 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text ${focusClass}`}
           onClick={() => props.onDismiss()}
         >
           Dismiss
@@ -141,7 +141,7 @@ function DisclosureButton(props: {
         ref={props.buttonRef}
         aria-labelledby={`${props.panelId}-label`}
         aria-describedby={`${props.panelId}-summary`}
-        class={`spring-press group flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-xl px-1 py-2 text-left transition-colors hover:text-text ${focusClass}`}
+        class={`spring-press group flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-md px-1 py-2 text-left transition-colors hover:text-text ${focusClass}`}
       >
         <span class="inline-flex min-w-0 items-center gap-2.5">
           <LucideIcon icon={props.icon} class="size-4 text-text-muted transition-colors group-hover:text-text" strokeWidth={1.8} />
@@ -211,20 +211,20 @@ function SegmentedField<T>(props: {
           if (option) props.onChange(option.value);
         }}
         class={[
-          'segmented-track relative isolate mt-2 grid rounded-xl border border-border/75 p-1',
+          'segmented-track relative isolate mt-2 grid rounded-md border border-border/75 p-1',
           gridColsClass(),
         ]}
       >
         <SegmentedControlIndicator
           aria-hidden="true"
-          class="segmented-thumb pointer-events-none rounded-lg"
+          class="segmented-thumb pointer-events-none rounded-sm"
         />
         <For each={props.options}>
           {(option) => (
             <SegmentedControlItem
               value={option.key}
               class={[
-                'relative z-10 min-h-10 cursor-pointer rounded-lg px-2 py-1.5 text-center text-xs font-medium leading-snug transition-colors sm:text-[13px]',
+                'relative z-10 min-h-10 cursor-pointer rounded-sm px-2 py-1.5 text-center text-xs font-medium leading-snug transition-colors sm:text-[13px]',
                 focusClass,
                 'text-text-muted hover:text-text data-checked:font-semibold data-checked:text-text',
               ]}
@@ -272,7 +272,7 @@ function BoardPreview(props: {
     <aside
       aria-label="Board preview"
       data-preview-private={props.isBlurred ? 'true' : 'false'}
-      class="home-preview-frame overflow-hidden rounded-2xl border border-border bg-surface"
+      class="home-preview-frame overflow-hidden rounded-lg border border-border bg-surface"
     >
       <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-border/75 px-4 py-3.5 sm:px-5 sm:py-4">
         <div class="min-w-[12rem] flex-1">
@@ -302,7 +302,7 @@ function BoardPreview(props: {
         <div class={['grid gap-2.5 sm:gap-3', columnGridClass()]}>
           <For each={props.columns}>
             {(column, index) => (
-              <div class="preview-column-item flex min-w-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-surface">
+              <div class="preview-column-item flex min-w-0 flex-col overflow-hidden rounded-md border border-border/80 bg-surface">
                 <div
                   aria-hidden="true"
                   class={['h-1 w-full transition-colors duration-200', COLUMN_ACCENT_STYLES[column.accent].bar]}
@@ -327,7 +327,7 @@ function BoardPreview(props: {
                 </div>
 
                 <div aria-hidden="true" class="space-y-2 p-2.5">
-                  <div class="preview-card-ghost rounded-lg border border-border/55 bg-canvas/85 p-2">
+                  <div class="preview-card-ghost rounded-sm border border-border/55 bg-canvas/85 p-2">
                     <div
                       class={[
                         'h-2 rounded-full bg-border/75',
@@ -342,7 +342,7 @@ function BoardPreview(props: {
                     />
                   </div>
                   <Show when={props.columns.length <= 4}>
-                    <div class="preview-card-ghost rounded-lg border border-border/55 bg-canvas/85 p-2">
+                    <div class="preview-card-ghost rounded-sm border border-border/55 bg-canvas/85 p-2">
                       <div
                         class={[
                           'h-2 rounded-full bg-border/70',
@@ -646,11 +646,11 @@ export default function BoardCreator(props: BoardCreatorProps) {
         <div class="mt-5">
           <span class="block text-sm font-medium text-text">Template</span>
           <Collapsible open={templatesOpen()} onOpenChange={setTemplatesOpen}>
-            <div class="mt-2 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5">
+            <div class="mt-2 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3.5 py-2.5">
               <div class="flex min-w-0 items-center gap-3">
                 <span
                   aria-hidden="true"
-                  class="inline-flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface-subtle text-text-muted"
+                  class="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-surface-subtle text-text-muted"
                 >
                   <LucideIcon icon={LayoutGrid} class="size-4" strokeWidth={1.8} />
                 </span>
@@ -667,7 +667,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                 ref={(element) => { templateToggle = element; }}
                 aria-label="Change template"
                 class={[
-                  'spring-press inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border/80 bg-surface-subtle/60 px-3 py-1.5 text-xs font-medium text-text',
+                  'spring-press inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border/80 bg-surface-subtle/60 px-3 py-1.5 text-xs font-medium text-text',
                   'hover:border-control/70 hover:bg-surface-subtle active:bg-surface-subtle aria-expanded:border-accent/50 aria-expanded:bg-surface-subtle',
                   focusClass,
                 ]}
@@ -691,7 +691,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                     aria-describedby={`template-${template.id}-columns`}
                     onClick={() => handleSelectTemplate(template.id)}
                     class={[
-                      'spring-press flex min-h-11 min-w-0 cursor-pointer flex-col items-start justify-start gap-2 rounded-xl border p-3 text-left',
+                      'spring-press flex min-h-11 min-w-0 cursor-pointer flex-col items-start justify-start gap-2 rounded-lg border p-3 text-left',
                       focusClass,
                       template.id === 'custom' ? 'sm:col-span-2 border-dashed' : '',
                       templateId() === template.id
@@ -718,7 +718,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
           {(msg) => (
             <p
               role="alert"
-              class="disclosure-reveal mt-4 rounded-xl border border-col-rose bg-col-rose-tint px-3.5 py-2.5 text-sm text-text"
+              class="disclosure-reveal mt-4 rounded-md border border-col-rose bg-col-rose-tint px-3.5 py-2.5 text-sm text-text"
             >
               {msg()}
             </p>
@@ -729,7 +729,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
           type="submit"
           disabled={submitting()}
           class={[
-            'spring-press mt-5 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl bg-accent px-5 py-2.5 text-base font-semibold text-accent-contrast',
+            'spring-press mt-5 inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-md bg-accent px-5 py-2.5 text-base font-semibold text-accent-contrast',
             'hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-60',
             focusClass,
           ]}
@@ -783,7 +783,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                     type="button"
                     disabled={columns.length >= 10}
                     onClick={handleAddColumn}
-                    class={`spring-press inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text hover:border-control hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`}
+                    class={`spring-press inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text hover:border-control hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`}
                   >
                     <LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} />
                     <span>Add Column</span>
@@ -805,7 +805,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                           setDragIndex(null);
                         }}
                         onDragEnd={() => setDragIndex(null)}
-                        class="space-y-2.5 rounded-xl border border-border bg-surface p-3"
+                        class="space-y-2.5 rounded-lg border border-border bg-surface p-3"
                       >
                         <div class="flex items-center gap-2">
                           <LucideIcon
@@ -827,7 +827,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                             }
                             class={`min-w-0 flex-1 ${compactInputClass}`}
                           />
-                          <div class="inline-flex shrink-0 divide-x divide-border overflow-hidden rounded-lg border border-border bg-surface">
+                          <div class="inline-flex shrink-0 divide-x divide-border overflow-hidden rounded-md border border-border bg-surface">
                             <button
                               type="button"
                               disabled={index() === 0}
@@ -872,7 +872,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                                   aria-label={`${COLUMN_ACCENT_STYLES[accent].label} accent`}
                                   aria-pressed={col.accent === accent ? 'true' : 'false'}
                                   class={[
-                                    'spring-press inline-grid size-8 cursor-pointer place-items-center rounded-lg border border-transparent hover:bg-surface-subtle',
+                                    'spring-press inline-grid size-8 cursor-pointer place-items-center rounded-sm border border-transparent hover:bg-surface-subtle',
                                     focusClass,
                                     { 'border-border bg-surface-subtle': col.accent === accent },
                                   ]}
@@ -896,7 +896,7 @@ export default function BoardCreator(props: BoardCreatorProps) {
                             onClick={() => handleToggleActionColumn(index())}
                             title="Auto-flag new Cards in this Column as Action Items"
                             class={[
-                              'spring-press inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium',
+                              'spring-press inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium',
                               focusClass,
                               col.isActionColumn
                                 ? 'border-col-sky/60 bg-col-sky-tint text-text'

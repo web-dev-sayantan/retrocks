@@ -26,7 +26,7 @@ export default function CardText(props: CardTextProps) {
               <br />
             </Match>
             <Match when={token.type === 'code'}>
-              <code class="rounded bg-surface-subtle px-1 py-0.5 font-mono text-[0.85em] text-text">
+              <code class="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[0.85em] text-text">
                 {token.type === 'code' ? token.value : ''}
               </code>
             </Match>
@@ -38,7 +38,7 @@ export default function CardText(props: CardTextProps) {
                 class={[
                   'break-all text-text underline decoration-text-muted/60 underline-offset-2',
                   'transition-colors hover:decoration-text',
-                  'focus-visible:rounded-xs board-focus-ring',
+                  'focus-visible:rounded-sm board-focus-ring',
                 ]}
               >
                 {token.type === 'link' ? token.label : ''}

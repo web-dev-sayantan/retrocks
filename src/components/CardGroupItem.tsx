@@ -56,7 +56,7 @@ export interface CardGroupItemProps {
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }
 
-const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text active:bg-surface board-focus-ring disabled:opacity-50 sm:size-7';
+const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text active:bg-surface board-focus-ring disabled:opacity-50 sm:size-7';
 const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibold text-ellipsis text-text';
 
 export default function CardGroupItem(props: CardGroupItemProps) {
@@ -159,7 +159,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
           )}
           data-group-id={props.group.id}
           class={[
-            'relative min-w-0 rounded-xl border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
+            'relative min-w-0 rounded-lg border border-border/80 bg-surface-subtle/50 p-1.5 transition-shadow',
             'data-drop-active:ring-2 data-drop-active:ring-focus/70',
           ]}
         />
@@ -218,7 +218,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                   aria-label="Save Card Group title"
                   disabled={titleSave.isSaving() || !hasTitleText()}
                   onClick={() => groupEdit.end()}
-                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-accent text-accent-contrast hover:opacity-90 board-focus-ring disabled:opacity-50 sm:size-7"
+                  class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 board-focus-ring disabled:opacity-50 sm:size-7"
                 >
                   <LucideIcon icon={Check} />
                 </button>
@@ -294,14 +294,14 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                     </MenuTrigger>
                     <BoardMenuContent
                       aria-label="Move Card Group to Column"
-                      class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                      class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                     >
                       <For each={otherColumns()}>
                         {(targetColumn) => (
                           <MenuItem
                             value={targetColumn.id}
                             onSelect={() => { void handleSelectMoveTarget(targetColumn.id); }}
-                            class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus sm:min-h-8"
+                            class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus sm:min-h-8"
                           >
                             <span
                               aria-hidden="true"

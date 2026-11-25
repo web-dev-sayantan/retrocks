@@ -289,7 +289,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                       const ok = await updateAction({ isActionItem: checkbox.checked });
                       if (!ok && checkbox.isConnected) checkbox.checked = props.card.isActionItem;
                     }}
-                    class="h-4 w-4 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    class="h-4 w-4 cursor-pointer rounded-sm border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   {props.card.isActionItem
                     ? 'Action Item'
@@ -308,7 +308,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                       const ok = await updateAction({ actionDone: checkbox.checked });
                       if (!ok && checkbox.isConnected) checkbox.checked = props.card.actionDone;
                     }}
-                    class="h-4 w-4 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    class="h-4 w-4 cursor-pointer rounded-sm border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   Done
                 </label>
@@ -354,7 +354,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     }}
                     onFocusOut={(event) => ownerEdit.end('focus-out', event)}
                     class={[
-                      'mt-1 min-h-11 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text sm:min-h-9',
+                      'mt-1 min-h-11 w-full rounded-md border border-border bg-surface px-3 py-2 text-base text-text sm:min-h-9',
                       'placeholder:text-text-muted board-focus-ring disabled:opacity-50',
                     ]}
                   />
@@ -466,7 +466,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   onInput={(e) => setCommentDraft(e.currentTarget.value)}
                   onKeyDown={handleComposerKeyDown}
                   class={[
-                    'w-full resize-none rounded-lg border border-border bg-canvas px-3 py-2 text-base text-text',
+                    'w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-base text-text',
                     'placeholder:text-text-muted board-focus-ring',
                   ]}
                 />
@@ -483,7 +483,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                       isPosting() || commentDraft().trim().length === 0
                     }
                     class={[
-                      'min-h-11 rounded-lg bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-8',
+                      'min-h-11 rounded-md bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-8',
                       'cursor-pointer transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
                       'board-focus-ring',
                     ]}

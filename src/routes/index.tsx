@@ -12,10 +12,10 @@ import { pokerSetupPath } from '../lib/poker-routes';
 import { retroSetupPath } from '../lib/routes';
 
 const setupLinkClass =
-  'spring-press board-focus-ring inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-accent px-6 py-2.5 text-[15px] leading-none font-semibold text-accent-contrast hover:opacity-92 sm:w-fit sm:min-w-48';
+  'spring-press board-focus-ring inline-flex min-h-11 w-full items-center justify-center rounded-md bg-accent px-6 py-2.5 text-[15px] leading-none font-semibold text-accent-contrast hover:opacity-92 sm:w-fit sm:min-w-48';
 
 const tabClass = [
-  'home-tool-tab board-focus-ring relative z-10 inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[14px] leading-none font-semibold tracking-[-0.015em] whitespace-nowrap text-text-muted transition-colors hover:text-text data-selected:text-text min-[375px]:text-[15px] sm:min-h-[3.25rem] sm:gap-2.5 sm:px-7 sm:text-base',
+  'home-tool-tab board-focus-ring relative z-10 inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-md px-3 py-2.5 text-[14px] leading-none font-semibold tracking-[-0.015em] whitespace-nowrap text-text-muted transition-colors hover:text-text data-selected:text-text min-[375px]:text-[15px] sm:min-h-[3.25rem] sm:gap-2.5 sm:px-7 sm:text-base',
 ];
 
 export default function Home() {
@@ -31,9 +31,9 @@ export default function Home() {
         <div class="flex justify-center">
           <TabsList
             aria-label="Retrocks tools"
-            class="home-tabs-track relative grid w-full max-w-lg grid-cols-2 rounded-2xl p-1.5"
+            class="home-tabs-track relative grid w-full max-w-lg grid-cols-2 rounded-lg p-1.5"
           >
-            <TabsIndicator class="home-tabs-indicator rounded-xl" />
+            <TabsIndicator class="home-tabs-indicator rounded-md" />
 
             <TabsTab value="retro" class={tabClass}>
               <TabsTabIcon class="home-tool-tab-icon inline-flex shrink-0">

@@ -825,7 +825,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                               setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
                             }
                             class={[
-                              'h-11 min-w-0 flex-1 rounded-full border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
+                              'h-11 min-w-0 flex-1 rounded-md border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
                               'board-focus-ring',
                             ]}
                           />
@@ -836,7 +836,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                         aria-label="Save Board title"
                         disabled={boardTitleSave.isSaving() || !hasBoardTitleText()}
                         onClick={() => boardTitleEdit.end()}
-                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
+                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
                       >
                         <LucideIcon icon={Check} class="size-4" strokeWidth={2} />
                       </button>
@@ -844,7 +844,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                         type="button"
                         aria-label="Cancel Board rename"
                         onClick={cancelBoardRename}
-                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/80 bg-surface text-text-muted hover:bg-surface-subtle hover:text-text sm:size-9"
+                        class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/80 bg-surface text-text-muted hover:bg-surface-subtle hover:text-text sm:size-9"
                       >
                         <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
                       </button>
@@ -993,7 +993,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                         sideOffset={8}
                         finalFocus={isRenamingBoard() ? 'none' : undefined}
                         aria-label="More board actions"
-                        class="board-popover max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl p-1.5"
+                        class="board-popover max-h-[min(60dvh,28rem)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-md p-1"
                       >
                         <MenuItem
                           value="toggle-theme"
@@ -1162,13 +1162,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                 role="alert"
                 class="mx-auto mt-3 flex w-full max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6"
               >
-                <div class="flex flex-1 items-center justify-between gap-3 rounded-lg border border-col-rose/40 bg-col-rose-tint px-3.5 py-2 text-xs font-medium text-text">
+                <div class="flex flex-1 items-center justify-between gap-3 rounded-md border border-col-rose/40 bg-col-rose-tint px-3.5 py-2 text-xs font-medium text-text">
                   <span>{message()}</span>
                   <button
                     type="button"
                     aria-label="Dismiss error"
                     onClick={() => controller.clearError()}
-                    class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-md text-text-muted hover:text-text"
+                    class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-sm text-text-muted hover:text-text"
                   >
                     <CloseIcon />
                   </button>
@@ -1187,7 +1187,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             class="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-5 sm:px-6 sm:py-6"
           >
             <Show when={secretSearch()}>
-              <div class="relative mb-4 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
+              <div class="relative mb-4 rounded-lg border border-dashed border-border bg-surface px-4 py-3 text-sm text-text-muted">
                 <p class="flex items-center gap-2">
                   {secretSearch()?.message}
                   <Show when={secretSearch()?.id === 'rock'}>
@@ -1319,7 +1319,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     data-print-hide="true"
                     onClick={openAddColumn}
                     class={[
-                      'spring-press hidden w-fit shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-2xl border border-dashed border-border/85 bg-surface-subtle/25 px-3.5 py-2.5 text-[13px] font-medium text-text-muted',
+                      'spring-press hidden w-fit shrink-0 cursor-pointer items-center gap-1.5 self-start rounded-lg border border-dashed border-border/85 bg-surface-subtle/25 px-3.5 py-2.5 text-[13px] font-medium text-text-muted',
                       'transition-colors hover:border-control/80 hover:bg-surface hover:text-text active:bg-surface-subtle sm:inline-flex sm:min-h-11',
                       'board-focus-ring',
                       getAddColumnSlotClass(board().columns.length),
@@ -1345,7 +1345,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
               data-board-overlay="true"
               data-print-hide="true"
               initialFocus={() => newColumnTitleEl ?? null}
-              class="board-dialog-surface z-50 w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
+              class="board-dialog-surface z-50 w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-border bg-surface text-text shadow-2xl"
             >
               <div
                 aria-hidden="true"
@@ -1369,7 +1369,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                 </div>
                 <DialogClose
                   aria-label="Close Add Column"
-                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface/80 hover:text-text board-focus-ring sm:min-h-8 sm:min-w-8"
+                  class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface/80 hover:text-text board-focus-ring sm:min-h-8 sm:min-w-8"
                 >
                   <LucideIcon icon={X} class="size-4" strokeWidth={2} />
                 </DialogClose>
@@ -1392,7 +1392,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     value={newColumnTitle()}
                     maxlength={MAX_COLUMN_TITLE_LENGTH}
                     onInput={(e) => setNewColumnTitle(e.currentTarget.value)}
-                    class="mt-1.5 min-h-11 w-full rounded-xl border border-border/85 bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted board-focus-ring sm:min-h-10"
+                    class="mt-1.5 min-h-11 w-full rounded-md border border-border/85 bg-canvas px-3 py-2 text-sm text-text placeholder:text-text-muted board-focus-ring sm:min-h-10"
                   />
                 </div>
 
@@ -1412,7 +1412,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                         <Radio
                           value={accent}
                           aria-label={`New column accent ${COLUMN_ACCENT_STYLES[accent].label}`}
-                          class="spring-press inline-flex board-touch-target cursor-pointer items-center justify-center rounded-lg border border-transparent transition-colors hover:bg-surface-subtle data-checked:border-border data-checked:bg-surface-subtle board-focus-ring"
+                          class="spring-press inline-flex board-touch-target cursor-pointer items-center justify-center rounded-sm border border-transparent transition-colors hover:bg-surface-subtle data-checked:border-border data-checked:bg-surface-subtle board-focus-ring"
                         >
                           <span
                             aria-hidden="true"
@@ -1435,7 +1435,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     onChange={(e) =>
                       setNewColumnIsAction(e.currentTarget.checked)
                     }
-                    class="size-4 rounded border-border accent-accent"
+                    class="size-4 rounded-sm border-border accent-accent"
                   />
                   <span>Action Items column</span>
                 </label>
@@ -1444,7 +1444,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                   <button
                     type="button"
                     onClick={() => setIsAddingColumn(false)}
-                    class="spring-press board-touch-target cursor-pointer rounded-xl border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text"
+                    class="spring-press board-touch-target cursor-pointer rounded-md border border-border bg-surface px-3.5 py-2 text-xs font-medium text-text-muted hover:bg-surface-subtle hover:text-text"
                   >
                     Cancel
                   </button>
@@ -1453,7 +1453,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     disabled={
                       controller.isSavingColumn() || newColumnTitle().trim().length === 0
                     }
-                    class="spring-press board-touch-target cursor-pointer rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="spring-press board-touch-target cursor-pointer rounded-md bg-accent px-4 py-2 text-xs font-semibold text-accent-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {controller.isSavingColumn() ? 'Adding…' : 'Add column'}
                   </button>
@@ -1533,7 +1533,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     onValueChange={(value) => updateMobileDraft(targetCol().id, value)}
                     onKeyDown={handleMobileComposerKeyDown}
                     class={[
-                      'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-xl border border-control bg-canvas px-3 py-2.25 text-base leading-6 text-text',
+                      'min-h-11 max-h-32 min-w-0 flex-1 resize-none rounded-md border border-control bg-canvas px-3 py-2.25 text-base leading-6 text-text',
                       'placeholder:text-text-muted board-focus-ring',
                     ]}
                   />
@@ -1545,7 +1545,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     }
                     onClick={() => void handleMobileQuickAdd()}
                     class={[
-                      'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent px-4 text-xs font-medium text-accent-contrast',
+                      'inline-flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent px-4 text-xs font-medium text-accent-contrast',
                       'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
                       'board-focus-ring',
                     ]}

@@ -30,7 +30,7 @@ export default function RoomNameForm(props: ParentProps<{
         ref={heading}
         id={headingId}
         tabindex={props.focusHeading ? -1 : undefined}
-        class="poker-entry-title board-focus-ring rounded"
+        class="poker-entry-title board-focus-ring rounded-sm"
       >
         {props.heading}
       </h1>

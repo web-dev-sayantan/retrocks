@@ -71,7 +71,7 @@ export interface CardItemProps {
   onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }
 
-const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
+const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
 const PLACEHOLDER_LINES_1 = ['w-3/4'] as const;
 const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
 const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
@@ -342,8 +342,8 @@ export default function CardItem(props: CardItemProps) {
       tabindex={canDrag() ? 0 : undefined}
       aria-roledescription={canDrag() ? 'draggable' : undefined}
       class={[
-        'relative min-w-0 rounded-xl border bg-surface p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70 sm:p-3.5',
-        props.card.groupId === null ? 'border-border/80' : 'border-border/60',
+        'relative min-w-0 border bg-surface p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:border-control/70 sm:p-3.5',
+        props.card.groupId === null ? 'rounded-lg border-border/80' : 'rounded-md border-border/60',
         {
           'cursor-grab active:cursor-grabbing':
             canDrag(),
@@ -367,7 +367,7 @@ export default function CardItem(props: CardItemProps) {
                 {(widthClass) => (
                   <div
                     class={[
-                      'h-3 rounded bg-border/80 blur-[2px]',
+                      'h-3 rounded-sm bg-border/80 blur-[2px]',
                       widthClass,
                     ]}
                   />
@@ -462,7 +462,7 @@ export default function CardItem(props: CardItemProps) {
           </div>
 
           <Show when={props.card.isActionItem}>
-            <div class="mt-2.5 flex items-center justify-between gap-2 rounded-lg bg-surface-subtle/65 px-2.5 py-1.5">
+            <div class="mt-2.5 flex items-center justify-between gap-2 rounded-sm bg-surface-subtle/65 px-2.5 py-1.5">
               <label class="inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-2 sm:min-h-6">
                 <input
                   type="checkbox"
@@ -475,7 +475,7 @@ export default function CardItem(props: CardItemProps) {
                       checkbox.checked = props.card.actionDone;
                     }
                   }}
-                  class="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  class="h-4 w-4 shrink-0 cursor-pointer rounded-sm border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <span class="text-xs font-medium text-text-muted">
                   {actionDone() ? 'Done' : 'Open'}
@@ -539,7 +539,7 @@ export default function CardItem(props: CardItemProps) {
                 title="Open Card details"
                 onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
                 class={[
-                  'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
+                  'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
                   'board-focus-ring',
                 ]}
@@ -557,14 +557,14 @@ export default function CardItem(props: CardItemProps) {
                     ref={menuTrigger}
                     aria-label="Card actions"
                     title="Card actions"
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" />
                   </MenuTrigger>
                   <BoardMenuContent
                     aria-label="Card actions"
                     finalFocus={isEditing() ? 'none' : undefined}
-                    class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                    class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                   >
                     <Show when={canManage()}>
                       <MenuItem value="edit" class={menuItemClass} onSelect={startEdit}>
@@ -579,7 +579,7 @@ export default function CardItem(props: CardItemProps) {
                         </MenuSubTrigger>
                         <BoardMenuContent
                           aria-label="Move Card to Column"
-                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                         >
                           <For each={otherColumns()}>
                             {(target) => (
@@ -600,7 +600,7 @@ export default function CardItem(props: CardItemProps) {
                         </MenuSubTrigger>
                         <BoardMenuContent
                           aria-label="Group Card with"
-                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                          class="board-popover max-h-[min(50dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                         >
                           <For each={groupTargets().cards}>
                             {(target) => (

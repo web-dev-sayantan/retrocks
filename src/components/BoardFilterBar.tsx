@@ -114,7 +114,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                 onInput={(event) => props.onQueryChange(event.currentTarget.value)}
                 onKeyDown={handleSearchKeyDown}
                 class={[
-                  'h-11 w-full rounded-xl border border-border/85 bg-surface py-1.5 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 sm:h-9 sm:pr-9 sm:text-[13px]',
+                  'h-11 w-full rounded-md border border-border/85 bg-surface py-1.5 pl-9 text-base text-text placeholder:text-text-muted/75 transition-colors hover:border-control/75 sm:h-9 sm:pr-9 sm:text-[13px]',
                   props.query.length > 0 ? 'pr-11' : 'pr-2',
                   focusRingClass,
                   '[&::-webkit-search-cancel-button]:appearance-none',
@@ -125,7 +125,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                 fallback={
                   <kbd
                     aria-hidden="true"
-                    class="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 items-center justify-center rounded-md border border-border/80 bg-surface-subtle/80 px-1.5 py-0.5 font-mono text-[11px] font-medium leading-none text-text-muted sm:inline-flex"
+                    class="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 items-center justify-center rounded-sm border border-border/80 bg-surface-subtle/80 px-1.5 py-0.5 font-mono text-[11px] font-medium leading-none text-text-muted sm:inline-flex"
                   >
                     /
                   </kbd>
@@ -139,7 +139,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                     searchInput?.focus();
                   }}
                   class={[
-                    'spring-press absolute top-1/2 right-px inline-flex min-h-11 min-w-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle sm:right-1 sm:min-h-7 sm:min-w-7',
+                    'spring-press absolute top-1/2 right-px inline-flex min-h-11 min-w-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-subtle hover:text-text active:bg-surface-subtle sm:right-1 sm:min-h-7 sm:min-w-7',
                     focusRingClass,
                   ]}
                 >
@@ -155,7 +155,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
             aria-controls={`${filterControlsId} ${filterStatusId}`}
             onClick={() => setShowFilters((open) => !open)}
             class={[
-              'spring-press relative inline-flex h-11 w-36 max-w-full shrink-0 cursor-pointer items-center justify-between gap-1.5 rounded-xl border border-border/85 bg-surface px-3 text-left text-sm font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle max-[25rem]:w-11 max-[25rem]:justify-center max-[25rem]:px-0 sm:hidden',
+              'spring-press relative inline-flex h-11 w-36 max-w-full shrink-0 cursor-pointer items-center justify-between gap-1.5 rounded-md border border-border/85 bg-surface px-3 text-left text-sm font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle max-[25rem]:w-11 max-[25rem]:justify-center max-[25rem]:px-0 sm:hidden',
               focusRingClass,
             ]}
           >
@@ -201,11 +201,11 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
               onValueChange={(next) => {
                 if (next) props.onFilterChange(next);
               }}
-              class="segmented-track relative isolate grid w-full grid-cols-4 items-center rounded-xl border border-border/75 p-1 sm:h-9 sm:w-auto"
+              class="segmented-track relative isolate grid w-full grid-cols-4 items-center rounded-md border border-border/75 p-1 sm:h-9 sm:w-auto"
             >
               <SegmentedControlIndicator
                 aria-hidden="true"
-                class="segmented-thumb pointer-events-none rounded-lg"
+                class="segmented-thumb pointer-events-none rounded-sm"
               />
               <For each={BOARD_QUICK_FILTERS}>
                 {(option) => (
@@ -213,7 +213,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                     value={option.value}
                     data-label={option.label}
                     class={[
-                      'spring-press relative z-10 inline-flex board-touch-target cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-lg px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-checked:font-semibold data-checked:text-text max-[25rem]:px-0.5 sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
+                      'spring-press relative z-10 inline-flex board-touch-target cursor-pointer flex-col items-center justify-center whitespace-nowrap rounded-sm px-2 text-xs font-medium leading-none text-text-muted transition-colors after:block after:h-0 after:overflow-hidden after:invisible after:select-none after:font-semibold after:content-[attr(data-label)] hover:text-text data-checked:font-semibold data-checked:text-text max-[25rem]:px-0.5 sm:h-full sm:min-h-0 sm:px-2 sm:text-[13px] xl:px-2.5',
                       focusRingClass,
                     ]}
                   >
@@ -234,7 +234,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                 <SelectTrigger
                   aria-label="Sort cards"
                   class={[
-                    'relative inline-flex h-11 w-full cursor-pointer items-center gap-2 rounded-xl border border-border/85 bg-surface pl-9 pr-2.5 text-base font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle/50 sm:h-9 sm:w-auto sm:text-[13px]',
+                    'relative inline-flex h-11 w-full cursor-pointer items-center gap-2 rounded-md border border-border/85 bg-surface pl-9 pr-2.5 text-base font-medium text-text transition-colors hover:border-control/75 hover:bg-surface-subtle/50 sm:h-9 sm:w-auto sm:text-[13px]',
                     focusRingClass,
                   ]}
                 >
@@ -256,14 +256,14 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                   sideOffset={6}
                   collisionPadding={8}
                   data-board-overlay="true"
-                  class="board-popover z-40 max-h-64 w-44 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                  class="board-popover z-40 max-h-64 w-44 overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                 >
                   <For each={BOARD_SORT_OPTIONS}>
                     {(option) => (
                       <SelectItem
                         value={option.value}
                         disabled={option.value === 'most-voted' && props.blindVoting}
-                        class="flex min-h-11 w-full cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8"
+                        class="flex min-h-11 w-full cursor-pointer items-center rounded-sm px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8"
                       >
                         {option.value === 'most-voted' && props.blindVoting
                           ? `${option.label} (Blind Voting)`
@@ -317,7 +317,7 @@ export default function BoardFilterBar(props: BoardFilterBarProps) {
                   searchInput?.focus();
                 }}
                 class={[
-                  'spring-press inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-xl border border-border/85 bg-surface px-3 text-xs font-semibold text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle sm:h-9 sm:min-h-0 sm:px-2.5 sm:text-[13px]',
+                  'spring-press inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-md border border-border/85 bg-surface px-3 text-xs font-semibold text-text transition-colors hover:border-control/75 hover:bg-surface-subtle active:bg-surface-subtle sm:h-9 sm:min-h-0 sm:px-2.5 sm:text-[13px]',
                   !showFilters() && 'max-sm:hidden',
                   focusRingClass,
                 ]}

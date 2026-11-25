@@ -100,7 +100,7 @@ export default function CardReactions(props: CardReactionsProps) {
             focusableWhenDisabled
             onClick={(event) => event.currentTarget.focus({ preventScroll: true })}
             class={[
-              'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg text-text-muted sm:min-h-7 sm:min-w-7',
+              'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
               'transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text data-disabled:cursor-not-allowed data-disabled:opacity-60',
               'board-focus-ring',
             ]}
@@ -117,7 +117,7 @@ export default function CardReactions(props: CardReactionsProps) {
             aria-label="Reactions"
             data-board-overlay={pickerOpen() ? 'true' : undefined}
             data-print-hide="true"
-            class="board-popover w-max max-w-[calc(100vw-1.25rem)] rounded-xl border border-border bg-surface p-1.5 text-text"
+            class="board-popover w-max max-w-[calc(100vw-1.25rem)] rounded-md border border-border bg-surface p-1 text-text"
           >
             <div role="group" aria-label="Choose a reaction" class="flex flex-wrap items-center gap-1">
               <For each={REACTION_EMOJIS}>

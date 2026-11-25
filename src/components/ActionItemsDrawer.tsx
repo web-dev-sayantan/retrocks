@@ -125,7 +125,7 @@ function ActionItemRow(props: {
   return (
     <li class="rounded-lg border border-border bg-canvas/60 p-3">
       <div class="flex items-start gap-2.5">
-        <label class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg has-disabled:cursor-not-allowed sm:size-6">
+        <label class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-sm has-disabled:cursor-not-allowed sm:size-6">
           <input
             type="checkbox"
             checked={props.card.actionDone}
@@ -137,7 +137,7 @@ function ActionItemRow(props: {
                 checkbox.checked = props.card.actionDone;
               }
             }}
-            class="size-5 cursor-inherit rounded border-border accent-accent board-focus-ring disabled:opacity-50"
+            class="size-5 cursor-inherit rounded-sm border-border accent-accent board-focus-ring disabled:opacity-50"
           />
         </label>
         <div class="min-w-0 flex-1 space-y-1.5">
@@ -305,18 +305,18 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
             onValueChange={(next) => {
               if (next) setFilter(next);
             }}
-            class="segmented-track relative isolate grid w-full max-w-xs grid-cols-3 rounded-xl border border-border/75 p-1"
+            class="segmented-track relative isolate grid w-full max-w-xs grid-cols-3 rounded-md border border-border/75 p-1"
           >
             <SegmentedControlIndicator
               aria-hidden="true"
-              class="segmented-thumb pointer-events-none rounded-lg"
+              class="segmented-thumb pointer-events-none rounded-sm"
             />
             <For each={FILTERS}>
               {(option) => (
                 <SegmentedControlItem
                   value={option.value}
                   class={[
-                    'spring-press relative board-touch-target cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-checked:text-text sm:min-h-8 sm:text-[13px]',
+                    'spring-press relative board-touch-target cursor-pointer whitespace-nowrap rounded-sm px-2 text-xs font-semibold text-text-muted tabular-nums hover:text-text data-checked:text-text sm:min-h-8 sm:text-[13px]',
                     'board-focus-ring',
                   ]}
                 >
@@ -358,7 +358,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
             disabled={visibleItems().length === 0}
             onClick={() => void copyChecklist()}
             class={[
-              'inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-9',
+              'inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-md bg-accent px-3.5 py-1.5 text-xs font-medium text-accent-contrast sm:min-h-9',
               'transition-opacity hover:opacity-90 active:opacity-75 disabled:cursor-not-allowed disabled:opacity-50',
               'board-focus-ring',
             ]}

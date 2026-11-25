@@ -33,11 +33,11 @@ function ParticipantQrCode(props: { link: string }) {
   });
 
   return (
-    <figure class="flex items-center gap-3 rounded-xl bg-surface-subtle/75 p-3 sm:gap-4">
+    <figure class="flex items-center gap-3 rounded-md bg-surface-subtle/75 p-2.5 sm:gap-4">
       <svg
         role="img"
         aria-label="Participant link QR code"
-        class="aspect-square w-24 max-w-[40%] shrink-0 rounded-lg bg-white sm:w-28"
+        class="aspect-square w-24 max-w-[40%] shrink-0 rounded-sm bg-white sm:w-28"
         viewBox={`0 0 ${qr().size} ${qr().size}`}
         shape-rendering="crispEdges"
       >
@@ -155,7 +155,7 @@ export default function PokerRoomSharing(props: { roomId: string; isFacilitator:
         <span>Share</span>
       </DialogTrigger>
       <DialogBackdrop class="board-dialog-backdrop z-40" />
-      <DialogContent class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl">
+      <DialogContent class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-lg border border-border bg-surface text-text shadow-2xl">
         <BoardOverlayHeader closeLabel="Close Share" onClose={() => setOpen(false)}>
           <DialogTitle class="truncate">Share Room</DialogTitle>
         </BoardOverlayHeader>

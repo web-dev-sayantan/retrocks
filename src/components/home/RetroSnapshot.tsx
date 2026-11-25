@@ -5,7 +5,7 @@ import SnapshotFrame from './SnapshotFrame';
 
 function VoteCount(props: { count: number }) {
   return (
-    <span class="mt-1.5 inline-flex items-center gap-0.5 self-end rounded border border-border bg-surface-subtle/60 px-1.5 py-0.5 font-semibold text-accent">
+    <span class="mt-1.5 inline-flex items-center gap-0.5 self-end rounded-sm border border-border bg-surface-subtle/60 px-1.5 py-0.5 font-semibold text-accent">
       <LucideIcon icon={ChevronUp} class="size-3 shrink-0" strokeWidth={2} />
       {props.count}
     </span>
@@ -27,7 +27,7 @@ export default function RetroSnapshot() {
       }
     >
       <div class="home-retro-columns grid flex-1 gap-2.5 bg-canvas/70 p-3">
-        <div class="home-snapshot-column rounded-lg border-t-col-sage">
+        <div class="home-snapshot-column rounded-md border-t-col-sage">
           <p class="home-snapshot-column-title bg-col-sage-tint">Went Well</p>
           <div class="grid content-start gap-2 p-2">
             <div class="home-snapshot-card">
@@ -43,7 +43,7 @@ export default function RetroSnapshot() {
           </div>
         </div>
 
-        <div class="home-snapshot-column rounded-lg border-t-col-amber">
+        <div class="home-snapshot-column rounded-md border-t-col-amber">
           <p class="home-snapshot-column-title bg-col-amber-tint">To Improve</p>
           <div class="grid content-start gap-2 p-2">
             <div class="home-snapshot-card">
@@ -57,7 +57,7 @@ export default function RetroSnapshot() {
           </div>
         </div>
 
-        <div class="home-snapshot-column home-retro-action-column rounded-lg border-t-col-sky">
+        <div class="home-snapshot-column home-retro-action-column rounded-md border-t-col-sky">
           <p class="home-snapshot-column-title bg-col-sky-tint">
             <LucideIcon icon={Flag} class="size-3 shrink-0 text-col-sky" />
             Action Items

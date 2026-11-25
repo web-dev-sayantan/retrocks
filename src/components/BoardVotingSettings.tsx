@@ -25,7 +25,7 @@ import LucideIcon from './LucideIcon';
 export type VotingSettingsPatch = Omit<UpdateVotingSettingsInput, 'boardId'>;
 
 const buttonClass = [
-  'inline-flex board-touch-target cursor-pointer items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium',
+  'inline-flex board-touch-target cursor-pointer items-center justify-center rounded-md px-3 py-1.5 text-xs font-medium',
   'board-focus-ring disabled:cursor-not-allowed disabled:opacity-50',
 ];
 
@@ -191,7 +191,7 @@ export default function BoardVotingSettings(props: {
       <DialogContent
         data-board-overlay="true"
         data-print-hide="true"
-        class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface text-text shadow-2xl"
+        class="board-dialog-surface z-50 flex w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-lg border border-border bg-surface text-text shadow-2xl"
       >
         <BoardOverlayHeader closeLabel="Close Board Settings" onClose={() => props.onClose()}>
           <DialogTitle class="truncate">Board Settings</DialogTitle>
@@ -199,7 +199,7 @@ export default function BoardVotingSettings(props: {
 
         <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
           <Show when={props.board.isLocked}>
-            <p class="mb-3 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-text">
+            <p class="mb-3 rounded-md border border-border bg-surface-subtle px-3 py-2 text-xs text-text">
               This Board is Locked. Unlock the Board to adjust Voting settings or reset Votes.
             </p>
           </Show>
@@ -228,13 +228,13 @@ export default function BoardVotingSettings(props: {
                     sideOffset={4}
                     collisionPadding={8}
                     data-board-overlay="true"
-                    class="board-popover z-40 max-h-64 w-full overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                    class="board-popover z-40 max-h-64 w-full overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                   >
                     <For each={VOTE_LIMIT_ITEMS}>
                       {(option) => (
                         <SelectItem
                           value={option.value}
-                          class="flex min-h-11 w-full cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-8"
+                          class="flex min-h-11 w-full cursor-pointer items-center rounded-sm px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-8"
                         >
                           {option.label}
                         </SelectItem>
@@ -279,13 +279,13 @@ export default function BoardVotingSettings(props: {
                     sideOffset={4}
                     collisionPadding={8}
                     data-board-overlay="true"
-                    class="board-popover z-40 max-h-64 w-full overflow-y-auto rounded-xl border border-border bg-surface p-1.5 text-text"
+                    class="board-popover z-40 max-h-64 w-full overflow-y-auto rounded-md border border-border bg-surface p-1 text-text"
                   >
                     <For each={PER_CARD_CAP_ITEMS}>
                       {(option) => (
                         <SelectItem
                           value={option.value}
-                          class="flex min-h-11 w-full cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-8"
+                          class="flex min-h-11 w-full cursor-pointer items-center rounded-sm px-2.5 py-1.5 text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle sm:min-h-8"
                         >
                           {option.label}
                         </SelectItem>
@@ -297,7 +297,7 @@ export default function BoardVotingSettings(props: {
               <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium sm:min-h-9">
                 <input
                   type="checkbox"
-                  class="size-4 accent-accent board-focus-ring"
+                  class="size-4 rounded-sm accent-accent board-focus-ring"
                   checked={blindVoting()}
                   onChange={(event) => setBlindVoting(event.currentTarget.checked)}
                 />
@@ -306,7 +306,7 @@ export default function BoardVotingSettings(props: {
               <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium sm:min-h-9">
                 <input
                   type="checkbox"
-                  class="size-4 accent-accent board-focus-ring"
+                  class="size-4 rounded-sm accent-accent board-focus-ring"
                   checked={allowParticipantGroup()}
                   onChange={(event) =>
                     setAllowParticipantGroup(event.currentTarget.checked)
@@ -353,7 +353,7 @@ export default function BoardVotingSettings(props: {
 
           <section
             aria-labelledby={destructiveActionsId}
-            class="mt-5 space-y-3 rounded-xl border border-col-rose/45 bg-col-rose-tint/35 p-3.5"
+            class="mt-5 space-y-3 rounded-md border border-col-rose/45 bg-col-rose-tint/35 p-3.5"
           >
             <h3 id={destructiveActionsId} class="text-sm font-semibold text-text">
               Destructive actions

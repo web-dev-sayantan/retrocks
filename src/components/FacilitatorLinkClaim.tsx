@@ -68,7 +68,7 @@ export default function FacilitatorLinkClaim(props: FacilitatorLinkClaimProps) {
     <Show when={error()}>
       <p
         role="alert"
-        class="mx-4 mt-4 rounded-lg border border-col-rose bg-col-rose-tint px-4 py-3 text-sm text-text sm:mx-6"
+        class="mx-4 mt-4 rounded-md border border-col-rose bg-col-rose-tint px-4 py-3 text-sm text-text sm:mx-6"
       >
         {error()}
       </p>

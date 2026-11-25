@@ -37,7 +37,7 @@ export default function ThemeToggle(props: {
       ];
     }
     return [
-      'spring-press inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg',
+      'spring-press inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-md',
       'border border-border bg-surface text-text-muted',
       'hover:bg-surface-subtle hover:text-text active:bg-surface-subtle',
       'board-focus-ring',

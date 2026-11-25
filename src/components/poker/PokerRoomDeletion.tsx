@@ -41,7 +41,7 @@ export default function PokerRoomDeletion(props: { roomId: string; onUnavailable
         <LucideIcon icon={Trash2} class="size-4 shrink-0" strokeWidth={1.85} />
       </AlertDialogTrigger>
       <AlertDialogBackdrop class="board-dialog-backdrop z-40" />
-      <AlertDialogContent class="board-dialog-surface z-50 w-[min(22rem,calc(100vw-2rem))] overscroll-contain rounded-2xl border border-border bg-surface p-5 text-text shadow-2xl">
+      <AlertDialogContent class="board-dialog-surface z-50 w-[min(22rem,calc(100vw-2rem))] overscroll-contain rounded-lg border border-border bg-surface p-5 text-text shadow-2xl">
         <AlertDialogTitle class="font-semibold">Delete Room?</AlertDialogTitle>
         <AlertDialogDescription class="mt-2 text-sm text-text-muted">
           This permanently deletes the Room, its Stories, and any estimates. The participant link will stop working for everyone.
@@ -49,7 +49,7 @@ export default function PokerRoomDeletion(props: { roomId: string; onUnavailable
         <div class="mt-4 flex flex-wrap justify-end gap-2">
           <AlertDialogClose class="poker-secondary spring-press board-focus-ring">Cancel</AlertDialogClose>
           <AlertDialogClose
-            class="board-focus-ring spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg bg-rose-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-rose-800 aria-disabled:cursor-wait sm:min-h-9"
+            class="board-focus-ring spring-press inline-flex min-h-11 cursor-pointer items-center justify-center rounded-md bg-rose-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-rose-800 aria-disabled:cursor-wait sm:min-h-9"
             data-agent-confirm="Permanently deletes the Room, its Stories, and its estimates for everyone."
             value="confirm"
             action={removeRoom}

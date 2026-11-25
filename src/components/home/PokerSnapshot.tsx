@@ -58,7 +58,7 @@ export default function PokerSnapshot() {
                 <div class="grid justify-items-center gap-1">
                   <span
                     class={[
-                      'grid h-8 w-6 place-items-center rounded-md border bg-surface text-xs font-bold',
+                      'grid h-8 w-6 place-items-center rounded-sm border bg-surface text-xs font-bold',
                       ballot.value === 5 ? 'border-accent text-accent' : 'border-border text-text',
                     ]}
                   >
@@ -75,7 +75,7 @@ export default function PokerSnapshot() {
               {(value) => (
                 <span
                   class={[
-                    'grid h-8 w-6 place-items-center rounded-md border font-semibold',
+                    'grid h-8 w-6 place-items-center rounded-sm border font-semibold',
                     value === 5
                       ? '-translate-y-0.5 border-accent bg-accent text-accent-contrast'
                       : 'border-border bg-surface text-text',

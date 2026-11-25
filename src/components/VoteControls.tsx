@@ -27,7 +27,7 @@ export default function VoteControls(props: {
       role="group"
       aria-label="Voting"
       class={[
-        'inline-flex h-[calc(2.75rem+2px)] w-fit shrink-0 items-center rounded-lg border transition-colors sm:h-7',
+        'inline-flex h-[calc(2.75rem+2px)] w-fit shrink-0 items-center rounded-md border transition-colors sm:h-7',
         myVotes() > 0 ? 'border-accent/30 bg-accent/10' : 'border-border/75 bg-surface-subtle/75',
       ]}
     >
@@ -35,7 +35,7 @@ export default function VoteControls(props: {
         <button
           type="button"
           data-print-hide="true"
-          class={[buttonClass, 'rounded-l-lg']}
+          class={[buttonClass, 'rounded-l-md']}
           aria-label="Remove Vote"
           disabled={props.voting.pending || myVotes() === 0}
           onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, -1)}
@@ -53,7 +53,7 @@ export default function VoteControls(props: {
         <button
           type="button"
           data-print-hide="true"
-          class={[buttonClass, 'rounded-r-lg']}
+          class={[buttonClass, 'rounded-r-md']}
           aria-label="Cast Vote"
           disabled={props.voting.pending || !canCast()}
           onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, 1)}
