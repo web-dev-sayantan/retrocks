@@ -1300,6 +1300,95 @@ test('editing the active Story title during an unresolved Voting Round with cast
   expect(within(stage).getByText('0 of 1 voted')).toBeVisible();
 });
 
+test.each(['lock', 'unmount'] as const)(
+  'a queue title confirmation cannot submit after Story %s',
+  async (invalidate) => {
+    const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+    const originalRoom: PokerLiveRoomView = {
+      closed: false, id: 'room', name: 'Poker Room', version: 1,
+      viewer: facilitator, participants: [facilitator],
+      stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+      activeStoryId: 's1', deck: FIBONACCI_DECK, deckType: 'fibonacci',
+      round: { id: 'round-voted', phase: 'open', submittedParticipantIds: ['alex'], ownChoice: '5' },
+    };
+    const [room, setRoom] = createSignal(originalRoom);
+    const change = vi.fn();
+    render(() => <BoardConfirmDialog />);
+    const workspace = render(() => (
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+
+    const queue = screen.getByRole('list', { name: 'Story queue' });
+    fireEvent.dblClick(within(queue).getByText('Save checkout'));
+    const input = await within(queue).findByRole('textbox', { name: 'Edit Story title' });
+    fireEvent.input(input, { target: { value: 'Old draft' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    const dialog = await screen.findByRole('alertdialog', { name: 'Change active Story title?' });
+    if (invalidate === 'lock') {
+      setRoom({ ...originalRoom, stories: originalRoom.stories.map((story) => ({ ...story, locked: true })) });
+      flush();
+    } else {
+      workspace.unmount();
+    }
+
+    expect(screen.queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save and restart voting' }));
+    await waitFor(() => expect(dialog).not.toBeVisible());
+    expect(change).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['Story queue', 'Active Story'] as const)(
+  'a late title save leaves the newer editor and its focus intact on %s',
+  async (surface) => {
+    const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+    const room: PokerLiveRoomView = {
+      closed: false, id: 'room', name: 'Poker Room', version: 1,
+      viewer: facilitator, participants: [facilitator],
+      stories: [{ id: 's1', title: 'Save checkout', status: 'pending', locked: false }],
+      activeStoryId: 's1', deck: FIBONACCI_DECK, deckType: 'fibonacci', round: null,
+    };
+    const pending = Promise.withResolvers<PokerResult>();
+    const change = vi.fn<(command: PokerRoomChange) => Promise<PokerResult>>()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ ok: false, code: 'RATE_LIMITED', message: 'Try again.' })
+      .mockResolvedValueOnce({ ok: true, room });
+    render(() => (
+      <PokerWorkspace room={room} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+
+    const controls = within(screen.getByRole(surface === 'Story queue' ? 'list' : 'region', { name: surface }));
+    fireEvent.dblClick(controls.getByText('Save checkout'));
+    const input = await controls.findByRole('textbox', { name: 'Edit Story title' });
+    fireEvent.input(input, { target: { value: 'Old draft' } });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    expect(change).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(change).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    await waitFor(() => expect(input).not.toBeInTheDocument());
+    fireEvent.dblClick(controls.getByText('Save checkout'));
+    const newerInput = await controls.findByRole('textbox', { name: 'Edit Story title' });
+    await waitFor(() => expect(newerInput).toHaveFocus());
+    pending.resolve({ ok: false, code: 'RATE_LIMITED', message: 'Old save failed.' });
+    await waitFor(() => expect(newerInput).not.toHaveAttribute('readonly'));
+    expect(controls.queryByText('Old save failed.')).toBeNull();
+    expect(newerInput).toHaveFocus();
+    expect(newerInput).toHaveValue('Save checkout');
+
+    fireEvent.input(newerInput, { target: { value: 'New draft' } });
+    fireEvent.keyDown(newerInput, { key: 'Enter' });
+    expect(await controls.findByRole('alert')).toHaveTextContent('Try again.');
+    expect(newerInput).toHaveValue('New draft');
+    fireEvent.click(controls.getByRole('button', { name: 'Save Story title' }));
+    await waitFor(() => expect(newerInput).not.toBeInTheDocument());
+    expect(change).toHaveBeenCalledTimes(3);
+    expect(change).toHaveBeenLastCalledWith({ type: 'edit-story', storyId: 's1', title: 'New draft' });
+  },
+);
+
 test('clicking Select on a locked Story subtly wiggles the Unlock button beside it', async () => {
   vi.useFakeTimers();
   try {
