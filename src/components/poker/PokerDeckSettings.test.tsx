@@ -170,7 +170,7 @@ test('changing the Deck during a round with votes confirms before discarding bal
     round: { id: 'r1', phase: 'open', ownChoice: '5', submittedParticipantIds: [facilitator.id] },
   });
 
-  const change = vi.fn(async (command: PokerRoomChange): Promise<PokerResult> => {
+  const change = vi.fn(async (_id: string, command: PokerRoomChange): Promise<PokerResult> => {
     const current = untrack(room);
     if (command.type === 'set-deck') {
       const deckCommand = command as PokerDeckCommand;
@@ -190,18 +190,28 @@ test('changing the Deck during a round with votes confirms before discarding bal
     throw new Error(`Unexpected command: ${command.type}`);
   });
 
-  render(() => (
-    <>
-      <BoardConfirmDialog />
-      <PokerWorkspace
-        room={room()}
-        online={[facilitator.id]}
-        status="live"
-        onUnavailable={vi.fn()}
-        onChange={change}
-      />
-    </>
-  ));
+  render(() => {
+    const session = createPokerRoomController({
+      room,
+      changeRoom: change,
+      liveTransport: { connect: () => ({ ping() {}, close() {} }) },
+    });
+    return (
+      <>
+        <BoardConfirmDialog />
+        <PokerWorkspace
+          room={session.liveRoom()!}
+          online={[facilitator.id]}
+          status="live"
+          busy={session.busy()}
+          error={session.error()}
+          onUnavailable={session.markUnavailable}
+          onChange={session.changeRoom}
+          onClearError={session.clearError}
+        />
+      </>
+    );
+  });
 
   const confirmAgent = createAgent({ allow: () => true });
 
@@ -223,7 +233,7 @@ test('changing the Deck during a round with votes confirms before discarding bal
     ],
   });
   expect(confirmed.ok, confirmed.error?.message).toBe(true);
-  expect(change).toHaveBeenCalledWith({
+  expect(change).toHaveBeenCalledWith('room', {
     type: 'set-deck',
     deck: { type: 't-shirt' },
     discardRoundId: 'r1',
@@ -321,8 +331,11 @@ test('changing Deck between Fibonacci and T-shirt through createPokerRoomControl
           room={controller.room() as PokerLiveRoomView}
           online={[facilitator.id]}
           status="live"
-          onUnavailable={vi.fn()}
+          busy={controller.busy()}
+          error={controller.error()}
+          onUnavailable={controller.markUnavailable}
           onChange={controller.changeRoom}
+          onClearError={controller.clearError}
         />
       </>
     );

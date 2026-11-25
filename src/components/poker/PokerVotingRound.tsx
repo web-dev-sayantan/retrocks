@@ -1,8 +1,9 @@
 import { Button } from '@ui-sdk/solid/button';
 import { Radio, RadioGroup } from '@ui-sdk/solid/radio';
-import { For, Show, createMemo, createSignal, createUniqueId } from 'solid-js';
+import { For, Show, createMemo, createUniqueId } from 'solid-js';
 
-import type { PokerResult, PokerRoundView, PokerVotingCommand } from '../../lib/poker-types';
+import type { PokerChangeOutcome } from '../../lib/poker-controller';
+import type { PokerRoundView, PokerVotingCommand } from '../../lib/poker-types';
 import PokerEstimateForm from './PokerEstimateForm';
 
 export default function PokerVotingRound(props: {
@@ -11,14 +12,13 @@ export default function PokerVotingRound(props: {
   participantCount: number;
   canManage: boolean;
   hasEstimate: boolean;
+  busy?: boolean;
   onSkip: () => void;
-  onChange: (command: PokerVotingCommand) => Promise<PokerResult>;
+  onChange: (command: PokerVotingCommand) => Promise<PokerChangeOutcome>;
 }) {
   const headingId = createUniqueId();
   let heading!: HTMLHeadingElement;
-  const [pendingRound, setPendingRound] = createSignal<string>();
-  const [failure, setFailure] = createSignal<{ roundId: string; message: string }>();
-  const busy = () => pendingRound() !== undefined;
+  const isBusy = () => Boolean(props.busy);
   const open = createMemo(() => (props.round.phase === 'open' ? props.round : null));
   const revealed = createMemo(() => (props.round.phase !== 'open' ? props.round : null));
   const deckKey = createMemo(() => props.deck.join('\0'));
@@ -27,29 +27,15 @@ export default function PokerVotingRound(props: {
     if (!current) return undefined;
     return new Set(current.ballots.map((ballot) => ballot.choice));
   });
-  const error = () => {
-    const current = failure();
-    return current?.roundId === props.round.id ? current.message : '';
-  };
 
   async function change(command: PokerVotingCommand) {
-    if (busy()) return;
+    if (isBusy()) return;
     const control = heading.ownerDocument.activeElement;
     const hadFocus = control !== null && heading.parentElement?.contains(control);
-    setPendingRound(command.roundId);
-    setFailure(undefined);
-    try {
-      const result = await props.onChange(command);
-      if (!result.ok) {
-        setFailure({ roundId: command.roundId, message: result.message });
-      } else if (hadFocus && !control.isConnected && control.ownerDocument.activeElement === control.ownerDocument.body) {
-        if (command.type === 'skip-story') props.onSkip();
-        else heading.focus();
-      }
-    } catch {
-      setFailure({ roundId: command.roundId, message: 'Could not update the Voting Round. Try again.' });
-    } finally {
-      setPendingRound(undefined);
+    const result = await props.onChange(command);
+    if (result.ok && hadFocus && !control.isConnected && control.ownerDocument.activeElement === control.ownerDocument.body) {
+      if (command.type === 'skip-story') props.onSkip();
+      else heading.focus();
     }
   }
 
@@ -66,7 +52,7 @@ export default function PokerVotingRound(props: {
                 <Button
                   type="button"
                   class="poker-primary spring-press board-focus-ring !rounded-full !px-5"
-                  disabled={busy() || round().submittedParticipantIds.length === 0}
+                  disabled={isBusy() || round().submittedParticipantIds.length === 0}
                   focusableWhenDisabled
                   onClick={() => void change({ type: 'reveal', roundId: round().id })}
                 >
@@ -81,7 +67,7 @@ export default function PokerVotingRound(props: {
                   class="poker-deck"
                   aria-labelledby={headingId}
                   value={round().ownChoice}
-                  readOnly={busy()}
+                  readOnly={isBusy()}
                   onValueChange={(choice) => void change({ type: 'vote', roundId: round().id, choice })}
                 >
                   <For each={props.deck}>
@@ -103,7 +89,7 @@ export default function PokerVotingRound(props: {
                 <Button
                   type="button"
                   class="board-focus-ring cursor-pointer font-medium text-text underline underline-offset-2 transition-opacity hover:opacity-80 disabled:opacity-50"
-                  disabled={busy()}
+                  disabled={isBusy()}
                   focusableWhenDisabled
                   onClick={() => void change({ type: 'vote', roundId: round().id, choice: null })}
                 >
@@ -126,7 +112,7 @@ export default function PokerVotingRound(props: {
                 {(roundId) => (
                   <PokerEstimateForm
                     deck={props.deck}
-                    busy={busy()}
+                    busy={isBusy()}
                     votedChoices={votedChoices()}
                     onSave={(choice) => void change({ type: 'confirm-estimate', roundId, choice })}
                   />
@@ -136,7 +122,7 @@ export default function PokerVotingRound(props: {
                 <Button
                   type="button"
                   class="poker-ghost spring-press board-focus-ring !rounded-full"
-                  disabled={busy()}
+                  disabled={isBusy()}
                   focusableWhenDisabled
                   onClick={() => void change({ type: 'restart-round', roundId: round().id })}
                 >
@@ -146,7 +132,7 @@ export default function PokerVotingRound(props: {
                   <Button
                     type="button"
                     class="poker-ghost spring-press board-focus-ring !rounded-full"
-                    disabled={busy()}
+                    disabled={isBusy()}
                     focusableWhenDisabled
                     onClick={() => void change({ type: 'skip-story', roundId: round().id })}
                   >
@@ -158,8 +144,6 @@ export default function PokerVotingRound(props: {
           </>
         )}
       </Show>
-
-      <p class="poker-error-text text-sm font-medium [&:empty]:hidden" role="alert">{error()}</p>
     </div>
   );
 }
