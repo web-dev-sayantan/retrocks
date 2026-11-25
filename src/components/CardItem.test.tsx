@@ -170,4 +170,106 @@ describe('<CardItem />', () => {
     await Promise.resolve();
     expect(actions.ungroupCard).toHaveBeenCalledWith('card_1');
   });
+
+  it('handles Card inline editing with IME Enter, container focus-out, Escape cancel, Private Mode/Locked invalidation, error retention, and focus restoration', async () => {
+    const otherCard = makeCard({
+      id: 'card_edit',
+      columnId: 'col_1',
+      content: 'Original card note',
+      isMine: false,
+    });
+    const [isLocked, setIsLocked] = createSignal(false);
+    const [isBlurred, setIsBlurred] = createSignal(false);
+    const pending = Promise.withResolvers<string | null>();
+    const updateCard = vi
+      .fn<() => Promise<string | null>>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValueOnce('Could not save card.')
+      .mockResolvedValueOnce(null);
+    const actions = createTestBoardMutations({ updateCard });
+
+    const { getByRole, getByText, queryByRole } = render(() => (
+      <TestBoardWorkspace
+        isFacilitator={true}
+        isLocked={isLocked}
+        isBlurred={isBlurred}
+        actions={actions}
+      >
+        <CardItem card={otherCard} columnCards={[otherCard]} columnGroups={[]} />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    // Double-click opens editor
+    fireEvent.dblClick(getByText('Original card note'));
+    flush();
+    const textarea = getByRole('textbox', { name: 'Edit card text' });
+    expect(textarea).toHaveFocus();
+    fireEvent.input(textarea, { target: { value: 'Refined note' } });
+
+    // IME Enter is ignored
+    fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', keyCode: 229 });
+    flush();
+    expect(updateCard).not.toHaveBeenCalled();
+
+    // Focus-out into Cancel button inside container does not commit
+    const cancelBtn = getByRole('button', { name: 'Cancel' });
+    fireEvent.focusOut(textarea, { relatedTarget: cancelBtn });
+    flush();
+    expect(updateCard).not.toHaveBeenCalled();
+
+    // Escape during in-flight save cancels and restores focus to Card actions trigger
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(updateCard).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(textarea, { key: 'Escape' });
+    flush();
+    expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+    expect(getByRole('button', { name: 'Card actions' })).toHaveFocus();
+    pending.resolve('Stale error');
+    await pending.promise;
+    await Promise.resolve();
+    flush();
+    expect(queryByRole('alert')).toBeNull();
+
+    // Failed save retains draft and error message, clears on input, and succeeds on retry
+    fireEvent.dblClick(getByText('Original card note'));
+    flush();
+    const retryBox = getByRole('textbox', { name: 'Edit card text' });
+    fireEvent.input(retryBox, { target: { value: 'Retry text' } });
+    fireEvent.click(getByRole('button', { name: 'Save' }));
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(getByRole('alert')).toHaveTextContent('Could not save card.');
+    expect(retryBox).toHaveValue('Retry text');
+
+    fireEvent.input(retryBox, { target: { value: 'Retry text v2' } });
+    flush();
+    expect(queryByRole('alert')).toBeNull();
+    fireEvent.click(getByRole('button', { name: 'Save' }));
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(updateCard).toHaveBeenLastCalledWith('card_edit', 'Retry text v2');
+    expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+    // Private Mode cancels an active edit on another participant's card
+    fireEvent.dblClick(getByText('Original card note'));
+    flush();
+    expect(getByRole('textbox', { name: 'Edit card text' })).toBeInTheDocument();
+    setIsBlurred(true);
+    flush();
+    expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+
+    // Locked cancels an active edit
+    setIsBlurred(false);
+    flush();
+    fireEvent.dblClick(getByText('Original card note'));
+    flush();
+    expect(getByRole('textbox', { name: 'Edit card text' })).toBeInTheDocument();
+    setIsLocked(true);
+    flush();
+    expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+  });
 });

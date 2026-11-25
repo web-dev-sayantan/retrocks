@@ -1,5 +1,4 @@
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Textarea } from '@ui-sdk/solid/textarea';
 import {
   Check,
@@ -21,7 +20,7 @@ import {
 } from '../lib/board-types';
 import type { ColumnViewProjection } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
-import { inlineEdit, createInlineEditSave, type InlineEditOutcome } from '../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canContribute,
   canControlFacilitation,
@@ -32,7 +31,6 @@ import BoardMenuContent from './BoardMenuContent';
 import { useBoardWorkspace } from './BoardWorkspaceContext';
 import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
-import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 
 export interface ColumnPanelProps {
@@ -66,7 +64,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     (locked) => {
       if (locked) {
         setMenuOpen(false);
-        cancelRename();
       }
     },
   );
@@ -83,23 +80,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     canDeleteColumnPermission(workspace, workspace.columns.length, props.view.cards),
   );
 
-  // Inline title editing: createInlineEdit owns the session, input, and keyboard contract.
-  const titleField = usePrimitive(inlineEdit, () => ({
-    value: () => props.view.column.title,
-    commit: (text) => titleSave.commit(text),
-    disabled: () => !canManageColumn(),
-  }));
-  const columnEdit = titleField.api.edit;
-  const titleSave = createInlineEditSave(saveColumnTitle, () => columnEdit.cancel());
-  const isRenaming = () => titleField.present('input');
-  const [hasTitleText, setHasTitleText] = createSignal(true);
+  // Inline title editing: unified session owns edit, input, IME, focus-out, and fallback focus.
   let titleButtonEl: HTMLButtonElement | undefined;
-
-  // The title button re-mounts while editing ends, so guide focus back when nothing took it.
-  createEffect(isRenaming, (renaming, wasRenaming) => {
-    if (!renaming && wasRenaming && document.activeElement === document.body) {
-      titleButtonEl?.focus();
-    }
+  const titleEdit = createInlineEditSession({
+    value: () => props.view.column.title,
+    target: () => props.view.column.id,
+    disabled: () => !canManageColumn(),
+    save: saveColumnTitle,
+    fallbackFocus: () => titleButtonEl?.focus(),
   });
 
   let composerEl: HTMLTextAreaElement | undefined;
@@ -144,13 +132,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function startRename(): void {
     setMenuOpen(false);
-    setHasTitleText(props.view.column.title.trim().length > 0);
-    columnEdit.start(props.view.column.id);
-  }
-
-  function cancelRename(): void {
-    titleSave.resetError();
-    columnEdit.cancel();
+    titleEdit.start();
   }
 
   async function saveColumnTitle(text: string): Promise<InlineEditOutcome> {
@@ -233,35 +215,28 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
 
         <div class="board-column-cap-row relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-3.25 pb-2.5">
-          <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={isRenaming() ? "" : undefined}>
+          <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={titleEdit.isEditing() ? "" : undefined}>
             <Show
-              when={!isRenaming()}
+              when={!titleEdit.isEditing()}
               fallback={
-                <div class="flex min-w-0 flex-1 items-center gap-1">
-                  <InlineEditorMount bind={(el) => columnEdit.bindInput(el)}>
-                    {(ref) => (
-                      <input
-                        ref={ref}
-                        type="text"
-                        aria-label="Column title"
-                        maxlength={MAX_COLUMN_TITLE_LENGTH}
-                        onKeyDown={(event) => columnEdit.inputKeydown(event)}
-                        onFocusOut={(event) => columnEdit.end('focus-out', event)}
-                        onInput={(e) =>
-                          setHasTitleText(e.currentTarget.value.trim().length > 0)
-                        }
-                        class={[
-                          'min-w-0 flex-1 rounded-md border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
-                          'board-focus-ring',
-                        ]}
-                      />
-                    )}
-                  </InlineEditorMount>
+                <div ref={titleEdit.containerRef} class="flex min-w-0 flex-1 items-center gap-1">
+                  <input
+                    ref={titleEdit.inputRef}
+                    type="text"
+                    aria-label="Column title"
+                    maxlength={MAX_COLUMN_TITLE_LENGTH}
+                    readonly={titleEdit.isSaving()}
+                    {...titleEdit.inputProps}
+                    class={[
+                      'min-w-0 flex-1 rounded-md border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
+                      'board-focus-ring',
+                    ]}
+                  />
                   <button
                     type="button"
                     aria-label="Save column title"
-                    disabled={titleSave.isSaving() || !hasTitleText()}
-                    onClick={() => columnEdit.end()}
+                    disabled={titleEdit.isSaving() || !titleEdit.hasText()}
+                    onClick={titleEdit.submit}
                     class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={Check} class="size-3.5" strokeWidth={2.2} />
@@ -269,7 +244,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   <button
                     type="button"
                     aria-label="Cancel column rename"
-                    onClick={cancelRename}
+                    onClick={titleEdit.cancel}
                     class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />
@@ -343,7 +318,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   </MenuTrigger>
 
                   <BoardMenuContent
-                    finalFocus={isRenaming() ? 'none' : undefined}
+                    finalFocus={titleEdit.isEditing() ? 'none' : undefined}
                     aria-label={`Options for ${props.view.column.title}`}
                     class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text shadow-lg"
                   >

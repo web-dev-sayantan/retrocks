@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { ColumnDTO, CommentViewDTO } from '../lib/board-types';
@@ -181,5 +181,90 @@ describe('<CardDetailDrawer />', () => {
     expect(getByRole('checkbox', { name: 'Done' })).toBeDisabled();
     expect(getByLabelText('Action owner')).toBeDisabled();
     expect(getByRole('dialog', { name: 'Card details' })).toBe(drawer);
+  });
+
+  it('invalidates stale Action Item owner saves on Card switch or close and retains failed drafts for retry', async () => {
+    const cardA = makeCard({
+      id: 'card_a',
+      columnId: 'col_1',
+      content: 'Card A',
+      isActionItem: true,
+      actionOwner: 'Platform',
+    });
+    const cardB = makeCard({
+      id: 'card_b',
+      columnId: 'col_1',
+      content: 'Card B',
+      isActionItem: true,
+      actionOwner: 'Security',
+    });
+    const [activeCard, setActiveCard] = createSignal(cardA);
+    const [isOpen, setIsOpen] = createSignal(true);
+    const onClose = vi.fn(() => setIsOpen(false));
+    const slowSaveA = Promise.withResolvers<boolean>();
+    const updateActionItem = vi
+      .fn<() => Promise<boolean>>()
+      .mockImplementationOnce(() => slowSaveA.promise)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const actions = createTestBoardMutations({ updateActionItem });
+
+    const { getByLabelText, getByRole, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} actions={actions}>
+        <CardDetailDrawer
+          card={activeCard()}
+          isOpen={isOpen()}
+          side="right"
+          onClose={onClose}
+          onExit={() => {}}
+          restoreFocusTarget={() => undefined}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    const ownerInput = getByLabelText('Action owner') as HTMLInputElement;
+    expect(ownerInput).toHaveValue('Platform');
+
+    // IME Enter does not commit
+    fireEvent.input(ownerInput, { target: { value: 'Infra' } });
+    flush();
+    fireEvent.keyDown(ownerInput, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(ownerInput, { key: 'Enter', keyCode: 229 });
+    flush();
+    expect(updateActionItem).not.toHaveBeenCalled();
+
+    // Start saving Card A's owner, then switch to Card B before it settles
+    fireEvent.keyDown(ownerInput, { key: 'Enter' });
+    expect(updateActionItem).toHaveBeenCalledWith('card_a', { actionOwner: 'Infra' });
+
+    setActiveCard(cardB);
+    flush();
+    expect(ownerInput).toHaveValue('Security');
+
+    // Stale failure from Card A must not show an error or overwrite Card B's owner
+    slowSaveA.resolve(false);
+    await slowSaveA.promise;
+    await Promise.resolve();
+    flush();
+    expect(queryByRole('alert')).toBeNull();
+    expect(ownerInput).toHaveValue('Security');
+
+    // Failed save on Card B retains draft + shows alert, and retry succeeds
+    fireEvent.input(ownerInput, { target: { value: '  AppSec  ' } });
+    flush();
+    fireEvent.keyDown(ownerInput, { key: 'Enter' });
+    await waitFor(() => expect(getByRole('alert')).toHaveTextContent('Could not update the Action Item'));
+    expect(ownerInput).toHaveValue('  AppSec  ');
+
+    fireEvent.keyDown(ownerInput, { key: 'Enter' });
+    await waitFor(() => expect(queryByRole('alert')).toBeNull());
+    expect(updateActionItem).toHaveBeenLastCalledWith('card_b', { actionOwner: 'AppSec' });
+    expect(ownerInput).toHaveValue('AppSec');
+
+    // Escape on unchanged input still closes the drawer
+    fireEvent.keyDown(ownerInput, { key: 'Escape' });
+    flush();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

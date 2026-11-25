@@ -3,12 +3,10 @@ import {
   DrawerBackdrop,
   DrawerContent,
 } from '@ui-sdk/solid/drawer';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Trash2 } from 'lucide';
 import {
   For,
   Show,
-  createEffect,
   createMemo,
   createSignal,
   createUniqueId,
@@ -24,7 +22,7 @@ import {
   type CardViewDTO,
 } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
-import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canContribute,
   canDeleteComment,
@@ -65,32 +63,20 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     () => workspace.columns.find((col) => col.id === props.card.columnId) ?? null,
   );
 
-  // The owner input edits in place: createInlineEdit owns the draft-and-save
-  // contract, with the edit starting on the first change so an untouched
-  // Escape still reaches the drawer.
-  const ownerField = usePrimitive(inlineEdit, () => ({
+  // The owner input edits in place: unified always-mounted session owns draft, IME,
+  // live sync while idle, and stale-save invalidation on Card switch, close, or lock.
+  const ownerEdit = createInlineEditSession({
     value: () => props.card.actionOwner,
-    commit: (text) => ownerSave.commit(text),
+    target: () => (props.isOpen && props.card.isActionItem ? props.card.id : undefined),
     disabled: () => !canEditActionItemFollowUp(workspace, props.card),
-  }));
-  const ownerEdit = ownerField.api.edit;
-  const ownerSave = createInlineEditSave(saveActionOwnerText, () => ownerEdit.cancel());
-  const ownerEditing = () => ownerField.present('input');
+    save: saveActionOwnerText,
+    alwaysMounted: true,
+  });
 
   function bindOwnerInput(el: HTMLInputElement): void {
     ownerInputEl = el;
+    ownerEdit.inputRef(el);
   }
-
-  // Live sync: another viewer's optimistic/live owner change shows while this
-  // editor is idle; an active edit keeps its draft.
-  createEffect(
-    () => ownerEditing() ? undefined : props.card.actionOwner,
-    (owner) => {
-      if (owner !== undefined && ownerInputEl && ownerInputEl.value !== owner) {
-        ownerInputEl.value = owner;
-      }
-    },
-  );
 
   onSettled(() => () => {
     // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
@@ -104,12 +90,14 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
 
-  const isSavingAction = () => workspace.actions.isActionItemPending(props.card.id);
+  const isSavingAction = () =>
+    workspace.actions.isActionItemPending(props.card.id) || ownerEdit.isSaving();
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
     if (!canEditActionItem(workspace, props.card, patch)) return false;
     setActionError(null);
+    ownerEdit.resetError();
     try {
       const ok = await workspace.actions.updateActionItem(props.card.id, patch);
       if (!ok) setActionError('Could not update the Action Item. Try again.');
@@ -120,12 +108,25 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     }
   }
 
-  async function saveActionOwnerText(text: string): Promise<InlineEditOutcome> {
-    if (!canEditActionItemFollowUp(workspace, props.card)) return false;
+  async function saveActionOwnerText(
+    text: string,
+    isCurrent: () => boolean,
+  ): Promise<InlineEditOutcome> {
+    const card = props.card;
+    if (!canEditActionItemFollowUp(workspace, card) || workspace.actions.isActionItemPending(card.id)) {
+      return false;
+    }
     const trimmed = text.trim();
-    const ok = await updateAction({ actionOwner: trimmed });
-    if (ok && ownerInputEl) ownerInputEl.value = trimmed;
-    return ok ? true : false;
+    setActionError(null);
+    try {
+      const ok = await workspace.actions.updateActionItem(card.id, { actionOwner: trimmed });
+      if (!isCurrent()) return false;
+      if (ok && ownerInputEl) ownerInputEl.value = trimmed;
+      return ok ? true : 'Could not update the Action Item. Try again.';
+    } catch {
+      if (!isCurrent()) return false;
+      return 'Could not update the Action Item. Try again.';
+    }
   }
 
   async function submitComment(): Promise<void> {
@@ -315,37 +316,20 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     id={actionOwnerId}
                     type="text"
                     aria-label="Action owner"
+                    aria-invalid={ownerEdit.error() ? 'true' : undefined}
                     placeholder={'e.g. "Platform"'}
                     // Uncontrolled: seeded on mount and re-synced while idle; typing and saves live in the DOM.
                     defaultValue={props.card.actionOwner}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
-                    disabled={!canEditActionItemFollowUp(workspace, props.card) || isSavingAction()}
-                    onInput={(event) => {
-                      if (!ownerEditing() && event.currentTarget.value !== props.card.actionOwner) {
-                        ownerEdit.start(props.card.id, { reason: 'type', text: event.currentTarget.value });
-                        ownerEdit.bindInput(event.currentTarget);
-                      }
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.isComposing) return;
-                      const input = event.currentTarget;
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        ownerEdit.end('enter-key', event);
-                      } else if (event.key === 'Escape') {
-                        // Unchanged text lets the drawer's Escape close it.
-                        if (input.value === props.card.actionOwner) return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                        ownerEdit.cancel();
-                        input.value = props.card.actionOwner;
-                        setActionError(null);
-                      }
-                    }}
-                    onFocusOut={(event) => ownerEdit.end('focus-out', event)}
+                    disabled={
+                      !canEditActionItemFollowUp(workspace, props.card) ||
+                      workspace.actions.isActionItemPending(props.card.id)
+                    }
+                    readonly={ownerEdit.isSaving()}
+                    {...ownerEdit.inputProps}
                     class={[
                       'mt-1 min-h-11 w-full rounded-md border border-border bg-surface px-3 py-2 text-base text-text sm:min-h-9',
-                      'placeholder:text-text-muted board-focus-ring disabled:opacity-50',
+                      'placeholder:text-text-muted board-focus-ring read-only:opacity-50 disabled:opacity-50',
                     ]}
                   />
                   <p class="mt-1 text-[11px] text-text-muted">
@@ -356,8 +340,10 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
               <Show when={isSavingAction()}>
                 <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
               </Show>
-              <Show when={actionError()}>
-                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{actionError()}</p>
+              <Show when={ownerEdit.error() ?? actionError()}>
+                {(message) => (
+                  <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{message()}</p>
+                )}
               </Show>
             </div>
           </section>
