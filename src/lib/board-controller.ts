@@ -15,8 +15,9 @@ import {
 } from 'solid-js';
 
 import type { BoardWorkspaceActions } from './board-actions';
-import { createBoardLive, type BoardLive, type BoardLiveTransport } from './board-live';
-export type { BoardLiveTransport } from './board-live';
+import { boardLivePath, type BoardLiveMessage } from './board-live-protocol';
+import { createLiveStream, type LiveTransport } from './live-stream';
+import { parseBoardLiveMessage } from './wire-schemas';
 import {
   canAddColumn,
   canContribute,
@@ -120,7 +121,7 @@ export interface BoardControllerOptions {
   /** Server-action surface; production passes the 'use server' callers, tests the fake. */
   actions: () => BoardWorkspaceActions;
   /** Injectable live transport; defaults to SSE/WebSocket. */
-  liveTransport?: BoardLiveTransport;
+  liveTransport?: LiveTransport;
   /** Bumped when the viewer's session role changes (e.g. Co-Facilitator Link claim) to reconnect live updates. */
   liveReconnectKey?: () => number;
   /** Private Mode reveal theater hook; invoked synchronously before the response applies. */
@@ -308,9 +309,9 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   );
 
   const [nowMs, setNowMs] = createSignal(Date.now());
-  const [liveSession, setLiveSession] = createSignal<{ boardId: string; live: BoardLive } | null>(null);
-  const isLive = createMemo(() => liveSession()?.live.status() === 'live');
-  const onlineCount = createMemo(() => liveSession()?.live.onlineCount() ?? null);
+  const [onlineCount, setOnlineCount] = createSignal<number | null>(null);
+  const [liveStream, setLiveStream] = createSignal<ReturnType<typeof createLiveStream> | null>(null);
+  const isLive = createMemo(() => liveStream()?.status() === 'live');
   const [serverClock, setServerClock] = createSignal<(ServerClockSample & { boardId: string }) | null>(null);
   const timerClock = createMemo(() => {
     const clock = serverClock();
@@ -399,13 +400,40 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   createEffect(liveBoardId, (boardId) => {
     if (!boardId) return;
     if (typeof window === 'undefined') return;
-    const live = createBoardLive(boardId, options.liveTransport);
-    setLiveSession({ boardId, live });
-    reconnectLive = live.reconnect;
+    const stream = createLiveStream<BoardLiveMessage>(
+      boardLivePath(boardId),
+      {
+        parse: parseBoardLiveMessage,
+        handshake: (message) => (message.type === 'board:snapshot' ? message : undefined),
+        isTerminal: (message) => message.type === 'board:deleted',
+        onMessage(message) {
+          switch (message.type) {
+            case 'board:snapshot':
+              if (message.board.id !== boardId) break;
+              applyServerSnapshot(message.board, message.serverNow);
+              break;
+            case 'board:mutation':
+              applyVersionedEvents(boardId, message.version, message.events);
+              break;
+            case 'board:deleted':
+              applySnapshot(null);
+              break;
+            case 'presence:count':
+              setOnlineCount(message.count);
+              break;
+          }
+        },
+        onDisconnect: () => setOnlineCount(null),
+      },
+      options.liveTransport,
+    );
+    setLiveStream(stream);
+    reconnectLive = stream.reconnect;
     return () => {
       reconnectLive = undefined;
-      setLiveSession(null);
-      live.dispose();
+      setLiveStream(null);
+      setOnlineCount(null);
+      stream.dispose();
     };
   });
 
@@ -414,30 +442,6 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     (key, previous) => {
       if (previous !== undefined && key !== previous) {
         reconnectLive?.();
-      }
-    },
-  );
-
-  createEffect(
-    () => {
-      const live = liveSession();
-      return live && { boardId: live.boardId, message: live.live.lastEvent() };
-    },
-    (event, previous) => {
-      const message = event?.message;
-      if (!event || !message || message === previous?.message) return;
-      const { boardId } = event;
-      switch (message.type) {
-        case 'board:snapshot':
-          if (message.board.id !== boardId) break;
-          applyServerSnapshot(message.board, message.serverNow);
-          break;
-        case 'board:mutation':
-          applyVersionedEvents(boardId, message.version, message.events);
-          break;
-        case 'board:deleted':
-          applySnapshot(null);
-          break;
       }
     },
   );
