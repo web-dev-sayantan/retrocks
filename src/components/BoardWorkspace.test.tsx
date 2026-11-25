@@ -1748,6 +1748,43 @@ describe('<BoardWorkspace />', () => {
     });
   });
 
+  it('does not report an error when a Card Group is released over itself', async () => {
+    const group: CardGroupDTO = {
+      id: 'group_keep',
+      columnId: 'col_1',
+      title: 'Keep going',
+      cardIds: ['card_g1', 'card_g2'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: 1_760_000_002_000,
+    };
+    const board = makeBoardView({
+      isFacilitator: true,
+      groups: [group],
+      cards: [
+        makeCard({ id: 'card_g1', columnId: 'col_1', content: 'First member', groupId: 'group_keep', isMine: true }),
+        makeCard({ id: 'card_g2', columnId: 'col_1', content: 'Second member', groupId: 'group_keep', isMine: true }),
+      ],
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const column = view.getByRole('region', { name: 'Went Well' });
+    const groupEl = within(column).getByText('Keep going').closest('article') as HTMLElement;
+    const headerEl = groupEl.querySelector('[data-slot="board-transfer-group-members"]') as HTMLElement;
+    stubRect(column, [0, 0, 300, 600]);
+    stubRect(groupEl, [10, 60, 290, 400]);
+
+    pointerDrag(headerEl, [{ x: 150, y: 100 }, { x: 155, y: 105 }]);
+    await flushPromises();
+
+    expect(dispatchCommand).not.toHaveBeenCalled();
+    expect(view.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
+  });
+
   it('moves a whole Card Group to another Column by dragging its header', async () => {
     const group: CardGroupDTO = {
       id: 'group_move',

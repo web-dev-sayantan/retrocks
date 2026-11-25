@@ -120,8 +120,8 @@ function planBoardDrop(
   return { kind: 'group-with-card', cardId: item.card.id, targetCardId: target.id };
 }
 
-// A Card dropped back on itself or on a Card in its own Group is a no-op, not
-// a rejected destination. The plan reports it as false to keep the old
+// A Card or Card Group dropped back on its own Group is a no-op, not a
+// rejected destination. The plan reports it as false to keep the old
 // drop-target eligibility; release handling must not surface an error for it.
 function isNoOpDrop(
   board: BoardViewDTO | null,
@@ -131,7 +131,12 @@ function isNoOpDrop(
   if (!targetKey.startsWith(BOARD_TARGET_PREFIX)) return false;
   const item = findTransferTarget(board, itemKey);
   const landing = findTransferTarget(board, targetKey.slice(BOARD_TARGET_PREFIX.length));
-  if (!item || item.kind !== 'card' || !landing) return false;
+  if (!item || !landing) return false;
+  if (item.kind === 'group') {
+    return landing.kind === 'group'
+      ? landing.group.id === item.group.id
+      : landing.card.groupId === item.group.id;
+  }
   if (landing.kind === 'group') return landing.group.cardIds.includes(item.card.id);
   return landing.card.id === item.card.id
     || (landing.card.groupId !== null && landing.card.groupId === item.card.groupId);
