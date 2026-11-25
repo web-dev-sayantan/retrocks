@@ -2,7 +2,7 @@ import 'server-only';
 
 import { safeParse } from 'valibot';
 
-import { deckRoundChange } from '../../lib/poker-deck-policy';
+import { deckRoundChange, isSamePokerDeck } from '../../lib/poker-deck-policy';
 import { PokerDisplayName, PokerRoomNameInput } from '../../lib/poker-schemas';
 import {
   POKER_DECK_PRESETS,
@@ -408,8 +408,7 @@ export class PokerRoomStorage {
           if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
           const { deck } = command;
           const choices = deck.type === 'custom' ? deck.choices : POKER_DECK_PRESETS[deck.type];
-          if (room.deckType === deck.type && room.deck.length === choices.length
-            && room.deck.every((choice, index) => choice === choices[index])) return { ok: true, room };
+          if (isSamePokerDeck(room, deck.type, choices)) return { ok: true, room };
           const round = room.round;
           const change = deckRoundChange(
             room.activeStoryId === null ? undefined : round?.id,

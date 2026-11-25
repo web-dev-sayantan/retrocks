@@ -8,7 +8,7 @@ import {
   untrack,
 } from 'solid-js';
 
-import { projectedDeckRoundChange } from './poker-deck-policy';
+import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
 import {
   createPokerLive,
   type PokerLiveStatus,
@@ -129,8 +129,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
         ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
         : POKER_DECK_PRESETS[deck.type];
       if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) return;
-      if (room.deckType === deck.type && room.deck.length === choices.length
-        && room.deck.every((choice, index) => choice === choices[index])) return;
+      if (isSamePokerDeck(room, deck.type, choices)) return;
 
       const change = projectedDeckRoundChange(room, command.discardRoundId);
       if (change.type === 'confirm' || change.type === 'stale') return;

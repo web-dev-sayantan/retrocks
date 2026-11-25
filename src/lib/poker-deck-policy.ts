@@ -1,4 +1,4 @@
-import { unresolvedPokerRoundWithVotesId, type PokerLiveRoomView } from './poker-types';
+import { unresolvedPokerRoundWithVotesId, type PokerDeckType, type PokerLiveRoomView } from './poker-types';
 
 type DeckRoundChange =
   | { type: 'keep' | 'restart' | 'stale' }
@@ -29,4 +29,14 @@ export function projectedDeckRoundChange(
     unresolvedPokerRoundWithVotesId(room.round),
     confirmedRoundId,
   );
+}
+
+export function isSamePokerDeck(
+  room: Pick<PokerLiveRoomView, 'deckType' | 'deck'>,
+  type: PokerDeckType,
+  choices: readonly string[],
+): boolean {
+  return room.deckType === type
+    && room.deck.length === choices.length
+    && room.deck.every((choice, index) => choice === choices[index]);
 }
