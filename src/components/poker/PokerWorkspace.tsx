@@ -1,13 +1,11 @@
 import { Button } from '@ui-sdk/solid/button';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, SquareCheck, Users, X } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
+import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
 import { projectedPokerDiscardPrompt } from '../../lib/poker-discard-policy';
 import { projectedDeckRoundChange } from '../../lib/poker-deck-policy';
 import { confirmBoardAction } from '../../lib/board-confirm';
-import { createDoubleTap } from '../../lib/double-tap';
-import { createInlineEditSession, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../../lib/inline-edit';
 import {
   POKER_DEFAULT_ROOM_NAME,
   POKER_ROOM_NAME_LIMIT,
@@ -20,7 +18,6 @@ import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerStoryQueue from './PokerStoryQueue';
-import { InlineEditorMount } from '../InlineEditorMount';
 import PokerStoryTitleEditor from './PokerStoryTitleEditor';
 import PokerVotingRound from './PokerVotingRound';
 import './poker.css';
@@ -131,44 +128,17 @@ export default function PokerWorkspace(props: {
 
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
-  let roomNameEditorEl: HTMLDivElement | undefined;
 
   const canManage = () => props.room.viewer?.isFacilitator === true;
 
-  const roomNameField = usePrimitive(inlineEdit, () => ({
+  const roomNameEdit = createInlineEditSession({
     value: () => props.room.name,
-    commit: (text: string) => roomNameSave.commit(text),
+    target: () => props.room.id,
     disabled: () => !canManage(),
-  }));
-  const roomNameEdit = roomNameField.api.edit;
-  const isRenamingRoom = () => roomNameField.present('input');
-  const roomNameSave = createInlineEditSession({
-    target: () => canManage() ? props.room.id : undefined,
-    isEditing: isRenamingRoom,
-    start: (id) => roomNameEdit.start(id),
-    close: () => {
-      roomNameTap.reset();
-      roomNameEdit.cancel();
-    },
     save: saveRoomNameText,
+    fallbackFocus: () => heading?.focus(),
+    acceptsTarget: (target) => !(target instanceof Element && target.closest('button')),
   });
-  const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
-
-  function isRoomNameEditTarget(target: EventTarget | null): boolean {
-    if (!canManage()) return false;
-    return !(target instanceof Element && target.closest('button'));
-  }
-
-  function startRoomRename(): void {
-    roomNameTap.reset();
-    roomNameSave.start();
-  }
-
-  function handleRoomNameDoubleClick(event: MouseEvent): void {
-    if (!isRoomNameEditTarget(event.target)) return;
-    roomNameTap.reset();
-    startRoomRename();
-  }
 
   async function saveRoomNameText(text: string): Promise<InlineEditOutcome> {
     const nextName = text.trim() || POKER_DEFAULT_ROOM_NAME;
@@ -181,60 +151,37 @@ export default function PokerWorkspace(props: {
     }
   }
 
-  createEffect(isRenamingRoom, (renaming, wasRenaming) => {
-    if (!renaming && wasRenaming && document.activeElement === document.body) {
-      heading?.focus();
-    }
-  });
-
   onSettled(() => {
     if (props.focusHeading) heading.focus();
   });
 
-  const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
+  const alertMessage = () => closeError() || roomNameEdit.error() || props.claimError || '';
 
   return (
     <main class="poker-workspace" data-deck-type={props.room.deckType}>
       <header class="poker-room-bar">
         <div class="flex min-w-0 flex-wrap items-center gap-2.5 sm:gap-3">
           <Show
-            when={!isRenamingRoom()}
+            when={!roomNameEdit.isEditing()}
             fallback={
-              <div ref={roomNameEditorEl} class="poker-room-title-wrap">
-                <InlineEditorMount bind={(input) => roomNameEdit.bindInput(input)}>
-                  {(ref) => (
-                    <input
-                      ref={ref}
-                      type="text"
-                      aria-label="Room name"
-                      placeholder={POKER_DEFAULT_ROOM_NAME}
-                      maxlength={POKER_ROOM_NAME_LIMIT}
-                      onKeyDown={(event) => {
-                        if (event.isComposing || event.keyCode === 229) return;
-                        if (event.key === 'Escape') {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          roomNameSave.cancel();
-                          return;
-                        }
-                        roomNameEdit.inputKeydown(event);
-                      }}
-                      onFocusOut={(event) => {
-                        if (event.relatedTarget instanceof Node && roomNameEditorEl?.contains(event.relatedTarget)) return;
-                        roomNameEdit.end('focus-out', event);
-                      }}
-                      class="poker-input poker-room-title-input board-focus-ring"
-                    />
-                  )}
-                </InlineEditorMount>
+              <div ref={roomNameEdit.containerRef} class="poker-room-title-wrap">
+                <input
+                  ref={roomNameEdit.inputRef}
+                  type="text"
+                  aria-label="Room name"
+                  placeholder={POKER_DEFAULT_ROOM_NAME}
+                  maxlength={POKER_ROOM_NAME_LIMIT}
+                  {...roomNameEdit.inputProps}
+                  class="poker-input poker-room-title-input board-focus-ring"
+                />
                 <div class="poker-room-title-actions">
                   <Button
                     type="button"
                     aria-label="Save Room name"
                     title="Save Room name"
-                    disabled={roomNameSave.isSaving()}
+                    disabled={roomNameEdit.isSaving()}
                     focusableWhenDisabled
-                    onClick={() => roomNameEdit.end()}
+                    onClick={roomNameEdit.submit}
                     class="poker-inline-action poker-inline-action-save spring-press board-focus-ring"
                   >
                     <LucideIcon icon={Check} class="size-3.5 shrink-0" strokeWidth={2.2} />
@@ -243,7 +190,7 @@ export default function PokerWorkspace(props: {
                     type="button"
                     aria-label="Cancel Room rename"
                     title="Cancel Room rename"
-                    onClick={roomNameSave.cancel}
+                    onClick={roomNameEdit.cancel}
                     class="poker-inline-action spring-press board-focus-ring"
                   >
                     <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
@@ -252,13 +199,7 @@ export default function PokerWorkspace(props: {
               </div>
             }
           >
-            <div
-              onDblClick={handleRoomNameDoubleClick}
-              onPointerDown={roomNameTap.onPointerDown}
-              onPointerUp={roomNameTap.onPointerUp}
-              onPointerCancel={roomNameTap.onPointerCancel}
-              class="poker-room-title-wrap"
-            >
+            <div {...roomNameEdit.triggerProps} class="poker-room-title-wrap">
               <h1
                 ref={heading}
                 tabindex={-1}
