@@ -35,10 +35,8 @@ import {
 } from '../../lib/templates';
 import { getBoardRealtime, getBoardStore } from '../adapters/runtime';
 import {
-  encryptFacilitatorToken,
   generateBoardId,
   generateEntityId,
-  generateFacilitatorToken,
   generateTokenSalt,
   hashTokenWithSalt,
 } from '../crypto';
@@ -51,6 +49,7 @@ import {
   projectBoardForViewer,
   projectMutationEventsForViewer,
 } from '../domain/projection';
+import { mintFacilitatorCapability } from '../facilitator-capability';
 import { checkBoardCreateRateLimit } from '../rate-limit';
 import {
   ensureParticipantSession,
@@ -134,11 +133,14 @@ export async function createBoardForRequest(
 
   const boardId = generateBoardId();
   const tokenSalt = generateTokenSalt();
-  const facilitatorToken = generateFacilitatorToken();
-  const [facilitatorTokenHash, facilitatorTokenEncrypted] = await Promise.all([
-    hashTokenWithSalt(facilitatorToken, tokenSalt),
-    encryptFacilitatorToken(facilitatorToken, boardId, getSessionSecrets()),
-  ]);
+  const {
+    hash: facilitatorTokenHash,
+    encrypted: facilitatorTokenEncrypted,
+  } = await mintFacilitatorCapability({
+    salt: tokenSalt,
+    aad: boardId,
+    secrets: getSessionSecrets(),
+  });
 
   const record: CreateBoardRecord = {
     id: boardId,
