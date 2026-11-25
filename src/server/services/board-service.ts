@@ -10,6 +10,7 @@ import type {
 } from '../../lib/board-types';
 import {
   AddColumnInputSchema,
+  BoardCommandSchema,
   BoardIdSchema,
   CreateBoardInputSchema,
   CreateCardInputSchema,
@@ -35,10 +36,8 @@ import {
 } from '../../lib/templates';
 import { getBoardRealtime, getBoardStore } from '../adapters/runtime';
 import {
-  encryptFacilitatorToken,
   generateBoardId,
   generateEntityId,
-  generateFacilitatorToken,
   generateTokenSalt,
   hashTokenWithSalt,
 } from '../crypto';
@@ -51,6 +50,7 @@ import {
   projectBoardForViewer,
   projectMutationEventsForViewer,
 } from '../domain/projection';
+import { mintFacilitatorCapability } from '../facilitator-capability';
 import { checkBoardCreateRateLimit } from '../rate-limit';
 import {
   ensureParticipantSession,
@@ -134,11 +134,14 @@ export async function createBoardForRequest(
 
   const boardId = generateBoardId();
   const tokenSalt = generateTokenSalt();
-  const facilitatorToken = generateFacilitatorToken();
-  const [facilitatorTokenHash, facilitatorTokenEncrypted] = await Promise.all([
-    hashTokenWithSalt(facilitatorToken, tokenSalt),
-    encryptFacilitatorToken(facilitatorToken, boardId, getSessionSecrets()),
-  ]);
+  const {
+    hash: facilitatorTokenHash,
+    encrypted: facilitatorTokenEncrypted,
+  } = await mintFacilitatorCapability({
+    salt: tokenSalt,
+    aad: boardId,
+    secrets: getSessionSecrets(),
+  });
 
   const record: CreateBoardRecord = {
     id: boardId,
@@ -305,20 +308,17 @@ export async function setBoardLockForRequest(
   });
 }
 
-export async function deleteBoardForRequest(
-  rawInput: unknown,
-): Promise<BoardMutationSuccess> {
+async function deleteBoardById(boardId: string): Promise<BoardMutationSuccess> {
   requireRequest();
-  const input = parseMutationInput(DeleteBoardInputSchema, rawInput);
   const store = await getBoardStore();
 
-  const snapshot = await store.getBoardSnapshot(input.boardId);
+  const snapshot = await store.getBoardSnapshot(boardId);
   if (!snapshot) {
     throw new BoardDomainError('BOARD_NOT_FOUND', 'Board not found or expired.');
   }
 
   const session = await ensureParticipantSession({ renew: true });
-  const isFacilitator = isFacilitatorForBoard(session, input.boardId);
+  const isFacilitator = isFacilitatorForBoard(session, boardId);
   if (!isFacilitator) {
     if (snapshot.board.isLocked) {
       throw new BoardDomainError(
@@ -333,7 +333,7 @@ export async function deleteBoardForRequest(
   }
 
   const deletedVersion = snapshot.board.version + 1;
-  const deleted = await store.deleteBoard(input.boardId);
+  const deleted = await store.deleteBoard(boardId);
   if (!deleted) {
     throw new BoardDomainError('BOARD_NOT_FOUND', 'Board not found or expired.');
   }
@@ -343,7 +343,7 @@ export async function deleteBoardForRequest(
     version: deletedVersion,
   };
   try {
-    await getBoardRealtime().publish(input.boardId, event);
+    await getBoardRealtime().publish(boardId, event);
   } catch (error) {
     // Storage is already purged; returning a failed delete would invite retries.
     console.error('Board delete live delivery failed', error);
@@ -354,6 +354,64 @@ export async function deleteBoardForRequest(
     version: deletedVersion,
     events: [event],
   };
+}
+
+type ParsedBoardCommand = v.InferOutput<typeof BoardCommandSchema>;
+
+function toStoreMutationCommand(
+  command: Exclude<ParsedBoardCommand, { type: 'board:delete' }>,
+): BoardMutationCommand {
+  switch (command.type) {
+    case 'card:create':
+      return { ...command, id: generateEntityId() };
+    case 'comment:create':
+      return { ...command, id: generateEntityId() };
+    case 'column:add':
+      return { ...command, id: generateEntityId() };
+    case 'group:merge':
+      return { ...command, groupId: generateEntityId() };
+    case 'board:rename':
+    case 'timer:update':
+    case 'board:set-private-mode':
+    case 'board:set-lock':
+    case 'card:update':
+    case 'card:set-action':
+    case 'card:move':
+    case 'card:delete':
+    case 'reaction:toggle':
+    case 'comment:delete':
+    case 'column:update':
+    case 'column:reorder':
+    case 'column:delete':
+    case 'group:rename':
+    case 'group:ungroup':
+    case 'group:dissolve':
+    case 'group:move':
+    case 'vote:change':
+    case 'voting:configure':
+    case 'voting:reset':
+      return command;
+  }
+}
+
+export async function dispatchBoardCommandForRequest(
+  rawBoardId: unknown,
+  rawCommand: unknown,
+): Promise<BoardMutationSuccess> {
+  const boardId = parseMutationInput(BoardIdSchema, rawBoardId);
+  const command = parseMutationInput(BoardCommandSchema, rawCommand);
+  if (command.type === 'board:delete') {
+    return deleteBoardById(boardId);
+  }
+  return executeBoardMutation(boardId, toStoreMutationCommand(command));
+}
+
+export async function deleteBoardForRequest(
+  rawInput: unknown,
+): Promise<BoardMutationSuccess> {
+  requireRequest();
+  const input = parseMutationInput(DeleteBoardInputSchema, rawInput);
+  return deleteBoardById(input.boardId);
 }
 
 export async function createCardForRequest(

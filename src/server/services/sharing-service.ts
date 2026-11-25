@@ -1,18 +1,19 @@
 import 'server-only';
-import { getRequestEvent } from '@solidjs/web';
 import * as v from 'valibot';
 
 import type { BoardViewDTO } from '../../lib/board-types';
 import { BoardIdSchema } from '../../lib/schemas';
 import { getBoardStore } from '../adapters/runtime';
-import {
-  decryptFacilitatorToken,
-  encryptFacilitatorToken,
-  generateFacilitatorToken,
-  hashTokenWithSalt,
-  tokenHashesMatch,
-} from '../crypto';
+import { hashTokenWithSalt } from '../crypto';
 import { projectBoardForViewer } from '../domain/projection';
+import {
+  enforceNoStoreHeader,
+  FacilitatorTokenSchema,
+  facilitatorTokenHashesMatch,
+  hashFacilitatorToken,
+  mintFacilitatorCapability,
+  recoverFacilitatorToken,
+} from '../facilitator-capability';
 import {
   getSession,
   getSessionSecrets,
@@ -30,7 +31,7 @@ function parseBoardId(input: unknown): string {
 }
 
 async function requireFacilitator(boardId: string): Promise<void> {
-  getRequestEvent()?.response.headers.set('cache-control', 'no-store');
+  enforceNoStoreHeader();
 
   if (!isFacilitatorForBoard(await getSession(), boardId)) {
     throw new BoardDomainError('FORBIDDEN', 'Facilitator access is required.');
@@ -51,32 +52,25 @@ export async function getFacilitatorLinkForRequest(
   const capability = await store.getFacilitatorCapability(boardId);
   if (!capability) throw boardNotFound();
 
-  const secrets = getSessionSecrets();
-  const decrypted = await decryptFacilitatorToken(
-    capability.facilitatorTokenEncrypted,
-    boardId,
-    secrets,
-  );
-  if (!decrypted) {
+  const token = await recoverFacilitatorToken({
+    encrypted: capability.facilitatorTokenEncrypted,
+    aad: boardId,
+    secrets: getSessionSecrets(),
+    persistReencrypted: (reencrypted) =>
+      store.updateFacilitatorTokenEncryption(boardId, reencrypted),
+  });
+  if (!token) {
     throw new BoardDomainError(
       'INTERNAL_ERROR',
       'This Co-Facilitator Link could not be recovered. Rotate Link to create a new one.',
     );
   }
-  if (decrypted.needsReencrypt) {
-    const reencrypted = await encryptFacilitatorToken(
-      decrypted.token,
-      boardId,
-      secrets,
-    );
-    await store.updateFacilitatorTokenEncryption(boardId, reencrypted);
-  }
-  return `/b/${boardId}#f=${decrypted.token}`;
+  return `/b/${boardId}#f=${token}`;
 }
 
 const ClaimFacilitatorRoleSchema = v.object({
   boardId: BoardIdSchema,
-  token: v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{43}$/)),
+  token: FacilitatorTokenSchema,
 });
 
 function invalidLink(): BoardDomainError {
@@ -89,7 +83,7 @@ function invalidLink(): BoardDomainError {
 export async function claimFacilitatorRoleForRequest(
   input: unknown,
 ): Promise<BoardViewDTO> {
-  getRequestEvent()?.response.headers.set('cache-control', 'no-store');
+  enforceNoStoreHeader();
 
   const parsed = v.safeParse(ClaimFacilitatorRoleSchema, input);
   if (!parsed.success) throw invalidLink();
@@ -99,12 +93,13 @@ export async function claimFacilitatorRoleForRequest(
   const tokenSalt = await store.getBoardTokenSalt(boardId);
   if (!tokenSalt) throw invalidLink();
 
-  const candidateHash = await hashTokenWithSalt(token, tokenSalt);
+  const candidateHash = await hashFacilitatorToken(token, tokenSalt);
+  if (!candidateHash) throw invalidLink();
   // Read the current hash after computing the candidate, in case the link rotated.
   const capability = await store.getFacilitatorCapability(boardId);
   if (
     !capability ||
-    !tokenHashesMatch(candidateHash, capability.facilitatorTokenHash)
+    !facilitatorTokenHashesMatch(candidateHash, capability.facilitatorTokenHash)
   ) {
     throw invalidLink();
   }
@@ -130,11 +125,15 @@ export async function rotateFacilitatorLinkForRequest(
   const tokenSalt = await store.getBoardTokenSalt(boardId);
   if (!tokenSalt) throw boardNotFound();
 
-  const token = generateFacilitatorToken();
-  const [facilitatorTokenHash, facilitatorTokenEncrypted] = await Promise.all([
-    hashTokenWithSalt(token, tokenSalt),
-    encryptFacilitatorToken(token, boardId, getSessionSecrets()),
-  ]);
+  const {
+    token,
+    hash: facilitatorTokenHash,
+    encrypted: facilitatorTokenEncrypted,
+  } = await mintFacilitatorCapability({
+    salt: tokenSalt,
+    aad: boardId,
+    secrets: getSessionSecrets(),
+  });
 
   await executeBoardMutation(boardId, {
     type: 'facilitator:rotate',
