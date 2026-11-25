@@ -3,6 +3,7 @@ import { createAgent } from '@ui-sdk/solid/agent';
 import { flush } from 'solid-js';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { createPokerRoomController } from '../../lib/poker-controller';
 import type { PokerClosedRoomView, PokerResult } from '../../lib/poker-types';
 import PokerRoomSummary from './PokerRoomSummary';
 
@@ -33,7 +34,7 @@ function makeClosedRoom(overrides: Partial<PokerClosedRoomView> = {}): PokerClos
 }
 
 test('hides Reopen Room and Delete Room when viewer was not a Facilitator before close', () => {
-  const onReopen = vi.fn(async (): Promise<PokerResult> => ({ ok: false, code: 'FORBIDDEN', message: 'Forbidden' }));
+  const onReopen = vi.fn();
   const onUnavailable = vi.fn();
   const view = render(() => (
     <PokerRoomSummary
@@ -47,20 +48,30 @@ test('hides Reopen Room and Delete Room when viewer was not a Facilitator before
   expect(view.queryByRole('button', { name: 'Delete Room' })).not.toBeInTheDocument();
 });
 
-test('shows Reopen Room for a pre-close Facilitator, stays focusable while pending, and handles errors and ROOM_NOT_FOUND', async () => {
+test('wires Reopen Room to the session controller, stays focusable while reopening, and surfaces session errors and unavailability', async () => {
   let resolveReopen!: (result: PokerResult) => void;
-  const onReopen = vi.fn(() => new Promise<PokerResult>((resolve) => {
+  const changeRoom = vi.fn(() => new Promise<PokerResult>((resolve) => {
     resolveReopen = resolve;
   }));
   const onUnavailable = vi.fn();
+  const closedRoom = makeClosedRoom({ canDelete: true });
 
-  const view = render(() => (
-    <PokerRoomSummary
-      room={makeClosedRoom({ canDelete: true })}
-      onReopen={onReopen}
-      onUnavailable={onUnavailable}
-    />
-  ));
+  const view = render(() => {
+    const session = createPokerRoomController({
+      room: () => closedRoom,
+      changeRoom,
+      onUnavailable,
+    });
+    return (
+      <PokerRoomSummary
+        room={closedRoom}
+        reopening={session.phase() === 'reopening'}
+        reopenError={session.reopenError()}
+        onReopen={session.reopenRoom}
+        onUnavailable={session.markUnavailable}
+      />
+    );
+  });
 
   const agent = createAgent();
   expect(agent.snapshot().map((control) => control.label)).toContain('Reopen Room');
@@ -70,19 +81,19 @@ test('shows Reopen Room for a pre-close Facilitator, stays focusable while pendi
   fireEvent.click(reopenButton);
   flush();
 
-  expect(onReopen).toHaveBeenCalledTimes(1);
+  expect(changeRoom).toHaveBeenCalledTimes(1);
   expect(reopenButton).toHaveAttribute('aria-disabled', 'true');
   expect(reopenButton).toHaveFocus();
   expect(reopenButton).toHaveTextContent('Reopening Room…');
 
   fireEvent.click(reopenButton);
-  expect(onReopen).toHaveBeenCalledTimes(1);
+  expect(changeRoom).toHaveBeenCalledTimes(1);
 
   resolveReopen({ ok: false, code: 'FORBIDDEN', message: 'Facilitator access is required.' });
   await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent('Facilitator access is required.'));
   expect(reopenButton).not.toHaveAttribute('aria-disabled', 'true');
 
-  onReopen.mockResolvedValueOnce({
+  changeRoom.mockResolvedValueOnce({
     ok: false,
     code: 'ROOM_NOT_FOUND',
     message: 'This Room is no longer available.',
