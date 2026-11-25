@@ -8,7 +8,7 @@ import {
   type PokerFacilitatorCapability,
 } from './room';
 import {
-  committedPokerDeletion, committedPokerMutation, missingPokerRoom, pokerRoomSnapshot,
+  committedPokerDeletion, committedPokerMutation, missingPokerRoom,
   projectPokerPublication, type PokerRoomPublication,
 } from './publication';
 
@@ -92,14 +92,16 @@ export async function openNodePokerRooms(dbPath: string) {
     replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
       const result = storage.replaceFacilitatorCapability(id, hash, revision, capability);
       if (!result.ok) return result;
-      publish(id, pokerRoomSnapshot(result.value));
+      const publication = committedPokerMutation(result);
+      if (publication) publish(id, publication);
       return { ok: true as const, value: null };
     },
     claimFacilitator(id: string, hash: string, candidate: string) {
       const result = storage.claimFacilitator(id, hash, candidate);
       if (!result.ok) return result;
-      publish(id, pokerRoomSnapshot(result.value));
-      return { ok: true as const, value: projectPokerRoom(result.value, hash) };
+      const publication = committedPokerMutation(result);
+      if (publication) publish(id, publication);
+      return { ok: true as const, value: projectPokerRoom(result.room, hash) };
     },
     connect(id: string, hash: string, request: Request): Response {
       const room = storage.snapshot(id);

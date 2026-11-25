@@ -56,6 +56,9 @@ const rateLimited = {
   message: 'Too many changes. Try again shortly.',
 } as const;
 
+type PokerSharingWrite = Extract<PokerSharingResult<never>, { ok: false }>
+  | { ok: true; room: StoredPokerRoom; updated?: true };
+
 export interface PokerFacilitatorCapability {
   hash: string;
   encrypted: string;
@@ -634,7 +637,7 @@ export class PokerRoomStorage {
     hash: string,
     expectedRevision: number,
     capability: PokerFacilitatorCapability,
-  ): PokerSharingResult<StoredPokerRoom> {
+  ): PokerSharingWrite {
     return this.db.transaction(() => {
       const room = this.snapshot(id);
       if (!room) return notFound;
@@ -644,11 +647,11 @@ export class PokerRoomStorage {
 
       room.facilitatorCapability = capability;
       this.save(room);
-      return { ok: true, value: room };
+      return { ok: true, room, updated: true };
     });
   }
 
-  claimFacilitator(id: string, hash: string, candidate: string): PokerSharingResult<StoredPokerRoom> {
+  claimFacilitator(id: string, hash: string, candidate: string): PokerSharingWrite {
     const now = Date.now();
     if (!this.writeLimiter.check(id, hash, now).allowed) return rateLimited;
     return this.db.transaction(() => {
@@ -659,12 +662,12 @@ export class PokerRoomStorage {
 
       const participant = room.participants.find((entry) => entry.hash === hash);
       if (participant?.isFacilitator || room.pendingFacilitatorClaims?.includes(hash)) {
-        return { ok: true, value: room };
+        return { ok: true, room };
       }
       if (participant) participant.isFacilitator = true;
       else (room.pendingFacilitatorClaims ??= []).push(hash);
       this.save(room);
-      return { ok: true, value: room };
+      return { ok: true, room, updated: true };
     });
   }
 

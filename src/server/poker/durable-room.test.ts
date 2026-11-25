@@ -147,6 +147,37 @@ function liveSocket(hash: string, participantId: string) {
   };
 }
 
+async function connectViewers(
+  adapter: PointingPokerRoom | Awaited<ReturnType<typeof openNodePokerRooms>>,
+  node: Awaited<ReturnType<typeof openNodePokerRooms>> | null,
+) {
+  const viewers = await Promise.all(['facilitator', 'voter'].map(async (hash) => {
+    const view = await adapter.read(id, hash);
+    if (!view || view.closed || !view.viewer) throw new Error('Expected a Participant.');
+    if (node) {
+      const reader = node.connect(id, hash, new Request('https://retrocks.test/live')).body!.getReader();
+      return async () => {
+        const { value, done } = await reader.read();
+        return done ? undefined : parsePokerLiveMessage(new TextDecoder().decode(value).slice(6));
+      };
+    }
+    const peer = liveSocket(hash, view.viewer.id);
+    sockets.push(peer);
+    return async () => {
+      expect(peer.events.length).toBeGreaterThan(0);
+      return peer.events.shift();
+    };
+  }));
+  if (node) {
+    for (const [index, next] of viewers.entries()) {
+      expect(await next()).toMatchObject({ type: 'room:snapshot' });
+      expect(await next()).toMatchObject({ type: 'room:presence' });
+      if (index === 0) expect(await next()).toMatchObject({ type: 'room:presence' });
+    }
+  }
+  return viewers;
+}
+
 test.each([
   ['Node', 'close'],
   ['Durable Object', 'close'],
@@ -162,30 +193,7 @@ test.each([
     if (!added.ok || added.room.closed || !added.room.round) throw new Error('Expected an open Voting Round.');
     const roundId = added.room.round.id;
 
-    const viewers = await Promise.all(['facilitator', 'voter'].map(async (hash) => {
-      const view = await adapter.read(id, hash);
-      if (!view || view.closed || !view.viewer) throw new Error('Expected a Participant.');
-      if (node) {
-        const reader = node.connect(id, hash, new Request('https://retrocks.test/live')).body!.getReader();
-        return async () => {
-          const { value, done } = await reader.read();
-          return done ? undefined : parsePokerLiveMessage(new TextDecoder().decode(value).slice(6));
-        };
-      }
-      const peer = liveSocket(hash, view.viewer.id);
-      sockets.push(peer);
-      return async () => {
-        expect(peer.events.length).toBeGreaterThan(0);
-        return peer.events.shift();
-      };
-    }));
-    if (node) {
-      for (const [index, next] of viewers.entries()) {
-        expect(await next()).toMatchObject({ type: 'room:snapshot' });
-        expect(await next()).toMatchObject({ type: 'room:presence' });
-        if (index === 0) expect(await next()).toMatchObject({ type: 'room:presence' });
-      }
-    }
+    const viewers = await connectViewers(adapter, node);
 
     expect(await adapter.mutate(id, 'voter', { type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({ ok: false });
     expect(await adapter.mutate(id, 'facilitator', { type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({ ok: true });
@@ -217,6 +225,50 @@ test.each([
         expect(await next()).toEqual({ type: 'room:missing' });
       }
       expect(await next()).toBeUndefined();
+    }
+  } finally {
+    node?.close();
+  }
+});
+
+test.each(['Node', 'Durable Object'])('%s publishes effective Co-Facilitator Link changes only', async (runtime) => {
+  const node = runtime === 'Node' ? await openNodePokerRooms(':memory:') : null;
+  const adapter = node ?? room;
+  try {
+    if (node) node.create(id, 'facilitator', 'Alex');
+    await adapter.mutate(id, 'voter', { type: 'join', displayName: 'Sam' });
+    await adapter.replaceFacilitatorCapability(id, 'facilitator', 0, {
+      hash: 'first-hash', encrypted: 'first-secret', revision: 1,
+    });
+    const [alex, sam] = await connectViewers(adapter, node);
+
+    const claim = await adapter.claimFacilitator(id, 'voter', 'first-hash');
+    expect(claim).toMatchObject({ ok: true, value: { viewer: { displayName: 'Sam', isFacilitator: true } } });
+    expect(await alex()).toMatchObject({
+      type: 'room:snapshot',
+      room: { viewer: { displayName: 'Alex' }, participants: expect.arrayContaining([
+        expect.objectContaining({ displayName: 'Sam', isFacilitator: true }),
+      ]) },
+    });
+    expect(await sam()).toMatchObject({
+      type: 'room:snapshot',
+      room: { viewer: { displayName: 'Sam', isFacilitator: true }, facilitatorLinkRevision: 1 },
+    });
+    expect(await adapter.claimFacilitator(id, 'voter', 'first-hash')).toEqual(claim);
+    expect(await adapter.claimFacilitator(id, 'voter', 'wrong-hash')).toMatchObject({
+      ok: false, code: 'INVALID_LINK',
+    });
+
+    expect(await adapter.replaceFacilitatorCapability(id, 'facilitator', 1, {
+      hash: 'second-hash', encrypted: 'second-secret', revision: 2,
+    })).toEqual({ ok: true, value: null });
+    for (const [next, displayName] of [[alex, 'Alex'], [sam, 'Sam']] as const) {
+      const frame = await next();
+      expect(frame).toMatchObject({
+        type: 'room:snapshot',
+        room: { viewer: { displayName, isFacilitator: true }, facilitatorLinkRevision: 2 },
+      });
+      expect(JSON.stringify(frame)).not.toMatch(/second-hash|second-secret/);
     }
   } finally {
     node?.close();

@@ -1,4 +1,4 @@
-import type { PokerDeleteResult, PokerResult } from '../../lib/poker-types';
+import type { PokerDeleteResult } from '../../lib/poker-types';
 import { projectPokerRoom, type StoredPokerRoom } from './room';
 
 export type PokerRoomPublication =
@@ -7,11 +7,11 @@ export type PokerRoomPublication =
 
 export const missingPokerRoom: PokerRoomPublication = { type: 'missing', terminal: true, frame: { type: 'room:missing' } };
 
-export function pokerRoomSnapshot(room: StoredPokerRoom): PokerRoomPublication {
+function pokerRoomSnapshot(room: StoredPokerRoom): PokerRoomPublication {
   return { type: 'snapshot', room, terminal: room.closedAt !== undefined };
 }
 
-export function committedPokerMutation(result: PokerResult<StoredPokerRoom> & { updated?: true }) {
+export function committedPokerMutation(result: { ok: false } | { ok: true; room: StoredPokerRoom; updated?: true }) {
   return result.ok && result.updated ? pokerRoomSnapshot(result.room) : undefined;
 }
 

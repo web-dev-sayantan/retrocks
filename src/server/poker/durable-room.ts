@@ -8,7 +8,7 @@ import {
   type PokerFacilitatorCapability,
 } from './room';
 import {
-  committedPokerDeletion, committedPokerMutation, missingPokerRoom, pokerRoomSnapshot,
+  committedPokerDeletion, committedPokerMutation, missingPokerRoom,
   projectPokerPublication, type PokerRoomPublication,
 } from './publication';
 
@@ -64,15 +64,17 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
     const result = this.storage.replaceFacilitatorCapability(id, hash, revision, capability);
     if (!result.ok) return result;
-    this.publish(pokerRoomSnapshot(result.value));
+    const publication = committedPokerMutation(result);
+    if (publication) this.publish(publication);
     return { ok: true as const, value: null };
   }
 
   async claimFacilitator(id: string, hash: string, candidate: string) {
     const result = this.storage.claimFacilitator(id, hash, candidate);
     if (!result.ok) return result;
-    this.publish(pokerRoomSnapshot(result.value));
-    return { ok: true as const, value: projectPokerRoom(result.value, hash) };
+    const publication = committedPokerMutation(result);
+    if (publication) this.publish(publication);
+    return { ok: true as const, value: projectPokerRoom(result.room, hash) };
   }
 
   async fetch(request: Request): Promise<Response> {
