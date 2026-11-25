@@ -33,7 +33,7 @@ import {
   canEditActionItem,
   canEditActionItemFollowUp,
 } from '../lib/board-permissions';
-import { formatRelativeTime } from '../lib/recent-boards';
+import { formatRelativeTime } from '../lib/relative-time';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardReactions from './CardReactions';

@@ -2,7 +2,7 @@ import { Button } from '@ui-sdk/solid/button';
 import { CheckCircle2, Circle, CircleSlash, RotateCcw } from 'lucide';
 import { For, Show, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 
-import { takeFacilitatorLinkToken } from '../../lib/facilitator-link';
+import { subscribeFacilitatorLinkScrub } from '../../lib/facilitator-link';
 import { pokerRoomPath } from '../../lib/poker-routes';
 import type { PokerClosedRoomView, PokerResult } from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
@@ -24,11 +24,7 @@ export default function PokerRoomSummary(props: {
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
-    const path = pokerRoomPath(untrack(() => props.room.id));
-    const scrubFragment = () => takeFacilitatorLinkToken(path);
-    scrubFragment();
-    window.addEventListener('hashchange', scrubFragment);
-    return () => window.removeEventListener('hashchange', scrubFragment);
+    return subscribeFacilitatorLinkScrub(pokerRoomPath(untrack(() => props.room.id)));
   });
 
   async function reopenRoom() {
