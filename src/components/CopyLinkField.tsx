@@ -21,7 +21,7 @@ const boardPrimaryButton = [
   boardButtonBase,
   'border-transparent bg-accent text-accent-contrast hover:opacity-90 active:opacity-80',
 ];
-const boardSecondaryButton = [
+export const boardSecondaryButton = [
   boardButtonBase,
   'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle',
 ];

@@ -99,8 +99,6 @@ export default function PokerStoryTitleEditor(props: {
             ]}
             aria-label="Cancel Story title edit"
             title="Cancel"
-            disabled={saving()}
-            focusableWhenDisabled
             onClick={titleEdit.cancel}
           >
             <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />

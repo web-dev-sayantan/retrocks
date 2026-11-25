@@ -1477,3 +1477,58 @@ test('clicking Select on a locked Story subtly wiggles the Unlock button beside 
     vi.useRealTimers();
   }
 });
+
+test('clicking Cancel during an in-flight Story title save discards the pending session', async () => {
+  const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
+  const room: PokerLiveRoomView = {
+    closed: false,
+    id: 'room',
+    name: 'Poker Room',
+    version: 1,
+    viewer: facilitator,
+    participants: [facilitator],
+    stories: [{ id: 's1', title: 'Checkout flow', status: 'pending', locked: false }],
+    activeStoryId: null,
+    deck: FIBONACCI_DECK,
+    deckType: 'fibonacci',
+    round: null,
+  };
+  const pending = Promise.withResolvers<PokerResult>();
+  const change = vi.fn(async () => pending.promise);
+
+  render(() => (
+    <PokerWorkspace
+      room={room}
+      online={['alex']}
+      status="live"
+      onUnavailable={vi.fn()}
+      onChange={change}
+    />
+  ));
+
+  const queue = screen.getByRole('list', { name: 'Story queue' });
+  const row = within(queue).getAllByRole('listitem')[0];
+  fireEvent.dblClick(within(row).getByText('Checkout flow'));
+  flush();
+
+  const input = await within(row).findByRole('textbox', { name: 'Edit Story title' }) as HTMLInputElement;
+  fireEvent.input(input, { target: { value: 'Updated checkout' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  flush();
+  expect(change).toHaveBeenCalledTimes(1);
+
+  const cancelButton = within(row).getByRole('button', { name: 'Cancel Story title edit' });
+  expect(cancelButton).not.toBeDisabled();
+  fireEvent.click(cancelButton);
+  flush();
+  expect(within(row).queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
+
+  // Reopen and resolve the earlier in-flight save with an error; the reopened session stays clean.
+  fireEvent.dblClick(within(row).getByText('Checkout flow'));
+  flush();
+  pending.resolve({ ok: false, code: 'STORY_LOCKED', message: 'Stale error' });
+  await Promise.resolve();
+  flush();
+  expect(within(row).getByRole('textbox', { name: 'Edit Story title' })).toBeInTheDocument();
+  expect(within(row).queryByRole('alert')).toBeNull();
+});

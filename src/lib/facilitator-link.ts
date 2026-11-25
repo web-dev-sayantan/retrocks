@@ -1,6 +1,12 @@
 export interface FacilitatorLinkClaimOptions<T> {
   path: string;
   claim: (token: string) => Promise<T>;
+  /** When false, the `#f=` fragment is still scrubbed immediately (ADR-0001) without issuing a claim. */
+  shouldClaim?: () => boolean;
+  /** Optional injectable token reader/scrubber; defaults to `takeFacilitatorLinkToken`. */
+  takeToken?: (expectedPath: string) => string | null;
+  /** Optional injectable `hashchange` subscriber; defaults to `window.addEventListener('hashchange', ...)`. */
+  onHashChange?: (listener: () => void) => () => void;
   onStart?: () => void;
   onPendingChange?: (pending: boolean) => void;
   onSuccess: (result: T) => void;
@@ -19,30 +25,17 @@ export function takeFacilitatorLinkToken(expectedPath: string): string | null {
   return token;
 }
 
-export function subscribeFacilitatorLinkScrub(
-  expectedPath: string | (() => string | undefined),
-): () => void {
-  function scrub() {
-    const target = typeof expectedPath === 'function' ? expectedPath() : expectedPath;
-    if (target) takeFacilitatorLinkToken(target);
-  }
-
-  window.addEventListener('hashchange', scrub);
-  scrub();
-  return () => {
-    window.removeEventListener('hashchange', scrub);
-  };
-}
-
 export function subscribeFacilitatorLinkClaim<T>(
   options: FacilitatorLinkClaimOptions<T>,
 ): () => void {
   let disposed = false;
   let activeAttempt = 0;
+  const readToken = options.takeToken ?? takeFacilitatorLinkToken;
 
   async function claimFromFragment() {
-    const token = takeFacilitatorLinkToken(options.path);
+    const token = readToken(options.path);
     if (token === null) return;
+    if (options.shouldClaim && !options.shouldClaim()) return;
 
     const { pathname } = window.location;
     const currentAttempt = ++activeAttempt;
@@ -69,10 +62,15 @@ export function subscribeFacilitatorLinkClaim<T>(
     }
   }
 
-  window.addEventListener('hashchange', claimFromFragment);
+  const unsubscribe = options.onHashChange
+    ? options.onHashChange(() => { void claimFromFragment(); })
+    : (() => {
+        window.addEventListener('hashchange', claimFromFragment);
+        return () => window.removeEventListener('hashchange', claimFromFragment);
+      })();
   void claimFromFragment();
   return () => {
     disposed = true;
-    window.removeEventListener('hashchange', claimFromFragment);
+    unsubscribe();
   };
 }

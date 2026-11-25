@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   subscribeFacilitatorLinkClaim,
-  subscribeFacilitatorLinkScrub,
   takeFacilitatorLinkToken,
 } from './facilitator-link';
 
@@ -176,18 +175,24 @@ describe('subscribeFacilitatorLinkClaim', () => {
     expect(claim).toHaveBeenCalledTimes(1);
     expect(window.location.hash).toBe(`#f=${secondToken}`);
   });
-});
-
-describe('subscribeFacilitatorLinkScrub', () => {
-  it('scrubs matching fragments immediately and on hashchange until stopped', () => {
+  it('scrubs matching fragments immediately and on hashchange without claiming when shouldClaim is false', () => {
     window.history.replaceState(null, '', `${roomPath}#f=${validToken}`);
-    const stop = subscribeFacilitatorLinkScrub(roomPath);
+    const claim = vi.fn();
+    const stop = subscribeFacilitatorLinkClaim({
+      path: roomPath,
+      shouldClaim: () => false,
+      claim,
+      onSuccess: vi.fn(),
+      onError: vi.fn(),
+    });
 
     expect(window.location.hash).toBe('');
+    expect(claim).not.toHaveBeenCalled();
 
     window.history.replaceState(null, '', `${roomPath}#f=${secondToken}`);
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(window.location.hash).toBe('');
+    expect(claim).not.toHaveBeenCalled();
 
     stop();
 

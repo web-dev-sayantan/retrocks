@@ -10,7 +10,7 @@ import {
 } from 'solid-js';
 
 import { confirmBoardAction, type BoardConfirmation } from './board-confirm';
-import { takeFacilitatorLinkToken } from './facilitator-link';
+import { subscribeFacilitatorLinkClaim, takeFacilitatorLinkToken } from './facilitator-link';
 import { createLiveStream, type LiveStatus, type LiveTransport } from './live-stream';
 import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
 import {
@@ -63,6 +63,19 @@ function canProceedWithRoundChange(
 ) {
   const decision = projectedPokerDiscardDecision(command.type, isActive, room.round, command.discardRoundId);
   return decision.type === 'proceed' || decision.type === 'discard';
+}
+
+function resolveChangedDeckChoices(
+  room: Pick<PokerLiveRoomView, 'deckType' | 'deck'>,
+  deck: Extract<PokerRoomChange, { type: 'set-deck' }>['deck'],
+): readonly string[] | null {
+  const choices = deck.type === 'custom'
+    ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
+    : POKER_DECK_PRESETS[deck.type];
+  if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) {
+    return null;
+  }
+  return isSamePokerDeck(room, deck.type, choices) ? null : choices;
 }
 
 function applyOptimisticRoomChange(room: PokerRoomView | null, command: PokerRoomChange): void {
@@ -139,16 +152,12 @@ function applyOptimisticRoomChange(room: PokerRoomView | null, command: PokerRoo
       break;
     }
     case 'set-deck': {
-      const { deck } = command;
-      const choices = deck.type === 'custom'
-        ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
-        : POKER_DECK_PRESETS[deck.type];
-      if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) return;
-      if (isSamePokerDeck(room, deck.type, choices)) return;
+      const choices = resolveChangedDeckChoices(room, command.deck);
+      if (!choices) return;
 
       const change = projectedDeckRoundChange(room, command.discardRoundId);
       if (change.type === 'confirm' || change.type === 'stale') return;
-      room.deckType = deck.type;
+      room.deckType = command.deck.type;
       room.deck = [...choices];
       // A replacement round becomes actionable once its authoritative ID arrives.
       if (change.type === 'discard') room.round = null;
@@ -282,14 +291,7 @@ function resolveConfirmation(
       };
     }
     case 'set-deck': {
-      const { deck } = command;
-      const choices = deck.type === 'custom'
-        ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
-        : POKER_DECK_PRESETS[deck.type];
-      if (isSamePokerDeck(room, deck.type, choices)) return null;
-      if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) {
-        return null;
-      }
+      if (!resolveChangedDeckChoices(room, command.deck)) return null;
       const change = projectedDeckRoundChange(room);
       if (change.type !== 'confirm') return null;
       return {
@@ -637,54 +639,38 @@ export function createPokerRoomController(
 
   onSettled(() => {
     if (!roomId) return;
-    let active = true;
-    let attempt = 0;
-
-    function handleFragment() {
-      const token = fragment.takeToken(pokerRoomPath(roomId));
-      if (token === null) return;
-
-      const current = untrack(serverRoom);
-      if (untrack(unavailable) || !current || current.closed) return;
-      const claimLink = options.claimFacilitatorLink;
-      if (!claimLink) return;
-
-      const currentAttempt = ++attempt;
-      setClaimPending(true);
-      setClaimError('');
-      void (async () => {
-        try {
-          const result = await claimLink(roomId, token);
-          if (!active) return;
-          if (result.ok) {
-            applySnapshot(result.value);
-            if (!result.value.closed && !result.value.viewer) {
-              setHasPendingFacilitatorClaim(true);
-            }
-          } else if (result.code === 'ROOM_NOT_FOUND') {
-            markUnavailable();
-          } else if (attempt === currentAttempt) {
-            setClaimError(result.message);
+    const claimLink = options.claimFacilitatorLink;
+    return subscribeFacilitatorLinkClaim({
+      path: pokerRoomPath(roomId),
+      takeToken: fragment.takeToken,
+      onHashChange: fragment.onHashChange,
+      shouldClaim: () => {
+        const current = untrack(serverRoom);
+        return Boolean(!untrack(unavailable) && current && !current.closed && claimLink);
+      },
+      claim: (token) => (
+        claimLink
+          ? claimLink(roomId, token)
+          : Promise.resolve({ ok: false as const, code: 'FORBIDDEN' as const, message: '' })
+      ),
+      onStart: () => setClaimError(''),
+      onPendingChange: setClaimPending,
+      onSuccess: (result) => {
+        if (result.ok) {
+          applySnapshot(result.value);
+          if (!result.value.closed && !result.value.viewer) {
+            setHasPendingFacilitatorClaim(true);
           }
-        } catch {
-          if (active && attempt === currentAttempt) {
-            setClaimError('Could not claim Facilitator access. Open the Co-Facilitator Link to try again.');
-          }
-        } finally {
-          if (active && attempt === currentAttempt) {
-            setClaimPending(false);
-          }
+        } else if (result.code === 'ROOM_NOT_FOUND') {
+          markUnavailable();
+        } else {
+          setClaimError(result.message);
         }
-      })();
-    }
-
-    const unsubscribe = fragment.onHashChange(handleFragment);
-    handleFragment();
-    return () => {
-      active = false;
-      attempt = 0;
-      unsubscribe();
-    };
+      },
+      onError: () => {
+        setClaimError('Could not claim Facilitator access. Open the Co-Facilitator Link to try again.');
+      },
+    });
   });
 
   const performChange = action(function* (activeId: string, command: PokerRoomChange) {

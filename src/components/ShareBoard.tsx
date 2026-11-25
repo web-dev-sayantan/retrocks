@@ -12,15 +12,9 @@ import { Show, createSignal, createUniqueId } from 'solid-js';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { getFacilitatorLink, rotateFacilitatorLink } from '../lib/sharing-actions';
 import BoardOverlayHeader from './BoardOverlayHeader';
-import CopyLinkField from './CopyLinkField';
+import CopyLinkField, { boardSecondaryButton as secondaryButtonClass } from './CopyLinkField';
 import LucideIcon from './LucideIcon';
 import ShareQrCode from './ShareQrCode';
-
-const buttonClass = [
-  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border px-3 py-2 text-sm font-medium',
-  'transition-colors board-focus-ring aria-disabled:cursor-wait aria-disabled:opacity-60',
-];
-const secondaryButtonClass = [buttonClass, 'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle'];
 
 function FacilitatorSharing(props: { boardId: string }) {
   const titleId = createUniqueId();
