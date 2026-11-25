@@ -2,18 +2,20 @@ import { flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  boardLivePath,
   LIVE_CONNECTION_HEADER,
   LIVE_HEARTBEAT_MS,
   LIVE_HEARTBEAT_TIMEOUT_MS,
   type BoardLiveMessage,
 } from './board-live-protocol';
-import { createBoardLive, type BoardLive, type BoardLiveTransport } from './board-live';
 import type { BoardViewDTO } from './board-types';
 import {
   createLiveStream,
   createSseTransport,
   createWebSocketTransport,
+  type LiveTransport,
 } from './live-stream';
+import { parseBoardLiveMessage } from './wire-schemas';
 
 interface FakeConnection {
   path: string;
@@ -25,9 +27,9 @@ interface FakeConnection {
   fail(): void;
 }
 
-function createFakeTransport(): { transport: BoardLiveTransport; connections: FakeConnection[] } {
+function createFakeTransport(): { transport: LiveTransport; connections: FakeConnection[] } {
   const connections: FakeConnection[] = [];
-  const transport: BoardLiveTransport = {
+  const transport: LiveTransport = {
     connect(path, handlers) {
       const connection: FakeConnection = {
         path,
@@ -100,15 +102,36 @@ function emitMessage(connection: FakeConnection, message: BoardLiveMessage): voi
   connection.emit(JSON.stringify(message));
 }
 
-const sessions: BoardLive[] = [];
+const sessions: Array<{ dispose(): void }> = [];
 
-function startLive(transport: BoardLiveTransport, boardId = 'board_1'): BoardLive {
-  const live = createBoardLive(boardId, transport);
-  sessions.push(live);
-  return live;
+function startLive(transport: LiveTransport, boardId = 'board_1') {
+  const messages: BoardLiveMessage[] = [];
+  let disconnects = 0;
+  const stream = createLiveStream<BoardLiveMessage>(
+    boardLivePath(boardId),
+    {
+      parse: parseBoardLiveMessage,
+      handshake: (message) => (message.type === 'board:snapshot' ? message : undefined),
+      isTerminal: (message) => message.type === 'board:deleted',
+      onMessage(message) {
+        messages.push(message);
+      },
+      onDisconnect() {
+        disconnects += 1;
+      },
+    },
+    transport,
+  );
+  sessions.push(stream);
+  return {
+    ...stream,
+    messages,
+    lastMessage: () => messages.at(-1) ?? null,
+    disconnects: () => disconnects,
+  };
 }
 
-describe('createBoardLive', () => {
+describe('createLiveStream', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
   });
@@ -124,7 +147,7 @@ describe('createBoardLive', () => {
     vi.restoreAllMocks();
   });
 
-  it('connects via the transport and exposes status, lastEvent, and onlineCount reactively', () => {
+  it('connects via the transport, updates status reactively, and delivers messages to onMessage', () => {
     const { transport, connections } = createFakeTransport();
     const live = startLive(transport, 'board 42');
     flush();
@@ -135,12 +158,11 @@ describe('createBoardLive', () => {
     emitMessage(connections[0], makeSnapshot(1, 'conn_1'));
     flush();
     expect(live.status()).toBe('live');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 1 });
-    expect(live.onlineCount()).toBeNull();
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 1 });
 
     emitMessage(connections[0], { type: 'presence:count', count: 3 });
     flush();
-    expect(live.onlineCount()).toBe(3);
+    expect(live.lastMessage()).toEqual({ type: 'presence:count', count: 3 });
     expect(live.status()).toBe('live');
 
     emitMessage(connections[0], {
@@ -149,7 +171,7 @@ describe('createBoardLive', () => {
       events: [{ type: 'board:updated', version: 2, patch: { title: 'Renamed' } }],
     });
     flush();
-    expect(live.lastEvent()).toMatchObject({ type: 'board:mutation', version: 2 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:mutation', version: 2 });
   });
 
   it('retries with capped backoff after transport failures', () => {
@@ -187,7 +209,7 @@ describe('createBoardLive', () => {
     expect(connections).toHaveLength(2);
   });
 
-  it('resets the backoff attempt counter when a snapshot arrives', () => {
+  it('resets the backoff attempt counter when a handshake arrives', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const { transport, connections } = createFakeTransport();
     startLive(transport);
@@ -243,7 +265,7 @@ describe('createBoardLive', () => {
     expect(connections).toHaveLength(3);
   });
 
-  it('pings the transport on the heartbeat interval with the snapshot connection id', () => {
+  it('pings the transport on the heartbeat interval with the handshake connection id', () => {
     const { transport, connections } = createFakeTransport();
     const live = startLive(transport);
     flush();
@@ -263,15 +285,14 @@ describe('createBoardLive', () => {
     expect(connections[1].pings).toEqual([undefined]);
   });
 
-  it('replaces the stream on reconnect() so a version gap resync loads a fresh snapshot', () => {
+  it('replaces the stream on reconnect(), notifies onDisconnect, and loads a fresh snapshot', () => {
     const { transport, connections } = createFakeTransport();
     const live = startLive(transport);
     flush();
+    const disconnectsBefore = live.disconnects();
     emitMessage(connections[0], makeSnapshot(1));
-    emitMessage(connections[0], { type: 'presence:count', count: 4 });
     flush();
     expect(live.status()).toBe('live');
-    expect(live.onlineCount()).toBe(4);
 
     // The consumer detected a version gap and asked the transport to resync.
     live.reconnect();
@@ -279,15 +300,15 @@ describe('createBoardLive', () => {
     expect(connections[0].closed).toBe(true);
     expect(connections).toHaveLength(2);
     expect(live.status()).toBe('connecting');
-    expect(live.onlineCount()).toBeNull();
+    expect(live.disconnects()).toBe(disconnectsBefore + 1);
 
     emitMessage(connections[1], makeSnapshot(3));
     flush();
     expect(live.status()).toBe('live');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 3 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 3 });
   });
 
-  it('stops reconnecting after board:deleted but still reports the event', () => {
+  it('stops reconnecting after a terminal frame but still delivers it to onMessage', () => {
     const { transport, connections } = createFakeTransport();
     const live = startLive(transport);
     flush();
@@ -298,7 +319,7 @@ describe('createBoardLive', () => {
     emitMessage(connections[0], { type: 'board:deleted', version: 2 });
     flush();
     expect(connections[0].closed).toBe(true);
-    expect(live.lastEvent()).toMatchObject({ type: 'board:deleted', version: 2 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:deleted', version: 2 });
 
     vi.advanceTimersByTime(60_000);
     flush();
@@ -324,7 +345,7 @@ describe('createBoardLive', () => {
     );
     flush();
     expect(live.status()).toBe('reconnecting');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 1 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 1 });
 
     vi.advanceTimersByTime(500);
     flush();
@@ -350,7 +371,7 @@ describe('createBoardLive', () => {
     emitMessage(stale, makeSnapshot(9));
     flush();
     expect(live.status()).toBe('connecting');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 1 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 1 });
 
     vi.advanceTimersByTime(10_000);
     flush();
@@ -444,7 +465,7 @@ describe('createBoardLive', () => {
     emitMessage(connections[1], makeSnapshot(2, 'conn_2'));
     flush();
     expect(live.status()).toBe('live');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 2 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 2 });
 
     // Case 2: underlying transport is no longer open.
     connections[1].open = false;
@@ -456,7 +477,7 @@ describe('createBoardLive', () => {
     emitMessage(connections[2], makeSnapshot(3, 'conn_3'));
     flush();
     expect(live.status()).toBe('live');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 3 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 3 });
 
     // Case 3: connection went silent beyond the heartbeat timeout (e.g. after laptop sleep).
     vi.setSystemTime(Date.now() + LIVE_HEARTBEAT_TIMEOUT_MS);
@@ -469,7 +490,7 @@ describe('createBoardLive', () => {
     emitMessage(connections[3], makeSnapshot(4, 'conn_4'));
     flush();
     expect(live.status()).toBe('live');
-    expect(live.lastEvent()).toMatchObject({ type: 'board:snapshot', version: 4 });
+    expect(live.lastMessage()).toMatchObject({ type: 'board:snapshot', version: 4 });
   });
 
   it('transitions to reconnecting and recovers if the visible-return liveness ping fails or times out', () => {
@@ -672,7 +693,18 @@ describe('createLiveStream built-in transports', () => {
       .mockResolvedValueOnce(new Response(null, { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const live = createBoardLive('board_sse', createSseTransport());
+    const received: BoardLiveMessage[] = [];
+    const live = createLiveStream<BoardLiveMessage>(
+      boardLivePath('board_sse'),
+      {
+        parse: parseBoardLiveMessage,
+        handshake: (message) => (message.type === 'board:snapshot' ? message : undefined),
+        isTerminal: (message) => message.type === 'board:deleted',
+        onMessage: (message) => received.push(message),
+        onDisconnect: () => {},
+      },
+      createSseTransport(),
+    );
     activeStreams.push(live);
     flush();
 
@@ -723,6 +755,7 @@ describe('createLiveStream built-in transports', () => {
     sources[2].emit({ type: 'board:deleted', version: 4 });
     flush();
     expect(sources[2].closed).toBe(true);
+    expect(received.at(-1)).toEqual({ type: 'board:deleted', version: 4 });
     document.dispatchEvent(new Event('visibilitychange'));
     window.dispatchEvent(new Event('online'));
     flush();

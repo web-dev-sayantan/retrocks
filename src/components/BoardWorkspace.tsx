@@ -54,7 +54,8 @@ import {
   canFacilitate,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { createBoardController, type BoardLiveTransport } from '../lib/board-controller';
+import { createBoardController } from '../lib/board-controller';
+import type { LiveTransport } from '../lib/live-stream';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -105,7 +106,7 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   actions?: BoardWorkspaceActions;
-  liveTransport?: BoardLiveTransport;
+  liveTransport?: LiveTransport;
   liveReconnectKey?: number;
 }
 
