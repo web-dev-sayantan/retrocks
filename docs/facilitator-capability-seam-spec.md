@@ -22,6 +22,7 @@ Unify the Co-Facilitator Link capability lifecycle behind one deep server capabi
 
 - Create a shared server Facilitator capability module owning: 43-character base64url token validation, capability minting (raw token, salted SHA-256 hash, AES-256-GCM ciphertext), decryption with mandatory re-encryption callback when an older `SESSION_SECRET` decrypted the payload, and `Cache-Control: no-store` response header enforcement.
 - Wire two real storage adapters—Board sharing and Pointing Poker Room sharing—into the shared server capability module, passing scope-specific salt/AAD context and persistence callbacks for reading and updating encrypted tokens.
+- Preserve #103's shared Room publication semantics in the Pointing Poker Room adapter: effective Co-Facilitator Link replacements and claims publish projected Room updates across both Node and Cloudflare runtimes, unchanged repeated claims succeed without sending duplicate snapshots, and rejected claims publish nothing.
 - Fix the Pointing Poker Room secret-rotation gap by persisting re-encrypted ciphertext whenever `needsReencrypt` is reported during Co-Facilitator Link retrieval.
 - Consolidate client `#f=` fragment extraction, `hashchange` subscription, single-attempt race guarding, and `history.replaceState` scrubbing into one shared Facilitator-link claim module consumed by both Board and Room flows.
 - Consolidate the duplicated QR code rendering and clipboard-with-manual-select copy-link controls into shared client sharing primitives parameterized by label, URL, and feedback style, so Board and Room sharing panels stay thin and consistent.
@@ -31,7 +32,7 @@ Unify the Co-Facilitator Link capability lifecycle behind one deep server capabi
 ## Testing Decisions
 
 - Test the shared server Facilitator capability module directly through its interface with in-memory storage adapters, covering: valid token mint/verify, malformed token rejection, `Cache-Control: no-store` enforcement, and `SESSION_SECRET` rotation with verified re-encryption persistence.
-- Add a Pointing Poker Room sharing integration test confirming that retrieving a Co-Facilitator Link after a `SESSION_SECRET` rotation re-encrypts the stored token in Room storage.
+- Add a Pointing Poker Room sharing integration test confirming that retrieving a Co-Facilitator Link after a `SESSION_SECRET` rotation re-encrypts the stored token in Room storage, while preserving #103's dual-runtime replacement and repeated-claim publication assertions.
 - Test the shared client fragment-claim module against rapid `hashchange` events, in-flight claim races, invalid tokens, and history scrubbing, and test the shared copy-link/QR primitives for clipboard success and manual-select fallback.
 - Replace duplicated Board/Room sharing plumbing tests with shared-seam coverage while keeping thin end-to-end sharing checks on both Board and Room.
 - Follow existing Board sharing and Pointing Poker sharing server tests as prior art.
@@ -45,3 +46,4 @@ Unify the Co-Facilitator Link capability lifecycle behind one deep server capabi
 ## Further Notes
 
 - Two real adapters (Board and Pointing Poker Room) justify this seam; do not introduce speculative extra adapter layers beyond what Board and Room require.
+- Issue #103 already unified live publication for Pointing Poker Co-Facilitator Link replacements and claims across Node and Cloudflare runtimes; the remaining duplication covered here is server token crypto/re-encryption (`needsReencrypt`) and client fragment-claim, QR, and copy-link modules across Board and Room.
