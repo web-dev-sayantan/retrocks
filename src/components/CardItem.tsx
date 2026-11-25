@@ -8,7 +8,6 @@ import {
   type ActionItemPatch,
   type CardGroupDTO,
   type CardViewDTO,
-  type ColumnDTO,
 } from '../lib/board-types';
 import {
   REDACTED_CARD_WHISPERS,
@@ -19,14 +18,14 @@ import {
   canEditActionItemFollowUp,
   canInteractWithCard,
   canManageCard,
+  passesPrivateMode,
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import { formatRelativeTime } from '../lib/relative-time';
-import type { BoardMutations } from '../lib/board-controller';
-import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
+import { useBoardWorkspace } from './BoardWorkspaceContext';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
 import { InlineEditorMount } from './InlineEditorMount';
@@ -38,37 +37,14 @@ import {
   PlusIcon,
   TrashIcon,
 } from './Icons';
-import type { WorkspaceVoting } from '../lib/board-controller';
 import VoteControls from './VoteControls';
 
 export interface CardItemProps {
   card: CardViewDTO;
   revealIndex?: number;
-  voting: WorkspaceVoting;
-  columns: readonly ColumnDTO[];
   columnCards: readonly CardViewDTO[];
   columnGroups: readonly CardGroupDTO[];
-  canGroupCards: boolean;
-  canUngroup: boolean;
-  isFacilitator: boolean;
-  isLocked: boolean;
-  isBlurred: boolean;
-  nowMs: number;
-  /** The Board's createTransfer instance: this Card is one of its items. */
-  transfer: BoardTransferHandle;
-  /** Controller-shaped Card mutations (the workspace passes its session). */
-  actions: Pick<
-    BoardMutations,
-    | 'updateCard'
-    | 'updateActionItem'
-    | 'moveCard'
-    | 'deleteCard'
-    | 'toggleReaction'
-    | 'groupCard'
-    | 'ungroupCard'
-    | 'isActionItemPending'
-  >;
-  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
+  canUngroup?: boolean;
 }
 
 const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
@@ -77,11 +53,12 @@ const PLACEHOLDER_LINES_2 = ['w-full', 'w-4/5'] as const;
 const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
 
 export default function CardItem(props: CardItemProps) {
+  const workspace = useBoardWorkspace();
   const [isDeleting, setIsDeleting] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
   const [isGrouping, setIsGrouping] = createSignal(false);
   const [isUngrouping, setIsUngrouping] = createSignal(false);
-  const isUpdatingAction = createMemo(() => props.actions.isActionItemPending(props.card.id));
+  const isUpdatingAction = createMemo(() => workspace.actions.isActionItemPending(props.card.id));
   // The optimistic store is the draft: the pending value is the checkbox value.
   const actionDone = () => props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
@@ -148,7 +125,7 @@ export default function CardItem(props: CardItemProps) {
   );
 
   createEffect(
-    () => props.isLocked,
+    () => workspace.isLocked,
     (locked) => {
       if (locked) {
         cancelEdit();
@@ -157,7 +134,7 @@ export default function CardItem(props: CardItemProps) {
     },
   );
 
-  const canManage = createMemo(() => canManageCard(props, props.card));
+  const canManage = createMemo(() => canManageCard(workspace, props.card));
 
   // Card text inline editing: createInlineEdit owns the session, input, and keyboard contract.
   const textField = usePrimitive(inlineEdit, () => ({
@@ -179,7 +156,7 @@ export default function CardItem(props: CardItemProps) {
   });
 
   const otherColumns = createMemo(
-    () => props.columns.filter((col) => col.id !== props.card.columnId),
+    () => workspace.columns.filter((col) => col.id !== props.card.columnId),
   );
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
@@ -201,15 +178,21 @@ export default function CardItem(props: CardItemProps) {
 
   const canGroup = createMemo(
     () =>
-      props.canGroupCards &&
-      canInteractWithCard(props, props.card) &&
+      workspace.canGroupCards &&
+      canInteractWithCard(workspace, props.card) &&
       (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
+  );
+
+  const canUngroup = createMemo(
+    () =>
+      props.canUngroup ??
+      (workspace.canGroupCards && passesPrivateMode(workspace, props.card)),
   );
 
   const canDrag = createMemo(() => (canMove() || canGroup()) && !isEditing());
 
   const relativeTimestamp = createMemo(() =>
-    formatRelativeTime(props.card.createdAt, props.nowMs),
+    formatRelativeTime(props.card.createdAt, workspace.nowMs),
   );
 
   const placeholderLineWidths = createMemo(() => {
@@ -251,7 +234,7 @@ export default function CardItem(props: CardItemProps) {
     if (!canManage()) return false;
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    const error = await props.actions.updateCard(props.card.id, trimmed);
+    const error = await workspace.actions.updateCard(props.card.id, trimmed);
     return error === null ? true : error;
   }
 
@@ -282,7 +265,7 @@ export default function CardItem(props: CardItemProps) {
     });
     if (!confirmed) return;
     await runCardAction(
-      () => props.actions.deleteCard(props.card.id),
+      () => workspace.actions.deleteCard(props.card.id),
       'Could not delete the Card. Try again.',
       setIsDeleting,
     );
@@ -291,7 +274,7 @@ export default function CardItem(props: CardItemProps) {
   function updateAction(patch: ActionItemPatch): Promise<boolean> {
     return runCardAction(
       // eslint-disable-next-line solid/reactivity -- invoked from event handlers only
-      () => props.actions.updateActionItem(props.card.id, patch),
+      () => workspace.actions.updateActionItem(props.card.id, patch),
       'Could not update the Action Item. Try again.',
     );
   }
@@ -299,7 +282,7 @@ export default function CardItem(props: CardItemProps) {
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
     await runCardAction(
-      () => props.actions.moveCard(props.card.id, targetColumnId),
+      () => workspace.actions.moveCard(props.card.id, targetColumnId),
       'Could not move the Card. Try again.',
       setIsMoving,
     );
@@ -312,7 +295,7 @@ export default function CardItem(props: CardItemProps) {
   ): Promise<void> {
     if (isGrouping()) return;
     await runCardAction(
-      () => props.actions.groupCard(cardId, targetType, targetId),
+      () => workspace.actions.groupCard(cardId, targetType, targetId),
       'Could not group the Card. Try again.',
       setIsGrouping,
     );
@@ -321,7 +304,7 @@ export default function CardItem(props: CardItemProps) {
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
     await runCardAction(
-      () => props.actions.ungroupCard(props.card.id),
+      () => workspace.actions.ungroupCard(props.card.id),
       'Could not ungroup the Card. Try again.',
       setIsUngrouping,
     );
@@ -329,7 +312,7 @@ export default function CardItem(props: CardItemProps) {
 
   return (
     <article
-      {...props.transfer.slot('card', () => ({ value: `card:${props.card.id}` }))}
+      {...workspace.transfer.slot('card', () => ({ value: `card:${props.card.id}` }))}
       data-card-id={props.card.id}
       data-private-mode={props.card.redacted ? 'server-redacted-nice-try' : undefined}
       style={
@@ -467,7 +450,7 @@ export default function CardItem(props: CardItemProps) {
                 <input
                   type="checkbox"
                   checked={actionDone()}
-                  disabled={!canEditActionItemFollowUp(props, props.card)}
+                  disabled={!canEditActionItemFollowUp(workspace, props.card)}
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {
                     const checkbox = event.currentTarget;
@@ -498,8 +481,8 @@ export default function CardItem(props: CardItemProps) {
               cardId={props.card.id}
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
-              disabled={props.isLocked}
-              onToggleReaction={props.actions.toggleReaction}
+              disabled={workspace.isLocked}
+              onToggleReaction={workspace.actions.toggleReaction}
             />
 
             <div class="order-first flex min-w-0 basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-text-muted sm:order-0 sm:col-start-1">
@@ -513,7 +496,7 @@ export default function CardItem(props: CardItemProps) {
 
             <Show when={props.card.groupId === null}>
               <div class="flex sm:col-start-3">
-                <VoteControls target={props.card} voting={props.voting} isLocked={props.isLocked} />
+                <VoteControls target={props.card} voting={workspace.voting} isLocked={workspace.isLocked} />
               </div>
             </Show>
 
@@ -522,7 +505,7 @@ export default function CardItem(props: CardItemProps) {
                 <button
                   type="button"
                   aria-label={`${props.card.commentCount} ${props.card.commentCount === 1 ? 'comment' : 'comments'}`}
-                  onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
+                  onClick={(event) => workspace.openCardDetail(props.card.id, event.currentTarget)}
                   class={[
                     'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-1 rounded-full border border-border bg-surface-subtle px-2 text-[11px] font-medium text-text sm:min-h-7 sm:min-w-0',
                     'transition-colors hover:border-text-muted/50 hover:text-text',
@@ -537,7 +520,7 @@ export default function CardItem(props: CardItemProps) {
                 type="button"
                 aria-label="Open Card details"
                 title="Open Card details"
-                onClick={(event) => props.onOpenCardDetail(props.card.id, event.currentTarget)}
+                onClick={(event) => workspace.openCardDetail(props.card.id, event.currentTarget)}
                 class={[
                   'spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted sm:min-h-7 sm:min-w-7',
                   'transition-colors hover:bg-surface-subtle hover:text-text',
@@ -547,7 +530,7 @@ export default function CardItem(props: CardItemProps) {
                 <LucideIcon icon={PanelRightOpen} />
               </button>
 
-              <Show when={!props.isLocked}>
+              <Show when={!workspace.isLocked}>
                 <Menu
                   open={menuOpen()}
                   modal={false}
@@ -619,7 +602,7 @@ export default function CardItem(props: CardItemProps) {
                         </BoardMenuContent>
                       </MenuSub>
                     </Show>
-                    <Show when={props.card.groupId !== null && props.canUngroup}>
+                    <Show when={props.card.groupId !== null && canUngroup()}>
                       <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
                         Ungroup Card
                       </MenuItem>
