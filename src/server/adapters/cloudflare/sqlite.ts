@@ -2,9 +2,7 @@ import 'server-only';
 
 import type { SqlParam, SqlRunResult, SqlRunner } from '../../db/sql-runner';
 
-export function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
-  const sql = storage.sql;
-
+export function wrapDurableObjectSql({sql, transactionSync}: DurableObjectStorage): SqlRunner {
   return {
     exec(query: string): void {
       sql.exec(query);
@@ -27,7 +25,7 @@ export function wrapDurableObjectSql(storage: DurableObjectStorage): SqlRunner {
       return sql.exec(query, ...params).toArray() as T[];
     },
     transaction<T>(fn: () => T): T {
-      return storage.transactionSync(fn);
+      return transactionSync(fn);
     },
   };
 }
