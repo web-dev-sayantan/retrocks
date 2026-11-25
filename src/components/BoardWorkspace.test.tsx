@@ -1665,6 +1665,44 @@ describe('<BoardWorkspace />', () => {
     expect(view.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
   });
 
+  it('silently cancels a same-Column drop that cannot group', async () => {
+    const mine = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      content: 'My Card',
+      isMine: true,
+    });
+    const other = makeCard({
+      id: 'card_other',
+      columnId: 'col_1',
+      content: 'Another Card',
+      isMine: false,
+    });
+    const board = makeBoardView({
+      cards: [mine, other],
+      isFacilitator: false,
+      allowParticipantGroup: false,
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const column = view.getByRole('region', { name: 'Went Well' });
+    const source = within(column).getByText('My Card').closest('article')!;
+    const target = within(column).getByText('Another Card').closest('article')!;
+    stubRect(column, [0, 0, 300, 600]);
+    stubRect(source, [10, 60, 290, 160]);
+    stubRect(target, [10, 180, 290, 280]);
+
+    pointerDrag(source, [{ x: 50, y: 100 }, { x: 50, y: 230 }]);
+    await flushPromises();
+
+    expect(dispatchCommand).not.toHaveBeenCalled();
+    expect(view.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
+  });
+
   it('groups Cards when one is dropped onto another Card or onto a Card Group', async () => {
     const loose = makeCard({
       id: 'card_loose',
@@ -1801,11 +1839,12 @@ describe('<BoardWorkspace />', () => {
       cards: [
         makeCard({ id: 'card_g1', columnId: 'col_1', content: 'CI flakiness', groupId: 'group_move', isMine: true }),
         makeCard({ id: 'card_g2', columnId: 'col_1', content: 'Flaky CI checks', groupId: 'group_move', isMine: true }),
+        makeCard({ id: 'card_dest', columnId: 'col_2', content: 'Destination note', isMine: true }),
       ],
     });
     const { dispatchCommand } = createFakeBoardDispatcher(board);
 
-    const { getByRole } = render(() => (
+    const view = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
@@ -1815,14 +1854,17 @@ describe('<BoardWorkspace />', () => {
     ));
     flush();
 
-    const wentWell = getByRole('region', { name: 'Went Well' });
-    const toImprove = getByRole('region', { name: 'To Improve' });
+    const wentWell = view.getByRole('region', { name: 'Went Well' });
+    const toImprove = view.getByRole('region', { name: 'To Improve' });
     const groupEl = within(wentWell).getByText('CI stability').closest('article') as HTMLElement;
     const headerEl = groupEl.querySelector('[data-slot="board-transfer-group-members"]') as HTMLElement;
+    const destinationCard = within(toImprove).getByText('Destination note').closest('article') as HTMLElement;
     stubRect(wentWell, [0, 0, 300, 600]);
     stubRect(toImprove, [320, 0, 620, 600]);
     stubRect(groupEl, [10, 60, 290, 400]);
+    stubRect(destinationCard, [330, 60, 610, 160]);
 
+    // Releasing over the populated Column's Card must still resolve to its Column.
     pointerDrag(headerEl, [
       { x: 150, y: 100 },
       { x: 420, y: 100 },
@@ -1834,6 +1876,7 @@ describe('<BoardWorkspace />', () => {
       groupId: 'group_move',
       targetColumnId: 'col_2',
     });
+    expect(view.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument();
     // Every member Card travels with its Group.
     const movedGroup = within(toImprove).getByText('CI stability').closest('article')!;
     expect(within(movedGroup).getByText('CI flakiness')).toBeInTheDocument();

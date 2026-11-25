@@ -120,6 +120,18 @@ function planBoardDrop(
   return { kind: 'group-with-card', cardId: item.card.id, targetCardId: target.id };
 }
 
+function dropTargetColumn(
+  board: BoardViewDTO | null,
+  targetKey: string,
+): string | undefined {
+  if (!targetKey.startsWith(BOARD_TARGET_PREFIX)) {
+    return board?.columns.some((column) => column.id === targetKey) ? targetKey : undefined;
+  }
+  const landing = findTransferTarget(board, targetKey.slice(BOARD_TARGET_PREFIX.length));
+  if (!landing) return undefined;
+  return landing.kind === 'card' ? landing.card.columnId : landing.group.columnId;
+}
+
 // A Card or Card Group dropped back on its own Group is a no-op, not a
 // rejected destination. The plan reports it as false to keep the old
 // drop-target eligibility; release handling must not surface an error for it.
@@ -140,6 +152,18 @@ function isNoOpDrop(
   if (landing.kind === 'group') return landing.group.cardIds.includes(item.card.id);
   return landing.card.id === item.card.id
     || (landing.card.groupId !== null && landing.card.groupId === item.card.groupId);
+}
+
+function isQuietDrop(
+  board: BoardViewDTO | null,
+  itemKey: string,
+  targetKey: string,
+): boolean {
+  if (isNoOpDrop(board, itemKey, targetKey)) return true;
+  const item = findTransferTarget(board, itemKey);
+  if (!item) return false;
+  const sourceColumn = item.kind === 'card' ? item.card.columnId : item.group.columnId;
+  return dropTargetColumn(board, targetKey) === sourceColumn;
 }
 
 export function acceptsBoardDrop(
@@ -261,7 +285,7 @@ export const boardTransfer = definePrimitive({
         const options = read();
         const list = release?.key === details.key ? release.list : details.to;
         const move = planBoardDrop(options.board(), details.key, list);
-        if (move === false && !isNoOpDrop(options.board(), details.key, list)) options.onRejectedDrop();
+        if (move === false && !isQuietDrop(options.board(), details.key, list)) options.onRejectedDrop();
         if (!move) return false;
         announcedSave = true;
         options.commit(move);
@@ -314,22 +338,41 @@ export const boardTransfer = definePrimitive({
         const state = context.store.get();
         if (end.type !== 'pointerup' || !state.moving?.pointer || state.moving.key !== key) return;
 
-        // The SDK can retain the last accepted hover. Check the actual release point.
-        let landing: { key: string; el: HTMLElement } | undefined;
+        // The SDK can retain the last accepted hover. Check the actual release
+        // point, deepest zone first, so a Card inside a Column can fall back to
+        // its enclosing Column for a move that Card cannot itself receive.
+        const candidates: { key: string; el: HTMLElement }[] = [];
         for (const [list, { el }] of zones) {
           if (list === BOARD_TARGET_PREFIX + key || !el.isConnected) continue;
           const { left, right, top, bottom } = el.getBoundingClientRect();
           if (end.clientX < left || end.clientX >= right || end.clientY < top || end.clientY >= bottom) continue;
-          if (!landing || landing.el.contains(el)) landing = { key: list, el };
+          candidates.push({ key: list, el });
+        }
+        const depth = (el: HTMLElement): number => {
+          let value = 0;
+          for (let node: HTMLElement | null = el; node; node = node.parentElement) value += 1;
+          return value;
+        };
+        candidates.sort((a, b) => depth(b.el) - depth(a.el));
+
+        const board = read().board();
+        let landing: { key: string; el: HTMLElement } | undefined;
+        for (const candidate of candidates) {
+          const move = planBoardDrop(board, key, candidate.key);
+          if (move) {
+            landing = candidate;
+            break;
+          }
+          if (move === null) {
+            transfer.cancel();
+            return;
+          }
         }
         if (!landing) {
           transfer.cancel();
-          return;
-        }
-        const move = planBoardDrop(read().board(), key, landing.key);
-        if (!move) {
-          transfer.cancel();
-          if (move === false && !isNoOpDrop(read().board(), key, landing.key)) read().onRejectedDrop();
+          if (candidates.length > 0 && !candidates.some((candidate) => isQuietDrop(board, key, candidate.key))) {
+            read().onRejectedDrop();
+          }
           return;
         }
         release = { key, list: landing.key };
@@ -350,7 +393,7 @@ export const boardTransfer = definePrimitive({
           event.preventDefault();
           event.stopPropagation();
           transfer.cancel();
-          read().onRejectedDrop();
+          if (!isQuietDrop(read().board(), key, list)) read().onRejectedDrop();
           return true;
         }
       }

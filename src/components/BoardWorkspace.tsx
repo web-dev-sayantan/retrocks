@@ -518,7 +518,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     board: () => controller.board(),
     commit: (move) => { void commitTransferMove(move); },
     onRejectedDrop: () => {
-      latestTransfer += 1;
       controller.reportError('This move is no longer available. Choose another destination.');
     },
   }));
