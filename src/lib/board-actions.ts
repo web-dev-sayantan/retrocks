@@ -11,6 +11,7 @@ import type {
 } from './board-types';
 import type {
   AddColumnInput,
+  BoardCommand,
   CreateBoardInput,
   CreateCardInput,
   CreateCommentInput,
@@ -85,6 +86,19 @@ export async function createBoard(
     }
     throw error;
   }
+}
+
+export async function dispatchBoardCommand(
+  boardId: string,
+  command: BoardCommand,
+): Promise<BoardMutationResponse> {
+  'use server';
+  const { dispatchBoardCommandForRequest } = await import(
+    '../server/services/board-service'
+  );
+  return respondToBoardMutation(() =>
+    dispatchBoardCommandForRequest(boardId, command),
+  );
 }
 
 export async function renameBoard(
