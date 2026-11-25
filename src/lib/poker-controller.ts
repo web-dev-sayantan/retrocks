@@ -8,17 +8,15 @@ import {
   untrack,
 } from 'solid-js';
 
+import { createLiveStream, type LiveStatus, type LiveTransport } from './live-stream';
 import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
 import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
-import {
-  createPokerLive,
-  type PokerLiveStatus,
-  type PokerLiveTransport,
-} from './poker-live';
+import { parsePokerLiveMessage } from './poker-schemas';
 import {
   POKER_DECK_PRESETS,
   POKER_DEFAULT_ROOM_NAME,
   unresolvedPokerRoundId,
+  type PokerLiveMessage,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -176,7 +174,7 @@ export interface PokerRoomControllerOptions {
   /** Server-action surface; production passes `changePokerRoom`, tests inject a double. */
   changeRoom: (id: string, command: PokerRoomChange) => Promise<PokerResult>;
   /** Injectable live transport; defaults to SSE/WebSocket. */
-  liveTransport?: PokerLiveTransport;
+  liveTransport?: LiveTransport;
   /** Called when the Room transitions to unavailable (`room:missing` or `ROOM_NOT_FOUND`). */
   onUnavailable?: () => void;
 }
@@ -185,7 +183,7 @@ export interface PokerRoomController {
   /** Current viewer-projected Room state (keyed optimistic store read). */
   room(): PokerRoomView;
   online(): string[];
-  status(): PokerLiveStatus;
+  status(): LiveStatus;
   changeRoom(command: PokerRoomChange): Promise<PokerResult>;
 }
 
@@ -206,8 +204,8 @@ export function createPokerRoomController(
 
   const [online, setOnline] = createSignal<string[]>([]);
   const [unavailable, setUnavailable] = createSignal(false);
-  const [live, setLive] = createSignal<ReturnType<typeof createPokerLive> | null>(null);
-  const status = createMemo<PokerLiveStatus>(() => live()?.status() ?? 'connecting');
+  const [live, setLive] = createSignal<ReturnType<typeof createLiveStream> | null>(null);
+  const status = createMemo<LiveStatus>(() => live()?.status() ?? 'connecting');
 
   function applySnapshot(next: PokerRoomView): void {
     setServerRoom((current) => {
@@ -236,18 +234,25 @@ export function createPokerRoomController(
   createEffect(liveRoomId, (roomId) => {
     if (!roomId) return;
     if (typeof window === 'undefined') return;
-    const stream = createPokerLive(
-      roomId,
-      (message) => {
-        if (message.type === 'room:snapshot') {
-          applySnapshot(message.room);
-        } else if (message.type === 'room:presence') {
-          setOnline(message.online);
-        } else if (message.type === 'room:missing') {
-          markUnavailable();
-        }
+    const stream = createLiveStream<PokerLiveMessage>(
+      `/api/poker/${encodeURIComponent(roomId)}/live`,
+      {
+        parse: parsePokerLiveMessage,
+        handshake: (message) => (message.type === 'room:snapshot' ? message : undefined),
+        isTerminal: (message) =>
+          message.type === 'room:missing' ||
+          (message.type === 'room:snapshot' && message.room.closed),
+        onMessage(message) {
+          if (message.type === 'room:snapshot') {
+            applySnapshot(message.room);
+          } else if (message.type === 'room:presence') {
+            setOnline(message.online);
+          } else if (message.type === 'room:missing') {
+            markUnavailable();
+          }
+        },
+        onDisconnect: () => setOnline([]),
       },
-      () => setOnline([]),
       options.liveTransport,
     );
     setLive(stream);

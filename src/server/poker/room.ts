@@ -19,8 +19,9 @@ import {
   type PokerStory,
 } from '../../lib/poker-types';
 import type { PokerSharingResult } from '../../lib/poker-sharing-types';
-import { generateEntityId, tokenHashesMatch } from '../crypto';
+import { generateEntityId } from '../crypto';
 import type { SqlRunner } from '../db/sql-runner';
+import { facilitatorTokenHashesMatch } from '../facilitator-capability';
 import { createBoardWriteRateLimiter } from '../rate-limit';
 
 const ROOM_TTL_MS = 90 * 24 * 60 * 60 * 1000;
@@ -648,12 +649,36 @@ export class PokerRoomStorage {
     });
   }
 
+  updateFacilitatorCapabilityEncryption(
+    id: string,
+    hash: string,
+    expectedRevision: number,
+    encrypted: string,
+  ): void {
+    this.db.transaction(() => {
+      const room = this.snapshot(id);
+      if (!room || room.closedAt !== undefined) return;
+      if (!pokerParticipant(room, hash)?.isFacilitator) return;
+      if (room.facilitatorCapability?.revision !== expectedRevision) return;
+
+      room.facilitatorCapability = {
+        ...room.facilitatorCapability,
+        encrypted,
+      };
+      this.db.run(
+        'UPDATE poker_rooms SET data = ? WHERE id = ?',
+        JSON.stringify(room),
+        room.id,
+      );
+    });
+  }
+
   claimFacilitator(id: string, hash: string, candidate: string): PokerSharingWrite {
     const now = Date.now();
     if (!this.writeLimiter.check(id, hash, now).allowed) return rateLimited;
     return this.db.transaction(() => {
       const room = this.snapshot(id, now);
-      if (!room?.facilitatorCapability || !tokenHashesMatch(candidate, room.facilitatorCapability.hash)) {
+      if (!room?.facilitatorCapability || !facilitatorTokenHashesMatch(candidate, room.facilitatorCapability.hash)) {
         return invalidPokerFacilitatorLink;
       }
 

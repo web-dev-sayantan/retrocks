@@ -69,6 +69,10 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     return { ok: true as const, value: null };
   }
 
+  async updateFacilitatorCapabilityEncryption(id: string, hash: string, revision: number, encrypted: string) {
+    this.storage.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted);
+  }
+
   async claimFacilitator(id: string, hash: string, candidate: string) {
     const result = this.storage.claimFacilitator(id, hash, candidate);
     if (!result.ok) return result;

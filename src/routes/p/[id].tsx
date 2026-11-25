@@ -6,7 +6,10 @@ import PageMessage from '../../components/PageMessage';
 import PokerRoomSummary from '../../components/poker/PokerRoomSummary';
 import PokerWorkspace from '../../components/poker/PokerWorkspace';
 import RoomNameForm from '../../components/poker/RoomNameForm';
-import { takeFacilitatorLinkToken } from '../../lib/facilitator-link';
+import {
+  subscribeFacilitatorLinkClaim,
+  subscribeFacilitatorLinkScrub,
+} from '../../lib/facilitator-link';
 import { changePokerRoom, getPokerRoom, joinPokerRoom } from '../../lib/poker-actions';
 import { createPokerRoomController } from '../../lib/poker-controller';
 import { pokerRoomPath, pokerSetupPath } from '../../lib/poker-routes';
@@ -26,13 +29,10 @@ function RoomUnavailable(props: { roomId?: string; focusHeading?: boolean }) {
   onSettled(() => {
     if (props.focusHeading) heading.focus();
     if (props.roomId) removeRecentPokerRoom(props.roomId);
-    function scrubFragment() {
+    return subscribeFacilitatorLinkScrub(() => {
       const id = untrack(() => props.roomId);
-      if (id) takeFacilitatorLinkToken(pokerRoomPath(id));
-    }
-    window.addEventListener('hashchange', scrubFragment);
-    scrubFragment();
-    return () => window.removeEventListener('hashchange', scrubFragment);
+      return id ? pokerRoomPath(id) : undefined;
+    });
   });
 
   return (
@@ -133,41 +133,27 @@ function LiveRoomPage(props: {
   const [focusHeading, setFocusHeading] = createSignal(false);
   submit.onSubmit(() => setFocusHeading(true));
 
-  onSettled(() => {
-    let attempt = 0;
-    function claimFromFragment() {
-      const token = takeFacilitatorLinkToken(pokerRoomPath(id));
-      if (token === null) return;
-
-      const currentAttempt = ++attempt;
-      setClaimPending(true);
-      setClaimError('');
-      void claimPokerFacilitatorLink(id, token).then(
-        (result) => {
-          if (result.ok) {
-            const claimed = result.value;
-            if (attempt > 0 && !claimed.closed) setClaimedRoom((room) => !room || claimed.version >= room.version ? claimed : room);
-          } else if (attempt === currentAttempt) {
-            setClaimError(result.message);
+  onSettled(() =>
+    subscribeFacilitatorLinkClaim({
+      path: pokerRoomPath(id),
+      claim: (token) => claimPokerFacilitatorLink(id, token),
+      onStart: () => setClaimError(''),
+      onPendingChange: setClaimPending,
+      onSuccess: (result) => {
+        if (result.ok) {
+          const claimed = result.value;
+          if (!claimed.closed) {
+            setClaimedRoom((current) => !current || claimed.version >= current.version ? claimed : current);
           }
-        },
-        () => {
-          if (attempt === currentAttempt) {
-            setClaimError('Could not claim Facilitator access. Open the Co-Facilitator Link to try again.');
-          }
-        },
-      ).finally(() => {
-        if (attempt === currentAttempt) setClaimPending(false);
-      });
-    }
-
-    window.addEventListener('hashchange', claimFromFragment);
-    claimFromFragment();
-    return () => {
-      attempt = 0;
-      window.removeEventListener('hashchange', claimFromFragment);
-    };
-  });
+        } else {
+          setClaimError(result.message);
+        }
+      },
+      onError: () => {
+        setClaimError('Could not claim Facilitator access. Open the Co-Facilitator Link to try again.');
+      },
+    }),
+  );
 
   return (
     <Show when={room().viewer} fallback={

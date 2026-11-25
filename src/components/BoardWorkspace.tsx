@@ -54,8 +54,8 @@ import {
 import {
   createBoardController,
   type BoardCommandDispatcher,
-  type BoardLiveTransport,
 } from '../lib/board-controller';
+import type { LiveTransport } from '../lib/live-stream';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -89,6 +89,10 @@ import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
 import BoardMenuContent from './BoardMenuContent';
 import BoardVotingSettings from './BoardVotingSettings';
+import {
+  BoardWorkspaceContext,
+  type BoardWorkspaceContextValue,
+} from './BoardWorkspaceContext';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
@@ -106,7 +110,7 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   dispatchCommand?: BoardCommandDispatcher;
-  liveTransport?: BoardLiveTransport;
+  liveTransport?: LiveTransport;
   liveReconnectKey?: number;
 }
 
@@ -526,14 +530,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     return card;
   });
 
-  const openDetailColumn = createMemo(() => {
-    const card = openDetailCard();
-    if (!card) return null;
-    return (
-      controller.board()?.columns.find((col) => col.id === card.columnId) ?? null
-    );
-  });
-
   createEffect(
     () => ({ id: openCardDetailId(), card: openDetailCard() }),
     ({ id, card }) => {
@@ -792,13 +788,28 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
         </div>
       }
     >
-      {(board) => (
-        <div
-          ref={() => logPrivacyColophon()}
-          class="board-workspace flex min-h-dvh flex-col bg-canvas"
-          data-board-print-ready={isPrinting() ? "" : undefined}
-          data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
-        >
+      {(board) => {
+        const workspaceContext: BoardWorkspaceContextValue = {
+          get columns() { return view.columns; },
+          get voting() { return controller.voting(); },
+          get isFacilitator() { return board().isFacilitator; },
+          get isLocked() { return board().isLocked; },
+          get isBlurred() { return board().isBlurred; },
+          get blindVoting() { return board().blindVoting; },
+          get canGroupCards() { return canManageGrouping(board()); },
+          get nowMs() { return controller.nowMs(); },
+          transfer,
+          actions: controller,
+          openCardDetail: handleOpenCardDetail,
+        };
+        return (
+          <BoardWorkspaceContext value={workspaceContext}>
+            <div
+              ref={() => logPrivacyColophon()}
+              class="board-workspace flex min-h-dvh flex-col bg-canvas"
+              data-board-print-ready={isPrinting() ? "" : undefined}
+              data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
+            >
           <Show when={isPrinting()}>
             <PrintBoard board={board()} />
           </Show>
@@ -1294,24 +1305,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     <ColumnPanel
                       view={bucket}
                       columnIndex={index()}
-                      totalColumns={view.columns.length}
-                      columns={view.columns}
                       hasActiveFilter={view.hasActiveFilter}
-                      voting={controller.voting()}
-                      isFacilitator={board().isFacilitator}
-                      isLocked={board().isLocked}
-                      isBlurred={board().isBlurred}
-                      canGroupCards={canManageGrouping(board())}
-                      nowMs={controller.nowMs()}
                       isMobile={isMobileBoard()}
                       isMobileActive={resolvedActiveColumnIndex() === index()}
                       isHorizontalSnap={isHorizontalSnap()}
-                      transfer={transfer}
-                      actions={controller}
                       onResetFilters={resetFilters}
                       onRegisterComposer={registerColumnComposer}
                       onActivateColumn={(colId) => setActiveColumnId(colId)}
-                      onOpenCardDetail={handleOpenCardDetail}
                     />
                   )}
                 </For>
@@ -1469,21 +1469,11 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             {(card) => (
               <CardDetailDrawer
                 card={card}
-                column={openDetailColumn()}
-                isFacilitator={board().isFacilitator}
-                isLocked={board().isLocked}
-                isBlurred={board().isBlurred}
-                nowMs={controller.nowMs()}
                 isOpen={isCardDetailOpen()}
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocusTarget={cardDetailFocusTarget}
-                onUpdateActionItem={controller.updateActionItem}
-                onToggleReaction={controller.toggleReaction}
-                onCreateComment={controller.createComment}
-                onDeleteComment={controller.deleteComment}
-                isActionItemPending={controller.isActionItemPending}
               />
             )}
           </Show>
@@ -1558,8 +1548,10 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
               </div>
             )}
           </Show>
-        </div>
-      )}
+            </div>
+          </BoardWorkspaceContext>
+        );
+      }}
     </Show>
   );
 }

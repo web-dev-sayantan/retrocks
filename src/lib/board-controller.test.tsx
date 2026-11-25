@@ -3,7 +3,7 @@ import { createEffect, createRoot, createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardLiveMessage } from './board-live-protocol';
-import type { BoardLiveTransport } from './board-live';
+import type { LiveTransport } from './live-stream';
 import {
   createBoardController,
   type BoardCommandDispatcher,
@@ -28,11 +28,11 @@ interface FakeConnection {
 }
 
 function createFakeLiveTransport(): {
-  transport: BoardLiveTransport;
+  transport: LiveTransport;
   connections: FakeConnection[];
 } {
   const connections: FakeConnection[] = [];
-  const transport: BoardLiveTransport = {
+  const transport: LiveTransport = {
     connect(path, handlers) {
       const connection: FakeConnection = {
         path,
@@ -203,6 +203,79 @@ describe('createBoardController', () => {
     expect(controller.board()?.cards[0]?.content).toBe('Edited live');
     expect(connections[0].closed).toBe(true);
     expect(connections).toHaveLength(2);
+  });
+
+  it('dispatches consecutive live frames synchronously without dropping intermediate versions', () => {
+    const card = makeCard({ id: 'card_burst', content: 'Initial' });
+    const board = makeBoardView({ cards: [card] });
+    const { controller, connections } = mountSession(board);
+
+    // Emit two sequential versions in the same tick before flushing.
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        { type: 'card:upserted', version: 2, card: { ...card, content: 'Second' } },
+      ],
+    });
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [
+        { type: 'card:upserted', version: 3, card: { ...card, content: 'Third' } },
+      ],
+    });
+    flush();
+
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.board()?.cards[0]?.content).toBe('Third');
+    expect(connections).toHaveLength(1);
+  });
+
+  it('clears live status and presence on disconnect and recovers after reconnect', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const board = makeBoardView();
+      const { controller, connections } = mountSession(board);
+
+      connections[0].emit({
+        type: 'board:snapshot',
+        version: 2,
+        serverNow: 2000,
+        board: { ...board, version: 2, title: 'Connected' },
+      });
+      connections[0].emit({ type: 'presence:count', count: 4 });
+      flush();
+      expect(controller.isLive()).toBe(true);
+      expect(controller.onlineCount()).toBe(4);
+
+      connections[0].fail();
+      flush();
+      expect(controller.isLive()).toBe(false);
+      expect(controller.onlineCount()).toBeNull();
+      expect(connections[0].closed).toBe(true);
+
+      vi.advanceTimersByTime(500);
+      flush();
+      expect(connections).toHaveLength(2);
+
+      connections[1].emit({
+        type: 'board:snapshot',
+        version: 3,
+        serverNow: 3000,
+        board: { ...board, version: 3, title: 'Reconnected' },
+      });
+      connections[1].emit({ type: 'presence:count', count: 5 });
+      flush();
+      expect(controller.isLive()).toBe(true);
+      expect(controller.onlineCount()).toBe(5);
+      expect(controller.board()?.title).toBe('Reconnected');
+      expect(controller.board()?.version).toBe(3);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 
   it('clears the controller board and closes the stream on a live board:deleted', () => {

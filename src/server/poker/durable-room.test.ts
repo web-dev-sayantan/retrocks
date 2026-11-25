@@ -276,6 +276,28 @@ test.each(['Node', 'Durable Object'])('%s publishes effective Co-Facilitator Lin
       });
       expect(JSON.stringify(frame)).not.toMatch(/"(?:hash|encrypted|facilitatorCapability)"|second-hash|second-secret/);
     }
+
+    // Re-encrypting the current revision persists updated ciphertext without publishing a snapshot,
+    // and stale-revision re-encryption writes are ignored.
+    await adapter.updateFacilitatorCapabilityEncryption(id, 'facilitator', 1, 'stale-reencrypted');
+    expect(await adapter.getFacilitatorCapability(id, 'facilitator')).toEqual({
+      ok: true,
+      value: { hash: 'second-hash', encrypted: 'second-secret', revision: 2 },
+    });
+    await adapter.updateFacilitatorCapabilityEncryption(id, 'facilitator', 2, 'rotated-reencrypted');
+    expect(await adapter.getFacilitatorCapability(id, 'facilitator')).toEqual({
+      ok: true,
+      value: { hash: 'second-hash', encrypted: 'rotated-reencrypted', revision: 2 },
+    });
+    expect(await adapter.replaceFacilitatorCapability(id, 'facilitator', 2, {
+      hash: 'third-hash', encrypted: 'third-secret', revision: 3,
+    })).toEqual({ ok: true, value: null });
+    for (const [next, displayName] of [[alex, 'Alex'], [sam, 'Sam']] as const) {
+      expect(await next()).toMatchObject({
+        type: 'room:snapshot',
+        room: { viewer: { displayName, isFacilitator: true }, facilitatorLinkRevision: 3 },
+      });
+    }
   } finally {
     node?.close();
   }
