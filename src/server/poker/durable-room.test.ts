@@ -2,9 +2,11 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
+import type { PokerLiveMessage } from '../../lib/poker-types';
 import { wrapDatabaseSync } from '../adapters/node/sqlite';
 import { generateEntityId } from '../crypto';
 import { PointingPokerRoom } from './durable-room';
+import { openNodePokerRooms } from './node';
 
 vi.mock('cloudflare:workers', () => ({
   DurableObject: class MockDurableObject {
@@ -19,6 +21,7 @@ const id = generateEntityId();
 let db: DatabaseSync;
 let room: PointingPokerRoom;
 let socket: { readyState: number; send: ReturnType<typeof vi.fn<(data: string) => void>>; deserializeAttachment: () => null; close: ReturnType<typeof vi.fn> };
+let sockets: ReturnType<typeof liveSocket>[];
 let setAlarm: ReturnType<typeof vi.fn<(expiresAt: number) => void>>;
 let deleteAlarm: ReturnType<typeof vi.fn>;
 let clock: ReturnType<typeof vi.fn<() => number>>;
@@ -35,10 +38,11 @@ beforeEach(async () => {
     deserializeAttachment: () => null,
     close: vi.fn(() => { socket.readyState = WebSocket.CLOSED; }),
   };
+  sockets = [];
   const sqlRunner = wrapDatabaseSync(db);
   const ctx = {
     id: { name: id },
-    getWebSockets: () => [socket],
+    getWebSockets: () => [socket, ...sockets],
     storage: {
       sql: {
         exec(query: string, ...params: SQLInputValue[]) {
@@ -123,4 +127,98 @@ test('reopening a closed Room resets the Durable Object alarm to 90 days from no
   clock.mockReturnValue(start + 120 * day);
   await room.alarm();
   expect(await room.read(id, 'facilitator')).toBeNull();
+});
+
+
+function liveSocket(hash: string, participantId: string) {
+  const events: (PokerLiveMessage | null | undefined)[] = [];
+  return {
+    events,
+    readyState: Number(WebSocket.OPEN),
+    deserializeAttachment: () => ({ hash, participantId, lastSeenAt: start }),
+    serializeAttachment() {},
+    send(data: string) {
+      events.push(parsePokerLiveMessage(data));
+    },
+    close() {
+      events.push(undefined);
+      this.readyState = WebSocket.CLOSED;
+    },
+  };
+}
+
+test.each([
+  ['Node', 'close'],
+  ['Durable Object', 'close'],
+  ['Node', 'delete'],
+  ['Durable Object', 'delete'],
+] as const)('%s delivers Participant projections followed by the %s terminal frame', async (runtime, terminal) => {
+  const node = runtime === 'Node' ? await openNodePokerRooms(':memory:') : null;
+  const adapter = node ?? room;
+  try {
+    if (node) node.create(id, 'facilitator', 'Alex');
+    expect(await adapter.mutate(id, 'voter', { type: 'join', displayName: 'Sam' })).toMatchObject({ ok: true });
+    const added = await adapter.mutate(id, 'facilitator', { type: 'add-story', title: 'Estimate', makeActive: true });
+    if (!added.ok || added.room.closed || !added.room.round) throw new Error('Expected an open Voting Round.');
+    const roundId = added.room.round.id;
+
+    const viewers = await Promise.all(['facilitator', 'voter'].map(async (hash) => {
+      const view = await adapter.read(id, hash);
+      if (!view || view.closed || !view.viewer) throw new Error('Expected a Participant.');
+      if (node) {
+        const reader = node.connect(id, hash, new Request('https://retrocks.test/live')).body!.getReader();
+        return async () => {
+          const { value, done } = await reader.read();
+          return done ? undefined : parsePokerLiveMessage(new TextDecoder().decode(value).slice(6));
+        };
+      }
+      const peer = liveSocket(hash, view.viewer.id);
+      sockets.push(peer);
+      return async () => {
+        expect(peer.events.length).toBeGreaterThan(0);
+        return peer.events.shift();
+      };
+    }));
+    if (node) {
+      for (const [index, next] of viewers.entries()) {
+        expect(await next()).toMatchObject({ type: 'room:snapshot' });
+        expect(await next()).toMatchObject({ type: 'room:presence' });
+        if (index === 0) expect(await next()).toMatchObject({ type: 'room:presence' });
+      }
+    }
+
+    expect(await adapter.mutate(id, 'voter', { type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({ ok: false });
+    expect(await adapter.mutate(id, 'facilitator', { type: 'set-deck', deck: { type: 'fibonacci' } })).toMatchObject({ ok: true });
+    expect(await adapter.delete(id, 'voter')).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(await adapter.mutate(id, 'voter', { type: 'vote', roundId, choice: '3' })).toMatchObject({ ok: true });
+
+    for (const [index, next] of viewers.entries()) {
+      expect(await next()).toMatchObject({
+        type: 'room:snapshot',
+        room: {
+          viewer: { displayName: index === 0 ? 'Alex' : 'Sam' },
+          round: { phase: 'open', ownChoice: index === 0 ? null : '3' },
+        },
+      });
+    }
+
+    if (terminal === 'close') {
+      expect(await adapter.mutate(id, 'facilitator', { type: 'close-room', discardRoundId: roundId })).toMatchObject({ ok: true });
+    } else {
+      expect(await adapter.delete(id, 'facilitator')).toEqual({ ok: true });
+    }
+    for (const [index, next] of viewers.entries()) {
+      if (terminal === 'close') {
+        expect(await next()).toMatchObject({
+          type: 'room:snapshot',
+          room: { closed: true, canDelete: index === 0, stories: [{ title: 'Estimate' }] },
+        });
+      } else {
+        expect(await next()).toEqual({ type: 'room:missing' });
+      }
+      expect(await next()).toBeUndefined();
+    }
+  } finally {
+    node?.close();
+  }
 });

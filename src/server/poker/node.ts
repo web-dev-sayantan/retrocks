@@ -5,8 +5,12 @@ import type { PokerLiveMessage, PokerRoomCommand } from '../../lib/poker-types';
 import { openNodeDatabase, wrapDatabaseSync } from '../adapters/node/sqlite';
 import {
   PokerRoomStorage, pokerParticipant, projectPokerRoom,
-  type PokerFacilitatorCapability, type StoredPokerRoom,
+  type PokerFacilitatorCapability,
 } from './room';
+import {
+  committedPokerDeletion, committedPokerMutation, missingPokerRoom, pokerRoomSnapshot,
+  projectPokerPublication, type PokerRoomPublication,
+} from './publication';
 
 interface Connection {
   id: string;
@@ -38,32 +42,22 @@ export async function openNodePokerRooms(dbPath: string) {
     for (const connection of connections) connection.send({ type: 'room:presence', online });
   }
 
-  function broadcastRoom(room: StoredPokerRoom) {
-    const connections = streams.get(room.id);
-    if (!connections) return;
-    for (const connection of connections) {
-      connection.send({ type: 'room:snapshot', room: projectPokerRoom(room, connection.hash) });
-    }
-    if (room.closedAt !== undefined) {
-      streams.delete(room.id);
-      for (const connection of connections) connection.close();
-    }
-  }
-
-  function endRoom(id: string) {
+  function publish(id: string, publication: PokerRoomPublication) {
     const connections = streams.get(id);
     if (!connections) return;
-    streams.delete(id);
+    if (publication.terminal) streams.delete(id);
     for (const connection of connections) {
-      connection.send({ type: 'room:missing' });
-      connection.close();
+      connection.send(projectPokerPublication(publication, connection.hash));
+    }
+    if (publication.terminal) {
+      for (const connection of connections) connection.close();
     }
   }
 
   const heartbeat = setInterval(() => {
     const now = Date.now();
     for (const [id, connections] of streams) {
-      if (!storage.isAvailable(id, now)) endRoom(id);
+      if (!storage.isAvailable(id, now)) publish(id, missingPokerRoom);
       else {
         for (const connection of connections) {
           if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) connection.close();
@@ -84,25 +78,27 @@ export async function openNodePokerRooms(dbPath: string) {
     mutate(id: string, hash: string, command: PokerRoomCommand) {
       const result = storage.mutate(id, hash, command);
       if (!result.ok) return result;
-      if (result.updated) broadcastRoom(result.room);
+      const publication = committedPokerMutation(result);
+      if (publication) publish(id, publication);
       return { ok: true as const, room: projectPokerRoom(result.room, hash) };
     },
     delete(id: string, hash: string) {
       const result = storage.delete(id, hash);
-      if (result.ok) endRoom(id);
+      const publication = committedPokerDeletion(result);
+      if (publication) publish(id, publication);
       return result;
     },
     getFacilitatorCapability: (id: string, hash: string) => storage.getFacilitatorCapability(id, hash),
     replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
       const result = storage.replaceFacilitatorCapability(id, hash, revision, capability);
       if (!result.ok) return result;
-      broadcastRoom(result.value);
+      publish(id, pokerRoomSnapshot(result.value));
       return { ok: true as const, value: null };
     },
     claimFacilitator(id: string, hash: string, candidate: string) {
       const result = storage.claimFacilitator(id, hash, candidate);
       if (!result.ok) return result;
-      broadcastRoom(result.value);
+      publish(id, pokerRoomSnapshot(result.value));
       return { ok: true as const, value: projectPokerRoom(result.value, hash) };
     },
     connect(id: string, hash: string, request: Request): Response {
@@ -161,7 +157,7 @@ export async function openNodePokerRooms(dbPath: string) {
         if (connection.hash !== hash || connection.id !== connectionId) continue;
         const now = Date.now();
         if (!storage.isAvailable(id, now)) {
-          endRoom(id);
+          publish(id, missingPokerRoom);
           return new Response(null, { status: 204 });
         }
         if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {

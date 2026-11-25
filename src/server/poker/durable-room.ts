@@ -5,9 +5,12 @@ import { POKER_LIVE_VIEWER_HEADER, type PokerLiveMessage, type PokerRoomCommand,
 import { wrapDurableObjectSql } from '../adapters/cloudflare/sqlite';
 import {
   PokerRoomStorage, pokerParticipant, projectPokerRoom,
-  type PokerFacilitatorCapability, type StoredPokerRoom,
+  type PokerFacilitatorCapability,
 } from './room';
-
+import {
+  committedPokerDeletion, committedPokerMutation, missingPokerRoom, pokerRoomSnapshot,
+  projectPokerPublication, type PokerRoomPublication,
+} from './publication';
 
 interface Attachment {
   hash: string;
@@ -36,8 +39,9 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async mutate(id: string, hash: string, command: PokerRoomCommand) {
     const result = this.storage.mutate(id, hash, command);
     if (!result.ok) return result;
-    if (result.updated) {
-      this.broadcastRoom(result.room);
+    const publication = committedPokerMutation(result);
+    if (publication) {
+      this.publish(publication);
       if (command.type !== 'join') await this.ctx.storage.setAlarm(result.room.expiresAt);
     }
     return { ok: true as const, room: projectPokerRoom(result.room, hash) };
@@ -45,8 +49,9 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
 
   async delete(id: string, hash: string) {
     const result = this.storage.delete(id, hash);
-    if (result.ok) {
-      this.endRoom();
+    const publication = committedPokerDeletion(result);
+    if (publication) {
+      this.publish(publication);
       await this.ctx.storage.deleteAlarm();
     }
     return result;
@@ -59,14 +64,14 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
     const result = this.storage.replaceFacilitatorCapability(id, hash, revision, capability);
     if (!result.ok) return result;
-    this.broadcastRoom(result.value);
+    this.publish(pokerRoomSnapshot(result.value));
     return { ok: true as const, value: null };
   }
 
   async claimFacilitator(id: string, hash: string, candidate: string) {
     const result = this.storage.claimFacilitator(id, hash, candidate);
     if (!result.ok) return result;
-    this.broadcastRoom(result.value);
+    this.publish(pokerRoomSnapshot(result.value));
     return { ok: true as const, value: projectPokerRoom(result.value, hash) };
   }
 
@@ -105,7 +110,7 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     const now = Date.now();
     const id = this.ctx.id.name;
     if (!id || !this.storage.isAvailable(id, now)) {
-      this.endRoom();
+      this.publish(missingPokerRoom);
       return;
     }
     if (now - attachment.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
@@ -137,15 +142,7 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
       await this.ctx.storage.setAlarm(room.expiresAt);
       return;
     }
-    this.endRoom();
-  }
-
-  private endRoom() {
-    for (const socket of this.ctx.getWebSockets()) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      this.send(socket, { type: 'room:missing' });
-      socket.close(1000, 'Room unavailable');
-    }
+    this.publish(missingPokerRoom);
   }
 
   private connections(excluded?: WebSocket) {
@@ -164,10 +161,18 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     return active;
   }
 
-  private broadcastRoom(room: StoredPokerRoom): void {
+  private publish(publication: PokerRoomPublication): void {
+    if (publication.type === 'missing') {
+      for (const socket of this.ctx.getWebSockets()) {
+        if (socket.readyState !== WebSocket.OPEN) continue;
+        this.send(socket, publication.frame);
+        socket.close(1000, 'Room unavailable');
+      }
+      return;
+    }
     for (const { socket, attachment } of this.connections()) {
-      this.send(socket, { type: 'room:snapshot', room: projectPokerRoom(room, attachment.hash) });
-      if (room.closedAt !== undefined) {
+      this.send(socket, projectPokerPublication(publication, attachment.hash));
+      if (publication.terminal) {
         socket.serializeAttachment(null);
         socket.close(1000, 'Room closed');
       }
