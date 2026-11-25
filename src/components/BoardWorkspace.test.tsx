@@ -7,7 +7,7 @@ import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
-import { createFakeActions, makeBoardView, makeCard } from '../lib/board-fixtures';
+import { createFakeBoardDispatcher, makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { BoardMutationResponse, BoardViewDTO, CardGroupDTO } from '../lib/board-types';
 import { logPrivacyColophon } from '../lib/easter-eggs';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
@@ -74,11 +74,11 @@ describe('<BoardWorkspace />', () => {
       voteLimit: 3,
       remainingVotes: 3,
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const rejected = Promise.withResolvers<BoardMutationResponse>();
-    spies.changeVote.mockReturnValueOnce(rejected.promise);
+    dispatchCommand.mockReturnValueOnce(rejected.promise);
     const { getByRole, getByText, getByTitle, queryByRole } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -99,8 +99,8 @@ describe('<BoardWorkspace />', () => {
   it('stacks and removes Votes without showing a balance on an unlimited Board', async () => {
     const card = makeCard({ votes: 6, myVotes: 3 });
     const board = makeBoardView({ cards: [card], voteLimit: null, remainingVotes: null });
-    const { actions, spies } = createFakeActions(board);
-    spies.changeVote
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand
       .mockResolvedValueOnce({
         ok: true,
         version: 2,
@@ -129,7 +129,7 @@ describe('<BoardWorkspace />', () => {
       });
 
     const { getByRole, getByTitle, queryByText } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
     expect(queryByText(/votes left/)).not.toBeInTheDocument();
@@ -143,15 +143,16 @@ describe('<BoardWorkspace />', () => {
     expect(getByTitle('6 total Votes · 3 yours')).toBeInTheDocument();
     await flushPromises();
     expect(getByTitle('6 total Votes · 3 yours')).toBeInTheDocument();
-    expect(spies.changeVote).toHaveBeenLastCalledWith({
-      boardId: board.id, targetType: 'card', targetId: card.id, delta: -1,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'vote:change',
+      targetType: 'card', targetId: card.id, delta: -1,
     });
   });
 
   it('applies voting settings immediately and resets all Votes only after confirmation', async () => {
     const card = makeCard({ votes: 3, myVotes: 1 });
     const board = makeBoardView({ cards: [card], remainingVotes: 4 });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const blindBoard = makeBoardView({
       version: 3,
       cards: [{ ...card, votes: null }],
@@ -166,12 +167,12 @@ describe('<BoardWorkspace />', () => {
       remainingVotes: 7,
       cards: [{ ...card, votes: null, myVotes: 0 }],
     };
-    spies.updateVotingSettings.mockResolvedValue({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 3,
       events: [{ type: 'board:snapshot', version: 3, serverNow: Date.now(), board: blindBoard }],
     });
-    spies.resetVotes.mockResolvedValue({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 4,
       events: [{ type: 'board:snapshot', version: 4, serverNow: Date.now(), board: resetBoard }],
@@ -179,7 +180,7 @@ describe('<BoardWorkspace />', () => {
 
     const { getByRole, getByText, queryByRole, queryByTitle } = render(() => (
       <>
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         <BoardConfirmDialog />
       </>
     ));
@@ -207,8 +208,9 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(settings.getByRole('button', { name: 'Save Settings' }));
     await flushPromises();
 
-    expect(spies.updateVotingSettings).toHaveBeenCalledWith({
-      boardId: board.id, voteLimit: 7, maxVotesPerCard: 1, blindVoting: true,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'voting:configure',
+      voteLimit: 7, maxVotesPerCard: 1, blindVoting: true,
     });
     expect(getByText('6 / 7 votes left')).toBeInTheDocument();
     expect(getByText('1 yours')).toBeInTheDocument();
@@ -222,7 +224,7 @@ describe('<BoardWorkspace />', () => {
     expect(destructiveActions.getByRole('button', { name: 'Delete Board' })).toBeVisible();
     fireEvent.click(destructiveActions.getByRole('button', { name: 'Reset All Votes' }));
     await flushPromises();
-    expect(spies.resetVotes).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'voting:reset' }));
 
     // The shared confirm asks before the destructive reset.
     const resetConfirm = within(
@@ -230,7 +232,7 @@ describe('<BoardWorkspace />', () => {
     );
     fireEvent.click(resetConfirm.getByRole('button', { name: 'Reset All Votes' }));
     await waitFor(() =>
-      expect(spies.resetVotes).toHaveBeenCalledWith({ boardId: board.id }),
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id , { type: 'voting:reset' }),
     );
     expect(queryByRole('alertdialog')).not.toBeInTheDocument();
     fireEvent.click(reopened.getByRole('button', { name: 'Close Board Settings' }));
@@ -243,9 +245,9 @@ describe('<BoardWorkspace />', () => {
   it('preserves the open Voting Settings draft and takes a new baseline on reopening', async () => {
     const initial = makeBoardView({ voteLimit: 5, allowParticipantGroup: false });
     const [board, setBoard] = createSignal(initial);
-    const { actions, spies } = createFakeActions(initial);
+    const { dispatchCommand } = createFakeBoardDispatcher(initial);
     const view = render(() => (
-      <BoardWorkspace board={board()} boardId={initial.id} actions={actions} />
+      <BoardWorkspace board={board()} boardId={initial.id} dispatchCommand={dispatchCommand} />
     ));
     openBoardSettings(view);
     const dialog = () => within(view.getByRole('dialog', { name: 'Board Settings' }));
@@ -258,7 +260,7 @@ describe('<BoardWorkspace />', () => {
     flush();
     expect(grouping).toBeChecked();
     expect(dialog().getByRole('combobox', { name: 'Vote limit' })).toHaveTextContent('5');
-    spies.updateVotingSettings.mockResolvedValue({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: updated.version + 1,
       events: [{
@@ -270,8 +272,9 @@ describe('<BoardWorkspace />', () => {
     });
     fireEvent.click(dialog().getByRole('button', { name: 'Save Settings' }));
     await flushPromises();
-    expect(spies.updateVotingSettings).toHaveBeenCalledWith({
-      boardId: initial.id, allowParticipantGroup: true,
+    expect(dispatchCommand).toHaveBeenCalledWith(initial.id, {
+      type: 'voting:configure',
+      allowParticipantGroup: true,
     });
 
     openBoardSettings(view);
@@ -293,33 +296,33 @@ describe('<BoardWorkspace />', () => {
       commentCount: 1,
     });
     const board = makeBoardView({ cards: [card], isFacilitator: false });
-    const { actions } = createFakeActions(board);
-    const toggleReaction = vi.fn(async () => ({
-      ok: true as const,
-      version: 2,
-      events: [{
-        type: 'reaction:updated' as const, version: 2, cardId: card.id, counts: { '🎉': 1 }, myReactions: ['🎉'],
-      }],
-    }));
-    const createComment = vi.fn(async () => ({
-      ok: true as const,
-      version: 4,
-      events: [{
-        type: 'comment:created' as const,
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand
+      .mockResolvedValueOnce({
+        ok: true,
+        version: 2,
+        events: [{
+          type: 'reaction:updated', version: 2, cardId: card.id, counts: { '🎉': 1 }, myReactions: ['🎉'],
+        }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         version: 4,
-        cardId: card.id,
-        comment: { id: 'mine', cardId: card.id, content: 'My reply', isMine: true, createdAt: 300 },
-      }],
-    }));
-    const deleteComment = vi.fn(async () => ({
-      ok: true as const,
-      version: 5,
-      events: [{ type: 'comment:deleted' as const, version: 5, cardId: card.id, commentId: 'mine' }],
-    }));
-    Object.assign(actions, { toggleReaction, createComment, deleteComment });
+        events: [{
+          type: 'comment:created',
+          version: 4,
+          cardId: card.id,
+          comment: { id: 'mine', cardId: card.id, content: 'My reply', isMine: true, createdAt: 300 },
+        }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        version: 5,
+        events: [{ type: 'comment:deleted', version: 5, cardId: card.id, commentId: 'mine' }],
+      });
     const view = render(() => (
       <>
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         <BoardConfirmDialog />
       </>
     ));
@@ -336,7 +339,11 @@ describe('<BoardWorkspace />', () => {
       expect(view.getByRole('group', { name: 'Choose a reaction' }).querySelectorAll('button')).toHaveLength(6);
       fireEvent.click(view.getByRole('button', { name: '🎉' }));
       await flushPromises();
-      expect(toggleReaction).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, emoji: '🎉' });
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+        type: 'reaction:toggle',
+        cardId: card.id,
+        emoji: '🎉',
+      });
       expect(view.getByRole('button', { name: '🎉 1 reaction' })).toHaveAttribute('aria-pressed', 'true');
       fireEvent.click(view.getByRole('button', { name: '1 comment' }));
       flush();
@@ -365,17 +372,28 @@ describe('<BoardWorkspace />', () => {
       flush();
       fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
       await flushPromises();
-      expect(createComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, content: 'My reply' });
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+        type: 'comment:create',
+        cardId: card.id,
+        content: 'My reply',
+      });
       expect(drawer.getByText('My reply')).toBeInTheDocument();
       fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
       await flushPromises();
-      expect(deleteComment).not.toHaveBeenCalled();
+      expect(dispatchCommand).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ type: 'comment:delete' }),
+      );
       fireEvent.click(
         within(view.getByRole('alertdialog', { name: 'Delete this comment?' }))
           .getByRole('button', { name: 'Delete comment' }),
       );
       await waitFor(() => {
-        expect(deleteComment).toHaveBeenCalledWith({ boardId: board.id, cardId: card.id, commentId: 'mine' });
+        expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+          type: 'comment:delete',
+          cardId: card.id,
+          commentId: 'mine',
+        });
         expect(drawer.queryByText('My reply')).not.toBeInTheDocument();
       });
 
@@ -412,11 +430,11 @@ describe('<BoardWorkspace />', () => {
     });
     const card = makeCard();
     const board = makeBoardView({ cards: [card] });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
       <>
         <button type="button">Outside Board</button>
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
       </>
     ));
     try {
@@ -450,8 +468,8 @@ describe('<BoardWorkspace />', () => {
   it('retains a failed comment in Card details and clears it after a successful retry', async () => {
     const card = makeCard();
     const board = makeBoardView({ cards: [card] });
-    const { actions, spies } = createFakeActions(board);
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
     flush();
     fireEvent.click(view.getByRole('button', { name: 'Open Card details' }));
     flush();
@@ -461,7 +479,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     let rejectComment!: (response: BoardMutationResponse) => void;
-    spies.createComment.mockImplementationOnce(() => new Promise((resolve) => { rejectComment = resolve; }));
+    dispatchCommand.mockImplementationOnce(() => new Promise((resolve) => { rejectComment = resolve; }));
     fireEvent.click(drawer.getByRole('button', { name: 'Post comment' }));
     flush();
     expect(drawer.getByRole('button', { name: /Posting/ })).toBeDisabled();
@@ -470,7 +488,7 @@ describe('<BoardWorkspace />', () => {
     expect(drawer.getByRole('alert')).toHaveTextContent('Try posting again shortly.');
     expect(comment).toHaveValue('Keep my reply');
 
-    spies.createComment.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{
@@ -490,8 +508,8 @@ describe('<BoardWorkspace />', () => {
   it('handles Escape within Card details before dismissing the drawer', async () => {
     const card = makeCard({ isActionItem: true, actionOwner: 'Platform' });
     const board = makeBoardView({ cards: [card] });
-    const { actions, spies } = createFakeActions(board);
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
     flush();
 
     const trigger = view.getByRole('button', { name: 'Open Card details' });
@@ -518,7 +536,7 @@ describe('<BoardWorkspace />', () => {
     picker.focus();
     await flushPromises();
     expect(owner).toHaveValue('Platform');
-    expect(spies.updateActionItem).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:set-action' }));
 
     fireEvent.keyDown(picker, { key: 'Escape' });
     flush();
@@ -556,8 +574,8 @@ describe('<BoardWorkspace />', () => {
   it('contains focus in Card details and restores it after Escape or explicit close', async () => {
     const card = makeCard({ comments: [], commentCount: 1 });
     const board = makeBoardView({ cards: [card] });
-    const { actions } = createFakeActions(board);
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
     flush();
 
     const comments = view.getByRole('button', { name: '1 comment' });
@@ -603,25 +621,24 @@ describe('<BoardWorkspace />', () => {
       commentCount: 1,
     });
     const board = makeBoardView({ cards: [card], isFacilitator: true });
-    const { actions } = createFakeActions(board);
-    const deleteComment = vi.fn(async () => ({
-      ok: true as const,
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
       version: 2,
       events: [
         {
-          type: 'comment:deleted' as const,
+          type: 'comment:deleted',
           version: 2,
           cardId: card.id,
           commentId: 'other_comment',
         },
       ],
-    }));
-    Object.assign(actions, { deleteComment });
+    });
 
     const { artifact } = await captureArtifact(async () => {
       const view = render(() => (
         <>
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
           <BoardConfirmDialog />
         </>
       ));
@@ -635,14 +652,14 @@ describe('<BoardWorkspace />', () => {
         expect(drawer.getByText('Needs follow-up')).toBeInTheDocument();
         fireEvent.click(drawer.getByRole('button', { name: 'Delete' }));
         await flushPromises();
-        expect(deleteComment).not.toHaveBeenCalled();
+        expect(dispatchCommand).not.toHaveBeenCalled();
         fireEvent.click(
           within(view.getByRole('alertdialog', { name: 'Delete this comment?' }))
             .getByRole('button', { name: 'Delete comment' }),
         );
         await waitFor(() => {
-          expect(deleteComment).toHaveBeenCalledWith({
-            boardId: board.id,
+          expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+            type: 'comment:delete',
             cardId: card.id,
             commentId: 'other_comment',
           });
@@ -687,9 +704,9 @@ describe('<BoardWorkspace />', () => {
       isFacilitator: false,
       cards: [regular, action],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     function receive(message: BoardLiveMessage) {
       streams[0].dispatchEvent(
@@ -711,11 +728,11 @@ describe('<BoardWorkspace />', () => {
       flush();
       fireEvent.click(within(cardArticle).getByRole('menuitem', { name: 'Flag as Action Item' }));
       await flushPromises();
-      expect(spies.updateActionItem).toHaveBeenCalledWith({
-        boardId: board.id,
-        cardId: 'regular',
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:set-action',
+      cardId: 'regular',
         isActionItem: true,
-      });
+    });
       expect(
         view.getByRole('button', { name: 'Action Items 2 open' }),
       ).toBeInTheDocument();
@@ -728,11 +745,11 @@ describe('<BoardWorkspace />', () => {
       );
       fireEvent.click(doneCheckbox);
       await flushPromises();
-      expect(spies.updateActionItem).toHaveBeenLastCalledWith({
-        boardId: board.id,
-        cardId: 'regular',
+      expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:set-action',
+      cardId: 'regular',
         actionDone: true,
-      });
+    });
       expect(
         view.getByRole('button', { name: 'Action Items 1 open' }),
       ).toBeInTheDocument();
@@ -784,9 +801,9 @@ describe('<BoardWorkspace />', () => {
   it('flags, completes, and tags an Action Item from the Card detail drawer', async () => {
     const card = makeCard({ id: 'detail_card', content: 'Write the runbook' });
     const board = makeBoardView({ cards: [card] });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -796,16 +813,16 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.click(drawer.getByLabelText('Flag as Action Item'));
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: 'detail_card',
       isActionItem: true,
     });
 
     fireEvent.click(drawer.getByLabelText('Done'));
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: 'detail_card',
       actionDone: true,
     });
@@ -816,8 +833,8 @@ describe('<BoardWorkspace />', () => {
     flush();
     fireEvent.keyDown(owner, { key: 'Enter' });
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: 'detail_card',
       actionOwner: 'Platform',
     });
@@ -825,8 +842,8 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.click(drawer.getByLabelText('Action Item'));
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: 'detail_card',
       isActionItem: false,
     });
@@ -877,10 +894,10 @@ describe('<BoardWorkspace />', () => {
 
   it('lets Participants recover from a failed copy and return to Share after dismissal', async () => {
     const board = makeBoardView({ isFacilitator: false });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
       <>
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         <ToastRegion />
       </>
     ));
@@ -974,14 +991,14 @@ describe('<BoardWorkspace />', () => {
       ],
       cards: [],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByLabelText, getByRole } = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -1009,14 +1026,14 @@ describe('<BoardWorkspace />', () => {
     // Shift+Enter does NOT submit
     fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true });
     await flushPromises();
-    expect(spies.createCard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:create' }));
 
     // Enter submits the Card and clears draft with zero residual newline
     fireEvent.keyDown(composer, { key: 'Enter' });
     await flushPromises();
 
-    expect(spies.createCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:create',
       columnId: 'col_1',
       content: 'Shipped `v2` cleanly\nDocs: https://retrocks.app/docs',
     });
@@ -1056,8 +1073,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.keyDown(mobileComposer, { key: 'Enter', ctrlKey: true });
     await flushPromises();
 
-    expect(spies.createCard).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:create',
       columnId: 'col_2',
       content: 'Reduce flaky CI retries',
     });
@@ -1085,15 +1102,15 @@ describe('<BoardWorkspace />', () => {
     const card = makeCard({ content: 'My card', isMine: true });
     const target = makeCard({ id: 'target', content: 'Group target' });
     const board = makeBoardView({ cards: [card, target], allowParticipantGroup: true });
-    const { actions, spies } = createFakeActions(board);
-    spies.moveCard.mockRejectedValueOnce(new Error('Disconnected'));
-    spies.groupCards.mockResolvedValueOnce({
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand.mockRejectedValueOnce(new Error('Disconnected'));
+    dispatchCommand.mockResolvedValueOnce({
       ok: false, code: 'VALIDATION_ERROR', message: 'Grouping failed.',
     });
-    spies.deleteCard.mockRejectedValueOnce(new Error('Disconnected'));
+    dispatchCommand.mockRejectedValueOnce(new Error('Disconnected'));
     const view = render(() => (
       <>
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         <BoardConfirmDialog />
       </>
     ));
@@ -1125,7 +1142,7 @@ describe('<BoardWorkspace />', () => {
     flush();
     select('Delete Card');
     await flushPromises();
-    expect(spies.deleteCard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:delete' }));
     fireEvent.click(
       within(view.getByRole('alertdialog', { name: 'Delete this Card?' }))
         .getByRole('button', { name: 'Delete Card' }),
@@ -1179,7 +1196,7 @@ describe('<BoardWorkspace />', () => {
       ],
       cards: [myCard, otherCard],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole, queryByText } = render(() => (
       <>
@@ -1187,7 +1204,7 @@ describe('<BoardWorkspace />', () => {
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
         <BoardConfirmDialog />
       </>
@@ -1226,7 +1243,7 @@ describe('<BoardWorkspace />', () => {
     flush();
 
     let rejectEdit!: (response: BoardMutationResponse) => void;
-    spies.updateCard.mockImplementationOnce(() => new Promise((resolve) => { rejectEdit = resolve; }));
+    dispatchCommand.mockImplementationOnce(() => new Promise((resolve) => { rejectEdit = resolve; }));
     fireEvent.click(mine.getByRole('button', { name: 'Save' }));
     flush();
     expect(mine.getByRole('button', { name: 'Saving…' })).toBeDisabled();
@@ -1237,8 +1254,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(mine.getByRole('button', { name: 'Save' }));
     await flushPromises();
 
-    expect(spies.updateCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:update',
       cardId: 'card_mine',
       content: 'Refined retro note',
     });
@@ -1255,8 +1272,8 @@ describe('<BoardWorkspace />', () => {
     );
     await flushPromises();
 
-    expect(spies.moveCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:move',
       cardId: 'card_mine',
       targetColumnId: 'col_2',
     });
@@ -1278,8 +1295,8 @@ describe('<BoardWorkspace />', () => {
     ]);
     await flushPromises();
 
-    expect(spies.moveCard).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:move',
       cardId: 'card_mine',
       targetColumnId: 'col_1',
     });
@@ -1290,17 +1307,17 @@ describe('<BoardWorkspace />', () => {
     flush();
     fireEvent.click(movedBack.getByRole('menuitem', { name: 'Delete Card' }));
     await flushPromises();
-    expect(spies.deleteCard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:delete' }));
 
     fireEvent.click(
       within(getByRole('alertdialog', { name: 'Delete this Card?' }))
         .getByRole('button', { name: 'Delete Card' }),
     );
     await waitFor(() => {
-      expect(spies.deleteCard).toHaveBeenCalledWith({
-        boardId: board.id,
-        cardId: 'card_mine',
-      });
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:delete',
+      cardId: 'card_mine',
+    });
       expect(queryByText('Refined retro note')).not.toBeInTheDocument();
     });
   });
@@ -1309,8 +1326,8 @@ describe('<BoardWorkspace />', () => {
     const mine = makeCard({ id: 'card_sub', content: 'Submenu card', isMine: true });
     const pair = makeCard({ id: 'card_sub2', content: 'Groupable pair', isMine: true });
     const board = makeBoardView({ cards: [mine, pair], allowParticipantGroup: true });
-    const { actions, spies } = createFakeActions(board);
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
     flush();
     const card = within(view.getByText('Submenu card').closest('article')!);
     const trigger = card.getByRole('button', { name: 'Card actions' });
@@ -1371,8 +1388,8 @@ describe('<BoardWorkspace />', () => {
       within(card.getByRole('menu', { name: 'Group Card with' })).getByRole('menuitem', { name: /Groupable pair/ }),
     );
     await flushPromises();
-    expect(spies.groupCards).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:merge',
       cardId: 'card_sub',
       targetType: 'card',
       targetId: 'card_sub2',
@@ -1387,14 +1404,14 @@ describe('<BoardWorkspace />', () => {
       isMine: true,
     });
     const board = makeBoardView({ isFacilitator: false, cards: [myCard] });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole } = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -1414,8 +1431,8 @@ describe('<BoardWorkspace />', () => {
     ]);
     await flushPromises();
 
-    expect(spies.moveCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:move',
       cardId: 'card_dragme',
       targetColumnId: 'col_2',
     });
@@ -1458,14 +1475,14 @@ describe('<BoardWorkspace />', () => {
       cards: [loose, neighbour, member],
       groups: [group],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole } = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -1484,8 +1501,8 @@ describe('<BoardWorkspace />', () => {
       { x: 150, y: 230 },
     ]);
     await flushPromises();
-    expect(spies.groupCards).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:merge',
       cardId: 'card_loose',
       targetType: 'card',
       targetId: 'card_other',
@@ -1499,8 +1516,8 @@ describe('<BoardWorkspace />', () => {
       { x: 150, y: 480 },
     ]);
     await flushPromises();
-    expect(spies.groupCards).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'group:merge',
       cardId: 'card_loose',
       targetType: 'group',
       targetId: 'group_keep',
@@ -1525,14 +1542,14 @@ describe('<BoardWorkspace />', () => {
         makeCard({ id: 'card_g2', columnId: 'col_1', content: 'Flaky CI checks', groupId: 'group_move', isMine: true }),
       ],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole } = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -1551,8 +1568,8 @@ describe('<BoardWorkspace />', () => {
     ]);
     await flushPromises();
 
-    expect(spies.moveCardGroup).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:move',
       groupId: 'group_move',
       targetColumnId: 'col_2',
     });
@@ -1581,14 +1598,14 @@ describe('<BoardWorkspace />', () => {
       isBlurred: true,
       cards: [mine, hidden],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole } = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -1606,8 +1623,8 @@ describe('<BoardWorkspace />', () => {
     ]);
     await flushPromises();
 
-    expect(spies.groupCards).not.toHaveBeenCalled();
-    expect(spies.moveCard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'group:merge' }));
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:move' }));
     expect(hiddenEl.getAttribute('data-drop-active')).toBeNull();
   });
 
@@ -1621,14 +1638,14 @@ describe('<BoardWorkspace />', () => {
         isMine: true,
       });
       const board = makeBoardView({ isFacilitator: false, cards: [mine] });
-      const { actions, spies } = createFakeActions(board);
+      const { dispatchCommand } = createFakeBoardDispatcher(board);
 
       const { getByRole } = render(() => (
         <BoardWorkspace
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
       ));
       flush();
@@ -1652,7 +1669,7 @@ describe('<BoardWorkspace />', () => {
       fireEvent.click(document.body);
       vi.advanceTimersByTime(150);
 
-      expect(spies.moveCard).not.toHaveBeenCalled();
+      expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:move' }));
       expect(
         document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '',
       ).toContain('back to Column Went Well');
@@ -1671,14 +1688,14 @@ describe('<BoardWorkspace />', () => {
         isMine: true,
       });
       const board = makeBoardView({ isFacilitator: false, cards: [mine] });
-      const { actions, spies } = createFakeActions(board);
+      const { dispatchCommand } = createFakeBoardDispatcher(board);
 
       const { getByRole } = render(() => (
         <BoardWorkspace
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
       ));
       flush();
@@ -1694,11 +1711,11 @@ describe('<BoardWorkspace />', () => {
       fireEvent.keyDown(cardEl, { key: ' ' });
       vi.advanceTimersByTime(150);
 
-      expect(spies.moveCard).toHaveBeenCalledWith({
-        boardId: board.id,
-        cardId: 'card_keys',
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:move',
+      cardId: 'card_keys',
         targetColumnId: 'col_2',
-      });
+    });
       expect(
         document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '',
       ).toContain('Dropped Keyboard courier in Column To Improve');
@@ -1736,7 +1753,7 @@ describe('<BoardWorkspace />', () => {
       ],
       cards: [existingCard],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByLabelText, getByRole, queryByRole } = render(() => (
       <>
@@ -1744,7 +1761,7 @@ describe('<BoardWorkspace />', () => {
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
         <BoardConfirmDialog />
       </>
@@ -1762,8 +1779,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.keyDown(boardTitleInput, { key: 'Enter' });
     await flushPromises();
 
-    expect(spies.renameBoard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'board:rename',
       title: 'Sprint 43 Retro',
     });
     expect(
@@ -1779,8 +1796,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(getByRole('button', { name: 'Add column' }));
     await flushPromises();
 
-    expect(spies.addColumn).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:add',
       title: 'Kudos',
       accent: 'slate',
       isActionColumn: false,
@@ -1801,8 +1818,8 @@ describe('<BoardWorkspace />', () => {
       within(col2Region).getByRole('menuitemradio', { name: 'Accent Amber' }),
     );
     await flushPromises();
-    expect(spies.updateColumn).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:update',
       columnId: 'col_2',
       accent: 'amber',
     });
@@ -1818,8 +1835,8 @@ describe('<BoardWorkspace />', () => {
       within(col2Region).getByRole('menuitem', { name: 'Move left' }),
     );
     await flushPromises();
-    expect(spies.reorderColumns).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:reorder',
       columnIds: ['col_2', 'col_1', 'col_new_2'],
     });
 
@@ -1834,17 +1851,17 @@ describe('<BoardWorkspace />', () => {
       within(col2Region).getByRole('menuitem', { name: 'Delete column' }),
     );
     await flushPromises();
-    expect(spies.deleteColumn).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'column:delete' }));
 
     fireEvent.click(
       within(getByRole('alertdialog', { name: 'Delete this Column and its 1 card?' }))
         .getByRole('button', { name: 'Delete column' }),
     );
     await waitFor(() => {
-      expect(spies.deleteColumn).toHaveBeenCalledWith({
-        boardId: board.id,
-        columnId: 'col_2',
-      });
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:delete',
+      columnId: 'col_2',
+    });
       expect(
         queryByRole('heading', { level: 2, name: 'To Improve' }),
       ).not.toBeInTheDocument();
@@ -1858,11 +1875,13 @@ describe('<BoardWorkspace />', () => {
       makeCard({ id: 'secret2', content: 'Another Participant’s second Card', isMine: false }),
     ];
     const board = makeBoardView({ cards: [own, ...hidden] });
-    const { actions, spies } = createFakeActions(board);
-    spies.setPrivateMode.mockImplementation(async (input) => {
-      const version = input.isBlurred ? 3 : 4;
-      const cards = input.isBlurred
-        ? [own, ...hidden.map((card) => ({ ...card, content: '', redacted: true, placeholderLines: 2 }))]
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const defaultDispatch = dispatchCommand.getMockImplementation()!;
+    dispatchCommand.mockImplementation(async (boardId, command) => {
+      if (command.type !== 'board:set-private-mode') return defaultDispatch(boardId, command);
+      const version = command.isBlurred ? 3 : 4;
+      const cards = command.isBlurred
+        ? [own, ...hidden.map((card) => ({ ...card, content: '', redacted: true, placeholderLines: 2 as const }))]
         : board.cards;
       return {
         ok: true,
@@ -1871,12 +1890,12 @@ describe('<BoardWorkspace />', () => {
           type: 'board:snapshot',
           version,
           serverNow: Date.now(),
-          board: { ...board, version, cards, isBlurred: input.isBlurred },
+          board: { ...board, version, cards, isBlurred: command.isBlurred },
         }],
       };
     });
     const { getByRole, getByText, queryByText, queryByRole, getAllByLabelText } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -1893,7 +1912,10 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.click(getByRole('button', { name: 'Private Mode' }));
     await flushPromises();
-    expect(spies.setPrivateMode).toHaveBeenCalledWith({ boardId: board.id, isBlurred: true });
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'board:set-private-mode',
+      isBlurred: true
+    });
     expect(getAllByLabelText('Hidden Card in Private Mode')).toHaveLength(2);
     for (const card of hidden) {
       expect(queryByText(card.content)).toBeNull();
@@ -1904,20 +1926,23 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.keyDown(composer, { key: 'b' });
     await flushPromises();
-    expect(spies.setPrivateMode).toHaveBeenCalledTimes(1);
+    expect(dispatchCommand.mock.calls.filter(([, cmd]) => cmd.type === 'board:set-private-mode')).toHaveLength(1);
 
     // Moving focus to Reveal All blurs the card editor, which now commits the edit inline.
     getByRole('button', { name: 'Reveal All' }).focus();
     await flushPromises();
-    expect(spies.updateCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:update',
       cardId: 'own',
       content: 'Editing my Card',
     });
     expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
     fireEvent.keyDown(document, { key: 'b' });
     await flushPromises();
-    expect(spies.setPrivateMode).toHaveBeenLastCalledWith({ boardId: board.id, isBlurred: false });
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'board:set-private-mode',
+      isBlurred: false
+    });
     for (const card of hidden) {
       expect(getByText(card.content)).toBeInTheDocument();
     }
@@ -2060,7 +2085,7 @@ describe('<BoardWorkspace />', () => {
       isLocked: false,
       cards: [regularCard, actionCard],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole, getByText, queryByRole, queryByLabelText, queryByText } =
       render(() => (
@@ -2068,7 +2093,7 @@ describe('<BoardWorkspace />', () => {
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
       ));
     flush();
@@ -2080,8 +2105,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(settings.getByRole('button', { name: 'Lock Board' }));
     await flushPromises();
 
-    expect(spies.setBoardLock).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'board:set-lock',
       isLocked: true,
     });
     // Voting controls inside Board Settings are disabled while Locked, Unlock is enabled
@@ -2123,8 +2148,8 @@ describe('<BoardWorkspace />', () => {
 
     fireEvent.click(drawerDone);
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: actionCard.id,
       actionDone: true,
     });
@@ -2136,8 +2161,8 @@ describe('<BoardWorkspace />', () => {
     flush();
     fireEvent.keyDown(refreshedOwner, { key: 'Enter' });
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: actionCard.id,
       actionOwner: 'Platform',
     });
@@ -2157,8 +2182,8 @@ describe('<BoardWorkspace />', () => {
     expect(detail.queryByLabelText('Comment')).toBeNull();
     fireEvent.click(detail.getByLabelText('Done'));
     await flushPromises();
-    expect(spies.updateActionItem).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'card:set-action',
       cardId: actionCard.id,
       actionDone: false,
     });
@@ -2174,8 +2199,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(reopened.getByRole('button', { name: 'Close Board Settings' }));
     flush();
 
-    expect(spies.setBoardLock).toHaveBeenLastCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
+      type: 'board:set-lock',
       isLocked: false,
     });
     expect(queryByText('Locked')).toBeNull();
@@ -2184,9 +2209,9 @@ describe('<BoardWorkspace />', () => {
 
   it('returns focus to More when the Action Items header entry is hidden while the drawer is open', async () => {
     const board = makeBoardView({ isLocked: true });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -2239,14 +2264,14 @@ describe('<BoardWorkspace />', () => {
       isLocked: true,
       cards: [actionCard],
     });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole, getByText, queryByRole } = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -2285,7 +2310,7 @@ describe('<BoardWorkspace />', () => {
       title: board.title,
       isFacilitator: true,
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { getByRole, queryByRole } = render(() => (
       <>
@@ -2293,7 +2318,7 @@ describe('<BoardWorkspace />', () => {
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
         <BoardConfirmDialog />
       </>
@@ -2307,7 +2332,7 @@ describe('<BoardWorkspace />', () => {
     // Clicking Delete Board opens the shared confirm without deleting yet
     fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
     await flushPromises();
-    expect(spies.deleteBoard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'board:delete' }));
 
     const confirmDialog = within(
       getByRole('alertdialog', { name: 'Permanently delete this Board?' }),
@@ -2317,7 +2342,7 @@ describe('<BoardWorkspace />', () => {
     fireEvent.keyDown(confirmDialog.getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
     await flushPromises();
     expect(queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(spies.deleteBoard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'board:delete' }));
     expect(getByRole('dialog', { name: 'Board Settings' })).toBeInTheDocument();
 
     // Cancel aborts deletion
@@ -2326,7 +2351,7 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(within(getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
       .getByRole('button', { name: 'Cancel' }));
     await flushPromises();
-    expect(spies.deleteBoard).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'board:delete' }));
 
     // Confirming deletes the Board, shows 404 empty state, and removes from Recent Boards
     fireEvent.click(settings.getByRole('button', { name: 'Delete Board' }));
@@ -2334,7 +2359,7 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(within(getByRole('alertdialog', { name: 'Permanently delete this Board?' }))
       .getByRole('button', { name: 'Delete Board' }));
     await waitFor(() => {
-      expect(spies.deleteBoard).toHaveBeenCalledWith({ boardId: board.id });
+      expect(dispatchCommand).toHaveBeenCalledWith(board.id , { type: 'board:delete' });
       expect(
         getByRole('heading', { level: 1, name: 'Board not found or expired' }),
       ).toBeInTheDocument();
@@ -2410,7 +2435,7 @@ describe('<BoardWorkspace />', () => {
         makeCard({ id: 'a1', isActionItem: true, content: 'Track follow-up' }),
       ],
     });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
@@ -2419,7 +2444,7 @@ describe('<BoardWorkspace />', () => {
               board={board}
               boardId={board.id}
               homeHref="/"
-              actions={actions}
+              dispatchCommand={dispatchCommand}
             />
             <BoardConfirmDialog />
           </>
@@ -2449,12 +2474,12 @@ describe('<BoardWorkspace />', () => {
       actionOwner: 'Platform',
     });
     const board = makeBoardView({ cards: [actionCard] });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const update = Promise.withResolvers<BoardMutationResponse>();
-    spies.updateActionItem.mockReturnValueOnce(update.promise);
+    dispatchCommand.mockReturnValueOnce(update.promise);
 
     const { artifact } = await captureArtifact(async () => {
-      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
       flush();
       const card = within(view.getByText(actionCard.content).closest('article')!);
       expect(card.getByText(actionCard.content).closest('.line-through')).toBeInTheDocument();
@@ -2479,10 +2504,10 @@ describe('<BoardWorkspace />', () => {
   it('opens Card actions off-layout and returns keyboard focus to the trigger', async () => {
     const ownCard = makeCard({ id: 'card_menu', content: 'Review the release checklist' });
     const board = makeBoardView({ cards: [ownCard], isFacilitator: true });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { artifact } = await captureArtifact(() => {
-      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
       flush();
       const card = within(view.getByText(ownCard.content).closest('article')!);
       const trigger = card.getByRole('button', { name: 'Card actions' });
@@ -2526,9 +2551,9 @@ describe('<BoardWorkspace />', () => {
       votes: 1,
     });
     const board = makeBoardView({ cards: [first, second], isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { getByRole, queryByLabelText } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -2543,8 +2568,8 @@ describe('<BoardWorkspace />', () => {
     );
     await flushPromises();
 
-    expect(spies.groupCards).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:merge',
       cardId: 'card_1',
       targetType: 'card',
       targetId: 'card_2',
@@ -2561,9 +2586,10 @@ describe('<BoardWorkspace />', () => {
       within(wentWell).getByRole('button', { name: 'Cast Vote' }),
     );
     await flushPromises();
-    expect(spies.changeVote).toHaveBeenCalledWith(
+    expect(dispatchCommand).toHaveBeenCalledWith(
+      board.id,
       expect.objectContaining({
-        boardId: board.id,
+        type: 'vote:change',
         targetType: 'group',
         delta: 1,
       }),
@@ -2592,8 +2618,8 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(groupedFirstCard.getByRole('menuitem', { name: 'Ungroup Card' }));
     await flushPromises();
 
-    expect(spies.ungroupCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:ungroup',
       cardId: 'card_1',
     });
     expect(queryByLabelText('2 cards')).not.toBeInTheDocument();
@@ -2635,12 +2661,12 @@ describe('<BoardWorkspace />', () => {
       isFacilitator: false,
       allowParticipantGroup: false,
     });
-    const participant = createFakeActions(participantBoard);
+    const participant = createFakeBoardDispatcher(participantBoard);
     const firstRender = render(() => (
       <BoardWorkspace
         board={participantBoard}
         boardId={participantBoard.id}
-        actions={participant.actions}
+        dispatchCommand={participant.dispatchCommand}
       />
     ));
     flush();
@@ -2664,9 +2690,9 @@ describe('<BoardWorkspace />', () => {
       isFacilitator: false,
       allowParticipantGroup: true,
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { getByRole, getByLabelText, queryByText } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
     const wentWell = getByRole('region', { name: 'Went Well' });
@@ -2682,8 +2708,8 @@ describe('<BoardWorkspace />', () => {
       getByRole('button', { name: 'Save Card Group title' }),
     );
     await flushPromises();
-    expect(spies.renameCardGroup).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:rename',
       groupId: 'group_1',
       title: 'CI reliability',
     });
@@ -2691,7 +2717,7 @@ describe('<BoardWorkspace />', () => {
 
     const moveGroup = within(wentWell).getByRole('button', { name: 'Move Card Group to...' });
     let rejectMove!: (response: BoardMutationResponse) => void;
-    spies.moveCardGroup.mockImplementationOnce(() => new Promise((resolve) => { rejectMove = resolve; }));
+    dispatchCommand.mockImplementationOnce(() => new Promise((resolve) => { rejectMove = resolve; }));
     fireEvent.click(moveGroup);
     flush();
     fireEvent.click(within(wentWell).getByRole('menuitem', { name: /To Improve/i }));
@@ -2712,8 +2738,8 @@ describe('<BoardWorkspace />', () => {
       within(wentWell).getByRole('menuitem', { name: /To Improve/i }),
     );
     await flushPromises();
-    expect(spies.moveCardGroup).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:move',
       groupId: 'group_1',
       targetColumnId: 'col_2',
     });
@@ -2726,8 +2752,8 @@ describe('<BoardWorkspace />', () => {
       }),
     );
     await flushPromises();
-    expect(spies.dissolveCardGroup).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:dissolve',
       groupId: 'group_1',
     });
     expect(queryByText('CI reliability')).not.toBeInTheDocument();
@@ -2749,16 +2775,16 @@ describe('<BoardWorkspace />', () => {
         createdAt: Date.now(),
       }],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
-    spies.moveCardGroup.mockResolvedValueOnce({
+    dispatchCommand.mockResolvedValueOnce({
       ok: false,
       code: 'VALIDATION_ERROR',
       message: 'Could not move the Card Group.',
     });
 
     const { artifact } = await captureArtifact(async () => {
-      const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+      const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
       try {
         flush();
         const trigger = view.getByRole('button', { name: 'Move Card Group to...' });
@@ -2783,7 +2809,7 @@ describe('<BoardWorkspace />', () => {
         expect(trigger).toHaveFocus();
         expect(trigger).toHaveAttribute('aria-expanded', 'false');
         expect(view.queryByRole('menu', { name: 'Move Card Group to Column' })).not.toBeInTheDocument();
-        expect(spies.moveCardGroup).not.toHaveBeenCalled();
+        expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'group:move' }));
 
         fireEvent.keyDown(trigger, { key: 'ArrowDown' });
         flush();
@@ -3122,10 +3148,10 @@ describe('<BoardWorkspace />', () => {
     const board = makeBoardView({
       cards: hasCards ? [makeCard({ content: 'Fast deploy pipeline', isMine: false })] : [],
     });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { artifact } = await captureArtifact(() => {
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
       ));
       flush();
 
@@ -3199,10 +3225,10 @@ describe('<BoardWorkspace />', () => {
     const board = makeBoardView({
       cards: [makeCard({ content: 'Kudos for the fast deployment', isMine: false })],
     });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { artifact } = await captureArtifact(() => {
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
       ));
       flush();
       fireEvent.input(view.getByRole('searchbox'), { target: { value: 'kudos' } });
@@ -3278,10 +3304,10 @@ describe('<BoardWorkspace />', () => {
         }),
       ],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     try {
       flush();
@@ -3368,9 +3394,7 @@ describe('<BoardWorkspace />', () => {
       expect(search).not.toHaveFocus();
 
       // Purely client-side: zero server mutations called
-      for (const spy of Object.values(spies)) {
-        expect(spy).not.toHaveBeenCalled();
-      }
+      expect(dispatchCommand).not.toHaveBeenCalled();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -3412,10 +3436,10 @@ describe('<BoardWorkspace />', () => {
         makeCard({ id: 'c_g2', columnId: 'col_1', groupId: 'group_mid', content: 'Flaky staging', createdAt: 1_400 }),
       ],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     try {
       flush();
@@ -3478,9 +3502,7 @@ describe('<BoardWorkspace />', () => {
       expect(getTopLevelStreamIds()).toEqual(['card:c_new', 'group:group_mid', 'card:c_old']);
 
       // Purely local: zero server writes
-      for (const spy of Object.values(spies)) {
-        expect(spy).not.toHaveBeenCalled();
-      }
+      expect(dispatchCommand).not.toHaveBeenCalled();
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
@@ -3496,9 +3518,9 @@ describe('<BoardWorkspace />', () => {
         makeCard({ id: 'peer', content: 'Teammate deployment checklist', isMine: false }),
       ],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -3535,9 +3557,7 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(disclosure);
     flush();
     expect(within(view.getByRole('combobox', { name: 'Sort cards' })).getByText('Oldest')).toBeInTheDocument();
-    for (const spy of Object.values(spies)) {
-      expect(spy).not.toHaveBeenCalled();
-    }
+    expect(dispatchCommand).not.toHaveBeenCalled();
   });
 
   it('composes Quick Filter chips (All, Mine, Voted, Action Items) with Search and Sort and renders distinct empty-filter states', () => {
@@ -3565,10 +3585,10 @@ describe('<BoardWorkspace />', () => {
         makeCard({ id: 'c_col2', columnId: 'col_2', content: 'Teammate note', isMine: false, myVotes: 0, isActionItem: false, createdAt: 1_700 }),
       ],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -3622,9 +3642,7 @@ describe('<BoardWorkspace />', () => {
     expect(search).toHaveValue('');
     expect(view.getByText('Teammate note')).toBeInTheDocument();
 
-    for (const spy of Object.values(spies)) {
-      expect(spy).not.toHaveBeenCalled();
-    }
+    expect(dispatchCommand).not.toHaveBeenCalled();
   });
 
   it('handles global keyboard shortcuts (/, N, A, B, T, Esc), suppresses them inside editable inputs, and emits zero Solid 2.0 diagnostics', async () => {
@@ -3634,24 +3652,28 @@ describe('<BoardWorkspace />', () => {
         makeCard({ id: 'card_1', columnId: 'col_1', content: 'Deploy checks', isActionItem: true }),
       ],
     });
-    const { actions, spies } = createFakeActions(board);
-    spies.setPrivateMode.mockImplementation(async (input) => ({
-      ok: true,
-      version: input.isBlurred ? 2 : 3,
-      events: [
-        {
-          type: 'board:snapshot',
-          version: input.isBlurred ? 2 : 3,
-          serverNow: Date.now(),
-          board: { ...board, version: input.isBlurred ? 2 : 3, isBlurred: input.isBlurred },
-        },
-      ],
-    }));
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const defaultDispatch = dispatchCommand.getMockImplementation()!;
+    dispatchCommand.mockImplementation(async (boardId, command) => {
+      if (command.type !== 'board:set-private-mode') return defaultDispatch(boardId, command);
+      return {
+        ok: true,
+        version: command.isBlurred ? 2 : 3,
+        events: [
+          {
+            type: 'board:snapshot',
+            version: command.isBlurred ? 2 : 3,
+            serverNow: Date.now(),
+            board: { ...board, version: command.isBlurred ? 2 : 3, isBlurred: command.isBlurred },
+          },
+        ],
+      };
+    });
 
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -3689,7 +3711,7 @@ describe('<BoardWorkspace />', () => {
           flush();
           expect(view.queryByRole('dialog', { name: 'Action Items' })).not.toBeInTheDocument();
           expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
-          expect(spies.setPrivateMode).not.toHaveBeenCalled();
+          expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'board:set-private-mode' }));
           expect(searchInput).toHaveFocus();
 
           // Escape blurs search input cleanly
@@ -3756,7 +3778,7 @@ describe('<BoardWorkspace />', () => {
           fireEvent.keyDown(document.body, { key: 't' });
           flush();
           expect(searchInput).not.toHaveFocus();
-          expect(spies.setPrivateMode).not.toHaveBeenCalled();
+          expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'board:set-private-mode' }));
           expect(view.queryByRole('dialog', { name: 'Countdown Timer' })).not.toBeInTheDocument();
           // Pressing "A" again toggles Action Items Drawer closed
           fireEvent.keyDown(document.body, { key: 'a' });
@@ -3774,7 +3796,10 @@ describe('<BoardWorkspace />', () => {
           // "B" toggles Private Mode for Facilitators
           fireEvent.keyDown(document.body, { key: 'b' });
           await flushPromises();
-          expect(spies.setPrivateMode).toHaveBeenCalledWith({ boardId: board.id, isBlurred: true });
+          expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'board:set-private-mode',
+      isBlurred: true
+    });
 
           // "Esc" closes the Share Board dialog and the Column options popover
           fireEvent.click(view.getByRole('button', { name: 'Share' }));
@@ -3930,8 +3955,8 @@ describe('<BoardWorkspace />', () => {
 
   it('lets Tab leave More in either direction without adding actions to the tab order', () => {
     const board = makeBoardView({ isFacilitator: true });
-    const { actions } = createFakeActions(board);
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
     flush();
     const trigger = view.getByRole('button', { name: 'More board actions' });
     const next = view.getByRole('searchbox');
@@ -3961,7 +3986,7 @@ describe('<BoardWorkspace />', () => {
     const board = makeBoardView({ isFacilitator: true, voteLimit: 5, remainingVotes: 2 });
     const { artifact } = await captureArtifact(() => {
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={createFakeBoardDispatcher(board).dispatchCommand} />
       ));
       try {
         flush();
@@ -3984,7 +4009,7 @@ describe('<BoardWorkspace />', () => {
   it('lets an agent find the Column choices and select a mounted Column', async () => {
     const board = makeBoardView();
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={createFakeBoardDispatcher(board).dispatchCommand} />
     ));
     flush();
 
@@ -4008,7 +4033,7 @@ describe('<BoardWorkspace />', () => {
   it('fades the Column rail only on edges with more tabs to scroll to', async () => {
     const board = makeBoardView();
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={createFakeBoardDispatcher(board).dispatchCommand} />
     ));
     flush();
     const tablist = view.getByRole('tablist', { name: 'Select Column' });
@@ -4056,7 +4081,7 @@ describe('<BoardWorkspace />', () => {
     try {
       const board = makeBoardView();
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} actions={createFakeActions(board).actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={createFakeBoardDispatcher(board).dispatchCommand} />
       ));
       flush();
       const firstTab = view.getByRole('tab', { name: /Went Well/ });
@@ -4086,11 +4111,11 @@ describe('<BoardWorkspace />', () => {
       isFacilitator: true,
       cards: [makeCard({ isActionItem: true, actionDone: false })],
     });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { artifact } = await captureArtifact(
       () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4139,17 +4164,17 @@ describe('<BoardWorkspace />', () => {
       ],
       cards: [],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const pendingSuccess = Promise.withResolvers<BoardMutationResponse>();
     const pendingFailure = Promise.withResolvers<BoardMutationResponse>();
-    spies.createCard
+    dispatchCommand
       .mockReturnValueOnce(pendingSuccess.promise)
       .mockReturnValueOnce(pendingFailure.promise);
 
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4219,17 +4244,17 @@ describe('<BoardWorkspace />', () => {
       myReactions: [],
     });
     const board = makeBoardView({ cards: [card] });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const pendingSuccess = Promise.withResolvers<BoardMutationResponse>();
     const pendingFailure = Promise.withResolvers<BoardMutationResponse>();
-    spies.toggleReaction
+    dispatchCommand
       .mockReturnValueOnce(pendingSuccess.promise)
       .mockReturnValueOnce(pendingFailure.promise);
 
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4294,8 +4319,8 @@ describe('<BoardWorkspace />', () => {
       isMine: false,
     });
     const board = makeBoardView({ isBlurred: true, cards: [own, hidden] });
-    const { actions, spies } = createFakeActions(board);
-    spies.setPrivateMode.mockResolvedValue({
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{
@@ -4314,7 +4339,7 @@ describe('<BoardWorkspace />', () => {
     try {
       const { artifact } = await captureArtifact(async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4358,8 +4383,8 @@ describe('<BoardWorkspace />', () => {
       isMine: false,
     });
     const board = makeBoardView({ isBlurred: true, cards: [hidden] });
-    const { actions, spies } = createFakeActions(board);
-    spies.setPrivateMode.mockResolvedValue({
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{
@@ -4378,7 +4403,7 @@ describe('<BoardWorkspace />', () => {
     try {
       const { artifact } = await captureArtifact(async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4436,7 +4461,7 @@ describe('<BoardWorkspace />', () => {
         const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
         const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
         const secondView = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4485,8 +4510,8 @@ describe('<BoardWorkspace />', () => {
       isBlurred: true,
       cards: [own, ...hiddenCards],
     });
-    const { actions, spies } = createFakeActions(board);
-    spies.setPrivateMode.mockResolvedValue({
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand.mockResolvedValueOnce({
       ok: true,
       version: 2,
       events: [{
@@ -4511,7 +4536,7 @@ describe('<BoardWorkspace />', () => {
 
     const { artifact } = await captureArtifact(async () => {
       const view = render(() => (
-        <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+        <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
       ));
       try {
         flush();
@@ -4594,12 +4619,14 @@ describe('<BoardWorkspace />', () => {
       isFacilitator: true,
       cards: [{ ...hidden, content: '', redacted: true, placeholderLines: 2 }],
     });
-    const { actions, spies } = createFakeActions(initialBoard);
+    const { dispatchCommand } = createFakeBoardDispatcher(initialBoard);
     let version = initialBoard.version;
-    spies.setPrivateMode.mockImplementation(async (input) => {
+    const defaultDispatch = dispatchCommand.getMockImplementation()!;
+    dispatchCommand.mockImplementation(async (boardId, command) => {
+      if (command.type !== 'board:set-private-mode') return defaultDispatch(boardId, command);
       version += 1;
-      const cards = input.isBlurred
-        ? [{ ...hidden, content: '', redacted: true, placeholderLines: 2 }]
+      const cards = command.isBlurred
+        ? [{ ...hidden, content: '', redacted: true, placeholderLines: 2 as const }]
         : [hidden];
       return {
         ok: true,
@@ -4608,7 +4635,7 @@ describe('<BoardWorkspace />', () => {
           type: 'board:snapshot',
           version,
           serverNow: Date.now(),
-          board: { ...initialBoard, version, isBlurred: input.isBlurred, cards },
+          board: { ...initialBoard, version, isBlurred: command.isBlurred, cards },
         }],
       };
     });
@@ -4616,7 +4643,7 @@ describe('<BoardWorkspace />', () => {
     try {
       const { artifact } = await captureArtifact(async () => {
         const view = render(() => (
-          <BoardWorkspace board={initialBoard} boardId={initialBoard.id} actions={actions} />
+          <BoardWorkspace board={initialBoard} boardId={initialBoard.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4722,14 +4749,14 @@ describe('<BoardWorkspace />', () => {
       ],
       cards: [myCard, groupedCard, otherCard],
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const view = render(() => (
       <BoardWorkspace
         board={board}
         boardId={board.id}
         homeHref="/"
-        actions={actions}
+        dispatchCommand={dispatchCommand}
       />
     ));
     flush();
@@ -4763,8 +4790,8 @@ describe('<BoardWorkspace />', () => {
     flush();
     fireEvent.keyDown(editBox, { key: 'Enter' });
     await flushPromises();
-    expect(spies.updateCard).toHaveBeenCalledWith({
-      boardId: board.id,
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:update',
       cardId: 'card_mine',
       content: 'Updated via double-click',
     });
@@ -4792,14 +4819,14 @@ describe('<BoardWorkspace />', () => {
         isMine: true,
       });
       const board = makeBoardView({ cards: [myCard] });
-      const { actions } = createFakeActions(board);
+      const { dispatchCommand } = createFakeBoardDispatcher(board);
 
       const view = render(() => (
         <BoardWorkspace
           board={board}
           boardId={board.id}
           homeHref="/"
-          actions={actions}
+          dispatchCommand={dispatchCommand}
         />
       ));
       flush();
@@ -4846,12 +4873,12 @@ describe('<BoardWorkspace />', () => {
     const board = makeBoardView({
       cards: [makeCard({ id: 'card_1', columnId: 'col_1', content: 'Clean rail card' })],
     });
-    const { actions } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4906,12 +4933,12 @@ describe('<BoardWorkspace />', () => {
 
   it('keeps 3 Columns balanced at 1024px and opens Add Column in a non-shifting overlay dialog with zero diagnostics', async () => {
     const board = makeBoardView({ isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4959,12 +4986,12 @@ describe('<BoardWorkspace />', () => {
           fireEvent.click(within(dialog2).getByRole('button', { name: 'Add column' }));
           await flushPromises();
 
-          expect(spies.addColumn).toHaveBeenCalledWith({
-            boardId: board.id,
-            title: 'Risks',
+          expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:add',
+      title: 'Risks',
             accent: 'coral',
             isActionColumn: true,
-          });
+    });
           expect(view.queryByRole('dialog', { name: 'Add a Column' })).not.toBeInTheDocument();
           expect(view.getByRole('tab', { name: /Risks/i })).toHaveAttribute('aria-selected', 'true');
         } finally {
@@ -4978,12 +5005,12 @@ describe('<BoardWorkspace />', () => {
 
   it('clears desktop composer cleanly on Enter, handles Column options overlay with zero diagnostics', async () => {
     const board = makeBoardView({ isFacilitator: true, cards: [] });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { artifact } = await captureArtifact(
       async () => {
         const view = render(() => (
-          <BoardWorkspace board={board} boardId={board.id} actions={actions} />
+          <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
         ));
         try {
           flush();
@@ -4996,7 +5023,7 @@ describe('<BoardWorkspace />', () => {
           // Enter on empty/whitespace does not submit or leave a stray newline
           fireEvent.keyDown(composer, { key: 'Enter' });
           await flushPromises();
-          expect(spies.createCard).not.toHaveBeenCalled();
+          expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'card:create' }));
           expect(composer.value).toBe('');
 
           // Typing and pressing Enter submits and clears DOM value cleanly
@@ -5005,11 +5032,11 @@ describe('<BoardWorkspace />', () => {
           flush();
           fireEvent.keyDown(composer, { key: 'Enter' });
           await flushPromises();
-          expect(spies.createCard).toHaveBeenCalledWith({
-            boardId: board.id,
-            columnId: 'col_1',
+          expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:create',
+      columnId: 'col_1',
             content: 'Direct DOM sync card',
-          });
+    });
           expect(composer.value).toBe('');
 
           // Column options menu renders with data-board-overlay and closes on Escape
@@ -5054,11 +5081,11 @@ describe('<BoardWorkspace />', () => {
           flush();
           fireEvent.keyDown(renameInput, { key: 'Enter' });
           await flushPromises();
-          expect(spies.updateColumn).toHaveBeenCalledWith({
-            boardId: board.id,
-            columnId: 'col_1',
+          expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:update',
+      columnId: 'col_1',
             title: 'Highlights',
-          });
+    });
         } finally {
           view.unmount();
         }
@@ -5075,7 +5102,7 @@ describe('<BoardWorkspace />', () => {
       isFacilitator: true,
       isLocked: false,
     });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
 
     const { artifact } = await captureArtifact(
       async () => {
@@ -5084,7 +5111,7 @@ describe('<BoardWorkspace />', () => {
             board={board}
             boardId={board.id}
             homeHref="/"
-            actions={actions}
+            dispatchCommand={dispatchCommand}
           />
         ));
         try {
@@ -5129,10 +5156,10 @@ describe('<BoardWorkspace />', () => {
           fireEvent.keyDown(titleInput, { key: 'Enter' });
           await flushPromises();
 
-          expect(spies.renameBoard).toHaveBeenCalledWith({
-            boardId: board.id,
-            title: 'Q4 Platform Retro',
-          });
+          expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'board:rename',
+      title: 'Q4 Platform Retro',
+    });
           expect(withinIsland.getByRole('heading', { level: 1, name: 'Q4 Platform Retro' })).toBeVisible();
 
           // Escape cancels rename and keeps the current title
@@ -5168,7 +5195,7 @@ describe('<BoardWorkspace />', () => {
           board={participantBoard}
           boardId={participantBoard.id}
           homeHref="/"
-          actions={createFakeActions(participantBoard).actions}
+          dispatchCommand={createFakeBoardDispatcher(participantBoard).dispatchCommand}
         />
       ));
       flush();
@@ -5188,7 +5215,7 @@ describe('<BoardWorkspace />', () => {
           board={lockedBoard}
           boardId={lockedBoard.id}
           homeHref="/"
-          actions={createFakeActions(lockedBoard).actions}
+          dispatchCommand={createFakeBoardDispatcher(lockedBoard).dispatchCommand}
         />
       ));
       flush();
@@ -5208,7 +5235,7 @@ describe('<BoardWorkspace />', () => {
           board={facilitatorBoard}
           boardId={facilitatorBoard.id}
           homeHref="/"
-          actions={createFakeActions(facilitatorBoard).actions}
+          dispatchCommand={createFakeBoardDispatcher(facilitatorBoard).dispatchCommand}
         />
       ));
       try {
@@ -5257,17 +5284,21 @@ describe('<BoardWorkspace />', () => {
       isLocked: false,
       cards: [makeCard({ isActionItem: true, actionDone: false })],
     });
-    const { actions, spies } = createFakeActions(board);
-    spies.setPrivateMode.mockImplementation(async (input) => ({
-      ok: true,
-      version: input.isBlurred ? 2 : 3,
-      events: [{
-        type: 'board:snapshot',
-        version: input.isBlurred ? 2 : 3,
-        serverNow: Date.now(),
-        board: { ...board, version: input.isBlurred ? 2 : 3, isBlurred: input.isBlurred },
-      }],
-    }));
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const defaultDispatch = dispatchCommand.getMockImplementation()!;
+    dispatchCommand.mockImplementation(async (boardId, command) => {
+      if (command.type !== 'board:set-private-mode') return defaultDispatch(boardId, command);
+      return {
+        ok: true,
+        version: command.isBlurred ? 2 : 3,
+        events: [{
+          type: 'board:snapshot',
+          version: command.isBlurred ? 2 : 3,
+          serverNow: Date.now(),
+          board: { ...board, version: command.isBlurred ? 2 : 3, isBlurred: command.isBlurred },
+        }],
+      };
+    });
 
     const { artifact } = await captureArtifact(
       async () => {
@@ -5276,7 +5307,7 @@ describe('<BoardWorkspace />', () => {
             board={board}
             boardId={board.id}
             homeHref="/"
-            actions={actions}
+            dispatchCommand={dispatchCommand}
           />
         ));
         try {
@@ -5322,9 +5353,9 @@ describe('<BoardWorkspace />', () => {
 
   it('saves the Board title on blur, restores focus, and skips the network for unchanged text', async () => {
     const board = makeBoardView({ isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const { getByRole, queryByRole } = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -5340,7 +5371,10 @@ describe('<BoardWorkspace />', () => {
     fireEvent.focusOut(titleInput);
     await flushPromises();
 
-    expect(spies.renameBoard).toHaveBeenCalledWith({ boardId: board.id, title: 'Sprint 43 Retro' });
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'board:rename',
+      title: 'Sprint 43 Retro'
+    });
     expect(queryByRole('textbox', { name: 'Board title' })).toBeNull();
     expect(getByRole('button', { name: 'Rename Board' })).toHaveFocus();
 
@@ -5349,14 +5383,14 @@ describe('<BoardWorkspace />', () => {
     flush();
     fireEvent.focusOut(getByRole('textbox', { name: 'Board title' }));
     await flushPromises();
-    expect(spies.renameBoard).toHaveBeenCalledTimes(1);
+    expect(dispatchCommand.mock.calls.filter(([, cmd]) => cmd.type === 'board:rename')).toHaveLength(1);
     expect(queryByRole('textbox', { name: 'Board title' })).toBeNull();
   });
 
   it('opens a Column editor through the agent and preserves IME and Escape behavior', async () => {
     const board = makeBoardView({ isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
-    const view = render(() => <BoardWorkspace board={board} boardId={board.id} actions={actions} />);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const view = render(() => <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />);
     flush();
     const result = await createAgent().act({
       steps: [{ ref: 'Column options for Went Well', action: 'press', args: ['Rename column'] }],
@@ -5374,20 +5408,20 @@ describe('<BoardWorkspace />', () => {
     await flushPromises();
     expect(input).toHaveFocus();
     expect(input).toHaveValue('改善');
-    expect(spies.updateColumn).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'column:update' }));
 
     fireEvent.keyDown(input, { key: 'Escape' });
     flush();
     expect(input).not.toBeInTheDocument();
     expect(view.getByRole('button', { name: 'Went Well' })).toHaveFocus();
-    expect(spies.updateColumn).not.toHaveBeenCalled();
+    expect(dispatchCommand).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: 'column:update' }));
   });
 
   it('saves the Column title on blur and returns focus to the column title button', async () => {
     const board = makeBoardView({ isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -5406,7 +5440,10 @@ describe('<BoardWorkspace />', () => {
     fireEvent.focusOut(columnInput);
     await flushPromises();
 
-    expect(spies.updateColumn).toHaveBeenCalledWith({ boardId: board.id, columnId: 'col_1', title: 'Wins' });
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'column:update',
+      columnId: 'col_1', title: 'Wins'
+    });
     expect(view.queryByRole('textbox', { name: 'Column title' })).toBeNull();
     expect(within(wentWell).getByRole('button', { name: 'Wins' })).toHaveFocus();
   });
@@ -5426,9 +5463,9 @@ describe('<BoardWorkspace />', () => {
       makeCard({ id: 'card_2', columnId: 'col_1', content: 'Flaky CI checks', groupId: 'group_1', isMine: true }),
     ];
     const board = makeBoardView({ cards, groups: [group], isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -5445,16 +5482,19 @@ describe('<BoardWorkspace />', () => {
     fireEvent.focusOut(groupInput);
     await flushPromises();
 
-    expect(spies.renameCardGroup).toHaveBeenCalledWith({ boardId: board.id, groupId: 'group_1', title: 'CI wins' });
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:rename',
+      groupId: 'group_1', title: 'CI wins'
+    });
     expect(view.queryByRole('textbox', { name: 'Card Group title' })).toBeNull();
     expect(within(wentWell).getByRole('button', { name: 'CI wins — Edit Card Group title' })).toHaveFocus();
   });
 
   it('saves the Card text on blur and returns focus to the Card actions trigger', async () => {
     const board = makeBoardView({ cards: [makeCard({ id: 'blur_card', content: 'Old note' })], isFacilitator: true });
-    const { actions, spies } = createFakeActions(board);
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
     const view = render(() => (
-      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
     ));
     flush();
 
@@ -5471,8 +5511,80 @@ describe('<BoardWorkspace />', () => {
     fireEvent.focusOut(editBox);
     await flushPromises();
 
-    expect(spies.updateCard).toHaveBeenCalledWith({ boardId: board.id, cardId: 'blur_card', content: 'New note' });
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:update',
+      cardId: 'blur_card', content: 'New note'
+    });
     expect(view.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
     expect(within(article).getByRole('button', { name: 'Card actions' })).toHaveFocus();
+  });
+
+  it('guards Board title inline editing against IME Enter, container focus-out, Escape in-flight cancel, retains draft on failure, and restores focus', async () => {
+    const board = makeBoardView({ title: 'Sprint 42 Retro', isFacilitator: true });
+    const pending = Promise.withResolvers<boolean>();
+    const { dispatchCommand: baseDispatch } = createFakeBoardDispatcher(board);
+    let call = 0;
+    const dispatchCommand = vi.fn(async (
+      boardId: string,
+      command: Parameters<typeof baseDispatch>[1],
+    ) => {
+      if (command.type === 'board:rename') {
+        call += 1;
+        if (call === 1) {
+          const ok = await pending.promise;
+          return ok ? baseDispatch(boardId, command) : { ok: false as const, code: 'VALIDATION_ERROR' as const, message: 'Could not rename Board.' };
+        }
+        if (call === 2) return { ok: false as const, code: 'VALIDATION_ERROR' as const, message: 'Could not rename Board.' };
+      }
+      return baseDispatch(boardId, command);
+    });
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    fireEvent.dblClick(view.getByRole('heading', { level: 1, name: 'Sprint 42 Retro' }));
+    flush();
+    const input = view.getByRole('textbox', { name: 'Board title' });
+    expect(input).toHaveFocus();
+    fireEvent.input(input, { target: { value: 'Q1 Planning' } });
+
+    // IME Enter is ignored
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+    flush();
+    expect(dispatchCommand).not.toHaveBeenCalled();
+
+    // Focus-out into Cancel button inside container does not commit
+    const cancelBtn = view.getByRole('button', { name: 'Cancel Board rename' });
+    fireEvent.focusOut(input, { relatedTarget: cancelBtn });
+    flush();
+    expect(dispatchCommand).not.toHaveBeenCalled();
+
+    // Escape during in-flight save cancels even when the slow request fails, and restores focus to Rename Board button
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(dispatchCommand).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    pending.resolve(false);
+    await pending.promise;
+    await flushPromises();
+    expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+    expect(view.getByRole('button', { name: 'Rename Board' })).toHaveFocus();
+
+    // Failed save retains draft and retry succeeds
+    fireEvent.click(view.getByRole('button', { name: 'Rename Board' }));
+    flush();
+    const retryInput = view.getByRole('textbox', { name: 'Board title' });
+    fireEvent.input(retryInput, { target: { value: 'Q2 Retro' } });
+    fireEvent.click(view.getByRole('button', { name: 'Save Board title' }));
+    await flushPromises();
+    expect(retryInput).toHaveValue('Q2 Retro');
+
+    fireEvent.click(view.getByRole('button', { name: 'Save Board title' }));
+    await flushPromises();
+    expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, { type: 'board:rename', title: 'Q2 Retro' });
+    expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+    expect(view.getByRole('heading', { level: 1, name: 'Q2 Retro' })).toBeInTheDocument();
   });
 });

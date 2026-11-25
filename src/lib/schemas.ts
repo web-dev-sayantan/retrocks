@@ -22,16 +22,16 @@ export const BoardIdSchema = v.pipe(
   v.regex(/^[A-Za-z0-9_-]{16,32}$/, 'Invalid Board ID'),
 );
 
-export const EntityIdSchema = v.pipe(
+const EntityIdSchema = v.pipe(
   v.string(),
   v.regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid ID'),
 );
 
-export const ColumnAccentSchema = v.picklist(COLUMN_ACCENTS);
+const ColumnAccentSchema = v.picklist(COLUMN_ACCENTS);
 
-export const BoardTemplateIdSchema = v.picklist(BOARD_TEMPLATE_IDS);
+const BoardTemplateIdSchema = v.picklist(BOARD_TEMPLATE_IDS);
 
-export const ColumnTitleSchema = v.pipe(
+const ColumnTitleSchema = v.pipe(
   v.string(),
   v.trim(),
   v.minLength(1, 'Column title cannot be empty'),
@@ -41,13 +41,13 @@ export const ColumnTitleSchema = v.pipe(
   ),
 );
 
-export const CreateColumnInputSchema = v.object({
+const CreateColumnInputSchema = v.object({
   title: ColumnTitleSchema,
   accent: v.optional(ColumnAccentSchema, 'slate'),
   isActionColumn: v.optional(v.boolean(), false),
 });
 
-export const CardContentSchema = v.pipe(
+const CardContentSchema = v.pipe(
   v.string(),
   v.trim(),
   v.minLength(1, 'Card text cannot be empty'),
@@ -58,15 +58,15 @@ export const CardContentSchema = v.pipe(
 );
 
 // picklist cannot hold null, so the union is derived from the shared options list.
-export const VoteLimitSchema = v.union(
+const VoteLimitSchema = v.union(
   VOTE_LIMIT_OPTIONS.map((option) =>
     option === null ? v.null() : v.literal(option),
   ),
 );
 
-export const MaxVotesPerCardSchema = v.union([v.literal(1), v.null()]);
+const MaxVotesPerCardSchema = v.union([v.literal(1), v.null()]);
 
-export const RetentionDaysSchema = v.picklist(RETENTION_DAYS_OPTIONS);
+const RetentionDaysSchema = v.picklist(RETENTION_DAYS_OPTIONS);
 
 export const CreateBoardInputSchema = v.object({
   title: v.optional(
@@ -110,83 +110,7 @@ export const CreateBoardInputSchema = v.object({
 
 export type CreateBoardInput = v.InferInput<typeof CreateBoardInputSchema>;
 
-export const RenameBoardInputSchema = v.object({
-  boardId: BoardIdSchema,
-  title: v.pipe(
-    v.string(),
-    v.trim(),
-    v.minLength(1, 'Board title cannot be empty'),
-    v.maxLength(
-      MAX_BOARD_TITLE_LENGTH,
-      `Board title must be ${MAX_BOARD_TITLE_LENGTH} characters or fewer`,
-    ),
-  ),
-  subtitle: v.optional(
-    v.pipe(
-      v.string(),
-      v.trim(),
-      v.maxLength(
-        MAX_BOARD_SUBTITLE_LENGTH,
-        `Board subtitle must be ${MAX_BOARD_SUBTITLE_LENGTH} characters or fewer`,
-      ),
-    ),
-  ),
-});
-
-export type RenameBoardInput = v.InferInput<typeof RenameBoardInputSchema>;
-
-export const SetPrivateModeInputSchema = v.object({
-  boardId: BoardIdSchema,
-  isBlurred: v.boolean(),
-});
-
-export type SetPrivateModeInput = v.InferInput<typeof SetPrivateModeInputSchema>;
-
-export const SetBoardLockInputSchema = v.object({
-  boardId: BoardIdSchema,
-  isLocked: v.boolean(),
-});
-
-export type SetBoardLockInput = v.InferInput<typeof SetBoardLockInputSchema>;
-
-export const DeleteBoardInputSchema = v.object({
-  boardId: BoardIdSchema,
-});
-
-export type DeleteBoardInput = v.InferInput<typeof DeleteBoardInputSchema>;
-
-export const CreateCardInputSchema = v.object({
-  boardId: BoardIdSchema,
-  columnId: EntityIdSchema,
-  content: CardContentSchema,
-});
-
-export type CreateCardInput = v.InferInput<typeof CreateCardInputSchema>;
-
-export const UpdateCardInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-  content: CardContentSchema,
-});
-
-export type UpdateCardInput = v.InferInput<typeof UpdateCardInputSchema>;
-
-export const MoveCardInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-  targetColumnId: EntityIdSchema,
-});
-
-export type MoveCardInput = v.InferInput<typeof MoveCardInputSchema>;
-
-export const DeleteCardInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-});
-
-export type DeleteCardInput = v.InferInput<typeof DeleteCardInputSchema>;
-
-export const CardGroupTitleSchema = v.pipe(
+const CardGroupTitleSchema = v.pipe(
   v.string(),
   v.trim(),
   v.minLength(1, 'Card Group title cannot be empty'),
@@ -196,82 +120,7 @@ export const CardGroupTitleSchema = v.pipe(
   ),
 );
 
-export const GroupCardsInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-  targetType: v.picklist(['card', 'group']),
-  targetId: EntityIdSchema,
-});
-
-export type GroupCardsInput = v.InferInput<typeof GroupCardsInputSchema>;
-
-export const RenameCardGroupInputSchema = v.object({
-  boardId: BoardIdSchema,
-  groupId: EntityIdSchema,
-  title: CardGroupTitleSchema,
-});
-
-export type RenameCardGroupInput = v.InferInput<
-  typeof RenameCardGroupInputSchema
->;
-
-export const UngroupCardInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-});
-
-export type UngroupCardInput = v.InferInput<typeof UngroupCardInputSchema>;
-
-export const DissolveCardGroupInputSchema = v.object({
-  boardId: BoardIdSchema,
-  groupId: EntityIdSchema,
-});
-
-export type DissolveCardGroupInput = v.InferInput<
-  typeof DissolveCardGroupInputSchema
->;
-
-export const MoveCardGroupInputSchema = v.object({
-  boardId: BoardIdSchema,
-  groupId: EntityIdSchema,
-  targetColumnId: EntityIdSchema,
-});
-
-export type MoveCardGroupInput = v.InferInput<typeof MoveCardGroupInputSchema>;
-
-export const ToggleReactionInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-  emoji: v.picklist(REACTION_EMOJIS),
-});
-
-export type ToggleReactionInput = v.InferInput<typeof ToggleReactionInputSchema>;
-
-export const CreateCommentInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-  content: v.pipe(
-    v.string(),
-    v.trim(),
-    v.minLength(1, 'Comment cannot be empty'),
-    v.maxLength(
-      MAX_COMMENT_LENGTH,
-      `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`,
-    ),
-  ),
-});
-
-export type CreateCommentInput = v.InferInput<typeof CreateCommentInputSchema>;
-
-export const DeleteCommentInputSchema = v.object({
-  boardId: BoardIdSchema,
-  cardId: EntityIdSchema,
-  commentId: EntityIdSchema,
-});
-
-export type DeleteCommentInput = v.InferInput<typeof DeleteCommentInputSchema>;
-
-export const ActionOwnerSchema = v.pipe(
+const ActionOwnerSchema = v.pipe(
   v.string(),
   v.trim(),
   v.maxLength(
@@ -279,69 +128,6 @@ export const ActionOwnerSchema = v.pipe(
     `Action owner must be ${MAX_ACTION_OWNER_LENGTH} characters or fewer`,
   ),
 );
-
-export const UpdateActionItemInputSchema = v.pipe(
-  v.object({
-    boardId: BoardIdSchema,
-    cardId: EntityIdSchema,
-    isActionItem: v.optional(v.boolean()),
-    actionDone: v.optional(v.boolean()),
-    actionOwner: v.optional(ActionOwnerSchema),
-  }),
-  v.check(
-    (input) =>
-      input.isActionItem !== undefined ||
-      input.actionDone !== undefined ||
-      input.actionOwner !== undefined,
-    'No Action Item changes provided',
-  ),
-);
-
-export type UpdateActionItemInput = v.InferInput<
-  typeof UpdateActionItemInputSchema
->;
-
-export const AddColumnInputSchema = v.object({
-  boardId: BoardIdSchema,
-  title: ColumnTitleSchema,
-  accent: v.optional(ColumnAccentSchema, 'slate'),
-  isActionColumn: v.optional(v.boolean(), false),
-});
-
-export type AddColumnInput = v.InferInput<typeof AddColumnInputSchema>;
-
-export const UpdateColumnInputSchema = v.object({
-  boardId: BoardIdSchema,
-  columnId: EntityIdSchema,
-  title: v.optional(ColumnTitleSchema),
-  accent: v.optional(ColumnAccentSchema),
-  isActionColumn: v.optional(v.boolean()),
-});
-
-export type UpdateColumnInput = v.InferInput<typeof UpdateColumnInputSchema>;
-
-export const ReorderColumnsInputSchema = v.object({
-  boardId: BoardIdSchema,
-  columnIds: v.pipe(
-    v.array(EntityIdSchema),
-    v.minLength(1, 'A Board requires at least 1 Column'),
-    v.maxLength(
-      MAX_COLUMNS_PER_BOARD,
-      `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns`,
-    ),
-  ),
-});
-
-export type ReorderColumnsInput = v.InferInput<
-  typeof ReorderColumnsInputSchema
->;
-
-export const DeleteColumnInputSchema = v.object({
-  boardId: BoardIdSchema,
-  columnId: EntityIdSchema,
-});
-
-export type DeleteColumnInput = v.InferInput<typeof DeleteColumnInputSchema>;
 
 const StartTimerSchema = v.object({
   action: v.literal('start'),
@@ -353,13 +139,191 @@ const StartTimerSchema = v.object({
   ),
 });
 
-export const UpdateTimerInputSchema = v.object({
-  boardId: BoardIdSchema,
-  change: v.variant('action', [
-    StartTimerSchema,
-    v.object({ action: v.picklist(['pause', 'resume', 'extend', 'dismiss']) }),
-  ]),
-});
+const TimerChangeSchema = v.variant('action', [
+  StartTimerSchema,
+  v.object({ action: v.picklist(['pause', 'resume', 'extend', 'dismiss']) }),
+]);
 
-export type UpdateTimerInput = v.InferInput<typeof UpdateTimerInputSchema>;
-export type TimerChange = UpdateTimerInput['change'];
+export type TimerChange = v.InferInput<typeof TimerChangeSchema>;
+
+const BoardTitleSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1, 'Board title cannot be empty'),
+  v.maxLength(
+    MAX_BOARD_TITLE_LENGTH,
+    `Board title must be ${MAX_BOARD_TITLE_LENGTH} characters or fewer`,
+  ),
+);
+
+const BoardSubtitleSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.maxLength(
+    MAX_BOARD_SUBTITLE_LENGTH,
+    `Board subtitle must be ${MAX_BOARD_SUBTITLE_LENGTH} characters or fewer`,
+  ),
+);
+
+const CommentContentSchema = v.pipe(
+  v.string(),
+  v.trim(),
+  v.minLength(1, 'Comment cannot be empty'),
+  v.maxLength(
+    MAX_COMMENT_LENGTH,
+    `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`,
+  ),
+);
+
+const ColumnIdsSchema = v.pipe(
+  v.array(EntityIdSchema),
+  v.minLength(1, 'A Board requires at least 1 Column'),
+  v.maxLength(
+    MAX_COLUMNS_PER_BOARD,
+    `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns`,
+  ),
+);
+
+const CustomVoteLimitSchema = v.nullable(
+  v.pipe(
+    v.number(),
+    v.safeInteger('Vote limit must be a whole number'),
+    v.minValue(1, 'Vote limit must be at least 1'),
+  ),
+);
+
+export const BoardCommandSchema = v.variant('type', [
+  v.object({
+    type: v.literal('board:rename'),
+    title: BoardTitleSchema,
+    subtitle: v.optional(BoardSubtitleSchema),
+  }),
+  v.object({
+    type: v.literal('timer:update'),
+    change: TimerChangeSchema,
+  }),
+  v.object({
+    type: v.literal('board:set-private-mode'),
+    isBlurred: v.boolean(),
+  }),
+  v.object({
+    type: v.literal('board:set-lock'),
+    isLocked: v.boolean(),
+  }),
+  v.object({
+    type: v.literal('board:delete'),
+  }),
+  v.object({
+    type: v.literal('card:create'),
+    columnId: EntityIdSchema,
+    content: CardContentSchema,
+  }),
+  v.object({
+    type: v.literal('card:update'),
+    cardId: EntityIdSchema,
+    content: CardContentSchema,
+  }),
+  v.pipe(
+    v.object({
+      type: v.literal('card:set-action'),
+      cardId: EntityIdSchema,
+      isActionItem: v.optional(v.boolean()),
+      actionDone: v.optional(v.boolean()),
+      actionOwner: v.optional(ActionOwnerSchema),
+    }),
+    v.check(
+      (input) =>
+        input.isActionItem !== undefined ||
+        input.actionDone !== undefined ||
+        input.actionOwner !== undefined,
+      'No Action Item changes provided',
+    ),
+  ),
+  v.object({
+    type: v.literal('card:move'),
+    cardId: EntityIdSchema,
+    targetColumnId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('card:delete'),
+    cardId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('reaction:toggle'),
+    cardId: EntityIdSchema,
+    emoji: v.picklist(REACTION_EMOJIS),
+  }),
+  v.object({
+    type: v.literal('comment:create'),
+    cardId: EntityIdSchema,
+    content: CommentContentSchema,
+  }),
+  v.object({
+    type: v.literal('comment:delete'),
+    cardId: EntityIdSchema,
+    commentId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('column:add'),
+    title: ColumnTitleSchema,
+    accent: v.optional(ColumnAccentSchema, 'slate'),
+    isActionColumn: v.optional(v.boolean(), false),
+  }),
+  v.object({
+    type: v.literal('column:update'),
+    columnId: EntityIdSchema,
+    title: v.optional(ColumnTitleSchema),
+    accent: v.optional(ColumnAccentSchema),
+    isActionColumn: v.optional(v.boolean()),
+  }),
+  v.object({
+    type: v.literal('column:reorder'),
+    columnIds: ColumnIdsSchema,
+  }),
+  v.object({
+    type: v.literal('column:delete'),
+    columnId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('group:merge'),
+    cardId: EntityIdSchema,
+    targetType: v.picklist(['card', 'group']),
+    targetId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('group:rename'),
+    groupId: EntityIdSchema,
+    title: CardGroupTitleSchema,
+  }),
+  v.object({
+    type: v.literal('group:ungroup'),
+    cardId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('group:dissolve'),
+    groupId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('group:move'),
+    groupId: EntityIdSchema,
+    targetColumnId: EntityIdSchema,
+  }),
+  v.object({
+    type: v.literal('vote:change'),
+    targetType: v.picklist(['card', 'group']),
+    targetId: EntityIdSchema,
+    delta: v.picklist([1, -1]),
+  }),
+  v.object({
+    type: v.literal('voting:configure'),
+    voteLimit: v.optional(CustomVoteLimitSchema),
+    maxVotesPerCard: v.optional(MaxVotesPerCardSchema),
+    blindVoting: v.optional(v.boolean()),
+    allowParticipantGroup: v.optional(v.boolean()),
+  }),
+  v.object({
+    type: v.literal('voting:reset'),
+  }),
+]);
+
+export type BoardCommand = v.InferInput<typeof BoardCommandSchema>;

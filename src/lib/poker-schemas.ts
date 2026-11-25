@@ -1,11 +1,15 @@
 import * as v from 'valibot';
 
-import {
-  POKER_DEFAULT_ROOM_NAME,
-  POKER_DISPLAY_NAME_LIMIT,
-  POKER_ROOM_NAME_LIMIT,
-  POKER_STORY_TITLE_LIMIT,
-} from './poker-types';
+export const POKER_DEFAULT_ROOM_NAME = 'Poker Room';
+export const POKER_ROOM_NAME_LIMIT = 120;
+export const POKER_DISPLAY_NAME_LIMIT = 60;
+export const POKER_STORY_TITLE_LIMIT = 200;
+export const FIBONACCI_DECK = ['0', '1', '2', '3', '5', '8', '13', '21'] as const;
+
+export const POKER_DECK_PRESETS = {
+  fibonacci: FIBONACCI_DECK,
+  't-shirt': ['XS', 'S', 'M', 'L', 'XL'],
+} as const;
 
 const PokerEntityId = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9_-]{22}$/));
 export const PokerRoomId = PokerEntityId;
@@ -32,11 +36,10 @@ const CustomDeckChoices = v.pipe(
   v.check((choices) => new Set(choices).size === choices.length, 'Give each Deck choice a different value.'),
 );
 
-export const PokerCommand = v.variant('type', [
-  v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
-  v.object({ type: v.literal('rename-room'), name: PokerRoomNameInput }),
-  v.object({ type: v.literal('close-room'), discardRoundId: v.optional(PokerEntityId) }),
-  v.object({ type: v.literal('reopen-room') }),
+const PokerDeckPresetSchema = v.picklist(['fibonacci', 't-shirt']);
+const PokerDeckTypeSchema = v.picklist(['fibonacci', 't-shirt', 'custom']);
+
+const PokerStoryCommandSchema = v.variant('type', [
   v.object({
     type: v.literal('add-story'),
     title: PokerStoryTitle,
@@ -78,37 +81,54 @@ export const PokerCommand = v.variant('type', [
     storyId: PokerEntityId,
     discardRoundId: v.optional(PokerEntityId),
   }),
+]);
+
+const PokerVotingCommandSchema = v.variant('type', [
   v.object({ type: v.literal('vote'), roundId: PokerEntityId, choice: v.nullable(PokerDeckChoice) }),
   v.object({ type: v.literal('reveal'), roundId: PokerEntityId }),
   v.object({ type: v.literal('restart-round'), roundId: PokerEntityId }),
   v.object({ type: v.literal('skip-story'), roundId: PokerEntityId }),
   v.object({ type: v.literal('confirm-estimate'), roundId: PokerEntityId, choice: PokerDeckChoice }),
-  v.object({
-    type: v.literal('set-deck'),
-    deck: v.variant('type', [
-      v.object({ type: v.literal('fibonacci') }),
-      v.object({ type: v.literal('t-shirt') }),
-      v.object({ type: v.literal('custom'), choices: CustomDeckChoices }),
-    ]),
-    discardRoundId: v.optional(PokerEntityId),
-  }),
 ]);
 
-const Participant = v.object({
+const PokerDeckCommandSchema = v.object({
+  type: v.literal('set-deck'),
+  deck: v.variant('type', [
+    v.object({ type: PokerDeckPresetSchema }),
+    v.object({ type: v.literal('custom'), choices: CustomDeckChoices }),
+  ]),
+  discardRoundId: v.optional(PokerEntityId),
+});
+
+const PokerRoomChangeSchema = v.variant('type', [
+  ...PokerStoryCommandSchema.options,
+  ...PokerVotingCommandSchema.options,
+  PokerDeckCommandSchema,
+  v.object({ type: v.literal('rename-room'), name: PokerRoomNameInput }),
+  v.object({ type: v.literal('close-room'), discardRoundId: v.optional(PokerEntityId) }),
+  v.object({ type: v.literal('reopen-room') }),
+]);
+
+export const PokerCommand = v.variant('type', [
+  v.object({ type: v.literal('join'), displayName: PokerDisplayName }),
+  ...PokerRoomChangeSchema.options,
+]);
+
+const ParticipantSchema = v.object({
   id: v.string(),
   displayName: PokerDisplayName,
   isFacilitator: v.boolean(),
 });
 
-const StorySummary = v.object({
+const StorySummarySchema = v.object({
   title: PokerStoryTitle,
   status: v.picklist(['pending', 'estimated', 'skipped']),
   acceptedEstimate: v.optional(v.string()),
 });
 
-const Story = v.object({ id: PokerEntityId, ...StorySummary.entries, locked: v.optional(v.boolean()) });
+const StorySchema = v.object({ id: PokerEntityId, ...StorySummarySchema.entries, locked: v.optional(v.boolean()) });
 
-const Round = v.variant('phase', [
+const RoundSchema = v.variant('phase', [
   v.object({
     id: PokerEntityId,
     phase: v.literal('open'),
@@ -128,39 +148,53 @@ const Round = v.variant('phase', [
 
 const RoomVersion = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 
-const LiveRoom = v.object({
+const LiveRoomSchema = v.object({
   closed: v.literal(false),
   id: PokerRoomId,
   name: PokerRoomName,
   version: RoomVersion,
-  viewer: v.nullable(Participant),
+  viewer: v.nullable(ParticipantSchema),
   facilitatorLinkRevision: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
-  participants: v.array(Participant),
-  stories: v.array(Story),
+  participants: v.array(ParticipantSchema),
+  stories: v.array(StorySchema),
   activeStoryId: v.nullable(PokerEntityId),
-  deck: v.array(v.string()),
-  deckType: v.picklist(['fibonacci', 't-shirt', 'custom']),
-  round: v.nullable(Round),
+  deck: v.pipe(v.array(v.string()), v.transform((deck): readonly string[] => deck)),
+  deckType: PokerDeckTypeSchema,
+  round: v.nullable(RoundSchema),
 });
 
-const ClosedRoom = v.object({
+const ClosedRoomSchema = v.object({
   closed: v.literal(true),
   id: PokerRoomId,
   name: PokerRoomName,
   version: RoomVersion,
   canDelete: v.boolean(),
-  stories: v.array(StorySummary),
+  stories: v.array(StorySummarySchema),
 });
 
-const Room = v.variant('closed', [LiveRoom, ClosedRoom]);
+const RoomSchema = v.variant('closed', [LiveRoomSchema, ClosedRoomSchema]);
 
-const PokerLiveFrame = v.variant('type', [
-  v.object({ type: v.literal('room:snapshot'), room: Room, connectionId: v.optional(v.string()) }),
+const PokerLiveFrameSchema = v.variant('type', [
+  v.object({ type: v.literal('room:snapshot'), room: RoomSchema, connectionId: v.optional(v.string()) }),
   v.object({ type: v.literal('room:missing') }),
   v.object({ type: v.literal('room:presence'), online: v.array(v.string()) }),
   v.object({ type: v.literal('heartbeat') }),
 ]);
 
-export function parsePokerLiveMessage(data: string) {
-  return v.parse(PokerLiveFrame, JSON.parse(data) as unknown);
+export type PokerDeckType = v.InferOutput<typeof PokerDeckTypeSchema>;
+export type PokerDeckCommand = v.InferOutput<typeof PokerDeckCommandSchema>;
+export type PokerParticipant = v.InferOutput<typeof ParticipantSchema>;
+export type PokerStory = v.InferOutput<typeof StorySchema>;
+export type PokerRoundView = v.InferOutput<typeof RoundSchema>;
+export type PokerLiveRoomView = v.InferOutput<typeof LiveRoomSchema>;
+export type PokerClosedRoomView = v.InferOutput<typeof ClosedRoomSchema>;
+export type PokerRoomView = v.InferOutput<typeof RoomSchema>;
+export type PokerStoryCommand = v.InferOutput<typeof PokerStoryCommandSchema>;
+export type PokerVotingCommand = v.InferOutput<typeof PokerVotingCommandSchema>;
+export type PokerRoomChange = v.InferOutput<typeof PokerRoomChangeSchema>;
+export type PokerRoomCommand = v.InferOutput<typeof PokerCommand>;
+export type PokerLiveMessage = v.InferOutput<typeof PokerLiveFrameSchema>;
+
+export function parsePokerLiveMessage(data: string): PokerLiveMessage {
+  return v.parse(PokerLiveFrameSchema, JSON.parse(data) as unknown);
 }

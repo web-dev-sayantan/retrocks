@@ -120,8 +120,6 @@ describe('handleExportRequest()', () => {
 
   it('structures Markdown with Columns, Card Groups, revealed Votes, visible comments, and trailing Action Items checklist', async () => {
     const boardService = await import('./services/board-service');
-    const groupingService = await import('./services/grouping-service');
-    const votingService = await import('./services/voting-service');
     const { handleExportRequest } = await import('./export-handler');
     const origin = 'https://retrocks.app';
 
@@ -134,128 +132,102 @@ describe('handleExportRequest()', () => {
         }),
     );
     const boardUrl = `${origin}/b/${board.id}`;
-    const post = <T>(cookie: string, run: () => Promise<T>) =>
+    const dispatch = (cookie: string, command: unknown) =>
       withSession(
         new Request(boardUrl, { method: 'POST', headers: { cookie } }),
-        run,
+        () => boardService.dispatchBoardCommandForRequest(board.id, command),
       ).then((r) => r.result);
 
     const col0 = board.columns[0].id;
     const col1 = board.columns[1].id;
     const col2 = board.columns[2].id; // Action Items column
 
-    const c1 = await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: col0,
-        content: 'CI runs took 25m',
-      }),
-    );
+    const c1 = await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: col0,
+      content: 'CI runs took 25m',
+    });
     const card1Id = c1.events[0].type === 'card:upserted' ? c1.events[0].card.id : '';
 
-    const c2 = await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: col0,
-        content: 'Flaky integration suite',
-      }),
-    );
+    const c2 = await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: col0,
+      content: 'Flaky integration suite',
+    });
     const card2Id = c2.events[0].type === 'card:upserted' ? c2.events[0].card.id : '';
 
-    const merged = await post(facilitatorCookie!, () =>
-      groupingService.groupCardsForRequest({
-        boardId: board.id,
-        cardId: card2Id,
-        targetType: 'card',
-        targetId: card1Id,
-      }),
-    );
+    const merged = await dispatch(facilitatorCookie!, {
+      type: 'group:merge',
+      cardId: card2Id,
+      targetType: 'card',
+      targetId: card1Id,
+    });
     const groupEvent = merged.events.find((e) => e.type === 'group:upserted');
     const groupId = groupEvent?.type === 'group:upserted' ? groupEvent.group.id : '';
 
-    await post(facilitatorCookie!, () =>
-      groupingService.renameCardGroupForRequest({
-        boardId: board.id,
-        groupId,
-        title: 'CI Flakiness',
-      }),
-    );
-    await post(facilitatorCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'group',
-        targetId: groupId,
-        delta: 1,
-      }),
-    );
-    await post(facilitatorCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'group',
-        targetId: groupId,
-        delta: 1,
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'group:rename',
+      groupId,
+      title: 'CI Flakiness',
+    });
+    await dispatch(facilitatorCookie!, {
+      type: 'vote:change',
+      targetType: 'group',
+      targetId: groupId,
+      delta: 1,
+    });
+    await dispatch(facilitatorCookie!, {
+      type: 'vote:change',
+      targetType: 'group',
+      targetId: groupId,
+      delta: 1,
+    });
 
-    const standalone = await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: col1,
-        content: 'Clarify release checklist',
-      }),
-    );
+    const standalone = await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: col1,
+      content: 'Clarify release checklist',
+    });
     const standaloneId =
       standalone.events[0].type === 'card:upserted' ? standalone.events[0].card.id : '';
 
-    await post(facilitatorCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'card',
-        targetId: standaloneId,
-        delta: 1,
-      }),
-    );
-    await post(facilitatorCookie!, () =>
-      boardService.createCommentForRequest({
-        boardId: board.id,
-        cardId: standaloneId,
-        content: 'Let us link the runbook here.',
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'vote:change',
+      targetType: 'card',
+      targetId: standaloneId,
+      delta: 1,
+    });
+    await dispatch(facilitatorCookie!, {
+      type: 'comment:create',
+      cardId: standaloneId,
+      content: 'Let us link the runbook here.',
+    });
 
-    const openAction = await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: col2,
-        content: 'Split slow Playwright spec',
-      }),
-    );
+    const openAction = await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: col2,
+      content: 'Split slow Playwright spec',
+    });
     const openActionId =
       openAction.events[0].type === 'card:upserted' ? openAction.events[0].card.id : '';
-    await post(facilitatorCookie!, () =>
-      boardService.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: openActionId,
-        actionOwner: 'Platform',
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'card:set-action',
+      cardId: openActionId,
+      actionOwner: 'Platform',
+    });
 
-    const doneAction = await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: col2,
-        content: 'Document rollback steps',
-      }),
-    );
+    const doneAction = await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: col2,
+      content: 'Document rollback steps',
+    });
     const doneActionId =
       doneAction.events[0].type === 'card:upserted' ? doneAction.events[0].card.id : '';
-    await post(facilitatorCookie!, () =>
-      boardService.updateActionItemForRequest({
-        boardId: board.id,
-        cardId: doneActionId,
-        actionDone: true,
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'card:set-action',
+      cardId: doneActionId,
+      actionDone: true,
+    });
 
     const res = await handleExportRequest(
       board.id,
@@ -281,7 +253,6 @@ describe('handleExportRequest()', () => {
 
   it('enforces Private Mode redaction across MD, CSV, and JSON exports even for the Facilitator', async () => {
     const boardService = await import('./services/board-service');
-    const votingService = await import('./services/voting-service');
     const { handleExportRequest } = await import('./export-handler');
     const origin = 'https://retrocks.app';
 
@@ -294,10 +265,10 @@ describe('handleExportRequest()', () => {
       new Request(boardUrl),
       () => boardService.getBoardForRequest(board.id),
     );
-    const post = <T>(cookie: string, run: () => Promise<T>) =>
+    const dispatch = (cookie: string, command: unknown) =>
       withSession(
         new Request(boardUrl, { method: 'POST', headers: { cookie } }),
-        run,
+        () => boardService.dispatchBoardCommandForRequest(board.id, command),
       ).then((r) => r.result);
 
     // Create cards, comments, reactions, and votes while revealed, then enable Private Mode
@@ -306,64 +277,50 @@ describe('handleExportRequest()', () => {
     const secretCommentText = 'TOP_SECRET_COMMENT_XYZ';
     const facilitatorCardText = 'FACILITATOR_OWN_NOTE_ABC';
 
-    const participantCard = await post(participantCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: board.columns[0].id,
-        content: secretCardText,
-      }),
-    );
+    const participantCard = await dispatch(participantCookie!, {
+      type: 'card:create',
+      columnId: board.columns[0].id,
+      content: secretCardText,
+    });
     const participantCardId =
       participantCard.events[0].type === 'card:upserted'
         ? participantCard.events[0].card.id
         : '';
 
-    await post(participantCookie!, () =>
-      boardService.createCommentForRequest({
-        boardId: board.id,
-        cardId: participantCardId,
-        content: secretCommentText,
-      }),
-    );
-    await post(participantCookie!, () =>
-      boardService.toggleReactionForRequest({
-        boardId: board.id,
-        cardId: participantCardId,
-        emoji: '🔥',
-      }),
-    );
-    await post(participantCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'card',
-        targetId: participantCardId,
-        delta: 1,
-      }),
-    );
-    await post(participantCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'card',
-        targetId: participantCardId,
-        delta: 1,
-      }),
-    );
+    await dispatch(participantCookie!, {
+      type: 'comment:create',
+      cardId: participantCardId,
+      content: secretCommentText,
+    });
+    await dispatch(participantCookie!, {
+      type: 'reaction:toggle',
+      cardId: participantCardId,
+      emoji: '🔥',
+    });
+    await dispatch(participantCookie!, {
+      type: 'vote:change',
+      targetType: 'card',
+      targetId: participantCardId,
+      delta: 1,
+    });
+    await dispatch(participantCookie!, {
+      type: 'vote:change',
+      targetType: 'card',
+      targetId: participantCardId,
+      delta: 1,
+    });
 
-    await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: board.columns[0].id,
-        content: facilitatorCardText,
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: board.columns[0].id,
+      content: facilitatorCardText,
+    });
 
     // Enable Private Mode
-    await post(facilitatorCookie!, () =>
-      boardService.setPrivateModeForRequest({
-        boardId: board.id,
-        isBlurred: true,
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'board:set-private-mode',
+      isBlurred: true,
+    });
 
     // Facilitator exports in MD, CSV, and JSON — participant's card MUST remain redacted!
     const [mdText, csvText, jsonText] = await Promise.all(
@@ -418,8 +375,6 @@ describe('handleExportRequest()', () => {
 
   it('redacts Private Mode Card Group title and Vote totals across MD, CSV, and JSON exports for other Participants and Facilitators', async () => {
     const boardService = await import('./services/board-service');
-    const groupingService = await import('./services/grouping-service');
-    const votingService = await import('./services/voting-service');
     const { handleExportRequest } = await import('./export-handler');
     const origin = 'https://retrocks.app';
 
@@ -432,18 +387,16 @@ describe('handleExportRequest()', () => {
         }),
     );
     const boardUrl = `${origin}/b/${board.id}`;
-    const post = <T>(cookie: string, run: () => Promise<T>) =>
+    const dispatch = (cookie: string, command: unknown) =>
       withSession(
         new Request(boardUrl, { method: 'POST', headers: { cookie } }),
-        run,
+        () => boardService.dispatchBoardCommandForRequest(board.id, command),
       ).then((r) => r.result);
 
-    await post(facilitatorCookie!, () =>
-      votingService.updateVotingSettingsForRequest({
-        boardId: board.id,
-        allowParticipantGroup: true,
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'voting:configure',
+      allowParticipantGroup: true,
+    });
 
     const { cookie: participantACookie } = await withSession(
       new Request(boardUrl),
@@ -455,50 +408,40 @@ describe('handleExportRequest()', () => {
     );
 
     const secretGroupTitle = 'CONFIDENTIAL_MERGED_THEME_999';
-    const cardA1 = await post(participantACookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: board.columns[0].id,
-        content: secretGroupTitle,
-      }),
-    );
+    const cardA1 = await dispatch(participantACookie!, {
+      type: 'card:create',
+      columnId: board.columns[0].id,
+      content: secretGroupTitle,
+    });
     const cardA1Id = cardA1.events[0].type === 'card:upserted' ? cardA1.events[0].card.id : '';
-    const cardA2 = await post(participantACookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: board.columns[0].id,
-        content: 'CONFIDENTIAL_SECOND_CARD_999',
-      }),
-    );
+    const cardA2 = await dispatch(participantACookie!, {
+      type: 'card:create',
+      columnId: board.columns[0].id,
+      content: 'CONFIDENTIAL_SECOND_CARD_999',
+    });
     const cardA2Id = cardA2.events[0].type === 'card:upserted' ? cardA2.events[0].card.id : '';
 
-    const merged = await post(participantACookie!, () =>
-      groupingService.groupCardsForRequest({
-        boardId: board.id,
-        cardId: cardA2Id,
-        targetType: 'card',
-        targetId: cardA1Id,
-      }),
-    );
+    const merged = await dispatch(participantACookie!, {
+      type: 'group:merge',
+      cardId: cardA2Id,
+      targetType: 'card',
+      targetId: cardA1Id,
+    });
     const groupEvent = merged.events.find((e) => e.type === 'group:upserted');
     const groupId = groupEvent?.type === 'group:upserted' ? groupEvent.group.id : '';
 
-    await post(participantACookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'group',
-        targetId: groupId,
-        delta: 1,
-      }),
-    );
-    await post(participantACookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'group',
-        targetId: groupId,
-        delta: 1,
-      }),
-    );
+    await dispatch(participantACookie!, {
+      type: 'vote:change',
+      targetType: 'group',
+      targetId: groupId,
+      delta: 1,
+    });
+    await dispatch(participantACookie!, {
+      type: 'vote:change',
+      targetType: 'group',
+      targetId: groupId,
+      delta: 1,
+    });
 
     // Neither Participant B nor Facilitator sees the group's title or votes in MD/CSV/JSON
     for (const viewerCookie of [participantBCookie!, facilitatorCookie!]) {
@@ -542,7 +485,6 @@ describe('handleExportRequest()', () => {
 
   it('omits aggregate Vote totals in MD, CSV, and JSON while Blind Voting is ON even for the Facilitator', async () => {
     const boardService = await import('./services/board-service');
-    const votingService = await import('./services/voting-service');
     const { handleExportRequest } = await import('./export-handler');
     const origin = 'https://retrocks.app';
 
@@ -551,44 +493,36 @@ describe('handleExportRequest()', () => {
       () => boardService.createBoardForRequest({ title: 'Blind Voting Export' }),
     );
     const boardUrl = `${origin}/b/${board.id}`;
-    const post = <T>(cookie: string, run: () => Promise<T>) =>
+    const dispatch = (cookie: string, command: unknown) =>
       withSession(
         new Request(boardUrl, { method: 'POST', headers: { cookie } }),
-        run,
+        () => boardService.dispatchBoardCommandForRequest(board.id, command),
       ).then((r) => r.result);
 
-    const created = await post(facilitatorCookie!, () =>
-      boardService.createCardForRequest({
-        boardId: board.id,
-        columnId: board.columns[0].id,
-        content: 'Invest in observability',
-      }),
-    );
+    const created = await dispatch(facilitatorCookie!, {
+      type: 'card:create',
+      columnId: board.columns[0].id,
+      content: 'Invest in observability',
+    });
     const cardId =
       created.events[0].type === 'card:upserted' ? created.events[0].card.id : '';
 
-    await post(facilitatorCookie!, () =>
-      votingService.updateVotingSettingsForRequest({
-        boardId: board.id,
-        blindVoting: true,
-      }),
-    );
-    await post(facilitatorCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'card',
-        targetId: cardId,
-        delta: 1,
-      }),
-    );
-    await post(facilitatorCookie!, () =>
-      votingService.changeVoteForRequest({
-        boardId: board.id,
-        targetType: 'card',
-        targetId: cardId,
-        delta: 1,
-      }),
-    );
+    await dispatch(facilitatorCookie!, {
+      type: 'voting:configure',
+      blindVoting: true,
+    });
+    await dispatch(facilitatorCookie!, {
+      type: 'vote:change',
+      targetType: 'card',
+      targetId: cardId,
+      delta: 1,
+    });
+    await dispatch(facilitatorCookie!, {
+      type: 'vote:change',
+      targetType: 'card',
+      targetId: cardId,
+      delta: 1,
+    });
 
     const [mdText, csvText, jsonText] = await Promise.all(
       (['md', 'csv', 'json'] as const).map(async (format) => {
@@ -647,16 +581,16 @@ describe('handleExportRequest()', () => {
     // via unit-level `formatBoardCsv` as well as full HTTP round-trip for non-trimmed payloads.
     for (const content of dangerousPayloads.slice(0, 4)) {
       await post(() =>
-        boardService.createCardForRequest({
-          boardId: board.id,
+        boardService.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:create',
           columnId: board.columns[0].id,
           content,
         }),
       );
     }
     await post(() =>
-      boardService.createCardForRequest({
-        boardId: board.id,
+      boardService.dispatchBoardCommandForRequest(board.id, {
+        type: 'card:create',
         columnId: board.columns[0].id,
         content: dangerousPayloads[6],
       }),
@@ -737,8 +671,8 @@ describe('handleExportRequest()', () => {
     await withSession(
       new Request(boardUrl, { method: 'POST', headers: { cookie: cookie! } }),
       () =>
-        boardService.createCardForRequest({
-          boardId: board.id,
+        boardService.dispatchBoardCommandForRequest(board.id, {
+          type: 'card:create',
           columnId: board.columns[0].id,
           content: 'Public card',
         }),

@@ -44,7 +44,7 @@ it('fans out a private Card over concurrent streams and counts tabs from one coo
   vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
   const streams: ReturnType<typeof readLiveStream>[] = [];
   try {
-    const { createBoardForRequest, createCardForRequest, getBoardForRequest } =
+    const { createBoardForRequest, dispatchBoardCommandForRequest, getBoardForRequest } =
       await import('./services/board-service');
     const { handleLiveRequest } = await import('./live-handler');
     const origin = 'https://retrocks.app';
@@ -89,7 +89,7 @@ it('fans out a private Card over concurrent streams and counts tabs from one coo
     const content = 'Private checkout feedback';
     await withSession(
       new Request(boardUrl, { method: 'POST', headers: { cookie: authorCookie! } }),
-      () => createCardForRequest({ boardId: board.id, columnId: board.columns[0].id, content }),
+      () => dispatchBoardCommandForRequest(board.id, { type: 'card:create', columnId: board.columns[0].id, content }),
     );
     const mutations = await Promise.all(subscribers.map((stream) =>
       stream.until('board:mutation'),
@@ -143,8 +143,8 @@ it('atomically projects Private Mode and Reveal All over HTTP and every live str
       [participantCookie!, participantText],
       [facilitatorCookie!, facilitatorText],
     ]) {
-      await post(cookie, () => service.createCardForRequest({
-        boardId: board.id, columnId: board.columns[0].id, content,
+      await post(cookie, () => service.dispatchBoardCommandForRequest(board.id, {
+        type: 'card:create', columnId: board.columns[0].id, content,
       }));
       streams.push(readLiveStream(await handleLiveRequest(
         board.id,
@@ -154,7 +154,7 @@ it('atomically projects Private Mode and Reveal All over HTTP and every live str
     }
 
     const setPrivateMode = (cookie: string, isBlurred: boolean) =>
-      post(cookie, () => service.setPrivateModeForRequest({ boardId: board.id, isBlurred }));
+      post(cookie, () => service.dispatchBoardCommandForRequest(board.id, { type: 'board:set-private-mode', isBlurred }));
     await expect(setPrivateMode(participantCookie!, true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     const enabled = await setPrivateMode(facilitatorCookie!, true);
@@ -257,7 +257,7 @@ it('broadcasts a Facilitator’s timer deadline and server time to Participants'
   vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-19T14:00:00Z') });
   let stream: ReturnType<typeof readLiveStream> | undefined;
   try {
-    const { createBoardForRequest, getBoardForRequest, updateTimerForRequest } =
+    const { createBoardForRequest, dispatchBoardCommandForRequest, getBoardForRequest } =
       await import('./services/board-service');
     const { handleLiveRequest } = await import('./live-handler');
     const origin = 'https://retrocks.app';
@@ -283,7 +283,7 @@ it('broadcasts a Facilitator’s timer deadline and server time to Participants'
 
     const { result } = await withSession(
       new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
-      () => updateTimerForRequest({ boardId: board.id, change: { action: 'start', minutes: 3 } }),
+      () => dispatchBoardCommandForRequest(board.id, { type: 'timer:update', change: { action: 'start', minutes: 3 } }),
     );
     const timer = {
       endsAt: Date.parse('2026-11-19T14:03:00Z'),
@@ -316,10 +316,8 @@ it('redacts Blind Voting totals in HTTP and both live streams, then reveals and 
   const streams: ReturnType<typeof readLiveStream>[] = [];
 
   try {
-    const { createBoardForRequest, createCardForRequest, getBoardForRequest } =
+    const { createBoardForRequest, dispatchBoardCommandForRequest, getBoardForRequest } =
       await import('./services/board-service');
-    const { changeVoteForRequest, resetVotesForRequest, updateVotingSettingsForRequest } =
-      await import('./services/voting-service');
     const { handleLiveRequest } = await import('./live-handler');
     const origin = 'https://retrocks.app';
     const { result: board, cookie: facilitatorCookie } = await withSession(
@@ -337,13 +335,13 @@ it('redacts Blind Voting totals in HTTP and both live streams, then reveals and 
       withSession(new Request(boardUrl, { method: 'POST', headers: { cookie } }), handler);
 
     const { result: created } = await write(facilitatorCookie!, () =>
-      createCardForRequest({ boardId: board.id, columnId: board.columns[0].id, content: 'Keep pairing' }));
+      dispatchBoardCommandForRequest(board.id, { type: 'card:create', columnId: board.columns[0].id, content: 'Keep pairing' }));
     const cardEvent = created.events[0];
     if (cardEvent.type !== 'card:upserted') throw new Error('Expected a new Card');
 
-    const voteInput = { boardId: board.id, targetType: 'card', targetId: cardEvent.card.id, delta: 1 } as const;
-    await write(participantCookie!, () => changeVoteForRequest(voteInput));
-    await write(participantCookie!, () => changeVoteForRequest(voteInput));
+    const voteCommand = { type: 'vote:change', targetType: 'card', targetId: cardEvent.card.id, delta: 1 } as const;
+    await write(participantCookie!, () => dispatchBoardCommandForRequest(board.id, voteCommand));
+    await write(participantCookie!, () => dispatchBoardCommandForRequest(board.id, voteCommand));
 
     for (const cookie of [participantCookie!, facilitatorCookie!]) {
       streams.push(readLiveStream(await handleLiveRequest(board.id, new Request(liveUrl, { headers: { cookie } }))));
@@ -352,7 +350,7 @@ it('redacts Blind Voting totals in HTTP and both live streams, then reveals and 
     expect(initial.map(({ board }) => board.cards[0].votes)).toEqual([2, 2]);
 
     const setBlind = (blindVoting: boolean) => write(facilitatorCookie!, () =>
-      updateVotingSettingsForRequest({ boardId: board.id, blindVoting }));
+      dispatchBoardCommandForRequest(board.id, { type: 'voting:configure', blindVoting }));
     const { result: enabled } = await setBlind(true);
     expect(enabled.events).toEqual([expect.objectContaining({
       type: 'board:snapshot',
@@ -367,7 +365,7 @@ it('redacts Blind Voting totals in HTTP and both live streams, then reveals and 
       { version: enabled.version, board: { blindVoting: true, cards: [{ votes: null, myVotes: 0 }], remainingVotes: 5 } },
     ]);
 
-    const { result: blindVote } = await write(facilitatorCookie!, () => changeVoteForRequest(voteInput));
+    const { result: blindVote } = await write(facilitatorCookie!, () => dispatchBoardCommandForRequest(board.id, voteCommand));
     expect(blindVote.events).toMatchObject([{ type: 'vote:updated', totalVotes: null, myVotes: 1, remainingVotes: 4 }]);
     const blindDeltas = await Promise.all(streams.map((stream) => stream.until('board:mutation')));
     expect(blindDeltas).toMatchObject([
@@ -389,7 +387,7 @@ it('redacts Blind Voting totals in HTTP and both live streams, then reveals and 
       { version: revealed.version, board: facilitatorReveal },
     ]);
 
-    const { result: reset } = await write(facilitatorCookie!, () => resetVotesForRequest({ boardId: board.id }));
+    const { result: reset } = await write(facilitatorCookie!, () => dispatchBoardCommandForRequest(board.id, { type: 'voting:reset' }));
     const resetOnStreams = await Promise.all(streams.map((stream) => stream.until('board:snapshot')));
     expect(resetOnStreams).toMatchObject(streams.map(() => ({
       version: reset.version,
@@ -434,7 +432,7 @@ it('broadcasts board:deleted to all live clients and immediately returns 404 on 
     // Lock then permanently delete the Board.
     await withSession(
       new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
-      () => service.setBoardLockForRequest({ boardId: board.id, isLocked: true }),
+      () => service.dispatchBoardCommandForRequest(board.id, { type: 'board:set-lock', isLocked: true }),
     );
     const lockFrames = await Promise.all([
       participantStream.until('board:mutation'),
@@ -446,7 +444,7 @@ it('broadcasts board:deleted to all live clients and immediately returns 404 on 
 
     const { result: deleted } = await withSession(
       new Request(boardUrl, { method: 'POST', headers: { cookie: facilitatorCookie! } }),
-      () => service.deleteBoardForRequest({ boardId: board.id }),
+      () => service.dispatchBoardCommandForRequest(board.id, { type: 'board:delete' }),
     );
     expect(deleted).toMatchObject({
       ok: true,

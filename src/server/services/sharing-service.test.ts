@@ -86,7 +86,7 @@ it('rejects an invalid Co-Facilitator Link without granting a cookie', async () 
 it('grants a signed HttpOnly Facilitator cookie and returns the Facilitator Board projection when a Participant claims a valid link', async () => {
   const { claimFacilitatorRoleForRequest, getFacilitatorLinkForRequest } =
     await import('./sharing-service');
-  const { createCardForRequest, getBoardForRequest } = await import('./board-service');
+  const { dispatchBoardCommandForRequest, getBoardForRequest } = await import('./board-service');
   const { boardId, facilitatorCookie } = await createBoard();
   const { result: link } = await runRequest(
     () => getFacilitatorLinkForRequest(boardId),
@@ -99,8 +99,8 @@ it('grants a signed HttpOnly Facilitator cookie and returns the Facilitator Boar
   const participantCookie = participantResponse.headers.getSetCookie()[0].split(';')[0];
   await runRequest(
     () =>
-      createCardForRequest({
-        boardId,
+      dispatchBoardCommandForRequest(boardId, {
+        type: 'card:create',
         columnId: participantBoard!.columns[0].id,
         content: 'Participant Card before claim',
       }),

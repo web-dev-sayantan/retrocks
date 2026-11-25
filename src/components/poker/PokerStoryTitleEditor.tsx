@@ -1,13 +1,9 @@
 import { Button } from '@ui-sdk/solid/button';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, X } from 'lucide';
-import { Show, createEffect, createSignal, untrack } from 'solid-js';
+import { Show, untrack } from 'solid-js';
 
-import { confirmBoardAction } from '../../lib/board-confirm';
-import { createDoubleTap } from '../../lib/double-tap';
-import { createInlineEditSession, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../../lib/inline-edit';
 import { POKER_STORY_TITLE_LIMIT, type PokerStory } from '../../lib/poker-types';
-import { InlineEditorMount } from '../InlineEditorMount';
 import LucideIcon from '../LucideIcon';
 
 export interface PokerStoryTitleEditorHandle {
@@ -19,144 +15,70 @@ export interface PokerStoryTitleEditorHandle {
 export default function PokerStoryTitleEditor(props: {
   story: PokerStory;
   canEdit: boolean;
-  discardRoundId?: string;
+  busy?: boolean;
   variant: 'queue' | 'stage';
-  onSave: (storyId: string, title: string, discardRoundId?: string) => Promise<InlineEditOutcome>;
+  onSave: (storyId: string, title: string, isCurrent: () => boolean) => Promise<InlineEditOutcome>;
   onHandle?: (handle: PokerStoryTitleEditorHandle) => void;
   fallbackFocus?: () => void;
 }) {
   const canEdit = () => props.canEdit && !props.story.locked;
 
-  const titleField = usePrimitive(inlineEdit, () => ({
+  const titleEdit = createInlineEditSession({
     value: () => props.story.title,
-    commit: (text: string) => titleSave.commit(text),
+    target: () => props.story.id,
     disabled: () => !canEdit(),
-  }));
-  const titleEdit = titleField.api.edit;
-  const isEditing = () => titleField.present('input');
-  const titleSave = createInlineEditSession({
-    target: () => canEdit() ? props.story.id : undefined,
-    isEditing,
-    start: (id) => titleEdit.start(id),
-    close: () => {
-      titleTap.reset();
-      titleEdit.cancel();
-    },
     save: saveTitleText,
+    fallbackFocus: () => props.fallbackFocus?.(),
   });
-  const [hasText, setHasText] = createSignal(true);
-  let editorEl: HTMLDivElement | undefined;
 
-  const titleTap = createDoubleTap(() => canEdit(), startEdit);
-
-  function startEdit(): void {
-    titleTap.reset();
-    if (!canEdit() || isEditing()) return;
-    titleSave.resetError();
-    setHasText(props.story.title.trim().length > 0);
-    titleSave.start();
-  }
-
-  function cancelEdit(): void {
-    titleSave.cancel();
-  }
+  const saving = () => titleEdit.isSaving() || Boolean(props.busy);
 
   async function saveTitleText(text: string, isCurrent: () => boolean): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return 'Enter a Story title.';
     if (trimmed === props.story.title) return true;
-    const storyId = props.story.id;
-    const discardRoundId = props.discardRoundId;
-    if (discardRoundId !== undefined) {
-      const confirmed = await confirmBoardAction({
-        title: 'Change active Story title?',
-        description: 'Changing the title restarts the current Voting Round with empty ballots.',
-        cancelLabel: 'Keep current title',
-        confirmLabel: 'Save and restart voting',
-        agentConfirm: 'Changes the active Story title and restarts the current Voting Round with empty ballots.',
-      });
-      if (!confirmed || !isCurrent()) return true;
-    }
-    return props.onSave(storyId, trimmed, discardRoundId);
+    return props.onSave(props.story.id, trimmed, isCurrent);
   }
 
   untrack(() => props.onHandle)?.({
-    start: startEdit,
-    cancel: cancelEdit,
-    isEditing,
+    start: titleEdit.start,
+    cancel: titleEdit.cancel,
+    isEditing: titleEdit.isEditing,
   });
-
-  createEffect(isEditing, (editing, wasEditing) => {
-    if (!editing && wasEditing && document.activeElement === document.body) {
-      props.fallbackFocus?.();
-    }
-  });
-
-  function handleKeyDown(event: KeyboardEvent): void {
-    if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      cancelEdit();
-      return;
-    }
-    titleEdit.inputKeydown(event);
-  }
-
-  function handleFocusOut(event: FocusEvent): void {
-    if (event.relatedTarget instanceof Node && editorEl?.contains(event.relatedTarget)) return;
-    titleEdit.end('focus-out', event);
-  }
 
   return (
     <Show
-      when={isEditing()}
+      when={titleEdit.isEditing()}
       fallback={
         <p
           class={props.variant === 'stage' ? 'poker-active-title' : 'poker-story-title min-w-0 flex-1'}
           data-editable={canEdit() ? 'true' : undefined}
           title={canEdit() ? `${props.story.title} — Double-click to edit` : undefined}
-          onDblClick={() => {
-            if (!canEdit()) return;
-            titleTap.reset();
-            startEdit();
-          }}
-          onPointerDown={titleTap.onPointerDown}
-          onPointerUp={titleTap.onPointerUp}
-          onPointerCancel={titleTap.onPointerCancel}
+          {...titleEdit.triggerProps}
         >
           {props.story.title}
         </p>
       }
     >
       <div
-        ref={editorEl}
+        ref={titleEdit.containerRef}
         class={props.variant === 'stage' ? 'poker-active-title-editor' : 'poker-story-inline-editor min-w-0 flex-1'}
       >
         <div class={props.variant === 'stage' ? 'flex w-full items-center justify-center gap-1.5' : 'flex min-w-0 items-center gap-1'}>
-          <InlineEditorMount bind={(input) => titleEdit.bindInput(input)}>
-            {(ref) => (
-              <input
-                ref={ref}
-                type="text"
-                aria-label="Edit Story title"
-                aria-invalid={titleSave.error() ? 'true' : undefined}
-                maxlength={POKER_STORY_TITLE_LIMIT}
-                readonly={titleSave.isSaving()}
-                onKeyDown={handleKeyDown}
-                onFocusOut={handleFocusOut}
-                onInput={(event) => {
-                  titleSave.resetError();
-                  setHasText(event.currentTarget.value.trim().length > 0);
-                }}
-                class={
-                  props.variant === 'stage'
-                    ? 'poker-active-title-input board-focus-ring'
-                    : 'poker-story-inline-input board-focus-ring'
-                }
-              />
-            )}
-          </InlineEditorMount>
+          <input
+            ref={titleEdit.inputRef}
+            type="text"
+            aria-label="Edit Story title"
+            aria-invalid={titleEdit.error() ? 'true' : undefined}
+            maxlength={POKER_STORY_TITLE_LIMIT}
+            readonly={saving()}
+            {...titleEdit.inputProps}
+            class={
+              props.variant === 'stage'
+                ? 'poker-active-title-input board-focus-ring'
+                : 'poker-story-inline-input board-focus-ring'
+            }
+          />
           <Button
             class={[
               'poker-inline-action poker-inline-action-save spring-press board-focus-ring',
@@ -164,9 +86,9 @@ export default function PokerStoryTitleEditor(props: {
             ]}
             aria-label="Save Story title"
             title="Save title"
-            disabled={titleSave.isSaving() || !hasText()}
+            disabled={saving() || !titleEdit.hasText()}
             focusableWhenDisabled
-            onClick={() => titleEdit.end()}
+            onClick={titleEdit.submit}
           >
             <LucideIcon icon={Check} class="size-3.5" strokeWidth={2.2} />
           </Button>
@@ -177,14 +99,12 @@ export default function PokerStoryTitleEditor(props: {
             ]}
             aria-label="Cancel Story title edit"
             title="Cancel"
-            disabled={titleSave.isSaving()}
-            focusableWhenDisabled
-            onClick={cancelEdit}
+            onClick={titleEdit.cancel}
           >
             <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />
           </Button>
         </div>
-        <Show when={titleSave.error()}>
+        <Show when={titleEdit.error()}>
           {(message) => (
             <p class="poker-error-text mt-1 text-xs font-medium" role="alert">
               {message()}

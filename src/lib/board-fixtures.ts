@@ -1,18 +1,20 @@
 import { vi } from 'vitest';
 
-import type { BoardWorkspaceActions } from './board-actions';
+import type { BoardCommandDispatcher } from './board-controller';
 import type {
   BoardEvent,
+  BoardMutationResponse,
   BoardViewDTO,
   CardGroupDTO,
   CardViewDTO,
   ColumnDTO,
 } from './board-types';
+import type { BoardCommand } from './schemas';
 
 /**
  * In-memory Board fixtures shared by the workspace component tests and the
- * Board session controller tests: DTO factories plus `createFakeActions`, an
- * in-memory `BoardWorkspaceActions` double that bumps `version`, mirrors the
+ * Board session controller tests: DTO factories plus `createFakeBoardDispatcher`,
+ * an in-memory `BoardCommandDispatcher` double that bumps `version`, mirrors the
  * cards/columns/groups maps, and emits `BoardEvent[]` responses (including
  * group vote rollup via `groupView`).
  */
@@ -99,9 +101,8 @@ function makeBoardView(overrides?: Partial<BoardViewDTO>): BoardViewDTO {
   };
 }
 
-function createFakeActions(initialBoard: BoardViewDTO): {
-  actions: BoardWorkspaceActions;
-  spies: Record<keyof BoardWorkspaceActions, ReturnType<typeof vi.fn>>;
+function createFakeBoardDispatcher(initialBoard: BoardViewDTO): {
+  dispatchCommand: ReturnType<typeof vi.fn<BoardCommandDispatcher>>;
 } {
   let version = initialBoard.version;
   let seq = 1;
@@ -131,404 +132,333 @@ function createFakeActions(initialBoard: BoardViewDTO): {
     };
   };
 
-  const updateTimer = vi.fn<BoardWorkspaceActions['updateTimer']>();
-
-  const renameBoard = vi.fn(async (input) => {
-    version += 1;
-    return {
-      ok: true as const,
-      version,
-      events: [
-        {
-          type: 'board:updated' as const,
-          version,
-          patch: { title: input.title.trim() },
-        },
-      ],
-    };
-  });
-
-  const createCard = vi.fn(async (input) => {
-    version += 1;
-    seq += 1;
-    const col = columns.get(input.columnId);
-    const card = makeCard({
-      id: `card_new_${seq}`,
-      columnId: input.columnId,
-      content: input.content.trim(),
-      isMine: true,
-      isActionItem: Boolean(col?.isActionColumn),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-    cards.set(card.id, card);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'card:upserted' as const, version, card }],
-    };
-  });
-
-  const updateCard = vi.fn(async (input) => {
-    version += 1;
-    const existing = must(cards.get(input.cardId), input.cardId);
-    const updated: CardViewDTO = {
-      ...existing,
-      content: input.content.trim(),
-      updatedAt: Date.now(),
-    };
-    cards.set(updated.id, updated);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'card:upserted' as const, version, card: updated }],
-    };
-  });
-
-  const updateActionItem = vi.fn(async (input) => {
-    version += 1;
-    const existing = must(cards.get(input.cardId), input.cardId);
-    const updated: CardViewDTO = {
-      ...existing,
-      ...(input.isActionItem !== undefined
-        ? {
-            isActionItem: input.isActionItem,
-            ...(input.isActionItem
-              ? {}
-              : { actionDone: false, actionOwner: '' }),
+  const dispatchCommand = vi.fn<BoardCommandDispatcher>(
+    async (_boardId: string, command: BoardCommand): Promise<BoardMutationResponse> => {
+      switch (command.type) {
+        case 'board:rename': {
+          version += 1;
+          return {
+            ok: true,
+            version,
+            events: [
+              {
+                type: 'board:updated',
+                version,
+                patch: { title: command.title.trim() },
+              },
+            ],
+          };
+        }
+        case 'board:set-lock': {
+          version += 1;
+          return {
+            ok: true,
+            version,
+            events: [
+              {
+                type: 'board:updated',
+                version,
+                patch: { isLocked: command.isLocked },
+              },
+            ],
+          };
+        }
+        case 'board:delete': {
+          version += 1;
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'board:deleted', version }],
+          };
+        }
+        case 'card:create': {
+          version += 1;
+          seq += 1;
+          const col = columns.get(command.columnId);
+          const card = makeCard({
+            id: `card_new_${seq}`,
+            columnId: command.columnId,
+            content: command.content.trim(),
+            isMine: true,
+            isActionItem: Boolean(col?.isActionColumn),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          cards.set(card.id, card);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'card:upserted', version, card }],
+          };
+        }
+        case 'card:update': {
+          version += 1;
+          const existing = must(cards.get(command.cardId), command.cardId);
+          const updated: CardViewDTO = {
+            ...existing,
+            content: command.content.trim(),
+            updatedAt: Date.now(),
+          };
+          cards.set(updated.id, updated);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'card:upserted', version, card: updated }],
+          };
+        }
+        case 'card:set-action': {
+          version += 1;
+          const existing = must(cards.get(command.cardId), command.cardId);
+          const updated: CardViewDTO = {
+            ...existing,
+            ...(command.isActionItem !== undefined
+              ? {
+                  isActionItem: command.isActionItem,
+                  ...(command.isActionItem
+                    ? {}
+                    : { actionDone: false, actionOwner: '' }),
+                }
+              : {}),
+            ...(command.actionDone !== undefined
+              ? { actionDone: command.actionDone }
+              : {}),
+            ...(command.actionOwner !== undefined
+              ? { actionOwner: command.actionOwner }
+              : {}),
+            updatedAt: Date.now(),
+          };
+          cards.set(updated.id, updated);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'card:upserted', version, card: updated }],
+          };
+        }
+        case 'card:move': {
+          version += 1;
+          const existing = must(cards.get(command.cardId), command.cardId);
+          const moved: CardViewDTO = {
+            ...existing,
+            columnId: command.targetColumnId,
+            updatedAt: Date.now(),
+          };
+          cards.set(moved.id, moved);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'card:upserted', version, card: moved }],
+          };
+        }
+        case 'card:delete': {
+          version += 1;
+          cards.delete(command.cardId);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'card:deleted', version, cardId: command.cardId }],
+          };
+        }
+        case 'group:merge': {
+          version += 1;
+          const targetCard =
+            command.targetType === 'card' ? cards.get(command.targetId) : undefined;
+          let group =
+            command.targetType === 'group'
+              ? groups.get(command.targetId)
+              : [...groups.values()].find((item) =>
+                  item.cardIds.includes(command.cardId),
+                );
+          const moved = must(cards.get(command.cardId), command.cardId);
+          if (!group) {
+            if (!targetCard) throw new Error('Missing target Card');
+            seq += 1;
+            group = {
+              id: `group_new_${seq}`,
+              columnId: targetCard.columnId,
+              title: targetCard.content,
+              cardIds: [targetCard.id],
+              votes: 0,
+              myVotes: 0,
+              createdAt: Date.now(),
+            };
+            groups.set(group.id, group);
+            targetCard.groupId = group.id;
           }
-        : {}),
-      ...(input.actionDone !== undefined
-        ? { actionDone: input.actionDone }
-        : {}),
-      ...(input.actionOwner !== undefined
-        ? { actionOwner: input.actionOwner }
-        : {}),
-      updatedAt: Date.now(),
-    };
-    cards.set(updated.id, updated);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'card:upserted' as const, version, card: updated }],
-    };
-  });
-
-  const moveCard = vi.fn(async (input) => {
-    version += 1;
-    const existing = must(cards.get(input.cardId), input.cardId);
-    const moved: CardViewDTO = {
-      ...existing,
-      columnId: input.targetColumnId,
-      updatedAt: Date.now(),
-    };
-    cards.set(moved.id, moved);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'card:upserted' as const, version, card: moved }],
-    };
-  });
-
-  const deleteCard = vi.fn(async (input) => {
-    version += 1;
-    cards.delete(input.cardId);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'card:deleted' as const, version, cardId: input.cardId }],
-    };
-  });
-
-  const groupCards = vi.fn(async (input) => {
-    version += 1;
-    const targetCard =
-      input.targetType === 'card' ? cards.get(input.targetId) : undefined;
-    let group =
-      input.targetType === 'group'
-        ? groups.get(input.targetId)
-        : [...groups.values()].find((item) =>
-            item.cardIds.includes(input.cardId),
-          );
-    const moved = must(cards.get(input.cardId), input.cardId);
-    if (!group) {
-      if (!targetCard) throw new Error('Missing target Card');
-      seq += 1;
-      group = {
-        id: `group_new_${seq}`,
-        columnId: targetCard.columnId,
-        title: targetCard.content,
-        cardIds: [targetCard.id],
-        votes: 0,
-        myVotes: 0,
-        createdAt: Date.now(),
-      };
-      groups.set(group.id, group);
-      targetCard.groupId = group.id;
-    }
-    const previousGroupId = moved.groupId;
-    if (previousGroupId && previousGroupId !== group.id) {
-      const previous = groups.get(previousGroupId);
-      if (previous) {
-        previous.cardIds = previous.cardIds.filter((id) => id !== moved.id);
-        if (previous.cardIds.length < 2) {
-          for (const id of previous.cardIds) {
+          const previousGroupId = moved.groupId;
+          if (previousGroupId && previousGroupId !== group.id) {
+            const previous = groups.get(previousGroupId);
+            if (previous) {
+              previous.cardIds = previous.cardIds.filter((id) => id !== moved.id);
+              if (previous.cardIds.length < 2) {
+                for (const id of previous.cardIds) {
+                  const member = cards.get(id);
+                  if (member) member.groupId = null;
+                }
+                groups.delete(previousGroupId);
+              }
+            }
+          }
+          moved.groupId = group.id;
+          if (!group.cardIds.includes(moved.id)) group.cardIds.push(moved.id);
+          return {
+            ok: true,
+            version,
+            events: [
+              { type: 'group:upserted', version, group: groupView(group) },
+              ...(targetCard && targetCard.id !== moved.id
+                ? [
+                    {
+                      type: 'card:upserted' as const,
+                      version,
+                      card: { ...targetCard },
+                    },
+                  ]
+                : []),
+              {
+                type: 'card:upserted',
+                version,
+                card: { ...moved },
+              },
+            ],
+          };
+        }
+        case 'group:rename': {
+          version += 1;
+          const group = must(groups.get(command.groupId), command.groupId);
+          group.title = command.title.trim();
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'group:upserted', version, group: groupView(group) }],
+          };
+        }
+        case 'group:ungroup': {
+          version += 1;
+          const card = must(cards.get(command.cardId), command.cardId);
+          const group = card.groupId ? groups.get(card.groupId) : undefined;
+          const events: BoardEvent[] = [];
+          card.groupId = null;
+          if (group) {
+            group.cardIds = group.cardIds.filter((id) => id !== card.id);
+            if (group.cardIds.length < 2) {
+              for (const id of group.cardIds) {
+                const member = cards.get(id);
+                if (member) member.groupId = null;
+              }
+              groups.delete(group.id);
+              events.push({ type: 'group:dissolved', version, groupId: group.id });
+            }
+          }
+          events.push({ type: 'card:upserted', version, card: { ...card } });
+          return { ok: true, version, events };
+        }
+        case 'group:dissolve': {
+          version += 1;
+          const group = must(groups.get(command.groupId), command.groupId);
+          for (const id of group.cardIds) {
             const member = cards.get(id);
             if (member) member.groupId = null;
           }
-          groups.delete(previousGroupId);
-        }
-      }
-    }
-    moved.groupId = group.id;
-    if (!group.cardIds.includes(moved.id)) group.cardIds.push(moved.id);
-    return {
-      ok: true as const,
-      version,
-      events: [
-        { type: 'group:upserted' as const, version, group: groupView(group) },
-        ...(targetCard && targetCard.id !== moved.id
-          ? [
-              {
-                type: 'card:upserted' as const,
-                version,
-                card: { ...targetCard },
-              },
-            ]
-          : []),
-        {
-          type: 'card:upserted' as const,
-          version,
-          card: { ...moved },
-        },
-      ],
-    };
-  });
-
-  const renameCardGroup = vi.fn(async (input) => {
-    version += 1;
-    const group = must(groups.get(input.groupId), input.groupId);
-    group.title = input.title.trim();
-    return {
-      ok: true as const,
-      version,
-      events: [
-        { type: 'group:upserted' as const, version, group: groupView(group) },
-      ],
-    };
-  });
-
-  const ungroupCard = vi.fn(async (input) => {
-    version += 1;
-    const card = must(cards.get(input.cardId), input.cardId);
-    const group = card.groupId ? groups.get(card.groupId) : undefined;
-    const events: BoardEvent[] = [];
-    card.groupId = null;
-    if (group) {
-      group.cardIds = group.cardIds.filter((id) => id !== card.id);
-      if (group.cardIds.length < 2) {
-        for (const id of group.cardIds) {
-          const member = cards.get(id);
-          if (member) member.groupId = null;
-        }
-        groups.delete(group.id);
-        events.push({ type: 'group:dissolved', version, groupId: group.id });
-      }
-    }
-    events.push({ type: 'card:upserted', version, card: { ...card } });
-    return { ok: true as const, version, events };
-  });
-
-  const dissolveCardGroup = vi.fn(async (input) => {
-    version += 1;
-    const group = must(groups.get(input.groupId), input.groupId);
-    for (const id of group.cardIds) {
-      const member = cards.get(id);
-      if (member) member.groupId = null;
-    }
-    groups.delete(input.groupId);
-    return {
-      ok: true as const,
-      version,
-      events: [
-        { type: 'group:dissolved' as const, version, groupId: input.groupId },
-      ],
-    };
-  });
-
-  const moveCardGroup = vi.fn(async (input) => {
-    version += 1;
-    const group = must(groups.get(input.groupId), input.groupId);
-    group.columnId = input.targetColumnId;
-    const events: BoardEvent[] = [
-      { type: 'group:upserted' as const, version, group: groupView(group) },
-    ];
-    for (const id of group.cardIds) {
-      const card = must(cards.get(id), id);
-      card.columnId = input.targetColumnId;
-      events.push({ type: 'card:upserted' as const, version, card: { ...card } });
-    }
-    return { ok: true as const, version, events };
-  });
-
-  const addColumn = vi.fn(async (input) => {
-    version += 1;
-    seq += 1;
-    const column: ColumnDTO = {
-      id: `col_new_${seq}`,
-      title: input.title.trim(),
-      accent: input.accent ?? 'slate',
-      position: columns.size,
-      isActionColumn: Boolean(input.isActionColumn),
-      cardCount: 0,
-    };
-    columns.set(column.id, column);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'column:upserted' as const, version, column }],
-    };
-  });
-
-  const updateColumn = vi.fn(async (input) => {
-    version += 1;
-    const existing = must(columns.get(input.columnId), input.columnId);
-    const updated: ColumnDTO = {
-      ...existing,
-      ...(input.title !== undefined ? { title: input.title.trim() } : {}),
-      ...(input.accent !== undefined ? { accent: input.accent } : {}),
-      ...(input.isActionColumn !== undefined
-        ? { isActionColumn: input.isActionColumn }
-        : {}),
-    };
-    columns.set(updated.id, updated);
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'column:upserted' as const, version, column: updated }],
-    };
-  });
-
-  const reorderColumns = vi.fn(async (input) => {
-    version += 1;
-    return {
-      ok: true as const,
-      version,
-      events: [
-        {
-          type: 'columns:reordered' as const,
-          version,
-          columnIds: input.columnIds,
-        },
-      ],
-    };
-  });
-
-  const deleteColumn = vi.fn(async (input) => {
-    version += 1;
-    columns.delete(input.columnId);
-    return {
-      ok: true as const,
-      version,
-      events: [
-        {
-          type: 'column:deleted' as const,
-          version,
-          columnId: input.columnId,
-        },
-      ],
-    };
-  });
-
-  const setPrivateMode = vi.fn<BoardWorkspaceActions['setPrivateMode']>();
-  const setBoardLock = vi.fn<BoardWorkspaceActions['setBoardLock']>(
-    async (input) => {
-      version += 1;
-      return {
-        ok: true as const,
-        version,
-        events: [
-          {
-            type: 'board:updated' as const,
+          groups.delete(command.groupId);
+          return {
+            ok: true,
             version,
-            patch: { isLocked: input.isLocked },
-          },
-        ],
-      };
+            events: [{ type: 'group:dissolved', version, groupId: command.groupId }],
+          };
+        }
+        case 'group:move': {
+          version += 1;
+          const group = must(groups.get(command.groupId), command.groupId);
+          group.columnId = command.targetColumnId;
+          const events: BoardEvent[] = [
+            { type: 'group:upserted', version, group: groupView(group) },
+          ];
+          for (const id of group.cardIds) {
+            const card = must(cards.get(id), id);
+            card.columnId = command.targetColumnId;
+            events.push({ type: 'card:upserted', version, card: { ...card } });
+          }
+          return { ok: true, version, events };
+        }
+        case 'column:add': {
+          version += 1;
+          seq += 1;
+          const column: ColumnDTO = {
+            id: `col_new_${seq}`,
+            title: command.title.trim(),
+            accent: command.accent ?? 'slate',
+            position: columns.size,
+            isActionColumn: Boolean(command.isActionColumn),
+            cardCount: 0,
+          };
+          columns.set(column.id, column);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'column:upserted', version, column }],
+          };
+        }
+        case 'column:update': {
+          version += 1;
+          const existing = must(columns.get(command.columnId), command.columnId);
+          const updated: ColumnDTO = {
+            ...existing,
+            ...(command.title !== undefined ? { title: command.title.trim() } : {}),
+            ...(command.accent !== undefined ? { accent: command.accent } : {}),
+            ...(command.isActionColumn !== undefined
+              ? { isActionColumn: command.isActionColumn }
+              : {}),
+          };
+          columns.set(updated.id, updated);
+          return {
+            ok: true,
+            version,
+            events: [{ type: 'column:upserted', version, column: updated }],
+          };
+        }
+        case 'column:reorder': {
+          version += 1;
+          return {
+            ok: true,
+            version,
+            events: [
+              {
+                type: 'columns:reordered',
+                version,
+                columnIds: command.columnIds,
+              },
+            ],
+          };
+        }
+        case 'column:delete': {
+          version += 1;
+          columns.delete(command.columnId);
+          return {
+            ok: true,
+            version,
+            events: [
+              {
+                type: 'column:deleted',
+                version,
+                columnId: command.columnId,
+              },
+            ],
+          };
+        }
+        case 'timer:update':
+        case 'board:set-private-mode':
+        case 'reaction:toggle':
+        case 'comment:create':
+        case 'comment:delete':
+        case 'vote:change':
+        case 'voting:configure':
+        case 'voting:reset':
+          throw new Error(`Unhandled fake command: ${command.type}`);
+      }
     },
   );
-  const deleteBoard = vi.fn<BoardWorkspaceActions['deleteBoard']>(async () => {
-    version += 1;
-    return {
-      ok: true as const,
-      version,
-      events: [{ type: 'board:deleted' as const, version }],
-    };
-  });
-  const toggleReaction = vi.fn<BoardWorkspaceActions['toggleReaction']>();
-  const createComment = vi.fn<BoardWorkspaceActions['createComment']>();
-  const deleteComment = vi.fn<BoardWorkspaceActions['deleteComment']>();
-  const changeVote = vi.fn<BoardWorkspaceActions['changeVote']>();
-  const updateVotingSettings = vi.fn<BoardWorkspaceActions['updateVotingSettings']>();
-  const resetVotes = vi.fn<BoardWorkspaceActions['resetVotes']>();
-  const actions: BoardWorkspaceActions = {
-    changeVote,
-    updateVotingSettings,
-    resetVotes,
-    setPrivateMode,
-    setBoardLock,
-    deleteBoard,
-    renameBoard,
-    updateTimer,
-    createCard,
-    updateCard,
-    updateActionItem,
-    moveCard,
-    deleteCard,
-    toggleReaction,
-    createComment,
-    deleteComment,
-    addColumn,
-    updateColumn,
-    reorderColumns,
-    deleteColumn,
-    groupCards,
-    renameCardGroup,
-    ungroupCard,
-    dissolveCardGroup,
-    moveCardGroup,
-  };
 
-  return {
-    actions,
-    spies: {
-      changeVote,
-      updateVotingSettings,
-      resetVotes,
-      setPrivateMode,
-      setBoardLock,
-      deleteBoard,
-      renameBoard,
-      updateTimer,
-      createCard,
-      updateCard,
-      updateActionItem,
-      moveCard,
-      deleteCard,
-      toggleReaction,
-      createComment,
-      deleteComment,
-      addColumn,
-      updateColumn,
-      reorderColumns,
-      deleteColumn,
-      groupCards,
-      renameCardGroup,
-      ungroupCard,
-      dissolveCardGroup,
-      moveCardGroup,
-    },
-  };
+  return { dispatchCommand };
 }
 
-export { createFakeActions, makeBoardView, makeCard };
+export { createFakeBoardDispatcher, makeBoardView, makeCard };

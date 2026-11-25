@@ -43,18 +43,19 @@ import {
   untrack,
 } from 'solid-js';
 
-import {
-  defaultBoardWorkspaceActions,
-  type BoardWorkspaceActions,
-} from '../lib/board-actions';
-import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
+import { dispatchBoardCommand } from '../lib/board-actions';
+import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
   canControlFacilitation,
   canFacilitate,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { createBoardController, type BoardLiveTransport } from '../lib/board-controller';
+import {
+  createBoardController,
+  type BoardCommandDispatcher,
+} from '../lib/board-controller';
+import type { LiveTransport } from '../lib/live-stream';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -83,17 +84,19 @@ import { retroSetupPath } from '../lib/routes';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import { toggleTheme } from '../lib/theme';
 import { createTimerChime, isTimerAudioMuted } from '../lib/timer-chime';
-import { createDoubleTap } from '../lib/double-tap';
 import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
 import BoardMenuContent from './BoardMenuContent';
 import BoardVotingSettings from './BoardVotingSettings';
+import {
+  BoardWorkspaceContext,
+  type BoardWorkspaceContextValue,
+} from './BoardWorkspaceContext';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
 import ExportBoardMenu from './ExportBoardMenu';
 import { CloseIcon } from './Icons';
-import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import PageMessage from './PageMessage';
 import PrintBoard from './PrintBoard';
@@ -104,8 +107,8 @@ export interface BoardWorkspaceProps {
   board: BoardViewDTO | null;
   boardId: string;
   homeHref?: string;
-  actions?: BoardWorkspaceActions;
-  liveTransport?: BoardLiveTransport;
+  dispatchCommand?: BoardCommandDispatcher;
+  liveTransport?: LiveTransport;
   liveReconnectKey?: number;
 }
 
@@ -169,7 +172,8 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   // mutation handlers, and pending state; this component keeps layout and UI state.
   const controller = createBoardController({
     board: () => props.board,
-    actions: () => props.actions ?? defaultBoardWorkspaceActions,
+    dispatchCommand: (boardId, command) =>
+      (props.dispatchCommand ?? dispatchBoardCommand)(boardId, command),
     liveTransport: untrack(() => props.liveTransport),
     liveReconnectKey: () => props.liveReconnectKey ?? 0,
     onDramaticReveal: runDramaticReveal,
@@ -232,29 +236,23 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     }
   }
 
-  // Board title inline editing: createInlineEdit owns the edit, input, and keyboard contract.
-  const boardTitleField = usePrimitive(inlineEdit, () => ({
+  // Board title inline editing: unified session owns edit, input, IME, focus-out, and fallback focus.
+  let renameBoardButtonEl: HTMLButtonElement | undefined;
+  const boardTitleEdit = createInlineEditSession({
     value: () => controller.board()?.title ?? '',
-    commit: (text: string) => boardTitleSave.commit(text),
+    target: () => controller.board()?.id,
     disabled: () => {
       const board = controller.board();
       return !board || !canControlFacilitation(board);
     },
-  }));
-  const boardTitleEdit = boardTitleField.api.edit;
-  const boardTitleSave = createInlineEditSave(saveBoardTitleText, () => boardTitleEdit.cancel());
-  const isRenamingBoard = () => boardTitleField.present('input');
-  const [hasBoardTitleText, setHasBoardTitleText] = createSignal(true);
-  let renameBoardButtonEl: HTMLButtonElement | undefined;
-  const boardTitleTap = createDoubleTap(isBoardTitleEditTarget, startBoardRename);
-
-  // The mobile menu that starts a rename unmounts, so restore the header's fallback focus chain.
-  createEffect(isRenamingBoard, (renaming, wasRenaming) => {
-    if (!renaming && wasRenaming && document.activeElement === document.body) {
+    save: saveBoardTitleText,
+    fallbackFocus: () => {
       renameBoardButtonEl?.focus();
       if (document.activeElement === document.body) boardMenuTriggerEl?.focus();
-    }
+    },
+    acceptsTarget: (target) => !(target instanceof Element && target.closest('button')),
   });
+  const isRenamingBoard = boardTitleEdit.isEditing;
 
   // Add Column inline composer state
   const [isAddingColumn, setIsAddingColumn] = createSignal(false);
@@ -370,8 +368,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     (boardId, previousBoardId) => {
       if (boardId) return;
       if (previousBoardId) unavailableHeading?.focus();
-      boardTitleSave.resetError();
-      boardTitleEdit.cancel();
       setIsAddingColumn(false);
       setOpenCardDetailId(null);
       setIsCardDetailOpen(false);
@@ -385,7 +381,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     () => controller.board()?.isLocked ?? false,
     (locked) => {
       if (locked) {
-        boardTitleEdit.cancel();
         setIsAddingColumn(false);
       }
     },
@@ -524,14 +519,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     return card;
   });
 
-  const openDetailColumn = createMemo(() => {
-    const card = openDetailCard();
-    if (!card) return null;
-    return (
-      controller.board()?.columns.find((col) => col.id === card.columnId) ?? null
-    );
-  });
-
   createEffect(
     () => ({ id: openCardDetailId(), card: openDetailCard() }),
     ({ id, card }) => {
@@ -610,32 +597,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     }
     // The controller runs the mutation and invokes onDramaticReveal before applying.
     await controller.togglePrivateMode(dramatic);
-  }
-
-  function isBoardTitleEditTarget(target: EventTarget | null): boolean {
-    const board = controller.board();
-    if (!board || !canControlFacilitation(board)) return false;
-    return !(target instanceof Element && target.closest('button'));
-  }
-
-  function handleBoardTitleDoubleClick(event: MouseEvent): void {
-    if (!isBoardTitleEditTarget(event.target)) return;
-    boardTitleTap.reset();
-    startBoardRename();
-  }
-
-  function startBoardRename(): void {
-    boardTitleTap.reset();
-    const board = controller.board();
-    if (!board) return;
-    setHasBoardTitleText(board.title.trim().length > 0);
-    boardTitleEdit.start(board.id);
-  }
-
-  function cancelBoardRename(): void {
-    boardTitleTap.reset();
-    boardTitleSave.resetError();
-    boardTitleEdit.cancel();
   }
 
   async function saveBoardTitleText(text: string): Promise<InlineEditOutcome> {
@@ -790,13 +751,28 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
         </div>
       }
     >
-      {(board) => (
-        <div
-          ref={() => logPrivacyColophon()}
-          class="board-workspace flex min-h-dvh flex-col bg-canvas"
-          data-board-print-ready={isPrinting() ? "" : undefined}
-          data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
-        >
+      {(board) => {
+        const workspaceContext: BoardWorkspaceContextValue = {
+          get columns() { return view.columns; },
+          get voting() { return controller.voting(); },
+          get isFacilitator() { return board().isFacilitator; },
+          get isLocked() { return board().isLocked; },
+          get isBlurred() { return board().isBlurred; },
+          get blindVoting() { return board().blindVoting; },
+          get canGroupCards() { return canManageGrouping(board()); },
+          get nowMs() { return controller.nowMs(); },
+          transfer,
+          actions: controller,
+          openCardDetail: handleOpenCardDetail,
+        };
+        return (
+          <BoardWorkspaceContext value={workspaceContext}>
+            <div
+              ref={() => logPrivacyColophon()}
+              class="board-workspace flex min-h-dvh flex-col bg-canvas"
+              data-board-print-ready={isPrinting() ? "" : undefined}
+              data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
+            >
           <Show when={isPrinting()}>
             <PrintBoard board={board()} />
           </Show>
@@ -811,31 +787,24 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                 <Show
                   when={!isRenamingBoard()}
                   fallback={
-                    <div class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
-                      <InlineEditorMount bind={(el) => boardTitleEdit.bindInput(el)}>
-                        {(ref) => (
-                          <input
-                            ref={ref}
-                            type="text"
-                            aria-label="Board title"
-                            maxlength={MAX_BOARD_TITLE_LENGTH}
-                            onKeyDown={(event) => boardTitleEdit.inputKeydown(event)}
-                            onFocusOut={(event) => boardTitleEdit.end('focus-out', event)}
-                            onInput={(e) =>
-                              setHasBoardTitleText(e.currentTarget.value.trim().length > 0)
-                            }
-                            class={[
-                              'h-11 min-w-0 flex-1 rounded-md border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
-                              'board-focus-ring',
-                            ]}
-                          />
-                        )}
-                      </InlineEditorMount>
+                    <div ref={boardTitleEdit.containerRef} class="flex h-7 w-full max-w-md items-center gap-1.5 sm:h-10">
+                      <input
+                        ref={boardTitleEdit.inputRef}
+                        type="text"
+                        aria-label="Board title"
+                        maxlength={MAX_BOARD_TITLE_LENGTH}
+                        readonly={boardTitleEdit.isSaving()}
+                        {...boardTitleEdit.inputProps}
+                        class={[
+                          'h-11 min-w-0 flex-1 rounded-md border border-control/80 bg-surface px-3.5 text-xl leading-snug font-semibold tracking-[-0.02em] text-text sm:h-9 sm:text-center sm:text-lg',
+                          'board-focus-ring',
+                        ]}
+                      />
                       <button
                         type="button"
                         aria-label="Save Board title"
-                        disabled={boardTitleSave.isSaving() || !hasBoardTitleText()}
-                        onClick={() => boardTitleEdit.end()}
+                        disabled={boardTitleEdit.isSaving() || !boardTitleEdit.hasText()}
+                        onClick={boardTitleEdit.submit}
                         class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:size-9"
                       >
                         <LucideIcon icon={Check} class="size-4" strokeWidth={2} />
@@ -843,7 +812,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                       <button
                         type="button"
                         aria-label="Cancel Board rename"
-                        onClick={cancelBoardRename}
+                        onClick={boardTitleEdit.cancel}
                         class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/80 bg-surface text-text-muted hover:bg-surface-subtle hover:text-text sm:size-9"
                       >
                         <LucideIcon icon={X} class="size-4" strokeWidth={1.9} />
@@ -852,10 +821,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                   }
                 >
                   <div
-                    onDblClick={handleBoardTitleDoubleClick}
-                    onPointerDown={boardTitleTap.onPointerDown}
-                    onPointerUp={boardTitleTap.onPointerUp}
-                    onPointerCancel={boardTitleTap.onPointerCancel}
+                    {...boardTitleEdit.triggerProps}
                     class="flex h-full max-w-full min-w-0 items-center gap-1 sm:justify-center"
                   >
                     <h1
@@ -878,7 +844,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                         aria-label="Rename Board"
                         title="Rename Board"
                         data-print-hide="true"
-                        onClick={startBoardRename}
+                        onClick={boardTitleEdit.start}
                         class={[
                           'spring-press hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-muted sm:inline-flex',
                           'transition-colors hover:bg-surface-subtle/90 hover:text-text',
@@ -1033,7 +999,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                               closeOnSelect={false}
                               onSelect={() => {
                                 closeBoardMenu(false);
-                                startBoardRename();
+                                boardTitleEdit.start();
                               }}
                             >
                               Rename Board
@@ -1292,24 +1258,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     <ColumnPanel
                       view={bucket}
                       columnIndex={index()}
-                      totalColumns={view.columns.length}
-                      columns={view.columns}
                       hasActiveFilter={view.hasActiveFilter}
-                      voting={controller.voting()}
-                      isFacilitator={board().isFacilitator}
-                      isLocked={board().isLocked}
-                      isBlurred={board().isBlurred}
-                      canGroupCards={canManageGrouping(board())}
-                      nowMs={controller.nowMs()}
                       isMobile={isMobileBoard()}
                       isMobileActive={resolvedActiveColumnIndex() === index()}
                       isHorizontalSnap={isHorizontalSnap()}
-                      transfer={transfer}
-                      actions={controller}
                       onResetFilters={resetFilters}
                       onRegisterComposer={registerColumnComposer}
                       onActivateColumn={(colId) => setActiveColumnId(colId)}
-                      onOpenCardDetail={handleOpenCardDetail}
                     />
                   )}
                 </For>
@@ -1467,21 +1422,11 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             {(card) => (
               <CardDetailDrawer
                 card={card}
-                column={openDetailColumn()}
-                isFacilitator={board().isFacilitator}
-                isLocked={board().isLocked}
-                isBlurred={board().isBlurred}
-                nowMs={controller.nowMs()}
                 isOpen={isCardDetailOpen()}
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocusTarget={cardDetailFocusTarget}
-                onUpdateActionItem={controller.updateActionItem}
-                onToggleReaction={controller.toggleReaction}
-                onCreateComment={controller.createComment}
-                onDeleteComment={controller.deleteComment}
-                isActionItemPending={controller.isActionItemPending}
               />
             )}
           </Show>
@@ -1556,8 +1501,10 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
               </div>
             )}
           </Show>
-        </div>
-      )}
+            </div>
+          </BoardWorkspaceContext>
+        );
+      }}
     </Show>
   );
 }

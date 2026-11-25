@@ -3,8 +3,8 @@ import { fireEvent, render, waitFor } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFakeActions, makeBoardView } from '../lib/board-fixtures';
-import type { BoardLiveTransport } from '../lib/board-live';
+import { createFakeBoardDispatcher, makeBoardView } from '../lib/board-fixtures';
+import type { LiveTransport } from '../lib/live-stream';
 import type { BoardViewDTO } from '../lib/board-types';
 import type { FacilitatorClaimInput, FacilitatorClaimResponse } from '../lib/sharing-actions';
 import BoardWorkspace from './BoardWorkspace';
@@ -16,7 +16,7 @@ const VALID_TOKEN = 'A'.repeat(43);
 
 function createFakeLiveTransport() {
   const connections: Array<{ path: string; closed: boolean }> = [];
-  const transport: BoardLiveTransport = {
+  const transport: LiveTransport = {
     connect(path) {
       const connection = { path, closed: false };
       connections.push(connection);
@@ -195,7 +195,7 @@ describe('FacilitatorLinkClaim', () => {
           ...participantBoard,
           isFacilitator: true,
         };
-        const { actions } = createFakeActions(facilitatorBoard);
+        const { dispatchCommand } = createFakeBoardDispatcher(facilitatorBoard);
         const { transport, connections } = createFakeLiveTransport();
         const claim = vi.fn(async (): Promise<FacilitatorClaimResponse> => ({
           ok: true,
@@ -221,7 +221,7 @@ describe('FacilitatorLinkClaim', () => {
               <BoardWorkspace
                 board={board()}
                 boardId={BOARD_ID}
-                actions={actions}
+                dispatchCommand={dispatchCommand}
                 liveTransport={transport}
                 liveReconnectKey={liveReconnectKey()}
               />

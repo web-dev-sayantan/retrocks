@@ -1,5 +1,4 @@
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@ui-sdk/solid/menu';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Textarea } from '@ui-sdk/solid/textarea';
 import {
   Check,
@@ -17,61 +16,42 @@ import {
   COLUMN_ACCENTS,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
-  type CardGroupDTO,
   type ColumnAccent,
-  type ColumnDTO,
 } from '../lib/board-types';
-import type { BoardMutations } from '../lib/board-controller';
-import type { BoardTransferHandle } from '../lib/board-transfer';
 import type { ColumnViewProjection } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
-import { inlineEdit, createInlineEditSave, type InlineEditOutcome } from '../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import {
-  areAllGroupCardsMine,
   canContribute,
   canControlFacilitation,
   canDeleteColumn as canDeleteColumnPermission,
-  passesPrivateMode,
 } from '../lib/board-permissions';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
-import CardGroupItem from './CardGroupItem';
 import BoardMenuContent from './BoardMenuContent';
+import { useBoardWorkspace } from './BoardWorkspaceContext';
+import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
-import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from '../lib/board-controller';
 
 export interface ColumnPanelProps {
   /** The keyed projection's Column bucket: the Column DTO plus its complete
    *  Card and Card Group lists, the filtered stream, and the counts. */
   view: ColumnViewProjection;
   columnIndex: number;
-  totalColumns: number;
-  columns: readonly ColumnDTO[];
   hasActiveFilter: boolean;
-  voting: WorkspaceVoting;
-  isFacilitator: boolean;
-  isLocked: boolean;
-  isBlurred: boolean;
-  canGroupCards: boolean;
-  nowMs: number;
   isMobile: boolean;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
-  /** The Board's createTransfer instance; Columns are its drop lists. */
-  transfer: BoardTransferHandle;
-  /** Controller-shaped Board mutations (the workspace passes its session). */
-  actions: BoardMutations;
   onResetFilters: () => void;
   onRegisterComposer?: (
     columnId: string,
     el: HTMLTextAreaElement | null,
   ) => void;
   onActivateColumn?: (columnId: string) => void;
-  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }
 
 export default function ColumnPanel(props: ColumnPanelProps) {
+  const workspace = useBoardWorkspace();
   const [cardDraft, setCardDraft] = createSignal('');
   const [cardError, setCardError] = createSignal<string | null>(null);
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
@@ -80,70 +60,56 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
 
   createEffect(
-    () => props.isLocked,
+    () => workspace.isLocked,
     (locked) => {
       if (locked) {
         setMenuOpen(false);
-        cancelRename();
       }
     },
   );
 
   const canManageColumn = createMemo(
-    () => canControlFacilitation(props),
+    () => canControlFacilitation(workspace),
   );
   const canMoveLeft = createMemo(() => props.columnIndex > 0);
   const canMoveRight = createMemo(
-    () => props.columnIndex < props.totalColumns - 1,
+    () => props.columnIndex < workspace.columns.length - 1,
   );
   const hasHiddenCards = createMemo(() => props.view.cards.some((card) => card.redacted));
   const canDeleteColumn = createMemo(() =>
-    canDeleteColumnPermission(props, props.totalColumns, props.view.cards),
+    canDeleteColumnPermission(workspace, workspace.columns.length, props.view.cards),
   );
 
-  // Inline title editing: createInlineEdit owns the session, input, and keyboard contract.
-  const titleField = usePrimitive(inlineEdit, () => ({
-    value: () => props.view.column.title,
-    commit: (text) => titleSave.commit(text),
-    disabled: () => !canManageColumn(),
-  }));
-  const columnEdit = titleField.api.edit;
-  const titleSave = createInlineEditSave(saveColumnTitle, () => columnEdit.cancel());
-  const isRenaming = () => titleField.present('input');
-  const [hasTitleText, setHasTitleText] = createSignal(true);
+  // Inline title editing: unified session owns edit, input, IME, focus-out, and fallback focus.
   let titleButtonEl: HTMLButtonElement | undefined;
-
-  // The title button re-mounts while editing ends, so guide focus back when nothing took it.
-  createEffect(isRenaming, (renaming, wasRenaming) => {
-    if (!renaming && wasRenaming && document.activeElement === document.body) {
-      titleButtonEl?.focus();
-    }
+  const titleEdit = createInlineEditSession({
+    value: () => props.view.column.title,
+    target: () => props.view.column.id,
+    disabled: () => !canManageColumn(),
+    save: saveColumnTitle,
+    fallbackFocus: () => titleButtonEl?.focus(),
   });
 
   let composerEl: HTMLTextAreaElement | undefined;
 
-  const contributingColumnId = createMemo(() => canContribute(props) ? props.view.column.id : null);
+  const contributingColumnId = createMemo(() => canContribute(workspace) ? props.view.column.id : null);
   createEffect(contributingColumnId, (columnId) => {
     if (!columnId || !composerEl) return;
     props.onRegisterComposer?.(columnId, composerEl);
     return () => props.onRegisterComposer?.(columnId, null);
   });
 
-  function canManageGroup(group: CardGroupDTO): boolean {
-    return props.canGroupCards && areAllGroupCardsMine(props, group, props.view.cards);
-  }
-
   async function submitNewCard(): Promise<void> {
     const draft = composerEl ? composerEl.value : cardDraft();
     const trimmed = draft.trim();
-    if (trimmed.length === 0 || isCreatingCard() || props.isLocked) return;
+    if (trimmed.length === 0 || isCreatingCard() || workspace.isLocked) return;
     if (cardDraft() !== draft) {
       setCardDraft(draft);
     }
     setIsCreatingCard(true);
     setCardError(null);
     try {
-      const error = await props.actions.createCard(props.view.column.id, trimmed);
+      const error = await workspace.actions.createCard(props.view.column.id, trimmed);
       const currentDraft = composerEl ? composerEl.value : cardDraft();
       if (currentDraft === draft) {
         setCardError(error);
@@ -166,30 +132,24 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   function startRename(): void {
     setMenuOpen(false);
-    setHasTitleText(props.view.column.title.trim().length > 0);
-    columnEdit.start(props.view.column.id);
-  }
-
-  function cancelRename(): void {
-    titleSave.resetError();
-    columnEdit.cancel();
+    titleEdit.start();
   }
 
   async function saveColumnTitle(text: string): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return (await props.actions.updateColumn(props.view.column.id, { title: trimmed }))
+    return (await workspace.actions.updateColumn(props.view.column.id, { title: trimmed }))
       ? true
       : false;
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
     if (accent === props.view.column.accent) return;
-    await props.actions.updateColumn(props.view.column.id, { accent });
+    await workspace.actions.updateColumn(props.view.column.id, { accent });
   }
 
   async function handleReorder(direction: -1 | 1): Promise<void> {
-    await props.actions.moveColumn(props.view.column.id, direction);
+    await workspace.actions.moveColumn(props.view.column.id, direction);
   }
 
   async function requestDeleteColumn(): Promise<void> {
@@ -205,7 +165,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (!confirmed) return;
     setIsDeletingColumn(true);
     try {
-      await props.actions.deleteColumn(props.view.column.id);
+      await workspace.actions.deleteColumn(props.view.column.id);
     } finally {
       setIsDeletingColumn(false);
     }
@@ -213,7 +173,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   return (
     <section
-      {...props.transfer.slot('column', () => ({ value: props.view.column.id }))}
+      {...workspace.transfer.slot('column', () => ({ value: props.view.column.id }))}
       id={`column-${props.view.column.id}`}
       role={props.isMobile ? 'tabpanel' : undefined}
       aria-hidden={props.isMobile && !props.isMobileActive ? 'true' : undefined}
@@ -255,35 +215,28 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
 
         <div class="board-column-cap-row relative flex min-h-11 items-center justify-between gap-2 px-3.5 pt-3.25 pb-2.5">
-          <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={isRenaming() ? "" : undefined}>
+          <div class="board-column-heading flex min-w-0 flex-1 items-center gap-1.5" data-renaming={titleEdit.isEditing() ? "" : undefined}>
             <Show
-              when={!isRenaming()}
+              when={!titleEdit.isEditing()}
               fallback={
-                <div class="flex min-w-0 flex-1 items-center gap-1">
-                  <InlineEditorMount bind={(el) => columnEdit.bindInput(el)}>
-                    {(ref) => (
-                      <input
-                        ref={ref}
-                        type="text"
-                        aria-label="Column title"
-                        maxlength={MAX_COLUMN_TITLE_LENGTH}
-                        onKeyDown={(event) => columnEdit.inputKeydown(event)}
-                        onFocusOut={(event) => columnEdit.end('focus-out', event)}
-                        onInput={(e) =>
-                          setHasTitleText(e.currentTarget.value.trim().length > 0)
-                        }
-                        class={[
-                          'min-w-0 flex-1 rounded-md border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
-                          'board-focus-ring',
-                        ]}
-                      />
-                    )}
-                  </InlineEditorMount>
+                <div ref={titleEdit.containerRef} class="flex min-w-0 flex-1 items-center gap-1">
+                  <input
+                    ref={titleEdit.inputRef}
+                    type="text"
+                    aria-label="Column title"
+                    maxlength={MAX_COLUMN_TITLE_LENGTH}
+                    readonly={titleEdit.isSaving()}
+                    {...titleEdit.inputProps}
+                    class={[
+                      'min-w-0 flex-1 rounded-md border border-border/85 bg-surface px-2 py-1 text-[15px] leading-snug font-semibold tracking-[-0.015em] text-text',
+                      'board-focus-ring',
+                    ]}
+                  />
                   <button
                     type="button"
                     aria-label="Save column title"
-                    disabled={titleSave.isSaving() || !hasTitleText()}
-                    onClick={() => columnEdit.end()}
+                    disabled={titleEdit.isSaving() || !titleEdit.hasText()}
+                    onClick={titleEdit.submit}
                     class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 disabled:opacity-50 sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={Check} class="size-3.5" strokeWidth={2.2} />
@@ -291,7 +244,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   <button
                     type="button"
                     aria-label="Cancel column rename"
-                    onClick={cancelRename}
+                    onClick={titleEdit.cancel}
                     class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface text-text-muted hover:text-text sm:min-h-8 sm:min-w-8"
                   >
                     <LucideIcon icon={X} class="size-3.5" strokeWidth={2} />
@@ -365,7 +318,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                   </MenuTrigger>
 
                   <BoardMenuContent
-                    finalFocus={isRenaming() ? 'none' : undefined}
+                    finalFocus={titleEdit.isEditing() ? 'none' : undefined}
                     aria-label={`Options for ${props.view.column.title}`}
                     class="board-popover z-30 max-h-[min(60dvh,var(--available-height))] w-56 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-md border border-border bg-surface p-1 text-text shadow-lg"
                   >
@@ -462,7 +415,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </div>
 
-      <Show when={canContribute(props)}>
+      <Show when={canContribute(workspace)}>
         <div data-print-hide="true" class="hidden px-3 pt-3 sm:block">
           <div
             class={[
@@ -525,7 +478,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </Show>
 
-      <Show when={props.isLocked}>
+      <Show when={workspace.isLocked}>
         <p data-print-hide="true" class="mx-3 mt-3 hidden rounded-md bg-surface/75 px-3 py-2 text-xs text-text-muted sm:block">
           This Board is Locked. You can still read and search Cards.
         </p>
@@ -571,21 +524,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <CardItem
                         card={card()}
                         revealIndex={props.columnIndex + streamIndex()}
-                        voting={props.voting}
-                        columns={props.columns}
                         columnCards={props.view.cards}
                         columnGroups={props.view.groups}
-                        canGroupCards={props.canGroupCards}
-                        canUngroup={
-                          props.canGroupCards && passesPrivateMode(props, card())
-                        }
-                        isFacilitator={props.isFacilitator}
-                        isLocked={props.isLocked}
-                        isBlurred={props.isBlurred}
-                        nowMs={props.nowMs}
-                        transfer={props.transfer}
-                        actions={props.actions}
-                        onOpenCardDetail={props.onOpenCardDetail}
                       />
                     )}
                   </Show>
@@ -598,17 +538,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     revealIndexOffset={props.columnIndex + streamIndex()}
                     columnCards={props.view.cards}
                     columnGroups={props.view.groups}
-                    columns={props.columns}
-                    voting={props.voting}
-                    isFacilitator={props.isFacilitator}
-                    isLocked={props.isLocked}
-                    isBlurred={props.isBlurred}
-                    canGroupCards={props.canGroupCards}
-                    canManage={canManageGroup(group().group)}
-                    nowMs={props.nowMs}
-                    transfer={props.transfer}
-                    actions={props.actions}
-                    onOpenCardDetail={props.onOpenCardDetail}
                   />
                 )}
               </Show>

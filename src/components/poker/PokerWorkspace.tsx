@@ -1,18 +1,13 @@
 import { Button } from '@ui-sdk/solid/button';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, SquareCheck, Users, X } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
+import { For, Show, createMemo, onSettled } from 'solid-js';
 
-import { projectedPokerDiscardPrompt } from '../../lib/poker-discard-policy';
-import { projectedDeckRoundChange } from '../../lib/poker-deck-policy';
-import { confirmBoardAction } from '../../lib/board-confirm';
-import { createDoubleTap } from '../../lib/double-tap';
-import { createInlineEditSession, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../../lib/inline-edit';
+import type { PokerChangeOptions, PokerChangeOutcome } from '../../lib/poker-controller';
 import {
   POKER_DEFAULT_ROOM_NAME,
   POKER_ROOM_NAME_LIMIT,
   type PokerLiveRoomView,
-  type PokerResult,
   type PokerRoomChange,
 } from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
@@ -20,26 +15,33 @@ import PokerDeckSettings from './PokerDeckSettings';
 import PokerRoomDeletion from './PokerRoomDeletion';
 import PokerRoomSharing from './PokerRoomSharing';
 import PokerStoryQueue from './PokerStoryQueue';
-import { InlineEditorMount } from '../InlineEditorMount';
 import PokerStoryTitleEditor from './PokerStoryTitleEditor';
 import PokerVotingRound from './PokerVotingRound';
 import './poker.css';
+
+function toInlineEditOutcome(result: PokerChangeOutcome): InlineEditOutcome {
+  if (result.ok) return true;
+  if ('reason' in result) {
+    if (result.reason === 'network') return result.message;
+    return result.reason === 'cancelled';
+  }
+  return result.message;
+}
 
 export default function PokerWorkspace(props: {
   room: PokerLiveRoomView;
   online: string[];
   status: 'connecting' | 'live' | 'reconnecting';
+  busy?: boolean;
+  error?: string;
   focusHeading?: boolean;
   claimError?: string;
   onUnavailable: () => void;
-  onChange: (command: PokerRoomChange) => Promise<PokerResult>;
+  onChange: (command: PokerRoomChange, options?: PokerChangeOptions) => Promise<PokerChangeOutcome>;
+  onClearError?: () => void;
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
   const onlineSet = createMemo(() => new Set(props.online));
-  const deckDiscardRoundId = createMemo(() => {
-    const change = projectedDeckRoundChange(props.room);
-    return change.type === 'confirm' ? change.roundId : undefined;
-  });
   const openRound = createMemo(() => (props.room.round?.phase === 'open' ? props.room.round : null));
   const revealedRound = createMemo(() => (props.room.round && props.room.round.phase !== 'open' ? props.room.round : null));
   const submitted = createMemo(() => {
@@ -68,173 +70,72 @@ export default function PokerWorkspace(props: {
   });
 
   const onlineStatusLabel = createMemo(() => (props.status === 'live' ? `${props.online.length} online` : 'Connecting to Room…'));
-
-  const [closeError, setCloseError] = createSignal('');
-  const [closing, setClosing] = createSignal(false);
-  let closeInProgress = false;
-
-  async function closeRoom() {
-    if (closeInProgress) return;
-    closeInProgress = true;
-    setCloseError('');
-    const discardRoundId = projectedPokerDiscardPrompt('close-room', true, props.room.round);
-    try {
-      const confirmed = await confirmBoardAction(
-        discardRoundId !== undefined
-          ? {
-              title: 'Close Room?',
-              description:
-                'Closing discards the current Voting Round and its votes while keeping Accepted Estimates in the summary. A Facilitator can reopen the Room later.',
-              confirmLabel: 'Close and discard votes',
-              agentConfirm:
-                'Closes the Room and discards the current Voting Round and its votes. Accepted Estimates stay in the summary, and a Facilitator can reopen the Room later.',
-            }
-          : {
-              title: 'Close Room?',
-              description:
-                'Closing moves the Room to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
-              confirmLabel: 'Close Room',
-              agentConfirm:
-                'Closes the Room and moves it to a read-only summary of Stories and Accepted Estimates. A Facilitator can reopen the Room later.',
-            },
-      );
-      if (!confirmed) return;
-
-      setClosing(true);
-      const result = await props.onChange({ type: 'close-room', ...(discardRoundId === undefined ? {} : { discardRoundId }) });
-      if (!result.ok) setCloseError(result.message);
-    } catch {
-      setCloseError('Could not close the Room. Try again.');
-    } finally {
-      closeInProgress = false;
-      setClosing(false);
-    }
-  }
+  const isBusy = () => Boolean(props.busy);
 
   async function editActiveStoryTitle(
     storyId: string,
     title: string,
-    discardRoundId?: string,
+    isCurrent: () => boolean,
   ): Promise<InlineEditOutcome> {
-    try {
-      const result = await props.onChange({
-        type: 'edit-story',
-        storyId,
-        title,
-        ...(discardRoundId === undefined ? {} : { discardRoundId }),
-      });
-      return result.ok ? true : result.message;
-    } catch {
-      return 'Could not update the Story title. Try again.';
-    }
+    const result = await props.onChange(
+      { type: 'edit-story', storyId, title },
+      { shouldContinue: isCurrent },
+    );
+    return toInlineEditOutcome(result);
   }
 
   let heading!: HTMLHeadingElement;
   let activeHeading!: HTMLHeadingElement;
-  let roomNameEditorEl: HTMLDivElement | undefined;
 
   const canManage = () => props.room.viewer?.isFacilitator === true;
 
-  const roomNameField = usePrimitive(inlineEdit, () => ({
+  const roomNameEdit = createInlineEditSession({
     value: () => props.room.name,
-    commit: (text: string) => roomNameSave.commit(text),
+    target: () => props.room.id,
     disabled: () => !canManage(),
-  }));
-  const roomNameEdit = roomNameField.api.edit;
-  const isRenamingRoom = () => roomNameField.present('input');
-  const roomNameSave = createInlineEditSession({
-    target: () => canManage() ? props.room.id : undefined,
-    isEditing: isRenamingRoom,
-    start: (id) => roomNameEdit.start(id),
-    close: () => {
-      roomNameTap.reset();
-      roomNameEdit.cancel();
-    },
     save: saveRoomNameText,
+    fallbackFocus: () => heading?.focus(),
+    acceptsTarget: (target) => !(target instanceof Element && target.closest('button')),
   });
-  const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
-
-  function isRoomNameEditTarget(target: EventTarget | null): boolean {
-    if (!canManage()) return false;
-    return !(target instanceof Element && target.closest('button'));
-  }
-
-  function startRoomRename(): void {
-    roomNameTap.reset();
-    roomNameSave.start();
-  }
-
-  function handleRoomNameDoubleClick(event: MouseEvent): void {
-    if (!isRoomNameEditTarget(event.target)) return;
-    roomNameTap.reset();
-    startRoomRename();
-  }
 
   async function saveRoomNameText(text: string): Promise<InlineEditOutcome> {
     const nextName = text.trim() || POKER_DEFAULT_ROOM_NAME;
     if (nextName === props.room.name) return true;
-    try {
-      const result = await props.onChange({ type: 'rename-room', name: nextName });
-      return result.ok ? true : result.message;
-    } catch {
-      return 'Could not rename the Room. Try again.';
-    }
+    const result = await props.onChange({ type: 'rename-room', name: nextName });
+    return toInlineEditOutcome(result);
   }
-
-  createEffect(isRenamingRoom, (renaming, wasRenaming) => {
-    if (!renaming && wasRenaming && document.activeElement === document.body) {
-      heading?.focus();
-    }
-  });
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
   });
 
-  const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
+  const alertMessage = () => props.error || roomNameEdit.error() || props.claimError || '';
 
   return (
     <main class="poker-workspace" data-deck-type={props.room.deckType}>
       <header class="poker-room-bar">
         <div class="flex min-w-0 flex-wrap items-center gap-2.5 sm:gap-3">
           <Show
-            when={!isRenamingRoom()}
+            when={!roomNameEdit.isEditing()}
             fallback={
-              <div ref={roomNameEditorEl} class="poker-room-title-wrap">
-                <InlineEditorMount bind={(input) => roomNameEdit.bindInput(input)}>
-                  {(ref) => (
-                    <input
-                      ref={ref}
-                      type="text"
-                      aria-label="Room name"
-                      placeholder={POKER_DEFAULT_ROOM_NAME}
-                      maxlength={POKER_ROOM_NAME_LIMIT}
-                      onKeyDown={(event) => {
-                        if (event.isComposing || event.keyCode === 229) return;
-                        if (event.key === 'Escape') {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          roomNameSave.cancel();
-                          return;
-                        }
-                        roomNameEdit.inputKeydown(event);
-                      }}
-                      onFocusOut={(event) => {
-                        if (event.relatedTarget instanceof Node && roomNameEditorEl?.contains(event.relatedTarget)) return;
-                        roomNameEdit.end('focus-out', event);
-                      }}
-                      class="poker-input poker-room-title-input board-focus-ring"
-                    />
-                  )}
-                </InlineEditorMount>
+              <div ref={roomNameEdit.containerRef} class="poker-room-title-wrap">
+                <input
+                  ref={roomNameEdit.inputRef}
+                  type="text"
+                  aria-label="Room name"
+                  placeholder={POKER_DEFAULT_ROOM_NAME}
+                  maxlength={POKER_ROOM_NAME_LIMIT}
+                  {...roomNameEdit.inputProps}
+                  class="poker-input poker-room-title-input board-focus-ring"
+                />
                 <div class="poker-room-title-actions">
                   <Button
                     type="button"
                     aria-label="Save Room name"
                     title="Save Room name"
-                    disabled={roomNameSave.isSaving()}
+                    disabled={roomNameEdit.isSaving() || isBusy()}
                     focusableWhenDisabled
-                    onClick={() => roomNameEdit.end()}
+                    onClick={roomNameEdit.submit}
                     class="poker-inline-action poker-inline-action-save spring-press board-focus-ring"
                   >
                     <LucideIcon icon={Check} class="size-3.5 shrink-0" strokeWidth={2.2} />
@@ -243,7 +144,10 @@ export default function PokerWorkspace(props: {
                     type="button"
                     aria-label="Cancel Room rename"
                     title="Cancel Room rename"
-                    onClick={roomNameSave.cancel}
+                    onClick={() => {
+                      props.onClearError?.();
+                      roomNameEdit.cancel();
+                    }}
                     class="poker-inline-action spring-press board-focus-ring"
                   >
                     <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
@@ -252,13 +156,7 @@ export default function PokerWorkspace(props: {
               </div>
             }
           >
-            <div
-              onDblClick={handleRoomNameDoubleClick}
-              onPointerDown={roomNameTap.onPointerDown}
-              onPointerUp={roomNameTap.onPointerUp}
-              onPointerCancel={roomNameTap.onPointerCancel}
-              class="poker-room-title-wrap"
-            >
+            <div {...roomNameEdit.triggerProps} class="poker-room-title-wrap">
               <h1
                 ref={heading}
                 tabindex={-1}
@@ -276,8 +174,9 @@ export default function PokerWorkspace(props: {
             deck={props.room.deck}
             deckType={props.room.deckType}
             canManage={props.room.viewer?.isFacilitator === true}
-            discardRoundId={deckDiscardRoundId()}
+            busy={isBusy()}
             onChange={props.onChange}
+            onClearError={props.onClearError}
           />
           <p
             class="poker-bar-chip poker-online-pill tabular-nums"
@@ -303,9 +202,9 @@ export default function PokerWorkspace(props: {
               class="poker-icon-btn spring-press board-focus-ring"
               aria-label="Close Room"
               title="Close Room"
-              disabled={closing()}
+              disabled={isBusy()}
               focusableWhenDisabled
-              onClick={() => void closeRoom()}
+              onClick={() => void props.onChange({ type: 'close-room' })}
             >
               <LucideIcon icon={SquareCheck} class="size-4 shrink-0" strokeWidth={1.85} />
             </Button>
@@ -328,6 +227,7 @@ export default function PokerWorkspace(props: {
           canManage={props.room.viewer?.isFacilitator === true}
           deck={props.room.deck}
           round={props.room.round}
+          busy={isBusy()}
           onChange={props.onChange}
         />
 
@@ -377,7 +277,7 @@ export default function PokerWorkspace(props: {
                   <PokerStoryTitleEditor
                     story={story()}
                     canEdit={props.room.viewer?.isFacilitator === true}
-                    discardRoundId={projectedPokerDiscardPrompt('edit-story', true, props.room.round)}
+                    busy={isBusy()}
                     variant="stage"
                     onSave={editActiveStoryTitle}
                     fallbackFocus={() => activeHeading.focus()}
@@ -534,6 +434,7 @@ export default function PokerWorkspace(props: {
                   deck={props.room.deck}
                   participantCount={props.room.participants.length}
                   hasEstimate={activeStory()?.acceptedEstimate !== undefined}
+                  busy={isBusy()}
                   onSkip={() => activeHeading.focus()}
                   canManage={props.room.viewer?.isFacilitator === true}
                   onChange={props.onChange}

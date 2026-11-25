@@ -2,11 +2,11 @@
 
 ## Problem Statement
 
-A Participant or Facilitator can edit text in place across six surfaces: a Room name, a Story title, a Board title, a Column title, a Card, and a Card Group title (plus the Action Item owner field in the Card detail drawer). Today each surface manually stitches together multiple shallow editing helpers, a mount-only wrapper, double-tap handling, and two local reactive effects. Because every surface coordinates keyboard, focus, and async save lifecycles independently, Board surfaces have drifted behind Pointing Poker surfaces—lacking IME composition guards on Enter, container-aware focus-out checks when clicking Save or Cancel, and full in-flight save cancellation on Escape or entity change.
+A Participant or Facilitator can edit text in place across six surfaces: a Room name, a Story title, a Board title, a Column title, a Card, and a Card Group title (plus the Action Item owner field in the Card detail drawer). Issues #100 and #101 introduced a shared inline-edit session helper for target identity, disposal, and serialized async saves on Room name and Story titles, yet even those Pointing Poker surfaces still hand-wire the underlying edit primitive, a mount-only helper, double-tap activation, IME-safe keyboard and Escape handlers, container-aware focus-out checks, and a fallback focus-restoration effect. Meanwhile, none of the four Board editing surfaces or the Action Item owner field use that session module at all, leaving Board surfaces without target-change or disposal invalidation, IME Enter guards, container-aware focus-out, or in-flight save cancellation on Escape.
 
 ## Solution
 
-Deepen the inline-edit session module so a single module owns input binding and cleanup, double-click and double-tap activation, IME-safe keyboard handling, container-aware focus-out, automatic cancellation on permission loss or lock or target change or unmount, stale-save invalidation, and fallback focus restoration. Every Board and Pointing Poker editing surface becomes a thin caller supplying only its current value, target identity, disabled rule, async save handler, and fallback focus target.
+Deepen the existing inline-edit session module so a single module owns edit primitive wiring, input binding and cleanup, double-click and double-tap activation, IME-safe keyboard handling, container-aware focus-out, automatic cancellation on permission loss or lock or target change or unmount, stale-save invalidation, and fallback focus restoration. Migrate all four Board editing surfaces (plus the Action Item owner field) alongside Room name and Story titles so every surface is a thin caller supplying only its current value, target identity, disabled rule, async save handler, and fallback focus target.
 
 ## User Stories
 
@@ -24,14 +24,13 @@ Deepen the inline-edit session module so a single module owns input binding and 
 
 ## Implementation Decisions
 
-- Deepen the shared inline-edit session module to absorb the mount-binding helper, double-tap activation, asynchronous save serialization, and focus-restoration logic; delete the standalone mount-only module once absorbed.
+- Build directly on the inline-edit session seam introduced in #100 and #101 (preserving its target identity tracking, disposal handling, serialized async save attempts, and `isCurrent` rechecks across async confirmations).
+- Deepen that session module to absorb the underlying edit-primitive wiring, the standalone mount-binding helper, double-tap activation, and fallback focus-restoration logic; delete the standalone mount-only module once absorbed.
 - Accept declarative inputs at the session interface: current persisted value, target identity key, disabled/locked predicate, optional double-tap configuration, async save callback returning a typed outcome, and optional fallback focus target.
-- Own IME composition detection on Enter, Escape cancellation, container-aware focus-out detection (ignoring focus transitions that stay inside the editor container), and draft-length/non-empty tracking inside the session module.
-- Track a monotonic session token alongside target identity, disposal state, and disabled state so any late async save resolution, rejection, or focus restoration from an invalidated session is ignored.
-- Serialize commits while a save is in flight so repeated Enter presses or blur-plus-click sequences issue at most one save call.
-- Eliminate the duplicated per-surface reactive effects for focus restoration and mount binding by handling ref attachment/cleanup and transition-end focus restoration inside the session module.
+- Own IME composition detection on Enter, Escape cancellation (with default prevention and propagation stopping), container-aware focus-out detection (ignoring focus transitions that stay inside the editor container), and draft-length/non-empty tracking inside the session module.
+- Eliminate the duplicated per-surface reactive effects for fallback focus restoration and mount binding by handling ref attachment/cleanup and transition-end focus restoration inside the session module.
 - Keep domain-specific rules—such as blank-title normalization, default Room name fallback, Story title validation, and Voting Round discard confirmation—inside each domain caller rather than in the generic session module.
-- Migrate all six primary inline-edit surfaces (Room name, Story title, Board title, Column title, Card text, Card Group title) and align the Action Item owner editor with the same session invalidation seam.
+- Migrate all four Board inline-edit surfaces (Board title, Column title, Card text, Card Group title) and the Action Item owner editor onto the deepened session module, and simplify the Room name and Story title editors to drop their remaining hand-wired primitive, keyboard, focus-out, and focus-fallback glue.
 
 ## Testing Decisions
 
@@ -48,4 +47,4 @@ Deepen the inline-edit session module so a single module owns input binding and 
 
 ## Further Notes
 
-- This spec broadens the scope of the earlier Pointing Poker inline editor session spec to unify all Board and Pointing Poker inline-editing surfaces under one deep module, closing the existing behavioral drift on Board surfaces.
+- Issues #100 and #101 implemented the first stage of session lifetime and save serialization for Pointing Poker Room name and Story title editors (per the narrower Pointing Poker inline editor session spec). This spec completes the deepening by absorbing the remaining per-surface interaction and focus wiring and migrating all Board editing surfaces onto the same seam.

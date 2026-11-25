@@ -7,99 +7,14 @@ import {
 } from '@ui-sdk/solid/dialog';
 import { toast } from '@ui-sdk/solid/toast';
 import { Share2 } from 'lucide';
-import { Show, createMemo, createSignal, createUniqueId } from 'solid-js';
-import { encode } from 'uqr';
+import { Show, createSignal, createUniqueId } from 'solid-js';
 
 import { confirmBoardAction } from '../lib/board-confirm';
 import { getFacilitatorLink, rotateFacilitatorLink } from '../lib/sharing-actions';
 import BoardOverlayHeader from './BoardOverlayHeader';
+import CopyLinkField, { boardSecondaryButton as secondaryButtonClass } from './CopyLinkField';
 import LucideIcon from './LucideIcon';
-
-const buttonClass = [
-  'inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border px-3 py-2 text-sm font-medium',
-  'transition-colors board-focus-ring aria-disabled:cursor-wait aria-disabled:opacity-60',
-];
-const secondaryButtonClass = [buttonClass, 'border-control bg-surface text-text hover:bg-surface-subtle active:bg-surface-subtle'];
-
-function CopyLink(props: { label: string; labelId: string; link: string; primary?: boolean }) {
-  let input!: HTMLInputElement;
-
-  async function copyLink(button: HTMLButtonElement) {
-    button.focus();
-    try {
-      await navigator.clipboard.writeText(props.link);
-      toast.success(`${props.label} copied.`);
-    } catch {
-      if (document.activeElement === button && input.isConnected) {
-        input.focus();
-        toast.info('Copy the selected link manually.');
-      } else {
-        toast.info('Select the link to copy it manually.');
-      }
-    }
-  }
-
-  return (
-    <div>
-      <div class="flex gap-2">
-        <input
-          ref={input}
-          aria-labelledby={props.labelId}
-          class="board-modal-field min-h-11 min-w-0 flex-1 px-3 text-base"
-          type="text"
-          value={props.link}
-          readonly
-          onFocus={(event) => event.currentTarget.select()}
-        />
-        <button
-          type="button"
-          class={[
-            'shrink-0',
-            props.primary
-              ? [buttonClass, 'border-transparent bg-accent text-accent-contrast hover:opacity-90 active:opacity-80']
-              : secondaryButtonClass,
-          ]}
-          aria-label={`Copy ${props.label}`}
-          onClick={(event) => void copyLink(event.currentTarget)}
-        >
-          Copy
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ParticipantQrCode(props: { link: string }) {
-  const qr = createMemo(() => {
-    const { data, size } = encode(props.link, { border: 4, ecc: 'M' });
-    const modules: string[] = [];
-    for (const [y, row] of data.entries()) {
-      for (const [x, dark] of row.entries()) {
-        if (dark) modules.push(`M${x} ${y}h1v1h-1z`);
-      }
-    }
-    return { size, path: modules.join('') };
-  });
-
-  return (
-    <figure class="flex items-center gap-3 rounded-md bg-surface-subtle p-2.5 sm:gap-4">
-      <svg
-        role="img"
-        aria-label="Participant Link QR code"
-        class="aspect-square w-28 max-w-[45%] shrink-0 rounded-sm bg-white sm:w-32"
-        viewBox={`0 0 ${qr().size} ${qr().size}`}
-        shape-rendering="crispEdges"
-      >
-        <rect width="100%" height="100%" fill="white" />
-        <path d={qr().path} fill="black" />
-      </svg>
-      <figcaption class="min-w-0 text-sm text-text-muted">
-        <strong class="block text-base font-semibold text-text">Scan to join</strong>
-        Use your phone camera to open this Board.
-      </figcaption>
-    </figure>
-  );
-}
+import ShareQrCode from './ShareQrCode';
 
 function FacilitatorSharing(props: { boardId: string }) {
   const titleId = createUniqueId();
@@ -162,7 +77,16 @@ function FacilitatorSharing(props: { boardId: string }) {
         </p>
       </div>
       <Show when={link()} keyed>
-        {(currentLink) => <CopyLink label="Co-Facilitator Link" labelId={titleId} link={currentLink} />}
+        {(currentLink) => (
+          <CopyLinkField
+            label="Co-Facilitator Link"
+            labelId={titleId}
+            href={currentLink}
+            buttonLabel="Copy"
+            buttonAriaLabel="Copy Co-Facilitator Link"
+            feedback="toast"
+          />
+        )}
       </Show>
       <div class="flex flex-wrap gap-2">
         <Show when={!link()}>
@@ -234,8 +158,20 @@ export default function ShareBoard(props: {
               <h3 id={participantTitleId} class="text-base font-semibold">Participant Link</h3>
               <p class="text-sm text-text-muted">Anyone with this link can join the Board as a Participant.</p>
             </div>
-            <CopyLink label="Participant Link" labelId={participantTitleId} link={participantLink()} primary />
-            <ParticipantQrCode link={participantLink()} />
+            <CopyLinkField
+              label="Participant Link"
+              labelId={participantTitleId}
+              href={participantLink()}
+              buttonLabel="Copy"
+              buttonAriaLabel="Copy Participant Link"
+              feedback="toast"
+              primary
+            />
+            <ShareQrCode
+              link={participantLink()}
+              label="Participant Link QR code"
+              description="Use your phone camera to open this Board."
+            />
           </section>
           <Show when={props.isFacilitator}>
             <FacilitatorSharing boardId={props.boardId} />

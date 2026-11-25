@@ -14,13 +14,12 @@ import { ChevronDown, Layers } from 'lucide';
 import { For, Show, createSignal, onSettled } from 'solid-js';
 
 import { isSamePokerDeck } from '../../lib/poker-deck-policy';
-import { confirmBoardAction } from '../../lib/board-confirm';
+import type { PokerChangeOptions, PokerChangeOutcome } from '../../lib/poker-controller';
 
 import {
   POKER_DECK_PRESETS,
   type PokerDeckCommand,
   type PokerDeckType,
-  type PokerResult,
 } from '../../lib/poker-types';
 import LucideIcon from '../LucideIcon';
 
@@ -42,17 +41,17 @@ export default function PokerDeckSettings(props: {
   deck: readonly string[];
   deckType: PokerDeckType;
   canManage: boolean;
-  discardRoundId?: string;
-  onChange: (command: PokerDeckCommand) => Promise<PokerResult>;
+  busy?: boolean;
+  onChange: (command: PokerDeckCommand, options?: PokerChangeOptions) => Promise<PokerChangeOutcome>;
+  onClearError?: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
   const [draftType, setDraftType] = createSignal<PokerDeckType>();
   const [draftChoices, setDraftChoices] = createSignal<string>();
-  const [busy, setBusy] = createSignal(false);
-  const [confirming, setConfirming] = createSignal(false);
   const [ready, setReady] = createSignal(false);
   const [fieldError, setFieldError] = createSignal('');
-  const [error, setError] = createSignal('');
+  const isBusy = () => Boolean(props.busy);
+  let pendingConfirm = false;
   const selectedType = () => draftType() ?? props.deckType;
   const customChoices = () => draftChoices() ?? (props.deckType === 'custom' ? props.deck.join('\n') : '');
   const previewDetail = () => {
@@ -67,16 +66,16 @@ export default function PokerDeckSettings(props: {
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
-    if (!nextOpen && !confirming()) {
+    if (!nextOpen && !pendingConfirm) {
       setDraftType(undefined);
       setDraftChoices(undefined);
       setFieldError('');
-      setError('');
+      props.onClearError?.();
     }
   }
 
   async function save() {
-    if (busy() || confirming() || !ready()) return;
+    if (isBusy() || !ready()) return;
     const type = selectedType();
     const choices = type === 'custom' ? parseCustomChoices(customChoices()) : POKER_DECK_PRESETS[type];
     if (isSamePokerDeck(props, type, choices)) {
@@ -87,54 +86,30 @@ export default function PokerDeckSettings(props: {
     }
 
     const deck: PokerDeckCommand['deck'] = type === 'custom' ? { type, choices: [...choices] } : { type };
-    const discardRoundId = props.discardRoundId;
-    if (discardRoundId !== undefined && (type !== 'custom' || (choices.length >= 2 && new Set(choices).size === choices.length))) {
-      setConfirming(true);
-      setOpen(false);
-      try {
-        const confirmed = await confirmBoardAction({
-          title: 'Change Deck and restart voting?',
-          description: 'Changing the Deck discards the current Voting Round and its votes. Existing Accepted Estimates stay as they are.',
-          cancelLabel: 'Keep current Deck',
-          confirmLabel: 'Change Deck & restart',
-          agentConfirm: 'Changes the Deck, discards the current Voting Round and its votes, and keeps existing Accepted Estimates.',
-        });
-        if (!confirmed) {
-          setOpen(true);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      } finally {
-        setConfirming(false);
-      }
-    }
-
-    setBusy(true);
-    setError('');
     setFieldError('');
-    try {
-      const result = await props.onChange({
-        type: 'set-deck',
-        deck,
-        ...(discardRoundId === undefined ? {} : { discardRoundId }),
-      });
-      if (result.ok) {
-        setDraftType(undefined);
-        setDraftChoices(undefined);
-        setOpen(false);
-      } else if (type === 'custom' && result.code === 'INVALID_INPUT') {
-        setFieldError(result.message);
-        setOpen(true);
-        queueMicrotask(() => choicesInput?.focus());
-      } else {
-        setError(result.message);
-        setOpen(true);
-      }
-    } catch {
-      setError('Could not save the Deck. Try again.');
+    const result = await props.onChange(
+      { type: 'set-deck', deck },
+      {
+        onBeforeConfirm: () => {
+          pendingConfirm = true;
+          setOpen(false);
+        },
+        onAfterConfirm: (confirmed) => {
+          pendingConfirm = false;
+          if (!confirmed) setOpen(true);
+        },
+      },
+    );
+    if (result.ok) {
+      setDraftType(undefined);
+      setDraftChoices(undefined);
+      setOpen(false);
+    } else if ('code' in result && type === 'custom' && result.code === 'INVALID_INPUT') {
+      setFieldError(result.message);
       setOpen(true);
-    } finally {
-      setBusy(false);
+      queueMicrotask(() => choicesInput?.focus());
+    } else if (!('reason' in result && (result.reason === 'cancelled' || result.reason === 'busy'))) {
+      setOpen(true);
     }
   }
 
@@ -183,7 +158,7 @@ export default function PokerDeckSettings(props: {
           </p>
           <form
             aria-label="Deck settings"
-            aria-busy={busy() ? 'true' : 'false'}
+            aria-busy={isBusy() ? 'true' : 'false'}
             class="poker-form mt-3 grid gap-3"
             method="post"
             onSubmit={(event) => {
@@ -196,11 +171,11 @@ export default function PokerDeckSettings(props: {
               class="poker-deck-types"
               value={selectedType()}
               disabled={!ready()}
-              readOnly={busy()}
+              readOnly={isBusy()}
               onValueChange={(value) => {
                 setDraftType(deckTypes.find((type) => value === type));
                 setFieldError('');
-                setError('');
+                props.onClearError?.();
               }}
             >
               <For each={deckTypes}>
@@ -226,7 +201,7 @@ export default function PokerDeckSettings(props: {
                     setDraftChoices(value);
                     setFieldError('');
                   }}
-                  readonly={busy() || !ready()}
+                  readonly={isBusy() || !ready()}
                   required
                 />
                 <FieldError match="valueMissing" class="poker-error-text text-xs font-medium">
@@ -241,7 +216,7 @@ export default function PokerDeckSettings(props: {
               <Button
                 class="poker-primary spring-press board-focus-ring"
                 type="submit"
-                disabled={busy() || !ready()}
+                disabled={isBusy() || !ready()}
                 focusableWhenDisabled={ready()}
               >
                 Save Deck
@@ -250,7 +225,6 @@ export default function PokerDeckSettings(props: {
                 Cancel
               </PopoverClose>
             </div>
-            <p role="alert" class={error() ? 'poker-error-text text-xs font-medium' : 'sr-only'}>{error()}</p>
           </form>
         </PopoverContent>
       </Popover>
