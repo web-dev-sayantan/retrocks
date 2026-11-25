@@ -81,6 +81,7 @@ export function TestBoardWorkspace(props: TestBoardWorkspaceProps) {
     lists: {},
     board: resolveBoard,
     commit: () => {},
+    onRejectedDrop: () => {},
   }));
 
   const contextValue: BoardWorkspaceContextValue = {

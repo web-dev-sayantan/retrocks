@@ -1,15 +1,16 @@
-import type { BoardEvent } from './board-types';
+import type { BoardEvent, BoardMutationUpdate } from './board-types';
 
 // Several deltas can share one transaction version. Deliver and apply them together.
 // The mapped type flattens the intersection so wire-schema output stays exactly comparable.
 type SnapshotLiveMessage = Extract<BoardEvent, { type: 'board:snapshot' }> & {
   connectionId?: string;
 };
+type MutationLiveMessage = { type: 'board:mutation' } & BoardMutationUpdate;
 
 export type BoardLiveMessage =
   | { [K in keyof SnapshotLiveMessage]: SnapshotLiveMessage[K] }
   | Extract<BoardEvent, { type: 'board:deleted' | 'presence:count' }>
-  | { type: 'board:mutation'; version: number; events: BoardEvent[] }
+  | { [K in keyof MutationLiveMessage]: MutationLiveMessage[K] }
   | { type: 'heartbeat' };
 
 export const LIVE_CONNECTION_HEADER = 'x-retrocks-live-connection';

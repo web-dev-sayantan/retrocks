@@ -189,6 +189,7 @@ export const BoardLiveMessageSchema = v.variant('type', [
   v.object({
     type: v.literal('board:mutation'),
     version: v.number(),
+    lastActiveAt: v.optional(v.number()),
     events: v.array(BoardEventSchema),
   }),
   v.object({ type: v.literal('heartbeat') }),

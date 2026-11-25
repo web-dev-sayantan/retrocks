@@ -3,7 +3,9 @@ import { provideRequestEvent } from '@solidjs/web/storage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardLiveMessage } from '../../lib/board-live-protocol';
+import { applyBoardMutation } from '../../lib/board-store';
 import type { BoardCommand } from '../../lib/schemas';
+import { parseBoardLiveMessage } from '../../lib/wire-schemas';
 import type { NodeBoardStore } from '../adapters/node/sqlite-board-store';
 import { setBoardStoreForTests } from '../adapters/runtime';
 
@@ -145,6 +147,88 @@ async function setupBoard(options: Record<string, unknown> = {}) {
 }
 
 describe('Unified Board command dispatcher', () => {
+  it('replays HTTP and live updates to the same viewer state as a fresh Board load', async () => {
+    const { board, origin, facilitator, participant, read, dispatch } = await setupBoard({
+      isBlurred: false,
+      voteLimit: 5,
+    });
+    const { handleLiveRequest } = await import('../live-handler');
+    const [firstColumn, secondColumn] = board.columns;
+    let now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const streams: ReturnType<typeof readLiveStream>[] = [];
+
+    try {
+      const viewers = await Promise.all([facilitator, participant].map(async (cookie) => {
+        const stream = readLiveStream(await handleLiveRequest(
+          board.id,
+          new Request(`${origin}/api/boards/${board.id}/live`, { headers: { cookie } }),
+        ));
+        streams.push(stream);
+        const { board: current } = await stream.until('board:snapshot');
+        return { cookie, stream, current };
+      }));
+
+      const change = async (actor: string, command: BoardCommand, elapsed = 1_000) => {
+        now += elapsed;
+        const { result } = await dispatch(actor, command);
+        const snapshot = result.events.find((event) => event.type === 'board:snapshot');
+        const actorBoard = structuredClone(viewers.find((viewer) => viewer.cookie === actor)!.current);
+        if (!snapshot) applyBoardMutation(actorBoard, result);
+
+        await Promise.all(viewers.map(async (viewer) => {
+          const live = snapshot
+            ? await viewer.stream.until('board:snapshot', (message) => message.version === result.version)
+            : await viewer.stream.until('board:mutation', (message) => message.version === result.version);
+          const parsed = parseBoardLiveMessage(JSON.stringify(live));
+          if (parsed.type === 'board:snapshot') viewer.current = parsed.board;
+          else if (parsed.type === 'board:mutation') applyBoardMutation(viewer.current, parsed);
+          else throw new Error('Expected a Board update');
+
+          const fresh = (await read(viewer.cookie)).result;
+          expect(viewer.current).toEqual(fresh);
+          if (viewer.cookie === actor) expect(snapshot?.board ?? actorBoard).toEqual(fresh);
+        }));
+        return result.events;
+      };
+
+      const [first] = await change(participant, {
+        type: 'card:create', columnId: firstColumn.id, content: 'First Card',
+      });
+      const [second] = await change(facilitator, {
+        type: 'card:create', columnId: firstColumn.id, content: 'Second Card',
+      });
+      const [third] = await change(participant, {
+        type: 'card:create', columnId: secondColumn.id, content: 'Card created at the same time',
+      }, 0);
+      const [fourth] = await change(facilitator, {
+        type: 'card:create', columnId: secondColumn.id, content: 'Fourth Card',
+      });
+      if (first.type !== 'card:upserted' || second.type !== 'card:upserted' ||
+          third.type !== 'card:upserted' || fourth.type !== 'card:upserted') {
+        throw new Error('Expected new Cards');
+      }
+
+      const otherGroup = (await change(facilitator, {
+        type: 'group:merge', cardId: third.card.id, targetType: 'card', targetId: fourth.card.id,
+      })).find((event) => event.type === 'group:upserted');
+      if (!otherGroup) throw new Error('Expected a Card Group');
+      const group = (await change(facilitator, {
+        type: 'group:merge', cardId: first.card.id, targetType: 'card', targetId: second.card.id,
+      }, 0)).find((event) => event.type === 'group:upserted');
+      if (!group) throw new Error('Expected a Card Group');
+      await change(facilitator, { type: 'group:move', groupId: otherGroup.group.id, targetColumnId: firstColumn.id });
+      await change(participant, { type: 'vote:change', targetType: 'group', targetId: group.group.id, delta: 1 });
+      await change(participant, { type: 'card:move', cardId: first.card.id, targetColumnId: secondColumn.id });
+      await change(facilitator, { type: 'board:set-private-mode', isBlurred: true });
+      await change(facilitator, { type: 'voting:configure', blindVoting: true });
+      await change(facilitator, { type: 'board:set-private-mode', isBlurred: false });
+    } finally {
+      await Promise.all(streams.map((stream) => stream.close()));
+      clock.mockRestore();
+    }
+  });
+
   it('executes core Board and Card commands through the unified server dispatcher and action entry point', async () => {
     const { board, facilitator, participant, read, dispatch, actionDispatch } =
       await setupBoard({ title: 'Initial Retro' });

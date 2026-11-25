@@ -237,6 +237,11 @@ describe('<CardDetailDrawer />', () => {
     // Start saving Card A's owner, then switch to Card B before it settles
     fireEvent.keyDown(ownerInput, { key: 'Enter' });
     expect(updateActionItem).toHaveBeenCalledWith('card_a', { actionOwner: 'Infra' });
+    flush();
+    const done = getByRole('checkbox', { name: 'Done' });
+    expect(done).toBeEnabled();
+    fireEvent.click(done);
+    expect(updateActionItem).toHaveBeenCalledTimes(1);
 
     setActiveCard(cardB);
     flush();
@@ -249,6 +254,7 @@ describe('<CardDetailDrawer />', () => {
     flush();
     expect(queryByRole('alert')).toBeNull();
     expect(ownerInput).toHaveValue('Security');
+    expect(updateActionItem).toHaveBeenCalledTimes(1);
 
     // Failed save on Card B retains draft + shows alert, and retry succeeds
     fireEvent.input(ownerInput, { target: { value: '  AppSec  ' } });

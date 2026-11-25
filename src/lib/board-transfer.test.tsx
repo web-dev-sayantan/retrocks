@@ -232,6 +232,7 @@ describe('resolveBoardTransferMove', () => {
     const group = makeGroup({ cardIds: ['card_a'] });
     const board = makeBoardView({
       ...unlocked,
+      allowParticipantGroup: true,
       groups: [group],
       cards: [myCard],
     });
@@ -249,6 +250,7 @@ describe('resolveBoardTransferMove', () => {
     const group = makeGroup({ cardIds: ['card_b'] });
     const board = makeBoardView({
       ...unlocked,
+      allowParticipantGroup: true,
       groups: [group],
       cards: [myCard, { ...target, groupId: 'group_1' }],
     });
@@ -321,6 +323,27 @@ describe('resolveBoardTransferMove', () => {
         to: 'on:group:group_1',
       }),
     ).toBeNull();
+  });
+
+  it('rechecks a previously accepted destination against the Board at release', () => {
+    const target = makeCard({ id: 'card_b', isMine: false, columnId: 'col_1' });
+    const board = makeBoardView({
+      ...unlocked,
+      allowParticipantGroup: true,
+      cards: [myCard, target],
+    });
+    const move = { key: 'card:card_a', to: 'col_2' };
+    expect(acceptsBoardDrop(board, move.key, move.to)).toBe(true);
+    expect(resolveBoardTransferMove({ ...board, isLocked: true }, move)).toBeNull();
+    expect(resolveBoardTransferMove({
+      ...board,
+      columns: board.columns.filter((column) => column.id !== move.to),
+    }, move)).toBeNull();
+
+    const group = { key: move.key, to: 'on:card:card_b' };
+    expect(acceptsBoardDrop(board, group.key, group.to)).toBe(true);
+    expect(resolveBoardTransferMove({ ...board, allowParticipantGroup: false }, group)).toBeNull();
+    expect(resolveBoardTransferMove({ ...board, cards: [myCard] }, group)).toBeNull();
   });
 });
 

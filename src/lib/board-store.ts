@@ -1,6 +1,6 @@
 import { reconcile } from 'solid-js';
 
-import type { BoardEvent, BoardViewDTO } from './board-types';
+import type { BoardEvent, BoardMutationUpdate, BoardViewDTO } from './board-types';
 import { cloneCardGroup, cloneCardView } from './board-types';
 
 function adjustColumnCardCount(
@@ -118,7 +118,10 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
         }
         reconcile(cloneCardView(event.card), 'id')(draft.cards[existingIndex]);
       } else {
-        draft.cards.push(cloneCardView(event.card));
+        const card = cloneCardView(event.card);
+        const insertAt = draft.cards.findIndex((item) => item.createdAt < card.createdAt);
+        if (insertAt === -1) draft.cards.push(card);
+        else draft.cards.splice(insertAt, 0, card);
         adjustColumnCardCount(draft, event.card.columnId, 1);
       }
       break;
@@ -146,7 +149,10 @@ export function applyBoardEvent(draft: BoardViewDTO, event: BoardEvent): void {
       if (existingIndex !== -1) {
         reconcile(cloneCardGroup(event.group), 'id')(draft.groups[existingIndex]);
       } else {
-        draft.groups.push(cloneCardGroup(event.group));
+        const group = cloneCardGroup(event.group);
+        const insertAt = draft.groups.findIndex((item) => item.createdAt > group.createdAt);
+        if (insertAt === -1) draft.groups.push(group);
+        else draft.groups.splice(insertAt, 0, group);
       }
       break;
     }
@@ -227,4 +233,13 @@ export function applyBoardEvents(
   for (const event of events) {
     applyBoardEvent(draft, event);
   }
+}
+
+export function applyBoardMutation(
+  draft: BoardViewDTO,
+  { version, lastActiveAt, events }: BoardMutationUpdate,
+): void {
+  applyBoardEvents(draft, events);
+  draft.version = version;
+  if (lastActiveAt !== undefined) draft.lastActiveAt = lastActiveAt;
 }

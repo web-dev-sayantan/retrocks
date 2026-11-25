@@ -297,8 +297,9 @@ it('broadcasts a Facilitator’s timer deadline and server time to Participants'
       timer,
     };
     expect(result.events).toEqual([event]);
+    expect(result.lastActiveAt).toBe(event.serverNow);
     expect(await stream.until('board:mutation')).toEqual({
-      type: 'board:mutation', version: 2, events: [event],
+      type: 'board:mutation', version: 2, lastActiveAt: event.serverNow, events: [event],
     });
 
     await stream.close();

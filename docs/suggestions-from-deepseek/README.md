@@ -1,16 +1,12 @@
 # Suggestions from DeepSeek
 
-Six specs synthesized from the 24 November 2026 architecture review. Each spec is written for an agent to implement without re-deriving the architecture. Nothing in the application was changed for this review.
+Reconciled the six proposals from the 24 November 2026 architecture review against checkout `e8ee04b` on 25 November 2026. Status describes what is present in that checkout.
 
-| # | Spec | Strength | Primary seam |
-|---|------|----------|--------------|
-| 1 | [Pointing Poker command rules](01-poker-command-rules.md) | Strong | One pure command-decision module over a shared Room state |
-| 2 | [Board mutation interface](02-board-command-interface.md) | Strong | One Board command registry and dispatcher |
-| 3 | [Board permission table](03-board-permission-table.md) | Strong | One permission table over authoritative and projected facts |
-| 4 | [Pointing Poker Room session](04-poker-room-session.md) | Worth exploring | One route-level Room session owning lifecycle precedence |
-| 5 | [Live Room protocol](05-live-room-protocol.md) | Worth exploring | One live-room hub and one SSE frame codec over thin runtime adapters |
-| 6 | [Browser history](06-browser-history.md) | Speculative | One local-history factory plus a shared time formatter |
+1. [Pointing Poker command rules](01-poker-command-rules.md) — **Partially implemented.** Discard decisions and Deck equality are shared. Deck input and selected Story transitions still benefit from focused parity work.
+2. [Board command interface](02-board-command-interface.md) — **Command channel implemented.** The server entry point and injected controller dispatcher have shipped. Keep the named workspace methods while they provide behavior callers use.
+3. [Board permission table](03-board-permission-table.md) — **Still open.** The controller has one guard, and SQL still makes independent authoritative decisions. Share rules where both sides can derive equivalent facts.
+4. [Pointing Poker Room session](04-poker-room-session.md) — **Implemented.** The route mounts one lifecycle controller that also coordinates live Room mutations and confirmations.
+5. [Live Room protocol](05-live-room-protocol.md) — **Partially implemented.** Shared client transport and Poker publication have shipped. Start the remaining server work with SSE framing and keep runtime-specific lifecycle contracts.
+6. [Browser history](06-browser-history.md) — **Implemented.** Both histories use the shared storage factory, list, and relative-time formatter.
 
-Recommended order: **1 → 3 → 2 → 4 → 5 → 6**. Specs 2 and 3 can be combined: the permission table becomes the gate column of the Board command registry. Spec 4 can be adopted independently of 1; if both are adopted, the session should consume the shared command rules rather than add a third copy.
-
-All six are marked `ready-for-agent` by intent; this repository stores them as local specs rather than GitHub issues.
+For follow-up implementation, start with [Poker Deck parity](01-poker-command-rules.md) or [Board permission facts](03-board-permission-table.md). Both can land independently. [SSE framing](05-live-room-protocol.md) is a separate, smaller change. The larger registry and cross-runtime hub are deferred pending evidence from those narrower changes.

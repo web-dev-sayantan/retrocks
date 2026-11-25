@@ -102,6 +102,31 @@ afterEach(() => {
 });
 
 describe('createBoardController', () => {
+  it('reports the rejected transfer independently of an earlier successful transfer', async () => {
+    const first = makeCard({ id: 'card_first' });
+    const second = makeCard({ id: 'card_second' });
+    const board = makeBoardView({ cards: [first, second] });
+    const { controller, dispatchCommand } = mountSession(board);
+    const olderResponse = Promise.withResolvers<BoardMutationResponse>();
+    dispatchCommand.mockReturnValueOnce(olderResponse.promise).mockResolvedValueOnce({
+      ok: false,
+      code: 'NOT_FOUND',
+      message: 'The destination Column was removed.',
+    });
+
+    const olderFailure = vi.fn();
+    const older = controller.moveCard(first.id, 'col_2', olderFailure);
+    await expect(controller.moveCard(second.id, 'col_2', controller.reportError)).resolves.toBe(false);
+    flush();
+    expect(controller.errorMessage()).toBe('The destination Column was removed.');
+
+    olderResponse.resolve({ ok: true, version: board.version, events: [] });
+    await expect(older).resolves.toBe(true);
+    flush();
+    expect(olderFailure).not.toHaveBeenCalled();
+    expect(controller.errorMessage()).toBe('The destination Column was removed.');
+  });
+
   it('seeds the store from the route snapshot and reconciles newer snapshots through the prop feed', () => {
     const board = makeBoardView({ title: 'Seed title' });
     const { controller, setBoardProp } = mountSession(board);
@@ -170,6 +195,7 @@ describe('createBoardController', () => {
     connections[0].emit({
       type: 'board:mutation',
       version: 2,
+      lastActiveAt: board.lastActiveAt + 1_000,
       events: [
         { type: 'card:upserted', version: 2, card: { ...card, content: 'Edited live' } },
       ],
@@ -177,11 +203,13 @@ describe('createBoardController', () => {
     flush();
     expect(controller.board()?.version).toBe(2);
     expect(controller.board()?.cards[0]?.content).toBe('Edited live');
+    expect(controller.board()?.lastActiveAt).toBe(board.lastActiveAt + 1_000);
 
     // Duplicate (stale) delivery: ignored, no reconnect.
     connections[0].emit({
       type: 'board:mutation',
       version: 2,
+      lastActiveAt: board.lastActiveAt,
       events: [
         { type: 'card:upserted', version: 2, card: { ...card, content: 'Ignored' } },
       ],
@@ -194,6 +222,7 @@ describe('createBoardController', () => {
     connections[0].emit({
       type: 'board:mutation',
       version: 9,
+      lastActiveAt: board.lastActiveAt + 9_000,
       events: [
         { type: 'card:upserted', version: 9, card: { ...card, content: 'From the gap' } },
       ],
@@ -201,6 +230,7 @@ describe('createBoardController', () => {
     flush();
     expect(controller.board()?.version).toBe(2);
     expect(controller.board()?.cards[0]?.content).toBe('Edited live');
+    expect(controller.board()?.lastActiveAt).toBe(board.lastActiveAt + 1_000);
     expect(connections[0].closed).toBe(true);
     expect(connections).toHaveLength(2);
   });
@@ -542,6 +572,13 @@ describe('createBoardController', () => {
     const board = makeBoardView({ cards: [card] });
     const { controller, dispatchCommand } = mountSession(board);
 
+    dispatchCommand.mockResolvedValueOnce({
+      ok: true,
+      version: 2,
+      lastActiveAt: board.lastActiveAt + 1_000,
+      events: [{ type: 'card:upserted', version: 2, card: { ...card, columnId: 'col_2' } }],
+    });
+
     const moved = await controller.moveCard(card.id, 'col_2');
     flush();
     expect(moved).toBe(true);
@@ -552,6 +589,7 @@ describe('createBoardController', () => {
     });
     expect(controller.board()?.cards[0]?.columnId).toBe('col_2');
     expect(controller.board()?.version).toBe(2);
+    expect(controller.board()?.lastActiveAt).toBe(board.lastActiveAt + 1_000);
 
     const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
     const lockedSession = mountSession(locked).controller;

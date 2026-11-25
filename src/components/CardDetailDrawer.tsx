@@ -22,7 +22,7 @@ import {
   type CardViewDTO,
 } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
-import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
+import { createActionItemFollowUp } from '../lib/action-item-follow-up';
 import {
   canContribute,
   canDeleteComment,
@@ -57,26 +57,23 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const [deletingCommentId, setDeletingCommentId] = createSignal<string | null>(
     null,
   );
-  let ownerInputEl: HTMLInputElement | undefined;
 
   const column = createMemo(
     () => workspace.columns.find((col) => col.id === props.card.columnId) ?? null,
   );
 
-  // The owner input edits in place: unified always-mounted session owns draft, IME,
-  // live sync while idle, and stale-save invalidation on Card switch, close, or lock.
-  const ownerEdit = createInlineEditSession({
-    value: () => props.card.actionOwner,
-    target: () => (props.isOpen && props.card.isActionItem ? props.card.id : undefined),
-    disabled: () => !canEditActionItemFollowUp(workspace, props.card),
-    save: saveActionOwnerText,
-    alwaysMounted: true,
+  const followUp = createActionItemFollowUp({
+    target: () => canEditActionItemFollowUp(workspace, props.card)
+      ? props.card.id
+      : undefined,
+    open: () => props.isOpen,
+    owner: () => props.card.actionOwner,
+    done: () => props.card.actionDone,
+    pending: () => workspace.actions.isActionItemPending(props.card.id),
+    update: (id, patch) => workspace.actions.updateActionItem(id, patch),
+    ownerError: 'Could not update the Action Item. Try again.',
   });
-
-  function bindOwnerInput(el: HTMLInputElement): void {
-    ownerInputEl = el;
-    ownerEdit.inputRef(el);
-  }
+  const { ownerEdit, isSaving: isSavingAction } = followUp;
 
   onSettled(() => () => {
     // An abrupt unmount (Board deleted, Card redacted) drops focus on the body.
@@ -90,9 +87,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
 
-  const isSavingAction = () =>
-    workspace.actions.isActionItemPending(props.card.id) || ownerEdit.isSaving();
-
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
     if (!canEditActionItem(workspace, props.card, patch)) return false;
@@ -105,27 +99,6 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     } catch {
       setActionError('Could not update the Action Item. Try again.');
       return false;
-    }
-  }
-
-  async function saveActionOwnerText(
-    text: string,
-    isCurrent: () => boolean,
-  ): Promise<InlineEditOutcome> {
-    const card = props.card;
-    if (!canEditActionItemFollowUp(workspace, card) || workspace.actions.isActionItemPending(card.id)) {
-      return false;
-    }
-    const trimmed = text.trim();
-    setActionError(null);
-    try {
-      const ok = await workspace.actions.updateActionItem(card.id, { actionOwner: trimmed });
-      if (!isCurrent()) return false;
-      if (ok && ownerInputEl) ownerInputEl.value = trimmed;
-      return ok ? true : 'Could not update the Action Item. Try again.';
-    } catch {
-      if (!isCurrent()) return false;
-      return 'Could not update the Action Item. Try again.';
     }
   }
 
@@ -292,12 +265,11 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                 <label class="flex min-h-11 min-w-11 cursor-pointer items-center gap-2 text-xs text-text">
                   <input
                     type="checkbox"
-                    checked={props.card.actionDone}
-                    disabled={!canEditActionItemFollowUp(workspace, props.card) || isSavingAction()}
-                    onChange={async (event) => {
-                      const checkbox = event.currentTarget;
-                      const ok = await updateAction({ actionDone: checkbox.checked });
-                      if (!ok && checkbox.isConnected) checkbox.checked = props.card.actionDone;
+                    checked={followUp.doneChecked()}
+                    disabled={followUp.doneDisabled()}
+                    onChange={(event) => {
+                      setActionError(null);
+                      void followUp.changeDone(event.currentTarget);
                     }}
                     class="h-4 w-4 cursor-pointer rounded-sm border-border accent-accent disabled:cursor-not-allowed disabled:opacity-50"
                   />
@@ -312,7 +284,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     Owner (optional)
                   </label>
                   <input
-                    ref={bindOwnerInput}
+                    ref={followUp.bindOwnerInput}
                     id={actionOwnerId}
                     type="text"
                     aria-label="Action owner"
@@ -339,6 +311,9 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
               </Show>
               <Show when={isSavingAction()}>
                 <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
+              </Show>
+              <Show when={followUp.doneFailed()}>
+                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">Could not update Done. Try again.</p>
               </Show>
               <Show when={ownerEdit.error() ?? actionError()}>
                 {(message) => (

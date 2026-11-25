@@ -335,6 +335,38 @@ describe('<ActionItemsDrawer />', () => {
     else expect(view.getByRole('alert')).toHaveTextContent('Could not save the owner');
   });
 
+  it('saves a queued Done click for the original Card after the drawer closes', async () => {
+    const board = makeBoard([openItem]);
+    const ownerSave = Promise.withResolvers<boolean>();
+    const update = vi.fn<ActionItemsDrawerProps['onUpdateActionItem']>()
+      .mockReturnValueOnce(ownerSave.promise)
+      .mockResolvedValueOnce(true);
+    const view = render(() => (
+      <ActionItemsDrawer
+        side="right"
+        open={true}
+        board={board}
+        cards={board.cards}
+        isLocked={false}
+        onClose={() => {}}
+        onUpdateActionItem={update}
+      />
+    ));
+    flush();
+    const owner = view.getByLabelText('Owner for Ship the API');
+    owner.focus();
+    fireEvent.input(owner, { target: { value: 'API squad' } });
+    const done = view.getByLabelText('Mark Ship the API as Done');
+    done.focus();
+    flush();
+    fireEvent.click(done);
+    expect(update).toHaveBeenCalledExactlyOnceWith('open', { actionOwner: 'API squad' });
+
+    view.unmount();
+    ownerSave.resolve(true);
+    await waitFor(() => expect(update).toHaveBeenNthCalledWith(2, 'open', { actionDone: true }));
+  });
+
   it('copies the filtered list as a Markdown checklist, focuses the close button, and closes on Escape', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', {

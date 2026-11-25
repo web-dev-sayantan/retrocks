@@ -26,7 +26,7 @@ import {
   DrawerTitle,
 } from '@ui-sdk/solid/drawer';
 import { canEditActionItems } from '../lib/board-permissions';
-import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
+import { createActionItemFollowUp } from '../lib/action-item-follow-up';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
@@ -58,59 +58,20 @@ function ActionItemRow(props: {
   card: CardViewDTO;
   columnTitle: string;
   canEdit: boolean;
+  open: boolean;
   isPending: boolean;
   onUpdate: ActionItemsDrawerProps['onUpdateActionItem'];
 }) {
-  const [doneFailed, setDoneFailed] = createSignal(false);
-  let ownerInputEl: HTMLInputElement | undefined;
-
-  // The owner input edits in place: unified always-mounted session owns draft, IME,
-  // live sync while idle, and stale-save invalidation on Card change or lock.
-  const ownerEdit = createInlineEditSession({
-    value: () => props.card.actionOwner,
-    target: () => props.card.id,
-    disabled: () => !props.canEdit,
-    save: saveOwnerText,
-    alwaysMounted: true,
-  });
-  const isSaving = () => ownerEdit.isSaving() || props.isPending;
-
-  function bindOwnerInput(el: HTMLInputElement): void {
-    ownerInputEl = el;
-    ownerEdit.inputRef(el);
-  }
-
-  async function update(patch: ActionItemPatch): Promise<boolean> {
-    if (!props.canEdit) return false;
-    try {
-      return await props.onUpdate(props.card.id, patch);
-    } catch {
-      return false;
-    }
-  }
-
-  async function saveOwnerText(
-    text: string,
-    isCurrent: () => boolean,
-  ): Promise<InlineEditOutcome> {
-    if (!props.canEdit || props.isPending) return false;
-    const trimmed = text.trim();
-    const ok = await update({ actionOwner: trimmed });
-    if (!isCurrent()) return false;
-    if (ok && ownerInputEl) ownerInputEl.value = trimmed;
-    return ok ? true : 'Could not save the owner. Try again.';
-  }
-
-  async function changeDone(checked: boolean): Promise<boolean> {
-    if (props.isPending) return false;
-    setDoneFailed(false);
-    // A click on Done can start the owner save as the input loses focus.
-    const ownerInFlight = ownerEdit.saving();
-    if (ownerInFlight) await ownerInFlight;
-    const ok = await update({ actionDone: checked });
-    if (!ok) setDoneFailed(true);
-    return ok;
-  }
+  const { ownerEdit, bindOwnerInput, changeDone, isSaving, doneChecked, doneDisabled, doneFailed } =
+    createActionItemFollowUp({
+      target: () => props.canEdit ? props.card.id : undefined,
+      open: () => props.open,
+      owner: () => props.card.actionOwner,
+      done: () => props.card.actionDone,
+      pending: () => props.isPending,
+      update: (id, patch) => props.onUpdate(id, patch),
+      ownerError: 'Could not save the owner. Try again.',
+    });
 
   return (
     <li class="rounded-lg border border-border bg-canvas/60 p-3">
@@ -118,15 +79,10 @@ function ActionItemRow(props: {
         <label class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-sm has-disabled:cursor-not-allowed sm:size-6">
           <input
             type="checkbox"
-            checked={props.card.actionDone}
-            disabled={!props.canEdit || props.isPending}
+            checked={doneChecked()}
+            disabled={doneDisabled()}
             aria-label={`Mark ${props.card.content} as Done`}
-            onChange={async (event) => {
-              const checkbox = event.currentTarget;
-              if (!await changeDone(checkbox.checked) && checkbox.isConnected) {
-                checkbox.checked = props.card.actionDone;
-              }
-            }}
+            onChange={(event) => void changeDone(event.currentTarget)}
             class="size-5 cursor-inherit rounded-sm border-border accent-accent board-focus-ring disabled:opacity-50"
           />
         </label>
@@ -311,6 +267,7 @@ export default function ActionItemsDrawer(props: ActionItemsDrawerProps) {
                     card={card}
                     columnTitle={columnTitles().get(card.columnId) ?? ''}
                     canEdit={canEditActionItems(props.board)}
+                    open={props.open}
                     isPending={props.isActionItemPending?.(card.id) ?? false}
                     onUpdate={props.onUpdateActionItem}
                   />
