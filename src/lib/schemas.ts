@@ -133,14 +133,10 @@ export const RenameBoardInputSchema = v.object({
   ),
 });
 
-export type RenameBoardInput = v.InferInput<typeof RenameBoardInputSchema>;
-
 export const SetPrivateModeInputSchema = v.object({
   boardId: BoardIdSchema,
   isBlurred: v.boolean(),
 });
-
-export type SetPrivateModeInput = v.InferInput<typeof SetPrivateModeInputSchema>;
 
 export const SetBoardLockInputSchema = v.object({
   boardId: BoardIdSchema,
@@ -169,22 +165,16 @@ export const UpdateCardInputSchema = v.object({
   content: CardContentSchema,
 });
 
-export type UpdateCardInput = v.InferInput<typeof UpdateCardInputSchema>;
-
 export const MoveCardInputSchema = v.object({
   boardId: BoardIdSchema,
   cardId: EntityIdSchema,
   targetColumnId: EntityIdSchema,
 });
 
-export type MoveCardInput = v.InferInput<typeof MoveCardInputSchema>;
-
 export const DeleteCardInputSchema = v.object({
   boardId: BoardIdSchema,
   cardId: EntityIdSchema,
 });
-
-export type DeleteCardInput = v.InferInput<typeof DeleteCardInputSchema>;
 
 export const CardGroupTitleSchema = v.pipe(
   v.string(),
@@ -203,33 +193,21 @@ export const GroupCardsInputSchema = v.object({
   targetId: EntityIdSchema,
 });
 
-export type GroupCardsInput = v.InferInput<typeof GroupCardsInputSchema>;
-
 export const RenameCardGroupInputSchema = v.object({
   boardId: BoardIdSchema,
   groupId: EntityIdSchema,
   title: CardGroupTitleSchema,
 });
 
-export type RenameCardGroupInput = v.InferInput<
-  typeof RenameCardGroupInputSchema
->;
-
 export const UngroupCardInputSchema = v.object({
   boardId: BoardIdSchema,
   cardId: EntityIdSchema,
 });
 
-export type UngroupCardInput = v.InferInput<typeof UngroupCardInputSchema>;
-
 export const DissolveCardGroupInputSchema = v.object({
   boardId: BoardIdSchema,
   groupId: EntityIdSchema,
 });
-
-export type DissolveCardGroupInput = v.InferInput<
-  typeof DissolveCardGroupInputSchema
->;
 
 export const MoveCardGroupInputSchema = v.object({
   boardId: BoardIdSchema,
@@ -237,15 +215,11 @@ export const MoveCardGroupInputSchema = v.object({
   targetColumnId: EntityIdSchema,
 });
 
-export type MoveCardGroupInput = v.InferInput<typeof MoveCardGroupInputSchema>;
-
 export const ToggleReactionInputSchema = v.object({
   boardId: BoardIdSchema,
   cardId: EntityIdSchema,
   emoji: v.picklist(REACTION_EMOJIS),
 });
-
-export type ToggleReactionInput = v.InferInput<typeof ToggleReactionInputSchema>;
 
 export const CreateCommentInputSchema = v.object({
   boardId: BoardIdSchema,
@@ -261,15 +235,11 @@ export const CreateCommentInputSchema = v.object({
   ),
 });
 
-export type CreateCommentInput = v.InferInput<typeof CreateCommentInputSchema>;
-
 export const DeleteCommentInputSchema = v.object({
   boardId: BoardIdSchema,
   cardId: EntityIdSchema,
   commentId: EntityIdSchema,
 });
-
-export type DeleteCommentInput = v.InferInput<typeof DeleteCommentInputSchema>;
 
 export const ActionOwnerSchema = v.pipe(
   v.string(),
@@ -297,10 +267,6 @@ export const UpdateActionItemInputSchema = v.pipe(
   ),
 );
 
-export type UpdateActionItemInput = v.InferInput<
-  typeof UpdateActionItemInputSchema
->;
-
 export const AddColumnInputSchema = v.object({
   boardId: BoardIdSchema,
   title: ColumnTitleSchema,
@@ -318,8 +284,6 @@ export const UpdateColumnInputSchema = v.object({
   isActionColumn: v.optional(v.boolean()),
 });
 
-export type UpdateColumnInput = v.InferInput<typeof UpdateColumnInputSchema>;
-
 export const ReorderColumnsInputSchema = v.object({
   boardId: BoardIdSchema,
   columnIds: v.pipe(
@@ -332,16 +296,10 @@ export const ReorderColumnsInputSchema = v.object({
   ),
 });
 
-export type ReorderColumnsInput = v.InferInput<
-  typeof ReorderColumnsInputSchema
->;
-
 export const DeleteColumnInputSchema = v.object({
   boardId: BoardIdSchema,
   columnId: EntityIdSchema,
 });
-
-export type DeleteColumnInput = v.InferInput<typeof DeleteColumnInputSchema>;
 
 const StartTimerSchema = v.object({
   action: v.literal('start'),

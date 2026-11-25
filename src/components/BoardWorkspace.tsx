@@ -43,10 +43,7 @@ import {
   untrack,
 } from 'solid-js';
 
-import {
-  defaultBoardWorkspaceActions,
-  type BoardWorkspaceActions,
-} from '../lib/board-actions';
+import { dispatchBoardCommand } from '../lib/board-actions';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
@@ -54,7 +51,10 @@ import {
   canFacilitate,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { createBoardController } from '../lib/board-controller';
+import {
+  createBoardController,
+  type BoardCommandDispatcher,
+} from '../lib/board-controller';
 import type { LiveTransport } from '../lib/live-stream';
 import {
   buildBoardTransferLists,
@@ -109,7 +109,7 @@ export interface BoardWorkspaceProps {
   board: BoardViewDTO | null;
   boardId: string;
   homeHref?: string;
-  actions?: BoardWorkspaceActions;
+  dispatchCommand?: BoardCommandDispatcher;
   liveTransport?: LiveTransport;
   liveReconnectKey?: number;
 }
@@ -174,7 +174,8 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   // mutation handlers, and pending state; this component keeps layout and UI state.
   const controller = createBoardController({
     board: () => props.board,
-    actions: () => props.actions ?? defaultBoardWorkspaceActions,
+    dispatchCommand: (boardId, command) =>
+      (props.dispatchCommand ?? dispatchBoardCommand)(boardId, command),
     liveTransport: untrack(() => props.liveTransport),
     liveReconnectKey: () => props.liveReconnectKey ?? 0,
     onDramaticReveal: runDramaticReveal,
