@@ -10,20 +10,18 @@ import {
 } from 'solid-js';
 
 import { takeFacilitatorLinkToken } from './facilitator-link';
+import { createLiveStream, type LiveStatus, type LiveTransport } from './live-stream';
 import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
 import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
-import {
-  createPokerLive,
-  type PokerLiveStatus,
-  type PokerLiveTransport,
-} from './poker-live';
 import { pokerRoomPath } from './poker-routes';
+import { parsePokerLiveMessage } from './poker-schemas';
 import type { PokerSharingResult } from './poker-sharing-types';
 import {
   POKER_DECK_PRESETS,
   POKER_DEFAULT_ROOM_NAME,
   unresolvedPokerRoundId,
   type PokerClosedRoomView,
+  type PokerLiveMessage,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -214,7 +212,7 @@ export interface PokerRoomControllerOptions {
   /** Co-Facilitator Link claim adapter; production passes `claimPokerFacilitatorLink`, tests inject a double. */
   claimFacilitatorLink?: (id: string, token: string) => Promise<PokerSharingResult<PokerRoomView>>;
   /** Injectable live transport; defaults to SSE/WebSocket. */
-  liveTransport?: PokerLiveTransport;
+  liveTransport?: LiveTransport;
   /** Injectable URL fragment adapter for `#f=` reading/scrubbing; defaults to browser `window.location`/`history`. */
   fragment?: PokerFragmentAdapter;
   /** Injectable recent-rooms persistence adapter; defaults to `localStorage` helpers. */
@@ -233,7 +231,7 @@ export interface PokerRoomController {
   /** Current closed Room view when in `'closed'` or `'reopening'` phase, otherwise `undefined`. */
   closedRoom(): PokerClosedRoomView | undefined;
   online(): string[];
-  status(): PokerLiveStatus;
+  status(): LiveStatus;
   /** True while a `#f=` Co-Facilitator Link claim is in flight. */
   claimPending(): boolean;
   /** True after a `#f=` Co-Facilitator Link claim succeeded while unjoined (ADR-0001). */
@@ -301,8 +299,8 @@ export function createPokerRoomController(
   const [claimError, setClaimError] = createSignal('');
   const [hasPendingFacilitatorClaim, setHasPendingFacilitatorClaim] = createSignal(false);
   const [hasTransitionedPhase, setHasTransitionedPhase] = createSignal(false);
-  const [live, setLive] = createSignal<ReturnType<typeof createPokerLive> | null>(null);
-  const status = createMemo<PokerLiveStatus>(() => live()?.status() ?? 'connecting');
+  const [live, setLive] = createSignal<ReturnType<typeof createLiveStream> | null>(null);
+  const status = createMemo<LiveStatus>(() => live()?.status() ?? 'connecting');
 
   function applySnapshot(next: PokerRoomView): void {
     if (untrack(unavailable)) return;
@@ -363,18 +361,25 @@ export function createPokerRoomController(
   createEffect(liveRoomId, (activeId) => {
     if (!activeId) return;
     if (typeof window === 'undefined') return;
-    const stream = createPokerLive(
-      activeId,
-      (message) => {
-        if (message.type === 'room:snapshot') {
-          applySnapshot(message.room);
-        } else if (message.type === 'room:presence') {
-          setOnline(message.online);
-        } else if (message.type === 'room:missing') {
-          markUnavailable();
-        }
+    const stream = createLiveStream<PokerLiveMessage>(
+      `/api/poker/${encodeURIComponent(activeId)}/live`,
+      {
+        parse: parsePokerLiveMessage,
+        handshake: (message) => (message.type === 'room:snapshot' ? message : undefined),
+        isTerminal: (message) =>
+          message.type === 'room:missing' ||
+          (message.type === 'room:snapshot' && message.room.closed),
+        onMessage(message) {
+          if (message.type === 'room:snapshot') {
+            applySnapshot(message.room);
+          } else if (message.type === 'room:presence') {
+            setOnline(message.online);
+          } else if (message.type === 'room:missing') {
+            markUnavailable();
+          }
+        },
+        onDisconnect: () => setOnline([]),
       },
-      () => setOnline([]),
       options.liveTransport,
     );
     setLive(stream);

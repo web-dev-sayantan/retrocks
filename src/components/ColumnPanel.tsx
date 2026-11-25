@@ -18,10 +18,7 @@ import {
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
   type ColumnAccent,
-  type ColumnDTO,
 } from '../lib/board-types';
-import type { BoardMutations } from '../lib/board-controller';
-import type { BoardTransferHandle } from '../lib/board-transfer';
 import type { ColumnViewProjection } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { inlineEdit, createInlineEditSave, type InlineEditOutcome } from '../lib/inline-edit';
@@ -31,44 +28,32 @@ import {
   canDeleteColumn as canDeleteColumnPermission,
 } from '../lib/board-permissions';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
-import CardGroupItem from './CardGroupItem';
 import BoardMenuContent from './BoardMenuContent';
+import { useBoardWorkspace } from './BoardWorkspaceContext';
+import CardGroupItem from './CardGroupItem';
 import CardItem from './CardItem';
 import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from '../lib/board-controller';
 
 export interface ColumnPanelProps {
   /** The keyed projection's Column bucket: the Column DTO plus its complete
    *  Card and Card Group lists, the filtered stream, and the counts. */
   view: ColumnViewProjection;
   columnIndex: number;
-  totalColumns: number;
-  columns: readonly ColumnDTO[];
   hasActiveFilter: boolean;
-  voting: WorkspaceVoting;
-  isFacilitator: boolean;
-  isLocked: boolean;
-  isBlurred: boolean;
-  canGroupCards: boolean;
-  nowMs: number;
   isMobile: boolean;
   isMobileActive: boolean;
   isHorizontalSnap: boolean;
-  /** The Board's createTransfer instance; Columns are its drop lists. */
-  transfer: BoardTransferHandle;
-  /** Controller-shaped Board mutations (the workspace passes its session). */
-  actions: BoardMutations;
   onResetFilters: () => void;
   onRegisterComposer?: (
     columnId: string,
     el: HTMLTextAreaElement | null,
   ) => void;
   onActivateColumn?: (columnId: string) => void;
-  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }
 
 export default function ColumnPanel(props: ColumnPanelProps) {
+  const workspace = useBoardWorkspace();
   const [cardDraft, setCardDraft] = createSignal('');
   const [cardError, setCardError] = createSignal<string | null>(null);
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
@@ -77,7 +62,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
 
   createEffect(
-    () => props.isLocked,
+    () => workspace.isLocked,
     (locked) => {
       if (locked) {
         setMenuOpen(false);
@@ -87,15 +72,15 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   );
 
   const canManageColumn = createMemo(
-    () => canControlFacilitation(props),
+    () => canControlFacilitation(workspace),
   );
   const canMoveLeft = createMemo(() => props.columnIndex > 0);
   const canMoveRight = createMemo(
-    () => props.columnIndex < props.totalColumns - 1,
+    () => props.columnIndex < workspace.columns.length - 1,
   );
   const hasHiddenCards = createMemo(() => props.view.cards.some((card) => card.redacted));
   const canDeleteColumn = createMemo(() =>
-    canDeleteColumnPermission(props, props.totalColumns, props.view.cards),
+    canDeleteColumnPermission(workspace, workspace.columns.length, props.view.cards),
   );
 
   // Inline title editing: createInlineEdit owns the session, input, and keyboard contract.
@@ -119,7 +104,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   let composerEl: HTMLTextAreaElement | undefined;
 
-  const contributingColumnId = createMemo(() => canContribute(props) ? props.view.column.id : null);
+  const contributingColumnId = createMemo(() => canContribute(workspace) ? props.view.column.id : null);
   createEffect(contributingColumnId, (columnId) => {
     if (!columnId || !composerEl) return;
     props.onRegisterComposer?.(columnId, composerEl);
@@ -129,14 +114,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   async function submitNewCard(): Promise<void> {
     const draft = composerEl ? composerEl.value : cardDraft();
     const trimmed = draft.trim();
-    if (trimmed.length === 0 || isCreatingCard() || props.isLocked) return;
+    if (trimmed.length === 0 || isCreatingCard() || workspace.isLocked) return;
     if (cardDraft() !== draft) {
       setCardDraft(draft);
     }
     setIsCreatingCard(true);
     setCardError(null);
     try {
-      const error = await props.actions.createCard(props.view.column.id, trimmed);
+      const error = await workspace.actions.createCard(props.view.column.id, trimmed);
       const currentDraft = composerEl ? composerEl.value : cardDraft();
       if (currentDraft === draft) {
         setCardError(error);
@@ -171,18 +156,18 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   async function saveColumnTitle(text: string): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return (await props.actions.updateColumn(props.view.column.id, { title: trimmed }))
+    return (await workspace.actions.updateColumn(props.view.column.id, { title: trimmed }))
       ? true
       : false;
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
     if (accent === props.view.column.accent) return;
-    await props.actions.updateColumn(props.view.column.id, { accent });
+    await workspace.actions.updateColumn(props.view.column.id, { accent });
   }
 
   async function handleReorder(direction: -1 | 1): Promise<void> {
-    await props.actions.moveColumn(props.view.column.id, direction);
+    await workspace.actions.moveColumn(props.view.column.id, direction);
   }
 
   async function requestDeleteColumn(): Promise<void> {
@@ -198,7 +183,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     if (!confirmed) return;
     setIsDeletingColumn(true);
     try {
-      await props.actions.deleteColumn(props.view.column.id);
+      await workspace.actions.deleteColumn(props.view.column.id);
     } finally {
       setIsDeletingColumn(false);
     }
@@ -206,7 +191,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
 
   return (
     <section
-      {...props.transfer.slot('column', () => ({ value: props.view.column.id }))}
+      {...workspace.transfer.slot('column', () => ({ value: props.view.column.id }))}
       id={`column-${props.view.column.id}`}
       role={props.isMobile ? 'tabpanel' : undefined}
       aria-hidden={props.isMobile && !props.isMobileActive ? 'true' : undefined}
@@ -455,7 +440,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </div>
 
-      <Show when={canContribute(props)}>
+      <Show when={canContribute(workspace)}>
         <div data-print-hide="true" class="hidden px-3 pt-3 sm:block">
           <div
             class={[
@@ -518,7 +503,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
         </div>
       </Show>
 
-      <Show when={props.isLocked}>
+      <Show when={workspace.isLocked}>
         <p data-print-hide="true" class="mx-3 mt-3 hidden rounded-md bg-surface/75 px-3 py-2 text-xs text-text-muted sm:block">
           This Board is Locked. You can still read and search Cards.
         </p>

@@ -8,7 +8,7 @@ import {
   type PokerRecentRoomsAdapter,
   type PokerRoomController,
 } from './poker-controller';
-import type { PokerLiveTransport } from './poker-live';
+import type { LiveTransport } from './live-stream';
 import type { PokerSharingResult } from './poker-sharing-types';
 import {
   FIBONACCI_DECK,
@@ -64,11 +64,11 @@ interface FakeConnection {
 }
 
 function createFakeLiveTransport(): {
-  transport: PokerLiveTransport;
+  transport: LiveTransport;
   connections: FakeConnection[];
 } {
   const connections: FakeConnection[] = [];
-  const transport: PokerLiveTransport = {
+  const transport: LiveTransport = {
     connect(path, handlers) {
       const connection: FakeConnection = {
         path,
@@ -313,6 +313,42 @@ describe('createPokerRoomController', () => {
     expect(controller.status()).toBe('reconnecting');
 
     cleanupObservers();
+  });
+
+  it('reconnects after a transport failure and restores live status, snapshot, and presence', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const { controller, connections } = mountSession(makeLiveRoom());
+
+      connections[0].emit({ type: 'room:snapshot', room: makeLiveRoom({ version: 2, name: 'Before drop' }) });
+      connections[0].emit({ type: 'room:presence', online: [ALICE_ID, BOB_ID] });
+      flush();
+      expect(controller.status()).toBe('live');
+      expect(controller.online()).toEqual([ALICE_ID, BOB_ID]);
+
+      connections[0].fail();
+      flush();
+      expect(connections[0].closed).toBe(true);
+      expect(controller.status()).toBe('reconnecting');
+      expect(controller.online()).toEqual([]);
+
+      vi.advanceTimersByTime(500);
+      flush();
+      expect(connections).toHaveLength(2);
+      expect(controller.status()).toBe('connecting');
+
+      connections[1].emit({ type: 'room:snapshot', room: makeLiveRoom({ version: 3, name: 'After reconnect' }) });
+      connections[1].emit({ type: 'room:presence', online: [ALICE_ID] });
+      flush();
+      expect(controller.status()).toBe('live');
+      expect(controller.room()?.name).toBe('After reconnect');
+      expect(controller.room()?.version).toBe(3);
+      expect(controller.online()).toEqual([ALICE_ID]);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 
   it('applies Vote selection and clearing optimistically, commits authoritative state on success, and rolls back automatically on rejection or network error', async () => {

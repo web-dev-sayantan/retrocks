@@ -22,8 +22,6 @@ import {
   MAX_COMMENT_LENGTH,
   type ActionItemPatch,
   type CardViewDTO,
-  type ColumnDTO,
-  type ReactionEmoji,
 } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
@@ -33,37 +31,25 @@ import {
   canEditActionItem,
   canEditActionItemFollowUp,
 } from '../lib/board-permissions';
-import { formatRelativeTime } from '../lib/recent-boards';
+import { formatRelativeTime } from '../lib/relative-time';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardOverlayHeader from './BoardOverlayHeader';
+import { useBoardWorkspace } from './BoardWorkspaceContext';
 import CardReactions from './CardReactions';
 import CardText from './CardText';
 import LucideIcon from './LucideIcon';
 
 export interface CardDetailDrawerProps {
   card: CardViewDTO;
-  column: ColumnDTO | null;
-  isFacilitator: boolean;
-  isLocked: boolean;
-  isBlurred: boolean;
-  nowMs: number;
   isOpen: boolean;
   side: 'bottom' | 'right';
   onClose: () => void;
   onExit: () => void;
   restoreFocusTarget: () => HTMLElement | undefined;
-  onUpdateActionItem: (
-    cardId: string,
-    patch: ActionItemPatch,
-  ) => Promise<boolean>;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
-  onCreateComment: (cardId: string, content: string) => Promise<string | null>;
-  onDeleteComment: (cardId: string, commentId: string) => Promise<string | null>;
-  /** Controller-owned in-flight Action Item patch for a Card (isPending). */
-  isActionItemPending?: (cardId: string) => boolean;
 }
 
 export default function CardDetailDrawer(props: CardDetailDrawerProps) {
+  const workspace = useBoardWorkspace();
   const actionOwnerId = createUniqueId();
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [commentDraft, setCommentDraft] = createSignal('');
@@ -75,13 +61,17 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   );
   let ownerInputEl: HTMLInputElement | undefined;
 
+  const column = createMemo(
+    () => workspace.columns.find((col) => col.id === props.card.columnId) ?? null,
+  );
+
   // The owner input edits in place: createInlineEdit owns the draft-and-save
   // contract, with the edit starting on the first change so an untouched
   // Escape still reaches the drawer.
   const ownerField = usePrimitive(inlineEdit, () => ({
     value: () => props.card.actionOwner,
     commit: (text) => ownerSave.commit(text),
-    disabled: () => !canEditActionItemFollowUp(props, props.card),
+    disabled: () => !canEditActionItemFollowUp(workspace, props.card),
   }));
   const ownerEdit = ownerField.api.edit;
   const ownerSave = createInlineEditSave(saveActionOwnerText, () => ownerEdit.cancel());
@@ -114,14 +104,14 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
 
-  const isSavingAction = () => props.isActionItemPending?.(props.card.id) ?? false;
+  const isSavingAction = () => workspace.actions.isActionItemPending(props.card.id);
 
   async function updateAction(patch: ActionItemPatch): Promise<boolean> {
     if (isSavingAction()) return false;
-    if (!canEditActionItem(props, props.card, patch)) return false;
+    if (!canEditActionItem(workspace, props.card, patch)) return false;
     setActionError(null);
     try {
-      const ok = await props.onUpdateActionItem(props.card.id, patch);
+      const ok = await workspace.actions.updateActionItem(props.card.id, patch);
       if (!ok) setActionError('Could not update the Action Item. Try again.');
       return ok;
     } catch {
@@ -131,7 +121,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   }
 
   async function saveActionOwnerText(text: string): Promise<InlineEditOutcome> {
-    if (!canEditActionItemFollowUp(props, props.card)) return false;
+    if (!canEditActionItemFollowUp(workspace, props.card)) return false;
     const trimmed = text.trim();
     const ok = await updateAction({ actionOwner: trimmed });
     if (ok && ownerInputEl) ownerInputEl.value = trimmed;
@@ -143,7 +133,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     if (
       trimmed.length === 0 ||
       isPosting() ||
-      props.isLocked ||
+      workspace.isLocked ||
       isAtCommentLimit()
     ) {
       return;
@@ -151,7 +141,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     setIsPosting(true);
     setCommentError(null);
     try {
-      const error = await props.onCreateComment(props.card.id, trimmed);
+      const error = await workspace.actions.createComment(props.card.id, trimmed);
       if (error) setCommentError(error);
       else setCommentDraft('');
     } finally {
@@ -182,7 +172,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     setDeletingCommentId(commentId);
     setDeleteCommentError(null);
     try {
-      const error = await props.onDeleteComment(props.card.id, commentId);
+      const error = await workspace.actions.deleteComment(props.card.id, commentId);
       if (error) setDeleteCommentError(error);
     } finally {
       setDeletingCommentId(null);
@@ -219,7 +209,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
           onClose={() => props.onClose()}
         >
           <div class="flex min-w-0 items-center gap-2">
-            <Show when={props.column}>
+            <Show when={column()}>
               {(col) => (
                 <>
                   <span
@@ -258,7 +248,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                 </span>
               </Show>
               <time class="tabular-nums">
-                {formatRelativeTime(props.card.createdAt, props.nowMs)}
+                {formatRelativeTime(props.card.createdAt, workspace.nowMs)}
               </time>
             </div>
 
@@ -266,8 +256,8 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
               cardId={props.card.id}
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
-              disabled={props.isLocked}
-              onToggleReaction={props.onToggleReaction}
+              disabled={workspace.isLocked}
+              onToggleReaction={workspace.actions.toggleReaction}
             />
 
             <div class="space-y-2 rounded-lg border border-border bg-canvas p-3">
@@ -280,7 +270,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     type="checkbox"
                     checked={props.card.isActionItem}
                     disabled={
-                      !canEditActionItem(props, props.card, {
+                      !canEditActionItem(workspace, props.card, {
                         isActionItem: !props.card.isActionItem,
                       }) || isSavingAction()
                     }
@@ -302,7 +292,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                   <input
                     type="checkbox"
                     checked={props.card.actionDone}
-                    disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp(workspace, props.card) || isSavingAction()}
                     onChange={async (event) => {
                       const checkbox = event.currentTarget;
                       const ok = await updateAction({ actionDone: checkbox.checked });
@@ -329,7 +319,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                     // Uncontrolled: seeded on mount and re-synced while idle; typing and saves live in the DOM.
                     defaultValue={props.card.actionOwner}
                     maxlength={MAX_ACTION_OWNER_LENGTH}
-                    disabled={!canEditActionItemFollowUp(props, props.card) || isSavingAction()}
+                    disabled={!canEditActionItemFollowUp(workspace, props.card) || isSavingAction()}
                     onInput={(event) => {
                       if (!ownerEditing() && event.currentTarget.value !== props.card.actionOwner) {
                         ownerEdit.start(props.card.id, { reason: 'type', text: event.currentTarget.value });
@@ -406,11 +396,11 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                             </span>
                           </Show>
                           <time class="tabular-nums">
-                            {formatRelativeTime(comment.createdAt, props.nowMs)}
+                            {formatRelativeTime(comment.createdAt, workspace.nowMs)}
                           </time>
                         </div>
 
-                        <Show when={canDeleteComment(props, comment)}>
+                        <Show when={canDeleteComment(workspace, comment)}>
                           <button
                             type="button"
                             aria-label="Delete"
@@ -443,7 +433,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         </div>
 
         {/* Comment composer footer */}
-        <Show when={canContribute(props)}>
+        <Show when={canContribute(workspace)}>
           <div class="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
             <Show
               when={!isAtCommentLimit()}

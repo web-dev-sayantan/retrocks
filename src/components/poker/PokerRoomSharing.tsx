@@ -7,50 +7,18 @@ import {
   DialogTrigger,
 } from '@ui-sdk/solid/dialog';
 import { Share2 } from 'lucide';
-import { Show, createMemo, createSignal, createUniqueId, onSettled } from 'solid-js';
-import { encode } from 'uqr';
+import { Show, createSignal, createUniqueId, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { pokerRoomPath } from '../../lib/poker-routes';
 import { getPokerFacilitatorLink, replacePokerFacilitatorLink } from '../../lib/poker-sharing-actions';
 import type { PokerFacilitatorLink } from '../../lib/poker-sharing-types';
 import BoardOverlayHeader from '../BoardOverlayHeader';
+import CopyLinkField from '../CopyLinkField';
 import LucideIcon from '../LucideIcon';
-import CopyRoomLink from './CopyRoomLink';
+import ShareQrCode from '../ShareQrCode';
 
 const buttonClass = 'poker-secondary spring-press board-focus-ring aria-disabled:cursor-wait aria-disabled:opacity-65';
-
-function ParticipantQrCode(props: { link: string }) {
-  const qr = createMemo(() => {
-    const { data, size } = encode(props.link, { border: 4, ecc: 'M' });
-    const modules: string[] = [];
-    for (const [y, row] of data.entries()) {
-      for (const [x, dark] of row.entries()) {
-        if (dark) modules.push(`M${x} ${y}h1v1h-1z`);
-      }
-    }
-    return { size, path: modules.join('') };
-  });
-
-  return (
-    <figure class="flex items-center gap-3 rounded-md bg-surface-subtle/75 p-2.5 sm:gap-4">
-      <svg
-        role="img"
-        aria-label="Participant link QR code"
-        class="aspect-square w-24 max-w-[40%] shrink-0 rounded-sm bg-white sm:w-28"
-        viewBox={`0 0 ${qr().size} ${qr().size}`}
-        shape-rendering="crispEdges"
-      >
-        <rect width="100%" height="100%" fill="white" />
-        <path d={qr().path} fill="black" />
-      </svg>
-      <figcaption class="min-w-0 text-xs leading-relaxed text-text-muted">
-        <strong class="block text-sm font-semibold text-text">Scan to join</strong>
-        Use your phone camera to open this Room.
-      </figcaption>
-    </figure>
-  );
-}
 
 function FacilitatorSharing(props: { roomId: string; revision?: number }) {
   const titleId = createUniqueId();
@@ -129,7 +97,7 @@ function FacilitatorSharing(props: { roomId: string; revision?: number }) {
         </Show>
       </div>
       <Show when={visibleLink()} keyed>
-        {(current) => <CopyRoomLink label="Co-Facilitator Link" href={current.href} />}
+        {(current) => <CopyLinkField label="Co-Facilitator Link" href={current.href} variant="poker" />}
       </Show>
       <p role="status" class={status() ? 'text-xs text-text-muted' : 'sr-only'}>{status()}</p>
       <p role="alert" class={error() ? 'poker-error-text text-xs font-medium' : 'sr-only'}>{error()}</p>
@@ -167,9 +135,14 @@ export default function PokerRoomSharing(props: { roomId: string; isFacilitator:
                 Anyone with this link can join the Room with a Display Name.
               </p>
             </div>
-            <CopyRoomLink label="Participant link" href={pokerRoomPath(props.roomId)} primary />
+            <CopyLinkField label="Participant link" href={pokerRoomPath(props.roomId)} primary variant="poker" />
             <Show when={origin()}>
-              <ParticipantQrCode link={participantUrl()} />
+              <ShareQrCode
+                link={participantUrl()}
+                label="Participant link QR code"
+                description="Use your phone camera to open this Room."
+                size="sm"
+              />
             </Show>
           </section>
           <Show when={props.isFacilitator}>

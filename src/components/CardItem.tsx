@@ -22,7 +22,7 @@ import {
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
-import { formatRelativeTime } from '../lib/recent-boards';
+import { formatRelativeTime } from '../lib/relative-time';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import { useBoardWorkspace } from './BoardWorkspaceContext';

@@ -54,7 +54,8 @@ import {
   canFacilitate,
   canManageGrouping,
 } from '../lib/board-permissions';
-import { createBoardController, type BoardLiveTransport } from '../lib/board-controller';
+import { createBoardController } from '../lib/board-controller';
+import type { LiveTransport } from '../lib/live-stream';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -109,7 +110,7 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   actions?: BoardWorkspaceActions;
-  liveTransport?: BoardLiveTransport;
+  liveTransport?: LiveTransport;
   liveReconnectKey?: number;
 }
 
@@ -526,14 +527,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const card = view.cards.find((item) => item.id === id) ?? null;
     if (!card || card.redacted) return null;
     return card;
-  });
-
-  const openDetailColumn = createMemo(() => {
-    const card = openDetailCard();
-    if (!card) return null;
-    return (
-      controller.board()?.columns.find((col) => col.id === card.columnId) ?? null
-    );
   });
 
   createEffect(
@@ -1311,24 +1304,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     <ColumnPanel
                       view={bucket}
                       columnIndex={index()}
-                      totalColumns={view.columns.length}
-                      columns={view.columns}
                       hasActiveFilter={view.hasActiveFilter}
-                      voting={controller.voting()}
-                      isFacilitator={board().isFacilitator}
-                      isLocked={board().isLocked}
-                      isBlurred={board().isBlurred}
-                      canGroupCards={canManageGrouping(board())}
-                      nowMs={controller.nowMs()}
                       isMobile={isMobileBoard()}
                       isMobileActive={resolvedActiveColumnIndex() === index()}
                       isHorizontalSnap={isHorizontalSnap()}
-                      transfer={transfer}
-                      actions={controller}
                       onResetFilters={resetFilters}
                       onRegisterComposer={registerColumnComposer}
                       onActivateColumn={(colId) => setActiveColumnId(colId)}
-                      onOpenCardDetail={handleOpenCardDetail}
                     />
                   )}
                 </For>
@@ -1486,21 +1468,11 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             {(card) => (
               <CardDetailDrawer
                 card={card}
-                column={openDetailColumn()}
-                isFacilitator={board().isFacilitator}
-                isLocked={board().isLocked}
-                isBlurred={board().isBlurred}
-                nowMs={controller.nowMs()}
                 isOpen={isCardDetailOpen()}
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocusTarget={cardDetailFocusTarget}
-                onUpdateActionItem={controller.updateActionItem}
-                onToggleReaction={controller.toggleReaction}
-                onCreateComment={controller.createComment}
-                onDeleteComment={controller.deleteComment}
-                isActionItemPending={controller.isActionItemPending}
               />
             )}
           </Show>
