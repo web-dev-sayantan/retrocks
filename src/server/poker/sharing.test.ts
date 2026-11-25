@@ -2,11 +2,26 @@ import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-beforeEach(() => {
-  vi.stubEnv('SESSION_SECRET', 'poker-sharing-test-secret-at-least-32-characters');
+import type { NodePokerRooms } from './node';
+
+const TEST_SECRET = 'poker-sharing-test-secret-at-least-32-characters';
+let rooms: NodePokerRooms;
+
+beforeEach(async () => {
+  vi.stubEnv('SESSION_SECRET', TEST_SECRET);
+  vi.resetModules();
+  const { openNodePokerRooms } = await import('./node');
+  const { setNodePokerRoomsForTests } = await import('./runtime');
+  rooms = await openNodePokerRooms(':memory:');
+  setNodePokerRoomsForTests(rooms);
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(async () => {
+  const { setNodePokerRoomsForTests } = await import('./runtime');
+  setNodePokerRoomsForTests(null);
+  rooms.close();
+  vi.unstubAllEnvs();
+});
 
 async function runRequest<T>(handler: () => Promise<T>, cookie?: string) {
   const request = new Request('https://retrocks.test/_server', {
@@ -131,4 +146,77 @@ test('replacing a link blocks stale claims and competing replacements while pres
   await expect(runRequest(
     () => claimPokerFacilitatorLinkForRequest(id, tokenFromLink(replacement.value.href)), visitorCookie,
   )).resolves.toMatchObject({ result: { ok: true, value: { viewer: { isFacilitator: true } } } });
+});
+
+test('re-encrypts a Room Co-Facilitator Link on SESSION_SECRET rotation so it survives retiring the old secret', async () => {
+  const { handlePokerLiveRequest } = await import('./service');
+  const { id, creatorCookie, link: before } = await shareRoom();
+
+  const stream = await handlePokerLiveRequest(id, new Request(`https://retrocks.test/api/poker/${id}/live`, {
+    headers: { cookie: creatorCookie },
+  }));
+  expect(stream.status).toBe(200);
+  const reader = stream.body!.getReader();
+  try {
+    await reader.read();
+    await reader.read();
+
+    const rotatedSecret = 'rotated-poker-sharing-secret-at-least-32-characters';
+    vi.stubEnv('SESSION_SECRET', `${rotatedSecret},${TEST_SECRET}`);
+    vi.resetModules();
+    const { setNodePokerRoomsForTests: setRoomsDuringRotation } = await import('./runtime');
+    setRoomsDuringRotation(rooms);
+    const { getPokerFacilitatorLinkForRequest: getLinkDuringRotation } = await import('./sharing');
+
+    const { result: duringRotation, response } = await runRequest(
+      () => getLinkDuringRotation(id),
+      creatorCookie,
+    );
+    expect(duringRotation).toEqual({ ok: true, value: before });
+    expect(response.headers.get('cache-control')).toBe('no-store');
+
+    // Retire the old secret; the link must still decrypt from Room storage.
+    vi.stubEnv('SESSION_SECRET', rotatedSecret);
+    vi.resetModules();
+    const { setNodePokerRoomsForTests: setRoomsAfterRetire } = await import('./runtime');
+    setRoomsAfterRetire(rooms);
+    const {
+      claimPokerFacilitatorLinkForRequest: claimAfterRetire,
+      getPokerFacilitatorLinkForRequest: getLinkAfterRetire,
+    } = await import('./sharing');
+    const { mutatePokerRoomForRequest: mutateAfterRetire } = await import('./service');
+
+    const { result: claimed, cookie: newSessionCookie, response: claimResponse } = await runRequest(
+      () => claimAfterRetire(id, tokenFromLink(before.href)),
+    );
+    expect(claimed).toMatchObject({ ok: true, value: { viewer: null } });
+    expect(claimResponse.headers.get('cache-control')).toBe('no-store');
+    await runRequest(
+      () => mutateAfterRetire(id, { type: 'join', displayName: 'Rotated Facilitator' }),
+      newSessionCookie,
+    );
+
+    const { result: afterRetire, response: retireResponse } = await runRequest(
+      () => getLinkAfterRetire(id),
+      newSessionCookie,
+    );
+    expect(afterRetire).toEqual({ ok: true, value: before });
+    expect(retireResponse.headers.get('cache-control')).toBe('no-store');
+
+    // Confirm invalid/malformed tokens are rejected with Cache-Control: no-store.
+    const { result: malformed, response: malformedResponse } = await runRequest(
+      () => claimAfterRetire(id, 'not-a-valid-token'),
+    );
+    expect(malformed).toMatchObject({ ok: false, code: 'INVALID_LINK' });
+    expect(malformedResponse.headers.get('cache-control')).toBe('no-store');
+
+    // Verify no snapshot was published by rotation re-encryption: the first frame is the
+    // pending claim (version 3) and the second is the join (version 4).
+    const claimFrame = new TextDecoder().decode((await reader.read()).value);
+    expect(claimFrame).toContain('"version":3');
+    const joinFrame = new TextDecoder().decode((await reader.read()).value);
+    expect(joinFrame).toContain('"displayName":"Rotated Facilitator","isFacilitator":true');
+  } finally {
+    await reader.cancel();
+  }
 });
