@@ -78,66 +78,73 @@ export default function PokerSnapshot(props: PokerSnapshotProps) {
       <div class="poker-snap-split flex-1">
         {/* Left Story queue rail */}
         <div class="poker-snap-rail">
-          <div class="flex items-center justify-between gap-2 px-3 pt-2.5 pb-1.5 text-[11px] text-text-muted">
-            <p class="font-semibold">Story queue</p>
-            <span>1 / 3</span>
-          </div>
-
-          <div class="grid gap-1.5 px-2.5 pb-2">
-            <div class="poker-snap-input">Add a Story…</div>
-            <div class="flex gap-1.5">
-              <span class="poker-snap-quick-btn poker-snap-quick-btn-primary">
-                <LucideIcon icon={Plus} class="size-2.5 shrink-0" strokeWidth={2.2} />
-                <span>Queue</span>
-              </span>
-              <span class="poker-snap-quick-btn">
-                <LucideIcon icon={Play} class="size-2.5 shrink-0" strokeWidth={2.1} />
-                <span>Publish</span>
-              </span>
+          <div class="flex items-center justify-between gap-2 px-3 py-2 text-[11px] text-text-muted">
+            <div class="flex min-w-0 items-center gap-1.5">
+              <p class="shrink-0 font-semibold">Story queue</p>
+              <span class="poker-snap-mobile-only shrink-0 text-[10px]">1/3</span>
+              <span class="poker-snap-mobile-only truncate text-[10px] font-normal">{activeStory}</span>
             </div>
+            <span class="poker-snap-desktop-only shrink-0">1 / 3</span>
+            <LucideIcon icon={ChevronDown} class="poker-snap-mobile-only size-3 shrink-0" strokeWidth={2} />
           </div>
 
-          <div class="flex-1 py-0.5">
-            <div class="poker-snap-row">
-              <div class="flex items-center gap-2">
-                <LucideIcon icon={CheckCircle2} class="size-3 shrink-0 text-accent" strokeWidth={2.2} />
-                <p class="min-w-0 flex-1 truncate text-[11px] font-medium text-text-muted">
-                  Export CSV summary
-                </p>
-                <span class="inline-flex shrink-0 items-center gap-1 text-text-muted">
-                  <LucideIcon icon={Lock} class="size-2.5" strokeWidth={2} />
-                  <span class="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-semibold leading-none text-text">
-                    M
+          <div class="poker-snap-queue-body">
+            <div class="grid gap-1.5 px-2.5 pb-2">
+              <div class="poker-snap-input">Add a Story…</div>
+              <div class="flex gap-1.5">
+                <span class="poker-snap-quick-btn poker-snap-quick-btn-primary">
+                  <LucideIcon icon={Plus} class="size-2.5 shrink-0" strokeWidth={2.2} />
+                  <span>Queue</span>
+                </span>
+                <span class="poker-snap-quick-btn">
+                  <LucideIcon icon={Play} class="size-2.5 shrink-0" strokeWidth={2.1} />
+                  <span>Publish</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="flex-1 py-0.5">
+              <div class="poker-snap-row">
+                <div class="flex items-center gap-2">
+                  <LucideIcon icon={CheckCircle2} class="size-3 shrink-0 text-accent" strokeWidth={2.2} />
+                  <p class="min-w-0 flex-1 truncate text-[11px] font-medium text-text-muted">
+                    Export CSV summary
+                  </p>
+                  <span class="inline-flex shrink-0 items-center gap-1 text-text-muted">
+                    <LucideIcon icon={Lock} class="size-2.5" strokeWidth={2} />
+                    <span class="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-semibold leading-none text-text">
+                      M
+                    </span>
                   </span>
-                </span>
+                </div>
               </div>
-            </div>
 
-            <div class="poker-snap-row">
-              <div class="flex items-center gap-2">
-                <LucideIcon icon={Circle} class="size-3 shrink-0 text-text-muted/70" strokeWidth={2} />
-                <p class="min-w-0 flex-1 truncate text-[11px] font-medium text-text-muted">
-                  Filter by owner tag
-                </p>
-                <LucideIcon icon={Lock} class="size-2.5 shrink-0 text-text-muted" strokeWidth={2} />
+              <div class="poker-snap-row">
+                <div class="flex items-center gap-2">
+                  <LucideIcon icon={Circle} class="size-3 shrink-0 text-text-muted/70" strokeWidth={2} />
+                  <p class="min-w-0 flex-1 truncate text-[11px] font-medium text-text-muted">
+                    Filter by owner tag
+                  </p>
+                  <LucideIcon icon={Lock} class="size-2.5 shrink-0 text-text-muted" strokeWidth={2} />
+                </div>
               </div>
-            </div>
 
-            <div class="poker-snap-row poker-snap-row-active">
-              <div class="flex items-center gap-2">
-                <LucideIcon icon={CircleDot} class="size-3 shrink-0 text-accent" strokeWidth={2.2} />
-                <p class="min-w-0 flex-1 truncate text-[11px] font-semibold text-text">
-                  {activeStory}
-                </p>
-              </div>
-              <div class="mt-1.5 flex items-center gap-1.5 text-text-muted">
-                <span class="poker-snap-row-pill">Selected</span>
-                <LucideIcon icon={Lock} class="size-2.5 shrink-0" strokeWidth={2} />
-                <LucideIcon icon={Trash2} class="size-2.5 shrink-0" strokeWidth={2} />
-                <span class="ms-auto inline-flex items-center gap-1">
-                  <LucideIcon icon={ChevronUp} class="size-3 shrink-0" strokeWidth={2} />
-                  <LucideIcon icon={ChevronDown} class="size-3 shrink-0 opacity-45" strokeWidth={2} />
-                </span>
+              <div class="poker-snap-row poker-snap-row-active">
+                <div class="flex items-center gap-2">
+                  <LucideIcon icon={CircleDot} class="size-3 shrink-0 text-accent" strokeWidth={2.2} />
+                  <p class="min-w-0 flex-1 truncate text-[11px] font-semibold text-text">
+                    {activeStory}
+                  </p>
+                </div>
+                <div class="mt-1.5 flex items-center gap-1.5 text-text-muted">
+                  <span class="poker-snap-row-pill">Selected</span>
+                  <LucideIcon icon={Lock} class="size-2.5 shrink-0" strokeWidth={2} />
+                  <LucideIcon icon={Trash2} class="size-2.5 shrink-0" strokeWidth={2} />
+                  <span class="ms-auto inline-flex items-center gap-1">
+                    <LucideIcon icon={ChevronUp} class="size-3 shrink-0" strokeWidth={2} />
+                    <LucideIcon icon={ChevronDown} class="size-3 shrink-0 opacity-45" strokeWidth={2} />
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -145,9 +152,9 @@ export default function PokerSnapshot(props: PokerSnapshotProps) {
 
         {/* Right Voting stage */}
         <div class="poker-snap-stage">
-          <div class="flex flex-col items-center gap-1.5">
+          <div class="flex flex-col items-center gap-1">
             <p class="text-[11px] font-medium text-text-muted">Revealed votes</p>
-            <p class="text-[15px] font-semibold tracking-[-0.025em] text-text text-balance">
+            <p class="text-[14px] font-semibold tracking-[-0.025em] text-text text-balance">
               {activeStory}
             </p>
             <div class="poker-snap-spread">
@@ -161,7 +168,7 @@ export default function PokerSnapshot(props: PokerSnapshotProps) {
             </div>
           </div>
 
-          <div class="flex flex-col items-center gap-2">
+          <div class="flex flex-col items-center gap-1.5">
             <div class="poker-snap-seats">
               <For each={ballots()}>
                 {(ballot) => (
