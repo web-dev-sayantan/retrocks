@@ -6,6 +6,7 @@ import { shortcuts } from '@ui-sdk/solid/shortcuts';
 import { Show, createSignal, flush } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardCommandDispatcher } from '../lib/board-controller';
 import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import { createFakeBoardDispatcher, makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { BoardMutationResponse, BoardViewDTO, CardGroupDTO } from '../lib/board-types';
@@ -32,9 +33,13 @@ function stubRect(el: Element, box: [number, number, number, number]): void {
 }
 
 /** Simulates a complete pointer drag gesture: press, moves, release. */
-function pointerDrag(from: Element, points: { x: number; y: number }[]): void {
+function pointerDrag(
+  from: Element,
+  points: { x: number; y: number }[],
+  release?: { x: number; y: number },
+): void {
   const [start, ...rest] = points;
-  const end = rest.at(-1) ?? start;
+  const end = release ?? rest.at(-1) ?? start;
   const init = (x: number, y: number) => ({
     button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true, pointerId: 7,
     clientX: x, clientY: y,
@@ -851,6 +856,62 @@ describe('<BoardWorkspace />', () => {
     expect(drawer.queryByLabelText('Action owner')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['Card details', true],
+    ['Action Items', true],
+    ['Card details', false],
+  ] as const)('saves the owner before Done in %s (focus moves: %s)', async (drawerName, movesFocus) => {
+    const card = makeCard({
+      id: 'detail_card',
+      content: 'Write the runbook',
+      isActionItem: true,
+    });
+    const board = makeBoardView({ cards: [card] });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const ownerSave = Promise.withResolvers<void>();
+    const dispatch = dispatchCommand.getMockImplementation()!;
+    dispatchCommand.mockImplementationOnce(async (id, command) => {
+      await ownerSave.promise;
+      return dispatch(id, command);
+    });
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+    const isDetail = drawerName === 'Card details';
+    fireEvent.click(view.getByRole('button', { name: isDetail ? 'Open Card details' : 'Action Items 1 open' }));
+    flush();
+    const drawer = within(view.getByRole('dialog', { name: drawerName }));
+    const owner = drawer.getByRole('textbox', { name: isDetail ? 'Action owner' : 'Owner for Write the runbook' });
+    const done = drawer.getByRole('checkbox', { name: isDetail ? 'Done' : 'Mark Write the runbook as Done' });
+    owner.focus();
+    fireEvent.input(owner, { target: { value: '  Platform  ' } });
+    flush();
+    if (movesFocus) {
+      done.focus();
+      flush();
+      expect(dispatchCommand).toHaveBeenCalledTimes(1);
+    }
+    expect(done).toBeEnabled();
+    fireEvent.click(done);
+    flush();
+    expect(done).toBeChecked();
+    expect(done).toBeDisabled();
+    expect(dispatchCommand).toHaveBeenCalledExactlyOnceWith(board.id, {
+      type: 'card:set-action', cardId: card.id, actionOwner: 'Platform',
+    });
+
+    ownerSave.resolve();
+    await waitFor(() => {
+      expect(dispatchCommand).toHaveBeenNthCalledWith(2, board.id, {
+        type: 'card:set-action', cardId: card.id, actionDone: true,
+      });
+      expect(done).toBeEnabled();
+      expect(done).toBeChecked();
+      expect(owner).toHaveValue('Platform');
+    });
+  });
+
   it('renders sticky header, Columns with 3px pastel accent bar and Card count badge, and records Recent Board', () => {
     const board = makeBoardView();
     const { getByRole, getByText } = render(() => (
@@ -1441,6 +1502,127 @@ describe('<BoardWorkspace />', () => {
     ).toBeInTheDocument();
   });
 
+  it.each(['Action Items', 'outside'])('uses the pointer release in %s instead of the previous hover', async (destination) => {
+    const card = makeCard({ content: 'Move to the release point', isMine: true });
+    const board = makeBoardView({ cards: [card] });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const { getByRole } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const source = getByRole('region', { name: 'Went Well' });
+    const previousHover = getByRole('region', { name: 'To Improve' });
+    const nextColumn = getByRole('region', { name: 'Action Items' });
+    const item = within(source).getByText(card.content).closest('article')!;
+    stubRect(source, [0, 0, 300, 600]);
+    stubRect(previousHover, [320, 0, 620, 600]);
+    stubRect(nextColumn, [640, 0, 940, 600]);
+    stubRect(item, [10, 60, 290, 160]);
+
+    pointerDrag(item, [{ x: 50, y: 100 }, { x: 420, y: 100 }], {
+      x: destination === 'outside' ? 1_000 : 740, y: 100,
+    });
+    await flushPromises();
+
+    if (destination === 'outside') {
+      expect(dispatchCommand).not.toHaveBeenCalled();
+    } else {
+      expect(dispatchCommand.mock.calls).toEqual([[board.id, {
+        type: 'card:move', cardId: card.id, targetColumnId: 'col_3',
+      }]]);
+    }
+  });
+
+  it('does not announce a save when a Card is picked up and dropped in place', async () => {
+    vi.useFakeTimers();
+    try {
+      const card = makeCard({ content: 'Stay here', isMine: true });
+      const board = makeBoardView({ cards: [card] });
+      const { dispatchCommand } = createFakeBoardDispatcher(board);
+      const { getByRole } = render(() => (
+        <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+      ));
+      flush();
+      const item = within(getByRole('region', { name: 'Went Well' })).getByText(card.content).closest('article')!;
+      item.focus();
+      fireEvent.keyDown(item, { key: ' ' });
+      fireEvent.keyDown(item, { key: ' ' });
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(dispatchCommand).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '')
+        .not.toContain('Saving move');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a rejected keyboard drop in the Board error banner', async () => {
+    const card = makeCard({ content: 'Move this Card', isMine: true });
+    const board = makeBoardView({ cards: [card] });
+    const dispatchCommand = vi.fn<BoardCommandDispatcher>().mockResolvedValue({
+      ok: false,
+      code: 'NOT_FOUND',
+      message: 'The destination Column was removed.',
+    });
+    const { getByRole } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const source = getByRole('region', { name: 'Went Well' });
+    const item = within(source).getByText(card.content).closest('article')!;
+    item.focus();
+    fireEvent.keyDown(item, { key: ' ' });
+    fireEvent.keyDown(item, { key: 'ArrowRight' });
+    fireEvent.keyDown(item, { key: ' ' });
+    await flushPromises();
+
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'card:move',
+      cardId: card.id,
+      targetColumnId: 'col_2',
+    });
+    expect(getByRole('button', { name: 'Dismiss error' }).closest('[role="alert"]'))
+      .toHaveTextContent('The destination Column was removed.');
+    expect(within(source).getByText(card.content)).toBeInTheDocument();
+  });
+
+  it('reports a failed drop after a different Card has been moved', async () => {
+    const first = makeCard({ id: 'card_first', content: 'First Card', isMine: true });
+    const second = makeCard({ id: 'card_second', content: 'Second Card', isMine: true });
+    const board = makeBoardView({ cards: [first, second] });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    const firstSave = Promise.withResolvers<BoardMutationResponse>();
+    dispatchCommand.mockReturnValueOnce(firstSave.promise);
+    const { getByRole } = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const source = getByRole('region', { name: 'Went Well' });
+    const destination = getByRole('region', { name: 'To Improve' });
+    const firstItem = within(source).getByText(first.content).closest('article')!;
+    const secondItem = within(source).getByText(second.content).closest('article')!;
+    stubRect(source, [0, 0, 300, 600]);
+    stubRect(destination, [320, 0, 620, 600]);
+    stubRect(firstItem, [10, 60, 290, 160]);
+    stubRect(secondItem, [10, 180, 290, 280]);
+
+    pointerDrag(firstItem, [{ x: 50, y: 100 }, { x: 420, y: 100 }]);
+    await waitFor(() => expect(firstItem).not.toHaveAttribute('data-moving'));
+    pointerDrag(secondItem, [{ x: 50, y: 230 }, { x: 420, y: 230 }]);
+    expect(dispatchCommand.mock.calls.map(([, command]) => command)).toEqual([
+      { type: 'card:move', cardId: first.id, targetColumnId: 'col_2' },
+      { type: 'card:move', cardId: second.id, targetColumnId: 'col_2' },
+    ]);
+
+    firstSave.resolve({ ok: false, code: 'FORBIDDEN', message: 'The first Card could not be moved.' });
+    await waitFor(() => expect(getByRole('button', { name: 'Dismiss error' }).closest('[role="alert"]'))
+      .toHaveTextContent('The first Card could not be moved.'));
+  });
+
   it('groups Cards when one is dropped onto another Card or onto a Card Group', async () => {
     const loose = makeCard({
       id: 'card_loose',
@@ -1678,7 +1860,7 @@ describe('<BoardWorkspace />', () => {
     }
   });
 
-  it('moves a focused Card across Columns with the keyboard alone', () => {
+  it('moves a focused Card across Columns with the keyboard alone', async () => {
     vi.useFakeTimers();
     try {
       const mine = makeCard({
@@ -1718,7 +1900,13 @@ describe('<BoardWorkspace />', () => {
     });
       expect(
         document.querySelector('[data-ui-sdk-announcer="assertive"]')?.textContent ?? '',
-      ).toContain('Dropped Keyboard courier in Column To Improve');
+      ).toContain('Saving move of Keyboard courier to Column To Improve');
+      await flushPromises();
+      await vi.advanceTimersByTimeAsync(150);
+      expect(within(getByRole('region', { name: 'To Improve' })).getByText('Keyboard courier')).toBeInTheDocument();
+      expect(
+        document.querySelector('[data-ui-sdk-announcer][role="status"]')?.textContent ?? '',
+      ).toContain('Move saved.');
     } finally {
       vi.useRealTimers();
     }

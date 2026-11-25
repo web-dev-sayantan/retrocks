@@ -246,6 +246,7 @@ export async function executeBoardMutation(
   return {
     ok: true,
     version: outcome.version,
+    lastActiveAt: outcome.lastActiveAt,
     events,
   };
 }

@@ -7,6 +7,7 @@
 import {
   createTransfer,
   definePrimitive,
+  transferMessage,
   type TransferDraft,
   type TransferLists,
 } from '@ui-sdk/core';
@@ -17,7 +18,7 @@ import {
   canManageCard,
   canManageGroup,
   canManageGrouping,
-  isGroupRedacted,
+  canMergeCard,
 } from './board-permissions';
 import type { BoardViewDTO, CardGroupDTO, CardViewDTO } from './board-types';
 import type { BoardViewProjection } from './board-view';
@@ -80,47 +81,51 @@ export function canGrabTransferItem(
   return canManageGroup(board, item.group, board.cards);
 }
 
-/** The one drop-target eligibility rule: can `itemKey` land on `targetKey`? */
+// A home-Column drop is an allowed no-op. An invalid destination is rejected.
+function planBoardDrop(
+  board: BoardViewDTO | null,
+  itemKey: string,
+  targetKey: string,
+): BoardTransferMove | null | false {
+  if (!board || board.isLocked) return false;
+  const item = findTransferTarget(board, itemKey);
+  if (!item) return false;
+
+  const isCardTarget = targetKey.startsWith(BOARD_TARGET_PREFIX);
+  const landing = isCardTarget
+    ? findTransferTarget(board, targetKey.slice(BOARD_TARGET_PREFIX.length))
+    : undefined;
+  if (isCardTarget && (!landing || item.kind !== 'card')) return false;
+  const columnId = landing
+    ? (landing.kind === 'card' ? landing.card : landing.group).columnId
+    : targetKey;
+  if (!board.columns.some((column) => column.id === columnId)) return false;
+
+  if (item.kind === 'group') {
+    if (!canManageGroup(board, item.group, board.cards)) return false;
+    if (columnId === item.group.columnId) return null;
+    return { kind: 'move-group', groupId: item.group.id, targetColumnId: columnId };
+  }
+  if (!landing || columnId !== item.card.columnId) {
+    if (!canManageCard(board, item.card)) return false;
+    if (columnId === item.card.columnId) return null;
+    return { kind: 'move-card', cardId: item.card.id, targetColumnId: columnId };
+  }
+  if (landing.kind === 'group') {
+    if (!canMergeCard(board, item.card.id, 'group', landing.group.id)) return false;
+    return { kind: 'group-with-group', cardId: item.card.id, targetGroupId: landing.group.id };
+  }
+  const target = landing.card;
+  if (!canMergeCard(board, item.card.id, 'card', target.id)) return false;
+  return { kind: 'group-with-card', cardId: item.card.id, targetCardId: target.id };
+}
+
 export function acceptsBoardDrop(
   board: BoardViewDTO | null,
   itemKey: string,
   targetKey: string,
 ): boolean {
-  if (!board || board.isLocked) return false;
-  const item = findTransferTarget(board, itemKey);
-  if (!item) return false;
-
-  const target = parseBoardTargetKey(targetKey);
-  if (!target) {
-    // Bare list key: a Column. Source re-entry stays allowed so a drag can
-    // come home and commit nothing (resolveBoardTransferMove returns null).
-    return item.kind === 'card'
-      ? canManageCard(board, item.card)
-      : canManageGroup(board, item.group, board.cards);
-  }
-  if (item.kind !== 'card') return false; // Card Groups only land on Columns.
-
-  const landing = findTransferTarget(board, `${target.kind}:${target.id}`);
-  if (!landing) return false;
-  const landingColumnId =
-    landing.kind === 'card' ? landing.card.columnId : landing.group.columnId;
-  if (landingColumnId !== item.card.columnId) {
-    // Hovering through another Column's Card or Group means "move to that
-    // Column", exactly like the Column itself.
-    return canManageCard(board, item.card);
-  }
-  if (!canManageGrouping(board)) return false;
-  if (landing.kind === 'card') {
-    return (
-      canInteractWithCard(board, landing.card) &&
-      landing.card.id !== item.card.id &&
-      (landing.card.groupId === null || landing.card.groupId !== item.card.groupId)
-    );
-  }
-  return (
-    !isGroupRedacted(landing.group) &&
-    !landing.group.cardIds.includes(item.card.id)
-  );
+  return planBoardDrop(board, itemKey, targetKey) !== false;
 }
 
 /**
@@ -131,33 +136,7 @@ export function resolveBoardTransferMove(
   board: BoardViewDTO | null,
   move: { key: string; to: string },
 ): BoardTransferMove | null {
-  if (!board) return null;
-  const item = findTransferTarget(board, move.key);
-  if (!item) return null;
-
-  const target = parseBoardTargetKey(move.to);
-  if (!target) {
-    const homeColumn =
-      item.kind === 'card' ? item.card.columnId : item.group.columnId;
-    if (move.to === homeColumn) return null;
-    return item.kind === 'card'
-      ? { kind: 'move-card', cardId: item.card.id, targetColumnId: move.to }
-      : { kind: 'move-group', groupId: item.group.id, targetColumnId: move.to };
-  }
-  if (item.kind !== 'card') return null;
-  const landing = findTransferTarget(board, `${target.kind}:${target.id}`);
-  if (!landing) return null;
-  if (landing.kind === 'card') {
-    return landing.card.columnId === item.card.columnId
-      ? { kind: 'group-with-card', cardId: item.card.id, targetCardId: landing.card.id }
-      : { kind: 'move-card', cardId: item.card.id, targetColumnId: landing.card.columnId };
-  }
-  // Already a member: the drop happened inside its own Group, a plain no-op.
-  return landing.group.columnId === item.card.columnId
-    ? landing.group.cardIds.includes(item.card.id)
-      ? null
-      : { kind: 'group-with-group', cardId: item.card.id, targetGroupId: landing.group.id }
-    : { kind: 'move-card', cardId: item.card.id, targetColumnId: landing.group.columnId };
+  return planBoardDrop(board, move.key, move.to) || null;
 }
 
 /**
@@ -193,6 +172,7 @@ export interface BoardTransferOptions {
   board: () => BoardViewDTO | null;
   /** Receives the resolved mutation for a committed drop. */
   commit: (move: BoardTransferMove) => void;
+  onRejectedDrop: () => void;
 }
 
 interface BoardTransferState {
@@ -238,15 +218,9 @@ function listWith(lists: TransferLists, key: string): string | undefined {
   return Object.keys(lists).find((list) => lists[list]?.includes(key));
 }
 
-/**
- * The Board's one transfer instance: Columns are its lists, Cards and Card
- * Groups its items. Pointer drags, keyboard moves, Escape cancels and
- * screen-reader announcements all come from `createTransfer`; drops commit
- * through `resolveBoardTransferMove` and the caller's mutation seam.
- */
 export const boardTransfer = definePrimitive({
   name: 'board-transfer',
-  options: { lists: 'value', board: 'callback', commit: 'callback' },
+  options: { lists: 'value', board: 'callback', commit: 'callback', onRejectedDrop: 'callback' },
   state: (options: BoardTransferOptions) => ({
     lists: options.lists,
     moving: null as TransferDraft | null,
@@ -254,19 +228,32 @@ export const boardTransfer = definePrimitive({
   sync: (options: BoardTransferOptions) => ({ lists: options.lists }),
   api: (context) => {
     const read = () => context.options();
+    let announcedSave = false;
+    let release: { key: string; list: string } | undefined;
+    let stopTrackingRelease: (() => void) | undefined;
+    context.onDestroy(() => stopTrackingRelease?.());
     const transfer = createTransfer(context, {
       key: 'lists',
       draft: 'moving',
-      set: (lists, details) => {
-        const move = resolveBoardTransferMove(read().board(), details);
+      set: (_lists, details) => {
+        const options = read();
+        const list = release?.key === details.key ? release.list : details.to;
+        const move = planBoardDrop(options.board(), details.key, list);
+        if (move === false) options.onRejectedDrop();
         if (!move) return false;
-        read().commit(move);
+        announcedSave = true;
+        options.commit(move);
         return true;
       },
       accepts: (key, target) => acceptsBoardDrop(read().board(), key, target),
       disabled: (key) => !canGrabTransferItem(read().board(), key),
       label: (key) => transferTargetLabel(read().board(), key),
       listLabel: (list) => boardListLabel(read().board(), list),
+      message: (message) => {
+        if (message.type !== 'drop' || !announcedSave) return transferMessage(message);
+        announcedSave = false;
+        return `Saving move of ${message.label} to ${message.list}.`;
+      },
       order: () => (read().board()?.columns ?? []).map((column) => column.id),
     });
 
@@ -286,8 +273,66 @@ export const boardTransfer = definePrimitive({
       }
       return () => {
         if (zones.get(listKey) === zone) zones.delete(listKey);
-        unbind();
+        zone.unbind();
       };
+    }
+
+    function trackPointerRelease(event: PointerEvent, key: string): void {
+      if (event.button !== 0 || !event.isPrimary || !(event.target instanceof Element)) return;
+      const document = event.target.ownerDocument;
+      stopTrackingRelease?.();
+      function cleanup() {
+        document.removeEventListener('pointerup', finish, true);
+        document.removeEventListener('pointercancel', finish, true);
+        stopTrackingRelease = undefined;
+      }
+      function finish(end: PointerEvent) {
+        if (event.pointerId !== end.pointerId) return;
+        cleanup();
+        const state = context.store.get();
+        if (end.type !== 'pointerup' || !state.moving?.pointer || state.moving.key !== key) return;
+
+        // The SDK can retain the last accepted hover. Check the actual release point.
+        let landing: { key: string; el: HTMLElement } | undefined;
+        for (const [list, { el }] of zones) {
+          if (list === BOARD_TARGET_PREFIX + key || !el.isConnected) continue;
+          const { left, right, top, bottom } = el.getBoundingClientRect();
+          if (end.clientX < left || end.clientX >= right || end.clientY < top || end.clientY >= bottom) continue;
+          if (!landing || landing.el.contains(el)) landing = { key: list, el };
+        }
+        if (!landing) {
+          transfer.cancel();
+          return;
+        }
+        const move = planBoardDrop(read().board(), key, landing.key);
+        if (!move) {
+          transfer.cancel();
+          if (move === false) read().onRejectedDrop();
+          return;
+        }
+        release = { key, list: landing.key };
+        queueMicrotask(() => { release = undefined; });
+        if (listWith(transfer.lists(state), key) !== landing.key) transfer.moveTo(landing.key, 0);
+      }
+      stopTrackingRelease = cleanup;
+      document.addEventListener('pointerup', finish, true);
+      document.addEventListener('pointercancel', finish, true);
+      transfer.pointerdown(event, key);
+    }
+
+    function handleTransferKey(event: KeyboardEvent, key: string): boolean {
+      const draft = context.store.get().moving;
+      if (draft?.key === key && !draft.pointer && (event.key === ' ' || event.key === 'Enter')) {
+        const list = listWith(draft.lists, key);
+        if (list && list !== draft.from && planBoardDrop(read().board(), key, list) === false) {
+          event.preventDefault();
+          event.stopPropagation();
+          transfer.cancel();
+          read().onRejectedDrop();
+          return true;
+        }
+      }
+      return transfer.keydown(event, key);
     }
 
     function overList(state: BoardTransferState, listKey: string): boolean {
@@ -305,6 +350,8 @@ export const boardTransfer = definePrimitive({
     return {
       transfer: {
         ...transfer,
+        keydown: handleTransferKey,
+        pointerdown: trackPointerRelease,
         bindColumn: (el: HTMLElement, columnId: string) => bindZone(el, columnId),
         bindTarget: (el: HTMLElement, itemKey: string) =>
           bindZone(el, BOARD_TARGET_PREFIX + itemKey),

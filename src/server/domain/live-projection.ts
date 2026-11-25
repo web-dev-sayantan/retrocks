@@ -33,6 +33,7 @@ export function projectLivePublication(
   return {
     type: 'board:mutation',
     version: snapshot.board.version,
+    lastActiveAt: snapshot.board.lastActiveAt,
     events: projected,
   };
 }

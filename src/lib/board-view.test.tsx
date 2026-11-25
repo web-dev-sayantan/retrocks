@@ -661,9 +661,9 @@ describe('createBoardProjection (keyed projection)', () => {
     });
     flush();
     expect(read(() => view.columnViews[0].cards.map((card) => card.id))).toEqual([
+      'card_new',
       'card_mine',
       'card_other',
-      'card_new',
     ]);
     expect(read(() => view.columnViews[0].items.map((item) => item.key))).toEqual([
       'card:card_new',

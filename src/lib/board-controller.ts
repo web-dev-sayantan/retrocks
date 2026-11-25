@@ -29,16 +29,17 @@ import {
   canManageCard,
   canManageGroup,
   canManageGrouping,
+  canMergeCard,
   isGroupRedacted,
   passesPrivateMode,
 } from './board-permissions';
-import { applyBoardEvents } from './board-store';
+import { applyBoardMutation } from './board-store';
 import type {
   ActionItemPatch,
   ActionError,
-  BoardEvent,
   BoardMutationResponse,
   BoardMutationSuccess,
+  BoardMutationUpdate,
   BoardViewDTO,
   CardViewDTO,
   ColumnAccent,
@@ -66,21 +67,23 @@ export interface WorkspaceVoting {
   onChange: (targetType: 'card' | 'group', targetId: string, delta: VoteDelta) => void;
 }
 
+type ReportMutationFailure = (message: string) => void;
+
 /** Card, Card Group, and Column mutations the workspace panels call. */
 export interface BoardMutations {
   createCard(columnId: string, content: string): Promise<string | null>;
   updateCard(cardId: string, content: string): Promise<string | null>;
   updateActionItem(cardId: string, patch: ActionItemPatch): Promise<boolean>;
-  moveCard(cardId: string, targetColumnId: string): Promise<boolean>;
+  moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
   deleteCard(cardId: string): Promise<boolean>;
   toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<string | null>;
   createComment(cardId: string, content: string): Promise<string | null>;
   deleteComment(cardId: string, commentId: string): Promise<string | null>;
-  groupCard(cardId: string, targetType: 'card' | 'group', targetId: string): Promise<boolean>;
+  groupCard(cardId: string, targetType: 'card' | 'group', targetId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
   ungroupCard(cardId: string): Promise<boolean>;
   renameCardGroup(groupId: string, title: string): Promise<boolean>;
   dissolveCardGroup(groupId: string): Promise<boolean>;
-  moveCardGroup(groupId: string, targetColumnId: string): Promise<boolean>;
+  moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
   updateColumn(
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
@@ -103,6 +106,7 @@ export interface BoardController extends BoardMutations {
   timerClock(): (ServerClockSample & { boardId: string }) | null;
   voting(): WorkspaceVoting;
   errorMessage(): string | null;
+  reportError(message: string): void;
   clearError(): void;
   isChangingPrivateMode(): boolean;
   isSavingBoardTitle(): boolean;
@@ -163,6 +167,7 @@ type MutationGate =
   | { kind: 'create-comment'; cardId: string }
   | { kind: 'delete-comment'; cardId: string; commentId: string }
   | { kind: 'grouping'; cardIds?: readonly string[]; groupId?: string }
+  | { kind: 'merge-card'; cardId: string; targetType: 'card' | 'group'; targetId: string }
   | { kind: 'vote'; targetType: 'card' | 'group'; targetId: string }
   | { kind: 'add-column' }
   | { kind: 'update-column' }
@@ -218,6 +223,8 @@ function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDen
         ? null
         : deny('This comment can no longer be deleted.');
     }
+    case 'merge-card':
+      return canMergeCard(board, gate.cardId, gate.targetType, gate.targetId) ? null : deny();
     case 'grouping': {
       if (gate.groupId !== undefined) {
         const group = groupById(gate.groupId);
@@ -275,14 +282,15 @@ interface MutationRequest {
   pending?: (board: BoardViewDTO) => void;
   /** Runs after a successful response is known, before its events apply. */
   beforeCommit?: (response: BoardMutationSuccess) => void;
+  preserveError?: boolean;
   send: () => Promise<BoardMutationResponse>;
 }
 
-interface GuardedMutation extends Omit<MutationRequest, 'boardId'> {
+interface GuardedMutation extends Omit<MutationRequest, 'boardId' | 'send' | 'preserveError'> {
   gate: MutationGate;
   failureMessage: string;
-  /** Surface server/network rejections through the global error banner. */
-  reportFailure?: boolean;
+  reportFailure?: true | ReportMutationFailure;
+  send: (boardId: string) => Promise<BoardMutationResponse>;
 }
 
 type MutationOutcome<T> =
@@ -369,7 +377,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     applySnapshot(nextBoard, true);
   }
 
-  function applyVersionedEvents(boardId: string, version: number, events: BoardEvent[]): void {
+  function applyVersionedEvents(boardId: string, update: BoardMutationUpdate): void {
+    const { version, events } = update;
     if (events.some((event) => event.type === 'board:deleted')) {
       if (untrack(() => serverStore.board?.id) === boardId) {
         applySnapshot(null);
@@ -391,8 +400,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
           needsResync = true;
           return;
         }
-        applyBoardEvents(board, events);
-        board.version = version;
+        applyBoardMutation(board, update);
         for (const event of events) {
           if (event.type === 'timer:updated') serverNow = event.serverNow;
         }
@@ -421,7 +429,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
               applyServerSnapshot(message.board, message.serverNow);
               break;
             case 'board:mutation':
-              applyVersionedEvents(boardId, message.version, message.events);
+              applyVersionedEvents(boardId, message);
               break;
             case 'board:deleted':
               applySnapshot(null);
@@ -486,8 +494,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       });
     }
     request.beforeCommit?.(response);
-    setErrorMessage(null);
-    applyVersionedEvents(request.boardId, response.version, response.events);
+    if (!request.preserveError) setErrorMessage(null);
+    applyVersionedEvents(request.boardId, response);
     return response;
   });
 
@@ -498,12 +506,16 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     // Commit caller-owned process flags written in this tick before the action
     // opens; the action's transaction would otherwise hold them until it settles.
     flush();
+    const reportFailure = mutation.reportFailure;
     const board = store.board;
     if (!board) {
-      return { ok: false, reason: 'guard', message: 'This Board is no longer available.' };
+      const message = 'This Board is no longer available.';
+      if (typeof reportFailure === 'function') reportFailure(message);
+      return { ok: false, reason: 'guard', message };
     }
     const denial = authorizeMutation(board, mutation.gate);
     if (denial) {
+      if (typeof reportFailure === 'function') reportFailure(denial.message ?? mutation.failureMessage);
       return { ok: false, reason: 'guard', message: denial.message };
     }
     const boardId = board.id;
@@ -514,13 +526,15 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         optimistic: mutation.optimistic,
         pending: mutation.pending,
         beforeCommit: mutation.beforeCommit,
-        send: mutation.send,
+        preserveError: typeof reportFailure === 'function',
+        send: () => mutation.send(boardId),
       });
       return { ok: true, response, value: select?.(response) };
     } catch (error) {
       const rejection = error instanceof MutationRejected ? error : undefined;
       const message = rejection?.message ?? mutation.failureMessage ?? GENERIC_FAILURE;
-      if (mutation.reportFailure) setErrorMessage(message);
+      if (typeof reportFailure === 'function') reportFailure(message);
+      else if (reportFailure) setErrorMessage(message);
       return {
         ok: false,
         reason: rejection ? 'rejection' : 'network',
@@ -699,14 +713,12 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     return outcome.ok;
   }
 
-  async function moveCard(cardId: string, targetColumnId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
+  async function moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
     const outcome = await runGuardedMutation({
       gate: { kind: 'move-card', cardId },
-      send: () => dispatchCommand(board.id, { type: 'card:move', cardId, targetColumnId }),
+      send: (boardId) => dispatchCommand(boardId, { type: 'card:move', cardId, targetColumnId }),
       failureMessage: 'Could not move the Card. Try again.',
-      reportFailure: true,
+      reportFailure: onFailure ?? true,
     });
     return outcome.ok;
   }
@@ -727,19 +739,13 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     cardId: string,
     targetType: 'card' | 'group',
     targetId: string,
+    onFailure?: ReportMutationFailure,
   ): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: {
-        kind: 'grouping',
-        cardIds: targetType === 'card' ? [cardId, targetId] : [cardId],
-        groupId: targetType === 'group' ? targetId : undefined,
-      },
-      send: () =>
-        dispatchCommand(board.id, { type: 'group:merge', cardId, targetType, targetId }),
+      gate: { kind: 'merge-card', cardId, targetType, targetId },
+      send: (boardId) => dispatchCommand(boardId, { type: 'group:merge', cardId, targetType, targetId }),
       failureMessage: 'Could not group the Card. Try again.',
-      reportFailure: true,
+      reportFailure: onFailure ?? true,
     });
     return outcome.ok;
   }
@@ -780,14 +786,12 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     return outcome.ok;
   }
 
-  async function moveCardGroup(groupId: string, targetColumnId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
+  async function moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
     const outcome = await runGuardedMutation({
       gate: { kind: 'grouping', groupId },
-      send: () => dispatchCommand(board.id, { type: 'group:move', groupId, targetColumnId }),
+      send: (boardId) => dispatchCommand(boardId, { type: 'group:move', groupId, targetColumnId }),
       failureMessage: 'Could not move the Card Group. Try again.',
-      reportFailure: true,
+      reportFailure: onFailure ?? true,
     });
     return outcome.ok;
   }
@@ -1023,6 +1027,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     timerClock,
     voting,
     errorMessage,
+    reportError: (message) => setErrorMessage(message),
     clearError: () => setErrorMessage(null),
     isChangingPrivateMode,
     isSavingBoardTitle,

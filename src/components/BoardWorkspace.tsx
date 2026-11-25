@@ -1,3 +1,4 @@
+import { announce } from '@ui-sdk/core';
 import {
   Dialog,
   DialogBackdrop,
@@ -481,24 +482,45 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     sortMode,
   });
 
-  // One createTransfer instance owns every Card / Card Group move (#52):
-  // Columns are its lists, Cards and Card Groups its items, and drops resolve
-  // through resolveBoardTransferMove onto the controller's existing mutations.
-  const commitTransferMove = (move: BoardTransferMove): void => {
-    if (move.kind === 'move-card') {
-      void controller.moveCard(move.cardId, move.targetColumnId);
-    } else if (move.kind === 'move-group') {
-      void controller.moveCardGroup(move.groupId, move.targetColumnId);
-    } else if (move.kind === 'group-with-card') {
-      void controller.groupCard(move.cardId, 'card', move.targetCardId);
-    } else {
-      void controller.groupCard(move.cardId, 'group', move.targetGroupId);
+  let latestTransfer = 0;
+  const pendingTransfers = new Map<string, number>();
+  onSettled(() => () => {
+    latestTransfer += 1;
+    pendingTransfers.clear();
+  });
+
+  function sendTransferMove(
+    move: BoardTransferMove,
+    onFailure: (message: string) => void,
+  ): Promise<boolean> {
+    switch (move.kind) {
+      case 'move-card': return controller.moveCard(move.cardId, move.targetColumnId, onFailure);
+      case 'move-group': return controller.moveCardGroup(move.groupId, move.targetColumnId, onFailure);
+      case 'group-with-card': return controller.groupCard(move.cardId, 'card', move.targetCardId, onFailure);
+      case 'group-with-group': return controller.groupCard(move.cardId, 'group', move.targetGroupId, onFailure);
     }
-  };
+  }
+
+  async function commitTransferMove(move: BoardTransferMove): Promise<void> {
+    const transferId = ++latestTransfer;
+    const item = move.kind === 'move-group' ? `group:${move.groupId}` : `card:${move.cardId}`;
+    pendingTransfers.set(item, transferId);
+    controller.clearError();
+    const moved = await sendTransferMove(move, (message) => {
+      if (pendingTransfers.get(item) === transferId) controller.reportError(message);
+    });
+    if (pendingTransfers.get(item) === transferId) pendingTransfers.delete(item);
+    if (moved && transferId === latestTransfer) announce('Move saved.');
+  }
+
   const transfer = usePrimitive(boardTransfer, () => ({
     lists: buildBoardTransferLists(view),
     board: () => controller.board(),
-    commit: commitTransferMove,
+    commit: (move) => { void commitTransferMove(move); },
+    onRejectedDrop: () => {
+      latestTransfer += 1;
+      controller.reportError('This move is no longer available. Choose another destination.');
+    },
   }));
 
   const secretSearch = createMemo(() => {

@@ -343,14 +343,14 @@ export class SqlBoardOperations {
 
     const groups = this.sql
       .all<CardGroupDbRow>(
-        'SELECT * FROM card_groups WHERE board_id = ? ORDER BY created_at ASC',
+        'SELECT * FROM card_groups WHERE board_id = ? ORDER BY created_at ASC, rowid ASC',
         boardId,
       )
       .map(mapGroupRow);
 
     const cards = this.sql
       .all<CardDbRow>(
-        'SELECT * FROM cards WHERE board_id = ? ORDER BY created_at DESC',
+        'SELECT * FROM cards WHERE board_id = ? ORDER BY created_at DESC, rowid ASC',
         boardId,
       )
       .map(mapCardRow);

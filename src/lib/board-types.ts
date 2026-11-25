@@ -71,11 +71,13 @@ export type ActionError = {
   message: string;
 };
 
-export type BoardMutationSuccess = {
-  ok: true;
+export type BoardMutationUpdate = {
   version: number;
+  lastActiveAt?: number;
   events: BoardEvent[];
 };
+
+export type BoardMutationSuccess = BoardMutationUpdate & { ok: true };
 
 export type BoardMutationResponse = BoardMutationSuccess | ActionError;
 

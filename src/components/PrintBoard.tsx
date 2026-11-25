@@ -1,8 +1,7 @@
 import { For, Show, createMemo } from 'solid-js';
 
 import {
-  buildBoardExportJson,
-  REDACTED_CARD_PLACEHOLDER,
+  prepareBoardExport,
   type BoardExportJson,
 } from '../lib/board-export';
 import type { BoardViewDTO } from '../lib/board-types';
@@ -47,64 +46,46 @@ function PrintedCard(props: { card: ExportCard; votes?: string }) {
 }
 
 export default function PrintBoard(props: { board: BoardViewDTO }) {
-  const document = createMemo(() => {
-    const snapshot = buildBoardExportJson(props.board);
-    const cardsByColumn = Map.groupBy(snapshot.cards, (card) => card.columnId);
-    const cardsByGroup = Map.groupBy(snapshot.cards, (card) => card.groupId);
-    const groupsByColumn = Map.groupBy(snapshot.groups, (group) => group.columnId);
-
-    return {
-      columns: snapshot.columns.map((column) => ({
-        ...column,
-        cards: (cardsByColumn.get(column.id) ?? []).filter((card) => card.groupId === null),
-        groups: (groupsByColumn.get(column.id) ?? []).flatMap((group) => {
-          const cards = cardsByGroup.get(group.id);
-          return cards?.length ? [{ ...group, cards }] : [];
-        }),
-      })),
-      ownCardVotes: new Map(props.board.cards.map((card) => [card.id, card.myVotes])),
-      ownGroupVotes: new Map(props.board.groups.map((group) => [group.id, group.myVotes])),
-    };
-  });
+  const document = createMemo(() => prepareBoardExport(props.board));
 
   const boardStates = createMemo(() => [
-    props.board.isLocked ? 'Locked' : '',
-    props.board.isBlurred ? 'Private Mode' : '',
-    props.board.blindVoting ? 'Blind Voting' : '',
+    document().board.isLocked ? 'Locked' : '',
+    document().board.isBlurred ? 'Private Mode' : '',
+    document().board.blindVoting ? 'Blind Voting' : '',
   ].filter(Boolean).join(' · '));
 
   return (
     <article aria-label="Printable Board" class="board-print">
-      <h1>{props.board.title}</h1>
-      <Show when={props.board.subtitle.trim()}>
-        <p class="board-print-content">{props.board.subtitle}</p>
+      <h1>{document().board.title}</h1>
+      <Show when={document().board.subtitle.trim()}>
+        <p class="board-print-content">{document().board.subtitle}</p>
       </Show>
       <Show when={boardStates()}>
         <p class="board-print-meta">{boardStates()}</p>
       </Show>
       <For each={document().columns}>
-        {(column) => (
+        {({ column, groups, cards }) => (
           <section>
             <h2>{column.title}</h2>
-            <Show when={column.groups.length || column.cards.length} fallback={<p>No Cards</p>}>
-              <For each={column.groups}>
-                {(group) => (
+            <Show when={groups.length || cards.length} fallback={<p>No Cards</p>}>
+              <For each={groups}>
+                {({ group, heading, cards: members }) => (
                   <div>
-                    <h3>{group.redacted ? REDACTED_CARD_PLACEHOLDER : group.title.trim() || 'Card Group'}</h3>
+                    <h3>{heading}</h3>
                     <Show when={!group.redacted && voteSummary(group.votes, document().ownGroupVotes.get(group.id) ?? 0)}>
                       {(votes) => <p class="board-print-meta">{votes()}</p>}
                     </Show>
                     <ul>
-                      <For each={group.cards}>
+                      <For each={members}>
                         {(card) => <PrintedCard card={card} />}
                       </For>
                     </ul>
                   </div>
                 )}
               </For>
-              <Show when={column.cards.length > 0}>
+              <Show when={cards.length > 0}>
                 <ul>
-                  <For each={column.cards}>
+                  <For each={cards}>
                     {(card) => (
                       <PrintedCard
                         card={card}

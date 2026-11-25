@@ -116,6 +116,28 @@ export function canManageGroup(
   return canManageGrouping(board) && !group.redacted && areAllGroupCardsMine(board, group, cards);
 }
 
+export function canMergeCard(
+  board: BoardViewDTO,
+  cardId: string,
+  targetType: 'card' | 'group',
+  targetId: string,
+): boolean {
+  if (!canManageGrouping(board)) return false;
+  const card = board.cards.find((item) => item.id === cardId);
+  if (!card || !canInteractWithCard(board, card) || !passesPrivateMode(board, card)) return false;
+
+  const target = targetType === 'card' ? board.cards.find((item) => item.id === targetId) : undefined;
+  if (targetType === 'card' &&
+      (!target || target.id === cardId || target.columnId !== card.columnId ||
+        !canInteractWithCard(board, target) || !passesPrivateMode(board, target))) return false;
+
+  const groupId = targetType === 'group' ? targetId : target?.groupId;
+  if (groupId == null) return true;
+  const group = board.groups.find((item) => item.id === groupId);
+  return group !== undefined && group.columnId === card.columnId &&
+    !group.cardIds.includes(cardId) && canManageGroup(board, group, board.cards);
+}
+
 // Projected group privacy: the projection (projection.ts) redacts groups holding
 // other participants' Cards while Private Mode is active.
 export function isGroupRedacted(group: Pick<CardGroupDTO, 'redacted'>): boolean {
