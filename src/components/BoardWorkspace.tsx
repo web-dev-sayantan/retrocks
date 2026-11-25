@@ -529,14 +529,6 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     return card;
   });
 
-  const openDetailColumn = createMemo(() => {
-    const card = openDetailCard();
-    if (!card) return null;
-    return (
-      controller.board()?.columns.find((col) => col.id === card.columnId) ?? null
-    );
-  });
-
   createEffect(
     () => ({ id: openCardDetailId(), card: openDetailCard() }),
     ({ id, card }) => {
@@ -1312,24 +1304,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                     <ColumnPanel
                       view={bucket}
                       columnIndex={index()}
-                      totalColumns={view.columns.length}
-                      columns={view.columns}
                       hasActiveFilter={view.hasActiveFilter}
-                      voting={controller.voting()}
-                      isFacilitator={board().isFacilitator}
-                      isLocked={board().isLocked}
-                      isBlurred={board().isBlurred}
-                      canGroupCards={canManageGrouping(board())}
-                      nowMs={controller.nowMs()}
                       isMobile={isMobileBoard()}
                       isMobileActive={resolvedActiveColumnIndex() === index()}
                       isHorizontalSnap={isHorizontalSnap()}
-                      transfer={transfer}
-                      actions={controller}
                       onResetFilters={resetFilters}
                       onRegisterComposer={registerColumnComposer}
                       onActivateColumn={(colId) => setActiveColumnId(colId)}
-                      onOpenCardDetail={handleOpenCardDetail}
                     />
                   )}
                 </For>
@@ -1487,21 +1468,11 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             {(card) => (
               <CardDetailDrawer
                 card={card}
-                column={openDetailColumn()}
-                isFacilitator={board().isFacilitator}
-                isLocked={board().isLocked}
-                isBlurred={board().isBlurred}
-                nowMs={controller.nowMs()}
                 isOpen={isCardDetailOpen()}
                 side={isMobileBoard() ? 'bottom' : 'right'}
                 onClose={() => setIsCardDetailOpen(false)}
                 onExit={() => setOpenCardDetailId(null)}
                 restoreFocusTarget={cardDetailFocusTarget}
-                onUpdateActionItem={controller.updateActionItem}
-                onToggleReaction={controller.toggleReaction}
-                onCreateComment={controller.createComment}
-                onDeleteComment={controller.deleteComment}
-                isActionItemPending={controller.isActionItemPending}
               />
             )}
           </Show>
