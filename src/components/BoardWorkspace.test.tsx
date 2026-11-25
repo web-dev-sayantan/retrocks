@@ -5475,4 +5475,69 @@ describe('<BoardWorkspace />', () => {
     expect(view.queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
     expect(within(article).getByRole('button', { name: 'Card actions' })).toHaveFocus();
   });
+
+  it('guards Board title inline editing against IME Enter, container focus-out, Escape in-flight cancel, retains draft on failure, and restores focus', async () => {
+    const board = makeBoardView({ title: 'Sprint 42 Retro', isFacilitator: true });
+    const pending = Promise.withResolvers<boolean>();
+    const { actions, spies } = createFakeActions(board);
+    let call = 0;
+    const baseRename = actions.renameBoard;
+    actions.renameBoard = vi.fn(async (input) => {
+      call += 1;
+      if (call === 1) {
+        const ok = await pending.promise;
+        return ok ? baseRename(input) : { ok: false as const, code: 'VALIDATION_ERROR' as const, message: 'Could not rename Board.' };
+      }
+      if (call === 2) return { ok: false as const, code: 'VALIDATION_ERROR' as const, message: 'Could not rename Board.' };
+      return baseRename(input);
+    });
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} homeHref="/" actions={actions} />
+    ));
+    flush();
+
+    fireEvent.dblClick(view.getByRole('heading', { level: 1, name: 'Sprint 42 Retro' }));
+    flush();
+    const input = view.getByRole('textbox', { name: 'Board title' });
+    expect(input).toHaveFocus();
+    fireEvent.input(input, { target: { value: 'Q1 Planning' } });
+
+    // IME Enter is ignored
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+    flush();
+    expect(actions.renameBoard).not.toHaveBeenCalled();
+
+    // Focus-out into Cancel button inside container does not commit
+    const cancelBtn = view.getByRole('button', { name: 'Cancel Board rename' });
+    fireEvent.focusOut(input, { relatedTarget: cancelBtn });
+    flush();
+    expect(actions.renameBoard).not.toHaveBeenCalled();
+
+    // Escape during in-flight save cancels even when the slow request fails, and restores focus to Rename Board button
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(actions.renameBoard).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    pending.resolve(false);
+    await pending.promise;
+    await flushPromises();
+    expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+    expect(view.getByRole('button', { name: 'Rename Board' })).toHaveFocus();
+
+    // Failed save retains draft and retry succeeds
+    fireEvent.click(view.getByRole('button', { name: 'Rename Board' }));
+    flush();
+    const retryInput = view.getByRole('textbox', { name: 'Board title' });
+    fireEvent.input(retryInput, { target: { value: 'Q2 Retro' } });
+    fireEvent.click(view.getByRole('button', { name: 'Save Board title' }));
+    await flushPromises();
+    expect(retryInput).toHaveValue('Q2 Retro');
+
+    fireEvent.click(view.getByRole('button', { name: 'Save Board title' }));
+    await flushPromises();
+    expect(spies.renameBoard).toHaveBeenCalledWith({ boardId: board.id, title: 'Q2 Retro' });
+    expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
+    expect(view.getByRole('heading', { level: 1, name: 'Q2 Retro' })).toBeInTheDocument();
+  });
 });

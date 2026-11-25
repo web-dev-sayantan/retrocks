@@ -206,4 +206,85 @@ describe('<ColumnPanel />', () => {
     expect(queryByRole('button', { name: 'Cast Vote' })).not.toBeInTheDocument();
     expect(container.querySelector('section[data-column-id="col_1"]')).toBe(section);
   });
+
+  it('guards inline Column title rename against IME Enter, container focus-out, Escape in-flight cancel, Locked invalidation, and retains draft on failure', async () => {
+    const board = makeBoardView({ isFacilitator: true });
+    const view = makeColumnView(board.columns[0], []);
+    const [isLocked, setIsLocked] = createSignal(false);
+    const pending = Promise.withResolvers<boolean>();
+    const updateColumn = vi
+      .fn<() => Promise<boolean>>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const actions = createTestBoardMutations({ updateColumn });
+
+    const { getByRole, queryByRole } = render(() => (
+      <TestBoardWorkspace board={board} isLocked={isLocked} actions={actions}>
+        <ColumnPanel
+          view={view}
+          columnIndex={0}
+          hasActiveFilter={false}
+          isMobile={false}
+          isMobileActive={true}
+          isHorizontalSnap={false}
+          onResetFilters={() => {}}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    // Open rename editor
+    fireEvent.click(getByRole('button', { name: 'Went Well' }));
+    flush();
+    const input = getByRole('textbox', { name: 'Column title' });
+    expect(input).toHaveFocus();
+    fireEvent.input(input, { target: { value: 'Highlights' } });
+
+    // IME Enter does not commit
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+    flush();
+    expect(updateColumn).not.toHaveBeenCalled();
+
+    // Moving focus to Cancel inside the editor container does not commit
+    const cancelBtn = getByRole('button', { name: 'Cancel column rename' });
+    fireEvent.focusOut(input, { relatedTarget: cancelBtn });
+    flush();
+    expect(updateColumn).not.toHaveBeenCalled();
+
+    // Escape during an in-flight save cancels and restores focus to the Column title button
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(updateColumn).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    flush();
+    expect(queryByRole('textbox', { name: 'Column title' })).toBeNull();
+    expect(getByRole('button', { name: 'Went Well' })).toHaveFocus();
+    pending.resolve(true);
+    await pending.promise;
+    await Promise.resolve();
+    flush();
+
+    // Failed save retains draft and allows retry
+    fireEvent.click(getByRole('button', { name: 'Went Well' }));
+    flush();
+    const retryInput = getByRole('textbox', { name: 'Column title' });
+    fireEvent.input(retryInput, { target: { value: 'Kudos' } });
+    fireEvent.keyDown(retryInput, { key: 'Enter' });
+    await waitFor(() => expect(updateColumn).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getByRole('button', { name: 'Save column title' })).toBeEnabled());
+    expect(retryInput).toHaveValue('Kudos');
+
+    fireEvent.click(getByRole('button', { name: 'Save column title' }));
+    await waitFor(() => expect(queryByRole('textbox', { name: 'Column title' })).toBeNull());
+    expect(updateColumn).toHaveBeenLastCalledWith('col_1', { title: 'Kudos' });
+
+    // Locking cancels an active rename
+    fireEvent.click(getByRole('button', { name: 'Went Well' }));
+    flush();
+    expect(getByRole('textbox', { name: 'Column title' })).toBeInTheDocument();
+    setIsLocked(true);
+    flush();
+    expect(queryByRole('textbox', { name: 'Column title' })).toBeNull();
+  });
 });
