@@ -1,0 +1,1493 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Retrocks — Developer Technical Onboarding Guide</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--foreground);
+      font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+      font-size: 13.5px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Outer wrapper stays transparent with no card/border/side-padding per T3 embed rules */
+    .guide {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Standalone browser polish: only applied by script when T3 theme vars are absent */
+    body.standalone {
+      background: var(--background);
+      padding: 28px 20px 56px;
+    }
+    body.standalone .guide {
+      max-width: 880px;
+      margin: 0 auto;
+    }
+
+    h1, h2, h3, h4, p {
+      margin: 0;
+    }
+
+    .top-head {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .eyebrow {
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--primary);
+    }
+
+    .top-head h1 {
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--foreground);
+    }
+
+    .lead {
+      color: var(--muted-foreground);
+      font-size: 13px;
+      max-width: 68ch;
+    }
+
+    /* KPI Strip */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .kpi {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .kpi-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+    }
+
+    .kpi-value {
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--foreground);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .kpi-sub {
+      font-size: 11px;
+      color: var(--muted-foreground);
+    }
+
+    /* Top chapter navigation bar */
+    .chapter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .chapter-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .chapter-btn {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted-foreground);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: calc(var(--radius) - 3px);
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .chapter-btn:hover {
+      color: var(--foreground);
+      background: var(--secondary);
+    }
+
+    .chapter-btn.active {
+      background: var(--primary);
+      color: var(--primary-foreground);
+    }
+
+    .chapter-btn.ghost {
+      border-color: var(--border);
+      color: var(--foreground);
+      font-weight: 550;
+    }
+
+    .chapter-btn.ghost.active {
+      background: var(--secondary);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .chapter-btn:focus-visible,
+    .tab-btn:focus-visible,
+    .copy-btn:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 1px;
+    }
+
+    /* Section chrome */
+    .chapter {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .section-title {
+      font-size: 14.5px;
+      font-weight: 650;
+      letter-spacing: -0.015em;
+      color: var(--foreground);
+    }
+
+    .section-hint {
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    /* Sub-tabs / Filter pills */
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tab-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--secondary);
+      color: var(--secondary-foreground, var(--foreground));
+      font-family: inherit;
+      font-size: 11.5px;
+      font-weight: 550;
+      padding: 5px 10px;
+      border-radius: calc(var(--radius) - 2px);
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+    }
+
+    .tab-btn:hover {
+      border-color: var(--ring);
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--primary-foreground);
+    }
+
+    /* Architecture SVG */
+    .arch-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .arch-svg {
+      display: block;
+      width: 100%;
+      min-width: 600px;
+      height: 304px;
+    }
+
+    .arch-node {
+      cursor: pointer;
+    }
+
+    .arch-node rect {
+      fill: var(--background);
+      stroke: var(--border);
+      stroke-width: 1.25;
+      transition: stroke 120ms ease, fill 120ms ease;
+    }
+
+    .arch-node:hover rect {
+      stroke: var(--ring);
+    }
+
+    .arch-node.selected rect {
+      fill: var(--accent-surface, var(--secondary));
+      stroke: var(--primary);
+      stroke-width: 1.75;
+    }
+
+    .arch-node .node-title {
+      fill: var(--foreground);
+      font-size: 11.5px;
+      font-weight: 650;
+    }
+
+    .arch-node .node-sub {
+      fill: var(--muted-foreground);
+      font-size: 10px;
+    }
+
+    .arch-lane-label {
+      fill: var(--muted-foreground);
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .arch-edge {
+      fill: none;
+      stroke: var(--muted-foreground);
+      stroke-width: 1.25;
+    }
+
+    .arch-edge.push {
+      stroke: var(--info, var(--primary));
+      stroke-dasharray: 4 3;
+    }
+
+    .arch-edge.write {
+      stroke: var(--primary);
+    }
+
+    .arch-edge-label {
+      fill: var(--muted-foreground);
+      font-size: 9.5px;
+      font-family: var(--font-mono, ui-monospace, monospace);
+    }
+
+    /* Layer inspector */
+    .inspector {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .inspector-title {
+      font-size: 13px;
+      font-weight: 650;
+      color: var(--foreground);
+      margin-bottom: 4px;
+    }
+
+    .inspector-body {
+      font-size: 12.5px;
+      color: var(--muted-foreground);
+    }
+
+    .file-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-content: flex-start;
+    }
+
+    .code-chip {
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+      font-size: 11px;
+      background: var(--code-background, var(--secondary));
+      color: var(--foreground);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px 7px;
+      white-space: nowrap;
+    }
+
+    code {
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+      font-size: 11.5px;
+      background: var(--code-background, var(--secondary));
+      padding: 1px 4px;
+      border-radius: 4px;
+      overflow-wrap: anywhere;
+    }
+
+    /* Flow steps — 2x2 grid for generous horizontal breathing room */
+    .flow-steps {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .step-card {
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 2px);
+      padding: 11px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .step-num {
+      font-family: var(--font-mono, ui-monospace, monospace);
+      font-size: 10px;
+      font-weight: 650;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .step-title {
+      font-size: 12.5px;
+      font-weight: 650;
+      color: var(--foreground);
+    }
+
+    .step-desc {
+      font-size: 12px;
+      color: var(--muted-foreground);
+    }
+
+    /* Tables */
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th {
+      text-align: left;
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted-foreground);
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      color: var(--foreground);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .muted {
+      color: var(--muted-foreground);
+    }
+
+    /* Domain comparison grid */
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .sub-box {
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 2px);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sub-box h4 {
+      font-size: 11px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted-foreground);
+    }
+
+    .bullet-list {
+      margin: 0;
+      padding-left: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--foreground);
+    }
+
+    .bullet-list li strong {
+      font-weight: 600;
+    }
+
+    /* Guardrails Don't / Do */
+    .rule-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .rule-row {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr);
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 2px);
+      align-items: start;
+    }
+
+    .rule-topic {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--foreground);
+    }
+
+    .rule-bad, .rule-good {
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .tag {
+      display: inline-block;
+      width: fit-content;
+      font-family: var(--font-mono, ui-monospace, monospace);
+      font-size: 9.5px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .tag-avoid {
+      background: var(--destructive-surface, var(--secondary));
+      color: var(--destructive);
+    }
+
+    .tag-use {
+      background: var(--accent-surface, var(--secondary));
+      color: var(--success, var(--primary));
+    }
+
+    /* Quickstart commands */
+    .cmd-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .cmd-card {
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 2px);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .cmd-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .cmd-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+
+    .copy-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--secondary);
+      color: var(--foreground);
+      font-family: var(--font-mono, ui-monospace, monospace);
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .copy-btn:hover {
+      border-color: var(--ring);
+    }
+
+    .cmd-pre {
+      margin: 0;
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+      font-size: 11px;
+      background: var(--code-background, var(--secondary));
+      color: var(--foreground);
+      padding: 7px 9px;
+      border-radius: 5px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .cmd-note {
+      font-size: 11.5px;
+      color: var(--muted-foreground);
+    }
+
+    /* Glossary badges */
+    .term-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .term-item {
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 2px);
+      padding: 9px 10px;
+    }
+
+    .term-name {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--foreground);
+    }
+
+    .term-avoid {
+      font-size: 11px;
+      color: var(--muted-foreground);
+      margin-top: 2px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 640px) {
+      .kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .inspector,
+      .flow-steps,
+      .two-col,
+      .cmd-grid {
+        grid-template-columns: 1fr;
+      }
+      .rule-row {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+      .term-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="guide">
+    <!-- Top Header -->
+    <header class="top-head">
+      <span class="eyebrow">Retrocks &middot; Technical Onboarding Blueprint</span>
+      <h1>Architecture &amp; Codebase Guide</h1>
+      <p class="lead">
+        Zero-login, privacy-first collaboration app for <strong>Retrospective Boards</strong> and
+        <strong>Pointing Poker Rooms</strong>. Built on Solid 2.0 streaming SSR, single-flight HTTP mutations,
+        per-workspace SQLite Durable Objects on Cloudflare Workers, and a drop-in Node SQLite + SSE runtime.
+      </p>
+    </header>
+
+    <!-- KPI Overview -->
+    <section class="kpi-grid" aria-label="Project overview metrics">
+      <div class="kpi">
+        <span class="kpi-label">Core Stack</span>
+        <span class="kpi-value">Solid 2.0</span>
+        <span class="kpi-sub">Vite 8 &middot; Tailwind v4 &middot; ui-sdk</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi-label">Product Domains</span>
+        <span class="kpi-value">2 Workspaces</span>
+        <span class="kpi-sub">Boards (/b/:id) &middot; Rooms (/p/:id)</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi-label">Runtimes</span>
+        <span class="kpi-value">CF + Node</span>
+        <span class="kpi-sub">DO SQLite/WS &middot; node:sqlite/SSE</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi-label">Footprint</span>
+        <span class="kpi-value">135 src / 61 tests</span>
+        <span class="kpi-sub">0 accounts &middot; 0 PII stored</span>
+      </div>
+    </section>
+
+    <!-- Chapter Switcher -->
+    <nav class="chapter-bar" aria-label="Onboarding chapters">
+      <div class="chapter-tabs" role="tablist">
+        <button class="chapter-btn active" type="button" role="tab" aria-selected="true" data-chapter="architecture">1. Architecture &amp; Flows</button>
+        <button class="chapter-btn" type="button" role="tab" aria-selected="false" data-chapter="domains">2. Domains &amp; Code Map</button>
+        <button class="chapter-btn" type="button" role="tab" aria-selected="false" data-chapter="guardrails">3. Solid 2.0 &amp; Rules</button>
+        <button class="chapter-btn" type="button" role="tab" aria-selected="false" data-chapter="quickstart">4. Day-1 Quickstart</button>
+      </div>
+      <button class="chapter-btn ghost" type="button" id="toggle-all-btn" aria-pressed="false">Expand all</button>
+    </nav>
+
+    <!-- CHAPTER 1: ARCHITECTURE & FLOWS -->
+    <div class="chapter" data-chapter-panel="architecture">
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">System Topology (HTTP Writes + Push-Only Realtime)</h2>
+          <span class="section-hint">Click any node to inspect its files &amp; invariants</span>
+        </div>
+
+        <div class="panel">
+          <div class="arch-wrap">
+            <svg class="arch-svg" viewBox="0 0 680 304" role="img" aria-label="Retrocks layered architecture diagram">
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="var(--muted-foreground)"></path>
+                </marker>
+                <marker id="arrow-write" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="var(--primary)"></path>
+                </marker>
+                <marker id="arrow-push" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="var(--info, var(--primary))"></path>
+                </marker>
+              </defs>
+
+              <!-- Lane Labels -->
+              <text x="10" y="15" class="arch-lane-label">Browser (Solid 2.0)</text>
+              <text x="242" y="15" class="arch-lane-label">Edge / HTTP Middleware</text>
+              <text x="472" y="15" class="arch-lane-label">State &amp; Realtime Runtime</text>
+
+              <!-- Edges -->
+              <path d="M 202 68 L 240 68" class="arch-edge write" marker-end="url(#arrow-write)"></path>
+              <text x="221" y="60" text-anchor="middle" class="arch-edge-label">POST</text>
+
+              <path d="M 340 100 L 340 124" class="arch-edge write" marker-end="url(#arrow-write)"></path>
+
+              <path d="M 438 158 L 470 158" class="arch-edge write" marker-end="url(#arrow-write)"></path>
+
+              <path d="M 571 130 L 571 102" class="arch-edge" marker-end="url(#arrow)"></path>
+
+              <path d="M 571 188 L 571 218" class="arch-edge" marker-end="url(#arrow)"></path>
+
+              <path d="M 470 256 L 204 256" class="arch-edge push" marker-end="url(#arrow-push)"></path>
+              <text x="337" y="248" text-anchor="middle" class="arch-edge-label">WS (CF 101) / SSE (Node) redacted push</text>
+
+              <path d="M 106 222 L 106 192" class="arch-edge push" marker-end="url(#arrow-push)"></path>
+              <path d="M 106 124 L 106 102" class="arch-edge" marker-end="url(#arrow)"></path>
+
+              <!-- Column 1: Browser -->
+              <g class="arch-node selected" data-node="ui" tabindex="0" role="button" aria-label="Inspect Routes and UI Components">
+                <rect x="10" y="32" width="192" height="68" rx="7"></rect>
+                <text x="22" y="55" class="node-title">Routes &amp; UI Components</text>
+                <text x="22" y="71" class="node-sub">/ &middot; /retro &middot; /b/:id &middot; /p/:id</text>
+                <text x="22" y="86" class="node-sub">Tailwind v4 + @ui-sdk/solid</text>
+              </g>
+
+              <g class="arch-node" data-node="controllers" tabindex="0" role="button" aria-label="Inspect Client Controllers">
+                <rect x="10" y="124" width="192" height="66" rx="7"></rect>
+                <text x="22" y="147" class="node-title">Client Controllers</text>
+                <text x="22" y="163" class="node-sub">createOptimisticStore + action()</text>
+                <text x="22" y="178" class="node-sub">board-controller &amp; poker-controller</text>
+              </g>
+
+              <g class="arch-node" data-node="livestream" tabindex="0" role="button" aria-label="Inspect Live Stream Client">
+                <rect x="10" y="222" width="192" height="68" rx="7"></rect>
+                <text x="22" y="245" class="node-title">Live Stream Client</text>
+                <text x="22" y="261" class="node-sub">createLiveStream (WS or SSE)</text>
+                <text x="22" y="276" class="node-sub">30s ping &middot; 65s watchdog &middot; backoff</text>
+              </g>
+
+              <!-- Column 2: Edge / Server Entry -->
+              <g class="arch-node" data-node="entry" tabindex="0" role="button" aria-label="Inspect Worker Entry and Middleware">
+                <rect x="242" y="32" width="196" height="68" rx="7"></rect>
+                <text x="254" y="55" class="node-title">Worker Entry &amp; Middleware</text>
+                <text x="254" y="71" class="node-sub">worker.ts (WS 101 bypass)</text>
+                <text x="254" y="86" class="node-sub">CSP nonce &middot; /_server &middot; API routes</text>
+              </g>
+
+              <g class="arch-node" data-node="services" tabindex="0" role="button" aria-label="Inspect Domain Services and Projection">
+                <rect x="242" y="124" width="196" height="70" rx="7"></rect>
+                <text x="254" y="147" class="node-title">Services, Auth &amp; Projection</text>
+                <text x="254" y="163" class="node-sub">Valibot &middot; HttpOnly capability cookie</text>
+                <text x="254" y="178" class="node-sub">Allowlist DTO redaction (no peeking)</text>
+              </g>
+
+              <!-- Column 3: Storage & Realtime -->
+              <g class="arch-node" data-node="cloudflare" tabindex="0" role="button" aria-label="Inspect Cloudflare Durable Objects">
+                <rect x="472" y="32" width="198" height="68" rx="7"></rect>
+                <text x="484" y="55" class="node-title">Cloudflare Durable Objects</text>
+                <text x="484" y="71" class="node-sub">BoardRoom &amp; PointingPokerRoom</text>
+                <text x="484" y="86" class="node-sub">SQLite DO + Hibernatable WS</text>
+              </g>
+
+              <g class="arch-node" data-node="seam" tabindex="0" role="button" aria-label="Inspect Dual Runtime Seam">
+                <rect x="472" y="130" width="198" height="58" rx="7"></rect>
+                <text x="484" y="153" class="node-title">Runtime Seam &amp; SQL Core</text>
+                <text x="484" y="169" class="node-sub">SqlBoardOperations &middot; PokerRoom</text>
+              </g>
+
+              <g class="arch-node" data-node="node" tabindex="0" role="button" aria-label="Inspect Node Fallback and Tests">
+                <rect x="472" y="220" width="198" height="70" rx="7"></rect>
+                <text x="484" y="243" class="node-title">Node Runtime &amp; Vitest</text>
+                <text x="484" y="259" class="node-sub">node:sqlite (:memory: in tests)</text>
+                <text x="484" y="274" class="node-sub">SSE fan-out + POST heartbeat</text>
+              </g>
+            </svg>
+          </div>
+
+          <div class="inspector" id="arch-inspector" aria-live="polite">
+            <div>
+              <div class="inspector-title" id="insp-title"></div>
+              <p class="inspector-body" id="insp-body"></p>
+            </div>
+            <div class="file-chips" id="insp-files"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Core End-to-End Flows</h2>
+          <div class="tabs" role="tablist" aria-label="Core flow tabs">
+            <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-flow="mutation">Mutation &amp; Live Sync</button>
+            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-flow="auth">Anonymous Auth &amp; Co-Facilitator</button>
+            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-flow="runtime">Cloudflare vs. Node Runtime</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <!-- Flow 1: Mutation -->
+          <div id="flow-mutation">
+            <p class="muted">
+              Every write is an HTTP call via a Solid <code>'use server'</code> function (never WebSocket RPC).
+              Realtime channels strictly push viewer-projected updates after commit.
+            </p>
+            <div class="flow-steps">
+              <div class="step-card">
+                <span class="step-num">Step 1 &middot; Client</span>
+                <span class="step-title">Optimistic Action</span>
+                <span class="step-desc">Controller runs a Solid 2.0 <code>action(function*)</code>, updating <code>createOptimisticStore</code> immediately while gating permissions.</span>
+              </div>
+              <div class="step-card">
+                <span class="step-num">Step 2 &middot; HTTP</span>
+                <span class="step-title">Single Command Seam</span>
+                <span class="step-desc">Posts a discriminated union to <code>dispatchBoardCommand</code> or <code>changePokerRoom</code> over <code>/_server</code> with signed cookies attached.</span>
+              </div>
+              <div class="step-card">
+                <span class="step-num">Step 3 &middot; Server</span>
+                <span class="step-title">Validate &amp; Transact</span>
+                <span class="step-desc">Valibot parses input, rate limiter checks burst quota, and <code>SqlBoardOperations</code> / <code>PokerRoomStorage</code> runs one atomic SQLite transaction.</span>
+              </div>
+              <div class="step-card">
+                <span class="step-num">Step 4 &middot; Fan-Out</span>
+                <span class="step-title">Per-Viewer Projection</span>
+                <span class="step-desc">Actor gets a viewer-projected HTTP response; other sockets receive individually redacted WS/SSE frames with monotonic <code>version</code>.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Flow 2: Auth -->
+          <div id="flow-auth" class="hidden">
+            <p class="muted">
+              Zero accounts, zero PII (ADR-0001). Identity is an opaque capability in a signed <code>HttpOnly</code> cookie
+              (<code>retrocks_session</code>), supporting key rotation via comma-separated <code>SESSION_SECRET</code>.
+            </p>
+            <div class="flow-steps">
+              <div class="step-card">
+                <span class="step-num">Step 1 &middot; First GET</span>
+                <span class="step-title">Async SSR Cookie Mint</span>
+                <span class="step-desc">Middleware sets <code>event.renderMode = 'async'</code> on <code>/b/:id</code> &amp; <code>/p/:id</code> so the server mints <code>participantId</code> before headers flush.</span>
+              </div>
+              <div class="step-card">
+                <span class="step-num">Step 2 &middot; Isolation</span>
+                <span class="step-title">Per-Board Salted Hash</span>
+                <span class="step-desc"><code>participantId</code> is hashed with each Board's <code>token_salt</code> (SHA-256). Same browser gets unlinkable hashes across Boards.</span>
+              </div>
+              <div class="step-card">
+                <span class="step-num">Step 3 &middot; Fragment</span>
+                <span class="step-title">Zero-Leak Link Claim</span>
+                <span class="step-desc">Co-Facilitator Link puts <code>#f=&lt;43-char-token&gt;</code> in the URL fragment (never sent to HTTP logs or Referer). Client exchanges it via server action.</span>
+              </div>
+              <div class="step-card">
+                <span class="step-num">Step 4 &middot; Upgrade</span>
+                <span class="step-title">Scrub &amp; Reconnect</span>
+                <span class="step-desc">Server verifies salted hash, upgrades <code>HttpOnly</code> cookie (max 35 Boards), client scrubs hash with <code>history.replaceState</code>, stream reconnects.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Flow 3: Dual Runtime -->
+          <div id="flow-runtime" class="hidden">
+            <p class="muted">
+              Switch between Cloudflare Workers and Node with one env flag (<code>RETROCKS_RUNTIME=node</code>) &mdash; zero changes to routes, components, or SQL logic (ADR-0002).
+            </p>
+            <div class="table-wrap" style="margin-top: 10px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Concern</th>
+                    <th>Cloudflare Workers (Default)</th>
+                    <th>Node Fallback / Vitest Server</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Command</strong></td>
+                    <td><code>pnpm dev</code> / <code>pnpm build</code> / <code>pnpm deploy</code></td>
+                    <td><code>pnpm dev:node</code> / <code>pnpm build:node</code> / <code>pnpm test</code></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Storage</strong></td>
+                    <td>Per-workspace SQLite Durable Object (<code>BoardRoom</code>, <code>PointingPokerRoom</code>)</td>
+                    <td><code>node:sqlite</code> (<code>DATABASE_URL</code> or <code>:memory:</code> in Vitest)</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Live Transport</strong></td>
+                    <td>Hibernatable WebSockets (101 intercepted in <code>src/worker.ts</code>)</td>
+                    <td>Server-Sent Events (<code>EventSource</code>) + <code>POST</code> heartbeat</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Expiry</strong></td>
+                    <td>DO Alarm (<code>ctx.storage.setAlarm</code>) wipes storage after 90d idle</td>
+                    <td>Lazy expiry check on read/mutate inside SQLite queries</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Rate Limiting</strong></td>
+                    <td><code>BOARD_CREATE_LIMITER</code> binding (10 / 60s) + DO write limiter</td>
+                    <td>In-memory sliding window keyed by ephemerally-salted IP hash</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- CHAPTER 2: DOMAINS & CODE MAP -->
+    <div class="chapter hidden" data-chapter-panel="domains">
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Product Domains Deep Dive</h2>
+          <div class="tabs" role="tablist" aria-label="Domain tabs">
+            <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-domain="boards">Retrospective Boards (/b/:id)</button>
+            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-domain="poker">Pointing Poker Rooms (/p/:id)</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div id="domain-boards">
+            <div class="file-chips">
+              <span class="code-chip">src/routes/b/[id].tsx</span>
+              <span class="code-chip">src/lib/board-controller.ts</span>
+              <span class="code-chip">src/lib/board-actions.ts</span>
+              <span class="code-chip">src/server/services/board-service.ts</span>
+              <span class="code-chip">src/server/db/sql-board-operations.ts</span>
+              <span class="code-chip">src/server/domain/projection.ts</span>
+            </div>
+            <div class="two-col">
+              <div class="sub-box">
+                <h4>Data Model (7 SQLite Tables)</h4>
+                <ul class="bullet-list">
+                  <li><strong>boards</strong> &mdash; metadata, encrypted/hashed facilitator token, <code>is_blurred</code>, <code>blind_voting</code>, <code>is_locked</code>, timer fields, monotonic <code>version</code>.</li>
+                  <li><strong>columns</strong> &mdash; ordered categories (<code>accent</code>, <code>is_action_column</code>).</li>
+                  <li><strong>card_groups</strong> &amp; <strong>cards</strong> &mdash; anonymous notes, optional group merge, Action Item flags (<code>is_action_item</code>, <code>action_done</code>, <code>action_owner</code>).</li>
+                  <li><strong>votes</strong>, <strong>reactions</strong>, <strong>comments</strong> &mdash; keyed by salted voter/author hashes; child tables carry <code>board_id</code> so SQL runs verbatim on DO &amp; Node SQLite.</li>
+                </ul>
+              </div>
+              <div class="sub-box">
+                <h4>Key Domain Invariants</h4>
+                <ul class="bullet-list">
+                  <li><strong>Private Mode</strong> &mdash; server redacts all non-authored cards (even for Facilitators) into placeholder line counts until revealed.</li>
+                  <li><strong>Blind Voting</strong> &mdash; viewer sees their own cast counts while aggregate totals stay hidden server-side until reveal.</li>
+                  <li><strong>Locked State</strong> &mdash; freezes content mutations while keeping search, export (<code>/api/boards/:id/export</code>), print, and Facilitator Action Item updates open.</li>
+                  <li><strong>Workspace Context</strong> &mdash; <code>BoardWorkspaceContext</code> exposes reactive getters to Column/Group/Card panels to prevent prop drilling.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div id="domain-poker" class="hidden">
+            <div class="file-chips">
+              <span class="code-chip">src/routes/p/[id].tsx</span>
+              <span class="code-chip">src/lib/poker-controller.ts</span>
+              <span class="code-chip">src/lib/poker-actions.ts</span>
+              <span class="code-chip">src/server/poker/service.ts</span>
+              <span class="code-chip">src/server/poker/room.ts</span>
+              <span class="code-chip">src/server/poker/durable-room.ts</span>
+            </div>
+            <div class="two-col">
+              <div class="sub-box">
+                <h4>Session &amp; Voting Engine</h4>
+                <ul class="bullet-list">
+                  <li><strong>Display Names (ADR-0003)</strong> &mdash; Room-specific exception to Board anonymity; Participants pick a session-local Display Name via <code>joinPokerRoom</code> <code>formAction</code>.</li>
+                  <li><strong>Story Queue &amp; Decks</strong> &mdash; reorderable Stories, preset/custom Decks (<code>poker-deck-policy.ts</code>), and discard prompts (<code>poker-discard-policy.ts</code>) when mid-round edits wipe votes.</li>
+                  <li><strong>Single-Flight Mutations</strong> &mdash; <code>changePokerRoom</code> returns typed <code>PokerResult</code> with HTTP status mapping (<code>409</code> on <code>ROUND_CHANGED</code>, <code>STORY_LOCKED</code>, <code>ROOM_CLOSED</code>).</li>
+                </ul>
+              </div>
+              <div class="sub-box">
+                <h4>Close &amp; Reopen Lifecycle (ADR-0004)</h4>
+                <ul class="bullet-list">
+                  <li><strong>Closing a Room</strong> &mdash; wipes the Participant roster and Co-Facilitator Link so Display Names never linger on closed summaries; retains only Facilitator session hashes.</li>
+                  <li><strong>Reopening a Room</strong> &mdash; turns saved hashes into pending Facilitator claims, routes returning users through the Display Name join screen, and marks all pre-close Stories as <strong>Locked Stories</strong>.</li>
+                  <li><strong>No-Store Headers</strong> &mdash; middleware forces <code>Cache-Control: no-store</code> on <code>/p/*</code> and <code>/api/poker/*</code>.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Where Everything Lives (Read-First Map)</h2>
+          <div class="tabs" role="tablist" aria-label="Module category filter">
+            <button class="tab-btn active" type="button" data-filter="all">All</button>
+            <button class="tab-btn" type="button" data-filter="entry">Entry &amp; Config</button>
+            <button class="tab-btn" type="button" data-filter="client">Client &amp; UI</button>
+            <button class="tab-btn" type="button" data-filter="server">Server Domain</button>
+            <button class="tab-btn" type="button" data-filter="security">Security</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Owns</th>
+                  <th>Key Boundary / Note</th>
+                </tr>
+              </thead>
+              <tbody id="module-rows">
+                <tr data-cat="entry">
+                  <td><code>vite.config.ts</code> &amp; <code>wrangler.jsonc</code></td>
+                  <td>Dual-runtime Vite plugins, Vitest projects, DO &amp; rate-limit bindings</td>
+                  <td class="muted"><code>RETROCKS_RUNTIME=node</code> switches Cloudflare plugin to Node server</td>
+                </tr>
+                <tr data-cat="entry">
+                  <td><code>env.ts</code></td>
+                  <td>Standard Schema (Valibot) env contract</td>
+                  <td class="muted"><code>virtual:solid-env/server</code> fails build if imported in client code</td>
+                </tr>
+                <tr data-cat="entry">
+                  <td><code>src/worker.ts</code> &amp; <code>src/middleware.ts</code></td>
+                  <td>Cloudflare fetch entry, AsyncLocalStorage env, CSP + API routing</td>
+                  <td class="muted">WS upgrades bypass SSR wrapper to preserve <code>101</code> + socket</td>
+                </tr>
+                <tr data-cat="entry">
+                  <td><code>src/router.ts</code> &amp; <code>src/server-config.ts</code></td>
+                  <td>Shared filesystem router + single-flight collector</td>
+                  <td class="muted"><code>intentPreload()</code> warms route code &amp; <code>query()</code> on hover/focus</td>
+                </tr>
+                <tr data-cat="client">
+                  <td><code>src/lib/board-controller.ts</code></td>
+                  <td>Board optimistic store, command dispatch, live delta ingestion</td>
+                  <td class="muted">Takes injectable <code>dispatchCommand</code> &amp; <code>liveTransport</code> for tests</td>
+                </tr>
+                <tr data-cat="client">
+                  <td><code>src/lib/poker-controller.ts</code></td>
+                  <td>Room phase machine (live / closed / reopening), optimistic votes</td>
+                  <td class="muted">Handles discard prompts &amp; Co-Facilitator fragment claim</td>
+                </tr>
+                <tr data-cat="client">
+                  <td><code>src/lib/live-stream.ts</code></td>
+                  <td>Shared WS/SSE transport, 30s heartbeat, 65s watchdog, backoff</td>
+                  <td class="muted">Probes or reconnects on <code>visibilitychange</code> and <code>online</code></td>
+                </tr>
+                <tr data-cat="client">
+                  <td><code>src/lib/inline-edit.ts</code></td>
+                  <td>Unified inline rename/edit session across Boards &amp; Rooms</td>
+                  <td class="muted">Built on <code>@ui-sdk/core</code> <code>definePrimitive</code> + <code>createInlineEdit</code></td>
+                </tr>
+                <tr data-cat="server">
+                  <td><code>src/server/db/schema.ts</code> &amp; <code>sql-board-operations.ts</code></td>
+                  <td>Shared SQLite schema &amp; atomic Board mutations</td>
+                  <td class="muted">Pure synchronous SQL via <code>SqlRunner</code>; zero runtime coupling</td>
+                </tr>
+                <tr data-cat="server">
+                  <td><code>src/server/adapters/runtime.ts</code></td>
+                  <td>Resolves <code>BoardStore</code> &amp; <code>BoardRealtime</code> for CF vs. Node</td>
+                  <td class="muted">Exposes <code>setBoardStoreForTests</code> for deterministic Node tests</td>
+                </tr>
+                <tr data-cat="server">
+                  <td><code>src/server/domain/projection.ts</code></td>
+                  <td>Allowlist DTO builder for Board snapshots &amp; mutation events</td>
+                  <td class="muted">Guarantees hashes, salts, &amp; redacted content never cross the wire</td>
+                </tr>
+                <tr data-cat="server">
+                  <td><code>src/server/poker/</code></td>
+                  <td>Room state machine (<code>room.ts</code>), DO (<code>durable-room.ts</code>), Node (<code>node.ts</code>)</td>
+                  <td class="muted">Parallel dual-runtime seam via <code>getPokerRoomAccess(id)</code></td>
+                </tr>
+                <tr data-cat="security">
+                  <td><code>src/server/session.ts</code></td>
+                  <td>Signed <code>HttpOnly</code> cookie (HMAC-SHA256, 90d sliding TTL)</td>
+                  <td class="muted">Comma-separated <code>SESSION_SECRET</code> supports zero-downtime rotation</td>
+                </tr>
+                <tr data-cat="security">
+                  <td><code>src/server/facilitator-capability.ts</code></td>
+                  <td>256-bit token minting, salted SHA-256 verification, AES-256-GCM at rest</td>
+                  <td class="muted">Sets <code>Cache-Control: no-store</code>; binds ciphertext with AAD</td>
+                </tr>
+                <tr data-cat="security">
+                  <td><code>src/server/security-headers.ts</code> &amp; <code>rate-limit.ts</code></td>
+                  <td>Per-request CSP script nonce, noindex, zero-IP-persistence limits</td>
+                  <td class="muted">Ephemeral per-process salt hashes transient IPs in memory only</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- CHAPTER 3: SOLID 2.0 & REPO GUARDRAILS -->
+    <div class="chapter hidden" data-chapter-panel="guardrails">
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Solid 2.0 &amp; Repo Guardrails (Day-1 Gotchas)</h2>
+          <span class="section-hint">From AGENTS.md &amp; docs/live-synchronization-effects.md</span>
+        </div>
+
+        <div class="panel">
+          <div class="rule-list">
+            <div class="rule-row">
+              <div class="rule-topic">Props &amp; Signals</div>
+              <div class="rule-bad">
+                <span class="tag tag-avoid">Avoid</span>
+                <span><code>function C({ name })</code> or passing accessors <code>&lt;C value={count} /&gt;</code></span>
+              </div>
+              <div class="rule-good">
+                <span class="tag tag-use">Do This</span>
+                <span>Read <code>props.name</code> in JSX/memos; pass values <code>&lt;C value={count()} /&gt;</code></span>
+              </div>
+            </div>
+
+            <div class="rule-row">
+              <div class="rule-topic">Effects Policy</div>
+              <div class="rule-bad">
+                <span class="tag tag-avoid">Avoid</span>
+                <span>Single-arg <code>createEffect(fn)</code> or effects for derived state / events</span>
+              </div>
+              <div class="rule-good">
+                <span class="tag tag-use">Do This</span>
+                <span>Prefer <code>createMemo</code>, JSX bindings, <code>ref</code>, <code>onSettled</code>. Only use <code>createEffect(compute, apply)</code> when unavoidable (9 audited live-sync effects)</span>
+              </div>
+            </div>
+
+            <div class="rule-row">
+              <div class="rule-topic">Stores &amp; Async</div>
+              <div class="rule-bad">
+                <span class="tag tag-avoid">Avoid</span>
+                <span>1.x <code>solid-js/store</code>, <code>produce</code>, <code>&lt;Suspense&gt;</code>, <code>&lt;ErrorBoundary&gt;</code>, <code>onMount</code></span>
+              </div>
+              <div class="rule-good">
+                <span class="tag tag-use">Do This</span>
+                <span>Draft writes <code>setStore(s =&gt; { s.x = 1 })</code>, <code>&lt;Loading&gt;</code>, <code>&lt;Errored&gt;</code>, <code>onSettled</code>, <code>flush()</code> before test assertions</span>
+              </div>
+            </div>
+
+            <div class="rule-row">
+              <div class="rule-topic">Boundaries &amp; CSS</div>
+              <div class="rule-bad">
+                <span class="tag tag-avoid">Avoid</span>
+                <span>Importing server code in client, touching <code>.env</code>, or ad-hoc vanilla CSS</span>
+              </div>
+              <div class="rule-good">
+                <span class="tag tag-use">Do This</span>
+                <span>Mark server files <code>import 'server-only'</code>, use <code>virtual:solid-env/*</code>, Tailwind v4 utilities first, and <code>@ui-sdk/solid</code> primitives</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="font-size: 12px; font-weight: 650; margin-bottom: 8px; color: var(--foreground);">
+              Ubiquitous Language (<code>GLOSSARY.md</code>) &mdash; Use exact terms in code, PRs &amp; UI
+            </div>
+            <div class="term-grid">
+              <div class="term-item">
+                <div class="term-name">Participant / Facilitator</div>
+                <div class="term-avoid">Avoid: User, admin, host, owner</div>
+              </div>
+              <div class="term-item">
+                <div class="term-name">Board vs. Room</div>
+                <div class="term-avoid">Board = Retro &middot; Room = Poker</div>
+              </div>
+              <div class="term-item">
+                <div class="term-name">Card / Card Group / Vote</div>
+                <div class="term-avoid">Avoid: Sticky, cluster, upvote</div>
+              </div>
+              <div class="term-item">
+                <div class="term-name">Private Mode / Blind Voting</div>
+                <div class="term-avoid">Avoid: Blur mode, secret votes</div>
+              </div>
+              <div class="term-item">
+                <div class="term-name">Co-Facilitator Link</div>
+                <div class="term-avoid">Avoid: Admin link, invite URL</div>
+              </div>
+              <div class="term-item">
+                <div class="term-name">Locked Story / Accepted Estimate</div>
+                <div class="term-avoid">Avoid: Archived story, winning vote</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- CHAPTER 4: DAY-1 QUICKSTART -->
+    <div class="chapter hidden" data-chapter-panel="quickstart">
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">Day-1 Quickstart &amp; Verification Commands</h2>
+          <span class="section-hint">Local dev runs at http://127.0.0.1:3002</span>
+        </div>
+
+        <div class="panel">
+          <div class="cmd-grid">
+            <div class="cmd-card">
+              <div class="cmd-top">
+                <span class="cmd-label">1. First-time setup</span>
+                <button class="copy-btn" type="button" data-copy="pnpm install && cp .env.example .env">Copy</button>
+              </div>
+              <pre class="cmd-pre">pnpm install &amp;&amp; cp .env.example .env</pre>
+              <span class="cmd-note">Set <code>SESSION_SECRET</code> in <code>.env</code> (32+ chars via <code>openssl rand -base64 32</code>).</span>
+            </div>
+
+            <div class="cmd-card">
+              <div class="cmd-top">
+                <span class="cmd-label">2. Run dev server</span>
+                <button class="copy-btn" type="button" data-copy="pnpm dev">Copy</button>
+              </div>
+              <pre class="cmd-pre">pnpm dev        # CF workerd + DO
+pnpm dev:node   # Node + SSE</pre>
+              <span class="cmd-note">Default matches Cloudflare prod; use <code>dev:node</code> for SSE/SQLite fallback.</span>
+            </div>
+
+            <div class="cmd-card">
+              <div class="cmd-top">
+                <span class="cmd-label">3. Run test suites</span>
+                <button class="copy-btn" type="button" data-copy="pnpm test">Copy</button>
+              </div>
+              <pre class="cmd-pre">pnpm test       # jsdom + node
+pnpm test:watch # watch mode</pre>
+              <span class="cmd-note">Server tests run against in-memory <code>node:sqlite</code> with zero Wrangler mocks.</span>
+            </div>
+
+            <div class="cmd-card">
+              <div class="cmd-top">
+                <span class="cmd-label">4. Pre-PR quality checks</span>
+                <button class="copy-btn" type="button" data-copy="pnpm typecheck && pnpm lint && pnpm knip">Copy</button>
+              </div>
+              <pre class="cmd-pre">pnpm typecheck &amp;&amp; pnpm lint &amp;&amp; pnpm knip</pre>
+              <span class="cmd-note">TypeScript 7 check, <code>oxlint</code>, and dead-code check. Husky runs lint-staged on commit.</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="font-size: 12px; font-weight: 650; margin-bottom: 8px; color: var(--foreground);">
+              Reference Docs to Bookmark
+            </div>
+            <div class="file-chips">
+              <span class="code-chip">docs/ONBOARDING.md</span>
+              <span class="code-chip">GLOSSARY.md</span>
+              <span class="code-chip">AGENTS.md</span>
+              <span class="code-chip">docs/adr/0001-anonymous-capability-tokens.md</span>
+              <span class="code-chip">docs/adr/0002-dual-runtime-adapters-and-http-mutations.md</span>
+              <span class="code-chip">docs/adr/0003-pointing-poker-room-display-names.md</span>
+              <span class="code-chip">docs/adr/0004-reopening-closed-pointing-poker-rooms.md</span>
+              <span class="code-chip">docs/live-synchronization-effects.md</span>
+              <span class="code-chip">docs/cloudflare-workers-deployment.md</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    // Standalone browser theme fallback: ONLY activates when T3 Code's :root variables are absent.
+    (function bootstrapStandaloneTheme() {
+      const rootStyle = getComputedStyle(document.documentElement);
+      if (!rootStyle.getPropertyValue('--foreground').trim()) {
+        const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const tokens = dark
+          ? {
+              '--background': '#0e1015',
+              '--foreground': '#edf0f5',
+              '--muted-foreground': '#9aa3b2',
+              '--card': '#161922',
+              '--secondary': '#1f2430',
+              '--secondary-foreground': '#e2e6ef',
+              '--border': '#293040',
+              '--ring': '#60a5fa',
+              '--primary': '#3b82f6',
+              '--primary-foreground': '#ffffff',
+              '--accent-surface': '#172554',
+              '--destructive': '#f87171',
+              '--destructive-surface': '#3b1519',
+              '--success': '#34d399',
+              '--info': '#38bdf8',
+              '--code-background': '#1b202c',
+              '--radius': '8px',
+            }
+          : {
+              '--background': '#f7f8fa',
+              '--foreground': '#111827',
+              '--muted-foreground': '#4b5563',
+              '--card': '#ffffff',
+              '--secondary': '#eef1f6',
+              '--secondary-foreground': '#1f2937',
+              '--border': '#d8dee8',
+              '--ring': '#2563eb',
+              '--primary': '#2563eb',
+              '--primary-foreground': '#ffffff',
+              '--accent-surface': '#dbeafe',
+              '--destructive': '#dc2626',
+              '--destructive-surface': '#fee2e2',
+              '--success': '#059669',
+              '--info': '#0284c7',
+              '--code-background': '#eef1f6',
+              '--radius': '8px',
+            };
+        for (const [k, v] of Object.entries(tokens)) {
+          document.documentElement.style.setProperty(k, v);
+        }
+        document.body.classList.add('standalone');
+      }
+    })();
+
+    // Chapter navigation
+    const chapterButtons = document.querySelectorAll('[data-chapter]');
+    const chapterPanels = document.querySelectorAll('[data-chapter-panel]');
+    const toggleAllBtn = document.getElementById('toggle-all-btn');
+    let expandedAll = false;
+    let currentChapter = 'architecture';
+
+    function renderChapters() {
+      chapterButtons.forEach((btn) => {
+        const active = !expandedAll && btn.dataset.chapter === currentChapter;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
+      });
+      toggleAllBtn.classList.toggle('active', expandedAll);
+      toggleAllBtn.setAttribute('aria-pressed', String(expandedAll));
+      toggleAllBtn.textContent = expandedAll ? 'Tabbed view' : 'Expand all';
+      chapterPanels.forEach((panel) => {
+        const visible = expandedAll || panel.dataset.chapterPanel === currentChapter;
+        panel.classList.toggle('hidden', !visible);
+      });
+    }
+
+    chapterButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        expandedAll = false;
+        currentChapter = btn.dataset.chapter;
+        renderChapters();
+      });
+    });
+
+    toggleAllBtn.addEventListener('click', () => {
+      expandedAll = !expandedAll;
+      renderChapters();
+    });
+
+    // Architecture layer inspector
+    const NODES = {
+      ui: {
+        title: 'Routes & UI Components (Solid 2.0)',
+        body: 'File-system routed pages (/, /retro, /b/:id, /pointing-poker, /p/:id). Each route defines a preload manifest so single-flight mutations refresh queries in one round trip. Built with Tailwind v4 utilities and @ui-sdk/solid accessible primitives.',
+        files: ['src/App.tsx', 'src/router.ts', 'src/routes/b/[id].tsx', 'src/routes/p/[id].tsx', 'src/components/BoardWorkspace.tsx', 'src/components/poker/PokerWorkspace.tsx'],
+      },
+      controllers: {
+        title: 'Client Controllers & Optimistic State',
+        body: 'Deep client state machines wrap createOptimisticStore, Solid 2.0 action(function*) transitions, version/gap reconciliation, and permission guards. BoardWorkspaceContext exposes reactive getters so leaf components track fine-grained updates without prop drilling.',
+        files: ['src/lib/board-controller.ts', 'src/lib/poker-controller.ts', 'src/lib/board-store.ts', 'src/lib/inline-edit.ts', 'src/components/BoardWorkspaceContext.tsx'],
+      },
+      livestream: {
+        title: 'Live Stream Client (WS / SSE)',
+        body: 'Single client transport engine with exponential backoff (0.5s to 10s + jitter), 30s ping heartbeat, 65s watchdog timeout, and visibilitychange/online recovery. Automatically switches between WebSocket (Cloudflare) and SSE + POST heartbeat (Node/tests) via import.meta.env.RETROCKS_LIVE_SSE.',
+        files: ['src/lib/live-stream.ts', 'src/lib/board-live-protocol.ts', 'src/lib/wire-schemas.ts', 'src/lib/poker-schemas.ts'],
+      },
+      entry: {
+        title: 'Worker Entry, Middleware & Single-Flight',
+        body: 'src/worker.ts binds Cloudflare env into AsyncLocalStorage and forwards WebSocket upgrades directly so 101 Switching Protocols is never wrapped. src/middleware.ts adds per-request CSP script nonces, noindex headers, async SSR on workspace GETs, and dispatches API routes.',
+        files: ['src/worker.ts', 'src/middleware.ts', 'src/server-config.ts', 'src/server/security-headers.ts', 'src/routes/api/boards/[id]/live.ts', 'src/routes/api/poker/[id]/live.ts'],
+      },
+      services: {
+        title: 'Domain Services, Capability Auth & Redaction',
+        body: 'Owns Valibot validation, rate limiting, signed HttpOnly session cookies, AES-256-GCM encrypted Co-Facilitator capabilities, and strict allowlist DTO projection. Private Mode and Blind Voting redaction happen here on the server—never only in CSS.',
+        files: ['src/server/services/board-service.ts', 'src/server/poker/service.ts', 'src/server/session.ts', 'src/server/facilitator-capability.ts', 'src/server/domain/projection.ts'],
+      },
+      seam: {
+        title: 'Dual-Runtime Seam & Shared SQLite Core',
+        body: 'Narrow server interfaces (BoardStore, BoardRealtime, getPokerRoomAccess) hide runtime differences. Atomic transactions and invariant guards live in SqlBoardOperations and PokerRoomStorage, executing identical SQL through a minimal SqlRunner adapter.',
+        files: ['src/server/adapters/types.ts', 'src/server/adapters/runtime.ts', 'src/server/db/schema.ts', 'src/server/db/sql-board-operations.ts', 'src/server/poker/room.ts', 'src/server/poker/runtime.ts'],
+      },
+      cloudflare: {
+        title: 'Cloudflare SQLite Durable Objects',
+        body: 'One isolated SQLite Durable Object per Board (BoardRoom) or Poker Room (PointingPokerRoom) serializes concurrent votes, merges, and round transitions without an external DB. Hibernatable WebSockets fan out per-viewer redacted updates; Alarms wipe inactive data after 90 days.',
+        files: ['src/server/adapters/cloudflare/board-room.ts', 'src/server/adapters/cloudflare/cloudflare-board-store.ts', 'src/server/poker/durable-room.ts', 'wrangler.jsonc'],
+      },
+      node: {
+        title: 'Node Fallback & Vitest Server Suite',
+        body: 'Powers self-hosted Node deployments (RETROCKS_RUNTIME=node) and the fast Vitest server test project (:memory: SQLite). Uses node:sqlite with the exact same schema and SQL statements plus in-memory SSE fan-out with POST heartbeats.',
+        files: ['src/server/adapters/node/sqlite-board-store.ts', 'src/server/adapters/node/sse-board-realtime.ts', 'src/server/poker/node.ts', 'vitest-env-server-stub.ts'],
+      },
+    };
+
+    const inspTitle = document.getElementById('insp-title');
+    const inspBody = document.getElementById('insp-body');
+    const inspFiles = document.getElementById('insp-files');
+
+    function selectNode(key) {
+      const data = NODES[key];
+      if (!data) return;
+      document.querySelectorAll('.arch-node').forEach((el) => {
+        el.classList.toggle('selected', el.dataset.node === key);
+      });
+      inspTitle.textContent = data.title;
+      inspBody.textContent = data.body;
+      inspFiles.innerHTML = data.files
+        .map((f) => `<span class="code-chip">${f}</span>`)
+        .join('');
+    }
+
+    document.querySelectorAll('.arch-node').forEach((el) => {
+      el.addEventListener('click', () => selectNode(el.dataset.node));
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectNode(el.dataset.node);
+        }
+      });
+    });
+    selectNode('ui');
+
+    // Flow tabs
+    document.querySelectorAll('[data-flow]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.flow;
+        document.querySelectorAll('[data-flow]').forEach((b) => {
+          const active = b.dataset.flow === target;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-selected', String(active));
+        });
+        ['mutation', 'auth', 'runtime'].forEach((id) => {
+          document.getElementById('flow-' + id).classList.toggle('hidden', id !== target);
+        });
+      });
+    });
+
+    // Domain tabs
+    document.querySelectorAll('[data-domain]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.domain;
+        document.querySelectorAll('[data-domain]').forEach((b) => {
+          const active = b.dataset.domain === target;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-selected', String(active));
+        });
+        ['boards', 'poker'].forEach((id) => {
+          document.getElementById('domain-' + id).classList.toggle('hidden', id !== target);
+        });
+      });
+    });
+
+    // Module filter
+    document.querySelectorAll('[data-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cat = btn.dataset.filter;
+        document.querySelectorAll('[data-filter]').forEach((b) => {
+          b.classList.toggle('active', b.dataset.filter === cat);
+        });
+        document.querySelectorAll('#module-rows tr').forEach((row) => {
+          row.classList.toggle('hidden', cat !== 'all' && row.dataset.cat !== cat);
+        });
+      });
+    });
+
+    // Copy buttons
+    document.querySelectorAll('[data-copy]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const text = btn.dataset.copy;
+        try {
+          await navigator.clipboard.writeText(text);
+          const prev = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(() => { btn.textContent = prev; }, 1200);
+        } catch {
+          btn.textContent = 'Select';
+        }
+      });
+    });
+  </script>
+</body>
+</html>
