@@ -16,7 +16,7 @@ As a Facilitator, I want Deck settings, the optimistic Room, and the server to a
 2. Preserve a no-op for an unchanged Deck. On confirmed discard, the optimistic view clears the old round until the server returns the replacement round with its authoritative ID. Preserve the existing stale-confirmation error if the round changes while the prompt is open.
 3. For later Story work, extract a shared decision only where both the optimistic view and authoritative write need it. Active Story edits and lock/delete transitions are candidates. Retitling an active Story restarts an unresolved round, while locking or deleting the active Story clears the stage. Preserve current command behavior, including the fact that the authoritative `move-story` allows reordering a Locked Story. Estimate corrections compare the expected Accepted Estimate, while Votes are scoped to a Voting Round ID.
 
-Keep server-side role checks, ballot projection, ID generation, and writes in the authoritative implementation. Use phase, vote presence, and viewer-visible facts for shared decisions. The [Voting Round discard spec](../voting-round-discard-policy-spec.md) remains the reference for when to prompt and how to handle stale confirmations.
+Keep server-side role checks, ballot projection, ID generation, and writes in the authoritative implementation. Use phase, vote presence, and viewer-visible facts for shared decisions. The Voting Round discard draft remains the reference for when to prompt and how to handle stale confirmations.
 
 ## Verification
 

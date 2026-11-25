@@ -11,6 +11,6 @@
 
 ## Remaining design decision
 
-The original proposal also called for a workspace-facing `mutate(command)` and a registry combining validation, server mapping, permissions, optimistic effects, and pending state. The delivered command channel already removed the repeated transport wiring. The named workspace methods still provide caller-specific results, such as a newly created Column, and behavior such as Private Mode reveal. Keep those methods while they serve those callers. The [Board command channel spec](../board-command-channel-spec.md) describes the delivered scope.
+The original proposal also called for a workspace-facing `mutate(command)` and a registry combining validation, server mapping, permissions, optimistic effects, and pending state. The delivered command channel already removed the repeated transport wiring. The named workspace methods still provide caller-specific results, such as a newly created Column, and behavior such as Private Mode reveal. Keep those methods while they serve those callers. The Board command channel draft describes the delivered scope.
 
 For future changes, use the existing schema, dispatcher, and guarded mutation flow. If repeated command-to-permission mapping warrants an extraction, address it through the [Board permission proposal](03-board-permission-table.md) with the authoritative transaction and client projection in view.

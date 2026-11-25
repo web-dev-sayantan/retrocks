@@ -17,7 +17,7 @@ As a maintainer, I want both Node adapters and their tests to use one SSE framin
 2. Preserve each feature's initial and terminal messages. Board Node subscribes before its asynchronous snapshot read and replays queued messages newer than the snapshot. Poker sends a closed summary on closure or `room:missing` on deletion or expiry. Preserve terminal delivery and teardown for healthy connections, and preserve the existing pressure handling for stalled connections.
 3. Reassess fan-out helpers only after the framing slice. Candidate reuse should account for hibernation, runtime-owned cleanup, and existing version guards. Keep the Durable Object socket inventory in the runtime and the Node stream registries in Node. A single in-memory hub would need to demonstrate that it preserves those contracts before adoption.
 
-Keep the HTTP-write and live-read split from [ADR-0002](../adr/0002-dual-runtime-adapters-and-http-mutations.md). Use the landed parts of the [Poker protocol and live-stream spec](../poker-protocol-and-live-stream-spec.md) and [Room publication spec](../room-mutation-publication-spec.md) as the starting point.
+Keep the HTTP-write and live-read split from [ADR-0002](../adr/0002-dual-runtime-adapters-and-http-mutations.md). Use the landed parts of the Poker protocol and live-stream draft and the Room publication draft as the starting point.
 
 ## Verification
 
