@@ -5,25 +5,31 @@ import {
   createOptimisticStore,
   createSignal,
   flush,
+  onSettled,
   untrack,
 } from 'solid-js';
 
-import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
+import { takeFacilitatorLinkToken } from './facilitator-link';
 import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
+import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
 import {
   createPokerLive,
   type PokerLiveStatus,
   type PokerLiveTransport,
 } from './poker-live';
+import { pokerRoomPath } from './poker-routes';
+import type { PokerSharingResult } from './poker-sharing-types';
 import {
   POKER_DECK_PRESETS,
   POKER_DEFAULT_ROOM_NAME,
   unresolvedPokerRoundId,
+  type PokerClosedRoomView,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
   type PokerRoomView,
 } from './poker-types';
+import { recordRecentPokerRoom, removeRecentPokerRoom } from './recent-poker-rooms';
 
 type PokerFailure = Extract<PokerResult, { ok: false }>;
 
@@ -56,8 +62,8 @@ function canProceedWithRoundChange(
   return decision.type === 'proceed' || decision.type === 'discard';
 }
 
-function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange): void {
-  if (room.closed) return;
+function applyOptimisticRoomChange(room: PokerRoomView | null, command: PokerRoomChange): void {
+  if (!room || room.closed) return;
   switch (command.type) {
     case 'vote':
       applyOptimisticVote(room, command.roundId, command.choice);
@@ -170,74 +176,195 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
   }
 }
 
+export type PokerRoomPhase = 'unjoined' | 'live' | 'closed' | 'reopening' | 'unavailable';
+
+export interface PokerFragmentAdapter {
+  /** Reads and scrubs any `#f=<token>` fragment for `roomPath` from the current URL. */
+  takeToken(roomPath: string): string | null;
+  /** Subscribes to subsequent URL hash changes and returns an unsubscribe callback. */
+  onHashChange(listener: () => void): () => void;
+}
+
+export interface PokerRecentRoomsAdapter {
+  record(id: string, options?: { name?: string; onlyIfSaved?: boolean }): void;
+  remove(id: string): void;
+}
+
+const browserPokerFragmentAdapter: PokerFragmentAdapter = {
+  takeToken: (roomPath) => (typeof window === 'undefined' ? null : takeFacilitatorLinkToken(roomPath)),
+  onHashChange: (listener) => {
+    if (typeof window === 'undefined') return () => {};
+    window.addEventListener('hashchange', listener);
+    return () => window.removeEventListener('hashchange', listener);
+  },
+};
+
+const browserRecentRoomsAdapter: PokerRecentRoomsAdapter = {
+  record: recordRecentPokerRoom,
+  remove: removeRecentPokerRoom,
+};
+
 export interface PokerRoomControllerOptions {
-  /** Route-provided Room snapshot; reconciled into the controller store when newer. */
-  room: () => PokerRoomView;
+  /** Route-provided Room ID (used for fragment scrubbing & recent-room cleanup even when `room()` is `null`). */
+  roomId?: string;
+  /** Route-provided Room snapshot (`null` when unavailable); reconciled into the session when newer. */
+  room: () => PokerRoomView | null;
   /** Server-action surface; production passes `changePokerRoom`, tests inject a double. */
   changeRoom: (id: string, command: PokerRoomChange) => Promise<PokerResult>;
+  /** Co-Facilitator Link claim adapter; production passes `claimPokerFacilitatorLink`, tests inject a double. */
+  claimFacilitatorLink?: (id: string, token: string) => Promise<PokerSharingResult<PokerRoomView>>;
   /** Injectable live transport; defaults to SSE/WebSocket. */
   liveTransport?: PokerLiveTransport;
-  /** Called when the Room transitions to unavailable (`room:missing` or `ROOM_NOT_FOUND`). */
+  /** Injectable URL fragment adapter for `#f=` reading/scrubbing; defaults to browser `window.location`/`history`. */
+  fragment?: PokerFragmentAdapter;
+  /** Injectable recent-rooms persistence adapter; defaults to `localStorage` helpers. */
+  recentRooms?: PokerRecentRoomsAdapter;
+  /** Called when the Room transitions from available to unavailable (`room:missing`, `ROOM_NOT_FOUND`, or `null` prop). */
   onUnavailable?: () => void;
 }
 
 export interface PokerRoomController {
-  /** Current viewer-projected Room state (keyed optimistic store read). */
-  room(): PokerRoomView;
+  /** Current lifecycle phase of the Pointing Poker Room session. */
+  phase(): PokerRoomPhase;
+  /** Current viewer-projected Room state (keyed optimistic store read), or `null` when unavailable. */
+  room(): PokerRoomView | null;
+  /** Current open Room view when in `'unjoined'` or `'live'` phase, otherwise `undefined`. */
+  liveRoom(): PokerLiveRoomView | undefined;
+  /** Current closed Room view when in `'closed'` or `'reopening'` phase, otherwise `undefined`. */
+  closedRoom(): PokerClosedRoomView | undefined;
   online(): string[];
   status(): PokerLiveStatus;
+  /** True while a `#f=` Co-Facilitator Link claim is in flight. */
+  claimPending(): boolean;
+  /** True after a `#f=` Co-Facilitator Link claim succeeded while unjoined (ADR-0001). */
+  hasPendingFacilitatorClaim(): boolean;
+  /** Error message from the most recent failed Co-Facilitator Link claim. */
+  claimError(): string;
+  /** Error message from the most recent failed Room reopen attempt. */
+  reopenError(): string;
+  /** True once the session has transitioned across lifecycle phases after initial mount (focus hint). */
+  hasTransitionedPhase(): boolean;
   changeRoom(command: PokerRoomChange): Promise<PokerResult>;
+  /** Unified single-flight Room reopen flow (ADR-0004). Returns `null` on unexpected network error. */
+  reopenRoom(): Promise<PokerResult | null>;
+  /** Transitions the session to `'unavailable'`, disposes live transport, and removes from recent rooms. */
+  markUnavailable(): void;
+}
+
+function effectiveRoomPhase(room: PokerRoomView | null): 'unjoined' | 'live' | 'closed' | 'unavailable' {
+  if (!room) return 'unavailable';
+  if (room.closed) return 'closed';
+  return room.viewer ? 'live' : 'unjoined';
+}
+
+function shouldAcceptSnapshot(current: PokerRoomView | null, next: PokerRoomView): boolean {
+  if (!current) return false;
+  if (next.id !== current.id) return false;
+  if (next.version < current.version) return false;
+  if (next.version === current.version) {
+    if (current.closed && !next.closed) return false;
+    if (!current.closed && !next.closed) {
+      if (current.viewer && !next.viewer) return false;
+      if (current.viewer?.isFacilitator && next.viewer && !next.viewer.isFacilitator) return false;
+    }
+  }
+  return true;
 }
 
 /**
- * Reactive Pointing Poker Room controller: owns the keyed optimistic Room store,
- * live stream lifecycle, presence list, and optimistic Room command dispatch.
+ * Route-level Pointing Poker Room session controller: owns all Room phases
+ * (`unjoined`, `live`, `closed`, `reopening`, `unavailable`), the single
+ * monotonic version-guarded optimistic Room store, live stream lifecycle,
+ * unified ADR-0004 reopen flow, ADR-0001 `#f=` fragment claiming/scrubbing,
+ * and recent-room recording.
  */
 export function createPokerRoomController(
   options: PokerRoomControllerOptions,
 ): PokerRoomController {
   const initialRoom = untrack(() => options.room());
-  const [serverRoom, setServerRoom] = createSignal<PokerRoomView>(initialRoom);
-  const [store, setStore] = createOptimisticStore<{ room: PokerRoomView }>(
+  const roomId = options.roomId ?? initialRoom?.id ?? '';
+  const fragment = options.fragment ?? browserPokerFragmentAdapter;
+  const recentRooms = options.recentRooms ?? browserRecentRoomsAdapter;
+
+  const [serverRoom, setServerRoom] = createSignal<PokerRoomView | null>(initialRoom);
+  const [store, setStore] = createOptimisticStore<{ room: PokerRoomView | null }>(
     () => ({ room: serverRoom() }),
     { room: initialRoom },
     { key: 'id' },
   );
 
   const [online, setOnline] = createSignal<string[]>([]);
-  const [unavailable, setUnavailable] = createSignal(false);
+  const [unavailable, setUnavailable] = createSignal(initialRoom === null);
+  const [reopening, setReopening] = createSignal(false);
+  const [reopenError, setReopenError] = createSignal('');
+  const [claimPending, setClaimPending] = createSignal(false);
+  const [claimError, setClaimError] = createSignal('');
+  const [hasPendingFacilitatorClaim, setHasPendingFacilitatorClaim] = createSignal(false);
+  const [hasTransitionedPhase, setHasTransitionedPhase] = createSignal(false);
   const [live, setLive] = createSignal<ReturnType<typeof createPokerLive> | null>(null);
   const status = createMemo<PokerLiveStatus>(() => live()?.status() ?? 'connecting');
 
   function applySnapshot(next: PokerRoomView): void {
-    setServerRoom((current) => {
-      if (next.id !== current.id) return current;
-      if (next.version < current.version) return current;
-      if (current.closed && !next.closed && next.version === current.version) return current;
-      return next;
-    });
+    if (untrack(unavailable)) return;
+    const current = untrack(serverRoom);
+    if (current === next || !shouldAcceptSnapshot(current, next)) return;
+    const prevPhase = effectiveRoomPhase(current);
+    const nextPhase = effectiveRoomPhase(next);
+    setServerRoom(next);
+    if (prevPhase !== nextPhase) {
+      setHasTransitionedPhase(true);
+      if (nextPhase !== 'closed') setReopenError('');
+      if (nextPhase !== 'unjoined') setHasPendingFacilitatorClaim(false);
+    }
   }
 
   function markUnavailable(): void {
     if (untrack(unavailable)) return;
     setUnavailable(true);
+    setHasTransitionedPhase(true);
     setOnline([]);
     options.onUnavailable?.();
   }
 
-  createEffect(() => options.room(), (next) => applySnapshot(next));
+  createEffect(
+    () => options.room(),
+    (next) => {
+      if (next === null) markUnavailable();
+      else applySnapshot(next);
+    },
+  );
+
+  const liveRoom = createMemo<PokerLiveRoomView | undefined>(() => {
+    if (unavailable()) return undefined;
+    const current = store.room;
+    return current && !current.closed ? current : undefined;
+  });
+
+  const closedRoom = createMemo<PokerClosedRoomView | undefined>(() => {
+    if (unavailable()) return undefined;
+    const current = store.room;
+    return current?.closed ? current : undefined;
+  });
+
+  const phase = createMemo<PokerRoomPhase>(() => {
+    if (unavailable()) return 'unavailable';
+    const current = store.room;
+    if (!current) return 'unavailable';
+    if (current.closed) return reopening() ? 'reopening' : 'closed';
+    return current.viewer ? 'live' : 'unjoined';
+  });
 
   const liveRoomId = createMemo(() => {
     if (unavailable()) return null;
     const current = serverRoom();
-    return current.closed || !current.viewer ? null : current.id;
+    return !current || current.closed || !current.viewer ? null : current.id;
   });
 
-  createEffect(liveRoomId, (roomId) => {
-    if (!roomId) return;
+  createEffect(liveRoomId, (activeId) => {
+    if (!activeId) return;
     if (typeof window === 'undefined') return;
     const stream = createPokerLive(
-      roomId,
+      activeId,
       (message) => {
         if (message.type === 'room:snapshot') {
           applySnapshot(message.room);
@@ -258,11 +385,81 @@ export function createPokerRoomController(
     };
   });
 
-  const performChange = action(function* (roomId: string, command: PokerRoomChange) {
+  createEffect(
+    () => {
+      if (unavailable()) return roomId ? { kind: 'remove' as const, id: roomId } : null;
+      const current = store.room;
+      if (!current) return roomId ? { kind: 'remove' as const, id: roomId } : null;
+      if (current.closed) return { kind: 'record' as const, id: current.id, name: current.name, onlyIfSaved: true };
+      if (current.viewer !== null) {
+        return { kind: 'record' as const, id: current.id, name: current.name, onlyIfSaved: false };
+      }
+      return null;
+    },
+    (entry) => {
+      if (!entry) return;
+      if (entry.kind === 'remove') recentRooms.remove(entry.id);
+      else recentRooms.record(entry.id, { name: entry.name, onlyIfSaved: entry.onlyIfSaved });
+    },
+  );
+
+  onSettled(() => {
+    if (!roomId) return;
+    let active = true;
+    let attempt = 0;
+
+    function handleFragment() {
+      const token = fragment.takeToken(pokerRoomPath(roomId));
+      if (token === null) return;
+
+      const current = untrack(serverRoom);
+      if (untrack(unavailable) || !current || current.closed) return;
+      const claimLink = options.claimFacilitatorLink;
+      if (!claimLink) return;
+
+      const currentAttempt = ++attempt;
+      setClaimPending(true);
+      setClaimError('');
+      void (async () => {
+        try {
+          const result = await claimLink(roomId, token);
+          if (!active) return;
+          if (result.ok) {
+            applySnapshot(result.value);
+            if (!result.value.closed && !result.value.viewer) {
+              setHasPendingFacilitatorClaim(true);
+            }
+          } else if (result.code === 'ROOM_NOT_FOUND') {
+            markUnavailable();
+          } else if (attempt === currentAttempt) {
+            setClaimError(result.message);
+          }
+        } catch {
+          if (active && attempt === currentAttempt) {
+            setClaimError('Could not claim Facilitator access. Open the Co-Facilitator Link to try again.');
+          }
+        } finally {
+          if (active && attempt === currentAttempt) {
+            setClaimPending(false);
+          }
+        }
+      })();
+    }
+
+    const unsubscribe = fragment.onHashChange(handleFragment);
+    handleFragment();
+    return () => {
+      active = false;
+      attempt = 0;
+      unsubscribe();
+    };
+  });
+
+  const performChange = action(function* (activeId: string, command: PokerRoomChange) {
     setStore((draft) => {
       applyOptimisticRoomChange(draft.room, command);
     });
-    const result: PokerResult = yield options.changeRoom(roomId, command);
+    const result: PokerResult = yield options.changeRoom(activeId, command);
     if (!result.ok) throw new PokerChangeRejected(result);
     applySnapshot(result.room);
     return result;
@@ -272,9 +469,16 @@ export function createPokerRoomController(
     // Commit caller-owned process flags written in this tick before the action
     // opens; the action's transaction would otherwise hold them until it settles.
     flush();
-    const roomId = untrack(() => serverRoom().id);
+    const current = untrack(serverRoom);
+    if (untrack(unavailable) || !current) {
+      return {
+        ok: false,
+        code: 'ROOM_NOT_FOUND',
+        message: 'This Room is no longer available.',
+      };
+    }
     try {
-      return await performChange(roomId, command);
+      return await performChange(current.id, command);
     } catch (error) {
       if (error instanceof PokerChangeRejected) {
         if (error.result.code === 'ROOM_NOT_FOUND') markUnavailable();
@@ -284,10 +488,58 @@ export function createPokerRoomController(
     }
   }
 
+  let activeReopen: Promise<PokerResult | null> | null = null;
+
+  function reopenRoom(): Promise<PokerResult | null> {
+    if (activeReopen) return activeReopen;
+    const current = untrack(serverRoom);
+    if (untrack(unavailable) || !current) {
+      return Promise.resolve({
+        ok: false,
+        code: 'ROOM_NOT_FOUND',
+        message: 'This Room is no longer available.',
+      });
+    }
+
+    setReopening(true);
+    setReopenError('');
+    const promise = (async (): Promise<PokerResult | null> => {
+      try {
+        const result = await changeRoom({ type: 'reopen-room' });
+        if (result.ok) {
+          if (!result.room.closed) {
+            setClaimError('');
+          }
+        } else if (result.code !== 'ROOM_NOT_FOUND') {
+          setReopenError(result.message);
+        }
+        return result;
+      } catch {
+        setReopenError('Could not reopen the Room. Try again.');
+        return null;
+      } finally {
+        activeReopen = null;
+        setReopening(false);
+      }
+    })();
+    activeReopen = promise;
+    return promise;
+  }
+
   return {
-    room: () => store.room,
+    phase,
+    room: () => (unavailable() ? null : store.room),
+    liveRoom,
+    closedRoom,
     online,
     status,
+    claimPending,
+    hasPendingFacilitatorClaim,
+    claimError,
+    reopenError,
+    hasTransitionedPhase,
     changeRoom,
+    reopenRoom,
+    markUnavailable,
   };
 }
