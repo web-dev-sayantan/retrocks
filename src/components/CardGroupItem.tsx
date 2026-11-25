@@ -1,8 +1,7 @@
 import { Menu, MenuItem, MenuTrigger } from '@ui-sdk/solid/menu';
-import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/solid/collapsible';
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
-import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
+import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
 import type {
   CardGroupDTO,
@@ -10,12 +9,11 @@ import type {
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
 import { areAllGroupCardsMine, isGroupRedacted } from '../lib/board-permissions';
-import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
+import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
 import { useBoardWorkspace } from './BoardWorkspaceContext';
 import CardItem from './CardItem';
-import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
 import VoteControls from './VoteControls';
 
@@ -53,33 +51,18 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       areAllGroupCardsMine(workspace, props.group, props.columnCards),
   );
 
-  // Inline title editing: createInlineEdit owns the edit, input, and keyboard contract.
-  const titleField = usePrimitive(inlineEdit, () => ({
+  // Inline title editing: unified session owns edit, input, IME, focus-out, and fallback focus.
+  const titleEdit = createInlineEditSession({
     value: () => props.group.title,
-    commit: (text) => titleSave.commit(text),
+    target: () => props.group.id,
     disabled: () => !canManageGroup(),
-  }));
-  const groupEdit = titleField.api.edit;
-  const titleSave = createInlineEditSave(saveGroupTitle, () => groupEdit.cancel());
-  const isRenaming = () => titleField.present('input');
-  const [hasTitleText, setHasTitleText] = createSignal(true);
-
-  // The title button re-mounts while editing ends, so guide focus back when nothing took it.
-  createEffect(isRenaming, (renaming, wasRenaming) => {
-    if (!renaming && wasRenaming && document.activeElement === document.body) {
-      titleButtonEl?.focus();
-    }
+    save: saveGroupTitle,
+    fallbackFocus: () => titleButtonEl?.focus(),
   });
 
   function startRename(): void {
-    setHasTitleText(props.group.title.trim().length > 0);
     setMoveMenuOpen(false);
-    groupEdit.start(props.group.id);
-  }
-
-  function cancelRename(): void {
-    titleSave.resetError();
-    groupEdit.cancel();
+    titleEdit.start();
   }
 
   async function saveGroupTitle(text: string): Promise<InlineEditOutcome> {
@@ -168,31 +151,23 @@ export default function CardGroupItem(props: CardGroupItemProps) {
           </CollapsibleTrigger>
 
           <Show
-            when={!isRenaming() || !canManageGroup()}
+            when={!titleEdit.isEditing() || !canManageGroup()}
             fallback={
-              <div class="col-span-2 flex min-w-0 items-center gap-1">
-                <InlineEditorMount bind={(el) => groupEdit.bindInput(el)}>
-                  {(ref) => (
-                    <input
-                      ref={ref}
-                      type="text"
-                      aria-label="Card Group title"
-                      readonly={titleSave.isSaving()}
-                      maxlength={MAX_GROUP_TITLE_LENGTH}
-                      onKeyDown={(event) => groupEdit.inputKeydown(event)}
-                      onFocusOut={(event) => groupEdit.end('focus-out', event)}
-                      onInput={(event) =>
-                        setHasTitleText(event.currentTarget.value.trim().length > 0)
-                      }
-                      class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text board-focus-ring sm:min-h-7"
-                    />
-                  )}
-                </InlineEditorMount>
+              <div ref={titleEdit.containerRef} class="col-span-2 flex min-w-0 items-center gap-1">
+                <input
+                  ref={titleEdit.inputRef}
+                  type="text"
+                  aria-label="Card Group title"
+                  readonly={titleEdit.isSaving()}
+                  maxlength={MAX_GROUP_TITLE_LENGTH}
+                  {...titleEdit.inputProps}
+                  class="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-base font-semibold text-text board-focus-ring sm:min-h-7"
+                />
                 <button
                   type="button"
                   aria-label="Save Card Group title"
-                  disabled={titleSave.isSaving() || !hasTitleText()}
-                  onClick={() => groupEdit.end()}
+                  disabled={titleEdit.isSaving() || !titleEdit.hasText()}
+                  onClick={titleEdit.submit}
                   class="spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent text-accent-contrast hover:opacity-90 board-focus-ring disabled:opacity-50 sm:size-7"
                 >
                   <LucideIcon icon={Check} />
@@ -200,7 +175,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 <button
                   type="button"
                   aria-label="Cancel Card Group rename"
-                  onClick={cancelRename}
+                  onClick={titleEdit.cancel}
                   class={actionButtonClass}
                 >
                   <LucideIcon icon={X} />
@@ -325,7 +300,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             </p>
           </Show>
           <p role="status" class="sr-only">
-            {titleSave.isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
+            {titleEdit.isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}
           </p>
         </Show>
       </div>

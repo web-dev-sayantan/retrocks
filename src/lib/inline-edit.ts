@@ -1,6 +1,6 @@
 import { createInlineEdit, definePrimitive } from '@ui-sdk/core';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
-import { createEffect, createSignal, onCleanup } from 'solid-js';
+import { createEffect, createSignal, onCleanup, untrack } from 'solid-js';
 
 import { createDoubleTap } from './double-tap';
 
@@ -20,13 +20,11 @@ interface InlineEditFieldOptions {
  * The one inline-editing session every rename surface shares: createInlineEdit
  * owns the editing id and the keyboard contract (Enter saves, Escape cancels,
  * blur saves). `present('input')` is the tracked "is editing" read; each
- * surface renders its own input element and calls `edit.bindInput`,
- * `edit.inputKeydown`, and `edit.end('focus-out')` — the Solid adapter can
- * recreate part-bound elements mid-session, which would wipe a draft in
- * progress, so the input slot carries presence only. Surfaces keep a thin
- * focus-fallback effect for when the originating control disappears.
+ * surface renders its own input element and lets `createInlineEditSession` own
+ * `bindInput`, keyboard/IME handling, container-aware focus-out, and fallback
+ * focus restoration.
  */
-export const inlineEdit = definePrimitive({
+const inlineEdit = definePrimitive({
   name: 'inline-edit',
   options: { value: 'callback', commit: 'action', disabled: 'callback' },
   state: (_options: InlineEditFieldOptions) => ({ editing: null as string | null }),
@@ -46,7 +44,7 @@ export const inlineEdit = definePrimitive({
   }),
 });
 
-export interface InlineEditSave {
+interface InlineEditSave {
   /** createInlineEdit's `commit`: starts the save, then answers false until the save's own result closes the editor. */
   commit(text: string): boolean;
   /** True while a save is in flight. */
@@ -65,7 +63,7 @@ export interface InlineEditSave {
  * mutations: `commit` fires the save and keeps the editor open; when the save
  * lands, `finish()` closes the session on success and the error shows on failure.
  */
-export function createInlineEditSave(
+function createInlineEditSave(
   save: (text: string, isCurrent: () => boolean) => Promise<InlineEditOutcome>,
   finish: () => void,
   isActive: () => boolean = () => true,
@@ -127,6 +125,12 @@ export interface InlineEditSessionOptions {
   fallbackFocus?: () => void;
   /** Optional predicate filtering double-click and touch double-tap targets on the trigger wrapper. */
   acceptsTarget?: (target: EventTarget | null) => boolean;
+  /**
+   * True when the input stays mounted while idle (e.g. an always-visible owner input inside a drawer).
+   * Editing starts on the first input change, idle values stay synced from `value()`, and Escape bubbles
+   * when no edit is active so an enclosing drawer can close.
+   */
+  alwaysMounted?: boolean;
 }
 
 export interface InlineEditSession {
@@ -134,6 +138,8 @@ export interface InlineEditSession {
   isEditing(): boolean;
   /** True while an async save attempt is in flight. */
   isSaving(): boolean;
+  /** The in-flight save promise, if any, for callers that must serialize follow-up mutations. */
+  saving(): Promise<boolean> | undefined;
   /** Error message from the last failed save attempt, or null. */
   error(): string | null;
   /** True when the current draft contains non-whitespace characters. */
@@ -181,13 +187,14 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
   let disposed = false;
   let inputEl: EditorElement | undefined;
   let containerEl: HTMLElement | undefined;
+  let unbindInput: (() => void) | undefined;
 
   const [hasText, setHasText] = createSignal(true);
   const [draftLength, setDraftLength] = createSignal(0);
 
   const save = createInlineEditSave(
     options.save,
-    cancel,
+    finish,
     () => !disposed && isEditing() && activeTarget !== undefined && effectiveTarget() === activeTarget,
   );
 
@@ -211,17 +218,32 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
     edit.end();
   }
 
-  function cancel(): void {
+  function finish(): void {
     activeTarget = undefined;
     tap.reset();
     save.reset();
     edit.cancel();
+    if (options.alwaysMounted) {
+      unbindInput?.();
+      unbindInput = undefined;
+    }
+  }
+
+  function cancel(): void {
+    finish();
+    if (options.alwaysMounted && inputEl) {
+      inputEl.value = untrack(options.value);
+    }
   }
 
   createEffect(isEditing, (editing, wasEditing) => {
     if (editing) {
-      if (inputEl?.isConnected) {
+      if (inputEl?.isConnected && !unbindInput) {
         const unbind = edit.bindInput(inputEl);
+        if (options.alwaysMounted) {
+          unbindInput = unbind;
+          return;
+        }
         return () => {
           unbind();
         };
@@ -229,12 +251,28 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
       return;
     }
     activeTarget = undefined;
+    if (options.alwaysMounted) {
+      unbindInput?.();
+      unbindInput = undefined;
+      return;
+    }
     inputEl = undefined;
     containerEl = undefined;
     if (wasEditing && document.activeElement === document.body) {
       options.fallbackFocus?.();
     }
   });
+
+  if (options.alwaysMounted) {
+    createEffect(
+      () => (isEditing() ? undefined : options.value()),
+      (committed) => {
+        if (committed !== undefined && inputEl && inputEl.value !== committed) {
+          inputEl.value = committed;
+        }
+      },
+    );
+  }
 
   createEffect(effectiveTarget, (current, previous) => {
     if (previous !== undefined && current !== previous && (activeTarget === undefined || activeTarget !== current)) {
@@ -245,6 +283,8 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
   onCleanup(() => {
     disposed = true;
     activeTarget = undefined;
+    unbindInput?.();
+    unbindInput = undefined;
     inputEl = undefined;
     containerEl = undefined;
     tap.reset();
@@ -254,6 +294,7 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
   return {
     isEditing,
     isSaving: save.isSaving,
+    saving: save.saving,
     error: save.error,
     hasText: () => hasText(),
     draftLength: () => draftLength(),
@@ -280,6 +321,20 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
     inputProps: {
       onKeyDown(event: KeyboardEvent) {
         if (event.isComposing || event.keyCode === 229) return;
+        if (options.alwaysMounted) {
+          if (event.key === 'Escape') {
+            if (!isEditing()) return;
+            event.preventDefault();
+            event.stopPropagation();
+            cancel();
+            return;
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            edit.end('enter-key', event);
+          }
+          return;
+        }
         if (event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
@@ -298,6 +353,16 @@ export function createInlineEditSession(options: InlineEditSessionOptions): Inli
         if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
           setHasText(el.value.trim().length > 0);
           setDraftLength(el.value.length);
+          if (options.alwaysMounted && !isEditing()) {
+            const next = effectiveTarget();
+            if (!disposed && next !== undefined && el.value !== options.value()) {
+              if (edit.start(next, { reason: 'type', text: el.value })) {
+                activeTarget = next;
+                unbindInput?.();
+                unbindInput = edit.bindInput(el);
+              }
+            }
+          }
         }
       },
     },
