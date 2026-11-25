@@ -165,6 +165,13 @@ describe('Inplace top-bar Room name editing', () => {
     expect(input.value).toBe('Sprint 14 Planning');
 
     fireEvent.input(input, { target: { value: 'Discarded' } });
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
+    flush();
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue('Discarded');
+    expect(change).not.toHaveBeenCalled();
+
     fireEvent.keyDown(input, { key: 'Escape' });
     flush();
     expect(change).not.toHaveBeenCalled();

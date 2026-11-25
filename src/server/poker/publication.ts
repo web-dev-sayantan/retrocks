@@ -1,5 +1,5 @@
 import type { PokerDeleteResult } from '../../lib/poker-types';
-import { projectPokerRoom, type StoredPokerRoom } from './room';
+import { projectPokerRoom, type PokerRoomWriteSuccess, type StoredPokerRoom } from './room';
 
 export type PokerRoomPublication =
   | { type: 'snapshot'; room: StoredPokerRoom; terminal: boolean }
@@ -11,7 +11,7 @@ function pokerRoomSnapshot(room: StoredPokerRoom): PokerRoomPublication {
   return { type: 'snapshot', room, terminal: room.closedAt !== undefined };
 }
 
-export function committedPokerMutation(result: { ok: false } | { ok: true; room: StoredPokerRoom; updated?: true }) {
+export function committedPokerMutation(result: { ok: false } | PokerRoomWriteSuccess) {
   return result.ok && result.updated ? pokerRoomSnapshot(result.room) : undefined;
 }
 

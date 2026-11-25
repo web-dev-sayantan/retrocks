@@ -2,7 +2,6 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
-import type { PokerLiveMessage } from '../../lib/poker-types';
 import { wrapDatabaseSync } from '../adapters/node/sqlite';
 import { generateEntityId } from '../crypto';
 import { PointingPokerRoom } from './durable-room';
@@ -131,14 +130,14 @@ test('reopening a closed Room resets the Durable Object alarm to 90 days from no
 
 
 function liveSocket(hash: string, participantId: string) {
-  const events: (PokerLiveMessage | null | undefined)[] = [];
+  const events: unknown[] = [];
   return {
     events,
     readyState: Number(WebSocket.OPEN),
     deserializeAttachment: () => ({ hash, participantId, lastSeenAt: start }),
     serializeAttachment() {},
     send(data: string) {
-      events.push(parsePokerLiveMessage(data));
+      events.push(JSON.parse(data));
     },
     close() {
       events.push(undefined);
@@ -158,7 +157,7 @@ async function connectViewers(
       const reader = node.connect(id, hash, new Request('https://retrocks.test/live')).body!.getReader();
       return async () => {
         const { value, done } = await reader.read();
-        return done ? undefined : parsePokerLiveMessage(new TextDecoder().decode(value).slice(6));
+        return done ? undefined : JSON.parse(new TextDecoder().decode(value).slice(6)) as unknown;
       };
     }
     const peer = liveSocket(hash, view.viewer.id);
@@ -201,13 +200,20 @@ test.each([
     expect(await adapter.mutate(id, 'voter', { type: 'vote', roundId, choice: '3' })).toMatchObject({ ok: true });
 
     for (const [index, next] of viewers.entries()) {
-      expect(await next()).toMatchObject({
+      const frame = await next();
+      expect(frame).toMatchObject({
         type: 'room:snapshot',
         room: {
           viewer: { displayName: index === 0 ? 'Alex' : 'Sam' },
-          round: { phase: 'open', ownChoice: index === 0 ? null : '3' },
+          round: {
+            id: roundId,
+            phase: 'open',
+            ownChoice: index === 0 ? null : '3',
+            submittedParticipantIds: [added.room.participants.find(({ displayName }) => displayName === 'Sam')!.id],
+          },
         },
       });
+      expect(frame).not.toHaveProperty('room.round.ballots');
     }
 
     if (terminal === 'close') {
@@ -268,7 +274,7 @@ test.each(['Node', 'Durable Object'])('%s publishes effective Co-Facilitator Lin
         type: 'room:snapshot',
         room: { viewer: { displayName, isFacilitator: true }, facilitatorLinkRevision: 2 },
       });
-      expect(JSON.stringify(frame)).not.toMatch(/second-hash|second-secret/);
+      expect(JSON.stringify(frame)).not.toMatch(/"(?:hash|encrypted|facilitatorCapability)"|second-hash|second-secret/);
     }
   } finally {
     node?.close();

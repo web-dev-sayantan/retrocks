@@ -38,7 +38,10 @@ export default function PokerStoryTitleEditor(props: {
     target: () => canEdit() ? props.story.id : undefined,
     isEditing,
     start: (id) => titleEdit.start(id),
-    close: () => titleEdit.cancel(),
+    close: () => {
+      titleTap.reset();
+      titleEdit.cancel();
+    },
     save: saveTitleText,
   });
   const [hasText, setHasText] = createSignal(true);
@@ -55,7 +58,6 @@ export default function PokerStoryTitleEditor(props: {
   }
 
   function cancelEdit(): void {
-    titleTap.reset();
     titleSave.cancel();
   }
 
@@ -94,6 +96,7 @@ export default function PokerStoryTitleEditor(props: {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       cancelEdit();
       return;
     }

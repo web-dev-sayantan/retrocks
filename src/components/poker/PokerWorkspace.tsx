@@ -210,9 +210,10 @@ export default function PokerWorkspace(props: {
                       placeholder={POKER_DEFAULT_ROOM_NAME}
                       maxlength={POKER_ROOM_NAME_LIMIT}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
+                        if (event.isComposing || event.keyCode === 229) return;
                         if (event.key === 'Escape') {
                           event.preventDefault();
+                          event.stopPropagation();
                           roomNameSave.cancel();
                           return;
                         }

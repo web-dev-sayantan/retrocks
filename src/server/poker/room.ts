@@ -57,8 +57,9 @@ const rateLimited = {
   message: 'Too many changes. Try again shortly.',
 } as const;
 
-type PokerSharingWrite = Extract<PokerSharingResult<never>, { ok: false }>
-  | { ok: true; room: StoredPokerRoom; updated?: true };
+export type PokerRoomWriteSuccess = Extract<PokerResult<StoredPokerRoom>, { ok: true }> & { updated?: true };
+
+type PokerSharingWrite = Extract<PokerSharingResult<never>, { ok: false }> | PokerRoomWriteSuccess;
 
 export interface PokerFacilitatorCapability {
   hash: string;
@@ -341,7 +342,7 @@ export class PokerRoomStorage {
     return room;
   }
 
-  mutate(id: string, hash: string, command: PokerRoomCommand): PokerResult<StoredPokerRoom> & { updated?: true } {
+  mutate(id: string, hash: string, command: PokerRoomCommand): Extract<PokerResult, { ok: false }> | PokerRoomWriteSuccess {
     if (!this.writeLimiter.check(id, hash, Date.now()).allowed) return rateLimited;
     return this.db.transaction(() => {
       const now = Date.now();

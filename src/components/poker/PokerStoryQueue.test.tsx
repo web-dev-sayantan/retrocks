@@ -1013,12 +1013,15 @@ test('Publish confirms before discarding cast votes while Queue does not', async
   }));
 });
 
-function fireDoubleTap(target: Element) {
+function fireTap(target: Element) {
   const init = { pointerType: 'touch', isPrimary: true, pointerId: 1, clientX: 20, clientY: 20, bubbles: true };
   fireEvent.pointerDown(target, init);
   fireEvent.pointerUp(target, init);
-  fireEvent.pointerDown(target, init);
-  fireEvent.pointerUp(target, init);
+}
+
+function fireDoubleTap(target: Element) {
+  fireTap(target);
+  fireTap(target);
 }
 
 test('a Facilitator can edit unlocked Story titles inplace from the sidebar via double-click and double-tap with IME-safe Enter, Escape, and blur', async () => {
@@ -1192,6 +1195,16 @@ test('Locked Stories and non-Facilitator Participants cannot activate inplace ti
   const lockedTitle = within(queue).getByText('Locked Story');
   fireEvent.dblClick(lockedTitle);
   fireDoubleTap(lockedTitle);
+  expect(screen.queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
+
+  const unlockedTitle = within(queue).getByText('Active unlocked');
+  fireTap(unlockedTitle);
+  setViewer(sam);
+  flush();
+  setViewer(alex);
+  flush();
+  fireTap(unlockedTitle);
+  flush();
   expect(screen.queryByRole('textbox', { name: 'Edit Story title' })).toBeNull();
 
   setViewer(sam);
