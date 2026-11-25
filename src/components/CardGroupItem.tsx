@@ -7,19 +7,16 @@ import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'so
 import type {
   CardGroupDTO,
   CardViewDTO,
-  ColumnDTO,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
-import { isGroupRedacted } from '../lib/board-permissions';
+import { areAllGroupCardsMine, isGroupRedacted } from '../lib/board-permissions';
 import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../lib/inline-edit';
-import type { BoardMutations } from '../lib/board-controller';
-import type { BoardTransferHandle } from '../lib/board-transfer';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
+import { useBoardWorkspace } from './BoardWorkspaceContext';
 import CardItem from './CardItem';
 import { InlineEditorMount } from './InlineEditorMount';
 import LucideIcon from './LucideIcon';
-import type { WorkspaceVoting } from '../lib/board-controller';
 import VoteControls from './VoteControls';
 
 export interface CardGroupItemProps {
@@ -28,38 +25,13 @@ export interface CardGroupItemProps {
   revealIndexOffset?: number;
   columnCards: readonly CardViewDTO[];
   columnGroups: readonly CardGroupDTO[];
-  columns: readonly ColumnDTO[];
-  voting: WorkspaceVoting;
-  isFacilitator: boolean;
-  isLocked: boolean;
-  isBlurred: boolean;
-  canGroupCards: boolean;
-  canManage: boolean;
-  nowMs: number;
-  /** The Board's createTransfer instance: this Group's header is one of its items. */
-  transfer: BoardTransferHandle;
-  /** Controller-shaped Card/Group mutations (the workspace passes its controller). */
-  actions: Pick<
-    BoardMutations,
-    | 'updateCard'
-    | 'updateActionItem'
-    | 'moveCard'
-    | 'deleteCard'
-    | 'toggleReaction'
-    | 'groupCard'
-    | 'ungroupCard'
-    | 'renameCardGroup'
-    | 'dissolveCardGroup'
-    | 'moveCardGroup'
-    | 'isActionItemPending'
-  >;
-  onOpenCardDetail: (cardId: string, trigger: HTMLButtonElement) => void;
 }
 
 const actionButtonClass = 'spring-press inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text active:bg-surface board-focus-ring disabled:opacity-50 sm:size-7';
 const titleTextClass = 'line-clamp-2 wrap-anywhere text-sm leading-5 font-semibold text-ellipsis text-text';
 
 export default function CardGroupItem(props: CardGroupItemProps) {
+  const workspace = useBoardWorkspace();
   const [expanded, setExpanded] = createSignal(true);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [isMoving, setIsMoving] = createSignal(false);
@@ -69,13 +41,16 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   let titleButtonEl: HTMLButtonElement | undefined;
 
   const otherColumns = createMemo(
-    () => props.columns.filter((column) => column.id !== props.group.columnId),
+    () => workspace.columns.filter((column) => column.id !== props.group.columnId),
   );
 
   const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
   const canManageGroup = createMemo(
-    () => props.canManage && !isGroupRedacted(props.group),
+    () =>
+      workspace.canGroupCards &&
+      !isGroupRedacted(props.group) &&
+      areAllGroupCardsMine(workspace, props.group, props.columnCards),
   );
 
   // Inline title editing: createInlineEdit owns the edit, input, and keyboard contract.
@@ -110,7 +85,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   async function saveGroupTitle(text: string): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return (await props.actions.renameCardGroup(props.group.id, trimmed))
+    return (await workspace.actions.renameCardGroup(props.group.id, trimmed))
       ? true
       : false;
   }
@@ -121,7 +96,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     setMoveFailed(false);
     let ok = false;
     try {
-      ok = await props.actions.moveCardGroup(props.group.id, targetColumnId);
+      ok = await workspace.actions.moveCardGroup(props.group.id, targetColumnId);
     } catch {
       // Treat an unexpected rejection like a failed move.
     }
@@ -138,7 +113,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
     if (isDissolving()) return;
     setIsDissolving(true);
     try {
-      await props.actions.dissolveCardGroup(props.group.id);
+      await workspace.actions.dissolveCardGroup(props.group.id);
     } finally {
       setIsDissolving(false);
     }
@@ -150,7 +125,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       onOpenChange={setExpanded}
       render={(rootProps) => (
         <article
-          {...props.transfer.slot(
+          {...workspace.transfer.slot(
             'group-target',
             () => ({ value: `group:${props.group.id}` }),
             // rootProps rides as the slot's author props: the Collapsible's
@@ -166,16 +141,16 @@ export default function CardGroupItem(props: CardGroupItemProps) {
       )}
     >
       <div
-        {...props.transfer.slot('group-members', () => ({ value: `group:${props.group.id}` }))}
+        {...workspace.transfer.slot('group-members', () => ({ value: `group:${props.group.id}` }))}
         /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
            grab–move–drop (APG): transfer items are focusable. */
-        tabindex={canManageGroup() && !props.isLocked ? 0 : undefined}
-        aria-roledescription={canManageGroup() && !props.isLocked ? 'draggable' : undefined}
+        tabindex={canManageGroup() && !workspace.isLocked ? 0 : undefined}
+        aria-roledescription={canManageGroup() && !workspace.isLocked ? 'draggable' : undefined}
         class={[
           'grid min-w-0 gap-1 px-0.5',
           {
             'cursor-grab active:cursor-grabbing touch-none':
-              canManageGroup() && !props.isLocked,
+              canManageGroup() && !workspace.isLocked,
           },
           'data-moving:opacity-50 data-dragging:opacity-50',
         ]}
@@ -275,8 +250,8 @@ export default function CardGroupItem(props: CardGroupItemProps) {
             <VoteControls
               target={props.group}
               targetType="group"
-              voting={props.voting}
-              isLocked={props.isLocked}
+              voting={workspace.voting}
+              isLocked={workspace.isLocked}
             />
 
             <Show when={canManageGroup()}>
@@ -361,19 +336,9 @@ export default function CardGroupItem(props: CardGroupItemProps) {
               <CardItem
                 card={card}
                 revealIndex={(props.revealIndexOffset ?? 0) + cardIndex()}
-                voting={props.voting}
-                columns={props.columns}
                 columnCards={props.columnCards}
                 columnGroups={props.columnGroups}
-                canGroupCards={props.canGroupCards}
                 canUngroup={canManageGroup()}
-                isFacilitator={props.isFacilitator}
-                isLocked={props.isLocked}
-                isBlurred={props.isBlurred}
-                nowMs={props.nowMs}
-                transfer={props.transfer}
-                actions={props.actions}
-                onOpenCardDetail={props.onOpenCardDetail}
               />
             )}
           </For>

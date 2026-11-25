@@ -17,7 +17,6 @@ import {
   COLUMN_ACCENTS,
   MAX_CARD_CONTENT_LENGTH,
   MAX_COLUMN_TITLE_LENGTH,
-  type CardGroupDTO,
   type ColumnAccent,
   type ColumnDTO,
 } from '../lib/board-types';
@@ -27,11 +26,9 @@ import type { ColumnViewProjection } from '../lib/board-view';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { inlineEdit, createInlineEditSave, type InlineEditOutcome } from '../lib/inline-edit';
 import {
-  areAllGroupCardsMine,
   canContribute,
   canControlFacilitation,
   canDeleteColumn as canDeleteColumnPermission,
-  passesPrivateMode,
 } from '../lib/board-permissions';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import CardGroupItem from './CardGroupItem';
@@ -128,10 +125,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     props.onRegisterComposer?.(columnId, composerEl);
     return () => props.onRegisterComposer?.(columnId, null);
   });
-
-  function canManageGroup(group: CardGroupDTO): boolean {
-    return props.canGroupCards && areAllGroupCardsMine(props, group, props.view.cards);
-  }
 
   async function submitNewCard(): Promise<void> {
     const draft = composerEl ? composerEl.value : cardDraft();
@@ -571,21 +564,8 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                       <CardItem
                         card={card()}
                         revealIndex={props.columnIndex + streamIndex()}
-                        voting={props.voting}
-                        columns={props.columns}
                         columnCards={props.view.cards}
                         columnGroups={props.view.groups}
-                        canGroupCards={props.canGroupCards}
-                        canUngroup={
-                          props.canGroupCards && passesPrivateMode(props, card())
-                        }
-                        isFacilitator={props.isFacilitator}
-                        isLocked={props.isLocked}
-                        isBlurred={props.isBlurred}
-                        nowMs={props.nowMs}
-                        transfer={props.transfer}
-                        actions={props.actions}
-                        onOpenCardDetail={props.onOpenCardDetail}
                       />
                     )}
                   </Show>
@@ -598,17 +578,6 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     revealIndexOffset={props.columnIndex + streamIndex()}
                     columnCards={props.view.cards}
                     columnGroups={props.view.groups}
-                    columns={props.columns}
-                    voting={props.voting}
-                    isFacilitator={props.isFacilitator}
-                    isLocked={props.isLocked}
-                    isBlurred={props.isBlurred}
-                    canGroupCards={props.canGroupCards}
-                    canManage={canManageGroup(group().group)}
-                    nowMs={props.nowMs}
-                    transfer={props.transfer}
-                    actions={props.actions}
-                    onOpenCardDetail={props.onOpenCardDetail}
                   />
                 )}
               </Show>
