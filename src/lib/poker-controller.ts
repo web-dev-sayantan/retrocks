@@ -8,6 +8,7 @@ import {
   untrack,
 } from 'solid-js';
 
+import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
 import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
 import {
   createPokerLive,
@@ -17,7 +18,7 @@ import {
 import {
   POKER_DECK_PRESETS,
   POKER_DEFAULT_ROOM_NAME,
-  unresolvedPokerRoundWithVotesId,
+  unresolvedPokerRoundId,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -46,10 +47,13 @@ function applyOptimisticVote(room: PokerLiveRoomView, roundId: string, choice: s
   }
 }
 
-function canDiscardActiveRound(room: PokerLiveRoomView, isActive: boolean, discardRoundId?: string): boolean {
-  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) return false;
-  if (isActive && unresolvedPokerRoundWithVotesId(room.round) !== undefined && discardRoundId === undefined) return false;
-  return true;
+function canDiscardActiveRound(
+  room: PokerLiveRoomView,
+  command: { type: PokerDiscardIntent; discardRoundId?: string },
+  isActive: boolean,
+) {
+  const decision = projectedPokerDiscardDecision(command.type, isActive, room.round, command.discardRoundId);
+  return decision.type === 'proceed' || decision.type === 'discard';
 }
 
 function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange): void {
@@ -63,8 +67,10 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       if (!title) return;
       const story = room.stories.find((item) => item.id === command.storyId);
       if (!story || story.locked || story.title === title) return;
-      if (!canDiscardActiveRound(room, room.activeStoryId === story.id, command.discardRoundId)) return;
+      const isActive = room.activeStoryId === story.id;
+      if (!canDiscardActiveRound(room, command, isActive)) return;
       story.title = title;
+      if (isActive && unresolvedPokerRoundId(room.round) !== undefined) room.round = null;
       break;
     }
     case 'move-story': {
@@ -100,7 +106,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       if (!story) return;
       if (command.locked) {
         const isActive = room.activeStoryId === story.id;
-        if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+        if (!canDiscardActiveRound(room, command, isActive)) return;
         if (isActive) {
           room.activeStoryId = null;
           room.round = null;
@@ -115,7 +121,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       const story = room.stories[index];
       if (story.locked) return;
       const isActive = room.activeStoryId === story.id;
-      if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+      if (!canDiscardActiveRound(room, command, isActive)) return;
       if (isActive) {
         room.activeStoryId = null;
         room.round = null;
@@ -136,7 +142,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       room.deckType = deck.type;
       room.deck = [...choices];
       // A replacement round becomes actionable once its authoritative ID arrives.
-      if (change.type === 'restart') room.round = null;
+      if (change.type === 'discard') room.round = null;
       break;
     }
     case 'confirm-estimate': {

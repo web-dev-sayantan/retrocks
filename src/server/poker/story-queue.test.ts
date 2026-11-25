@@ -642,6 +642,9 @@ test('closing an unresolved Room publishes only the ordered summary and ends liv
   const reconsidering = await mutate({ type: 'restart-round', roundId });
   if (!reconsidering.ok || !reconsidering.room.round) throw new Error('Voting did not restart.');
   const discardRoundId = reconsidering.room.round.id;
+  expect(await mutateRoom({ type: 'close-room' })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
+  expect(await mutateRoom({ type: 'close-room', discardRoundId: roundId }))
+    .toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
   await mutate({ type: 'vote', roundId: discardRoundId, choice: '13' }, participant);
   await mutate({ type: 'reveal', roundId: discardRoundId });
   await mutate({ type: 'add-story', title: 'Recover a cart' });
