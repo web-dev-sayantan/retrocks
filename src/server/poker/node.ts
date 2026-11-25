@@ -96,6 +96,9 @@ export async function openNodePokerRooms(dbPath: string) {
       if (publication) publish(id, publication);
       return { ok: true as const, value: null };
     },
+    updateFacilitatorCapabilityEncryption(id: string, hash: string, revision: number, encrypted: string) {
+      storage.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted);
+    },
     claimFacilitator(id: string, hash: string, candidate: string) {
       const result = storage.claimFacilitator(id, hash, candidate);
       if (!result.ok) return result;

@@ -89,6 +89,10 @@ import ActionItemsDrawer from './ActionItemsDrawer';
 import BoardFilterBar from './BoardFilterBar';
 import BoardMenuContent from './BoardMenuContent';
 import BoardVotingSettings from './BoardVotingSettings';
+import {
+  BoardWorkspaceContext,
+  type BoardWorkspaceContextValue,
+} from './BoardWorkspaceContext';
 import CardDetailDrawer from './CardDetailDrawer';
 import ColumnPanel from './ColumnPanel';
 import CountdownTimer from './CountdownTimer';
@@ -791,13 +795,28 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
         </div>
       }
     >
-      {(board) => (
-        <div
-          ref={() => logPrivacyColophon()}
-          class="board-workspace flex min-h-dvh flex-col bg-canvas"
-          data-board-print-ready={isPrinting() ? "" : undefined}
-          data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
-        >
+      {(board) => {
+        const workspaceContext: BoardWorkspaceContextValue = {
+          get columns() { return view.columns; },
+          get voting() { return controller.voting(); },
+          get isFacilitator() { return board().isFacilitator; },
+          get isLocked() { return board().isLocked; },
+          get isBlurred() { return board().isBlurred; },
+          get blindVoting() { return board().blindVoting; },
+          get canGroupCards() { return canManageGrouping(board()); },
+          get nowMs() { return controller.nowMs(); },
+          transfer,
+          actions: controller,
+          openCardDetail: handleOpenCardDetail,
+        };
+        return (
+          <BoardWorkspaceContext value={workspaceContext}>
+            <div
+              ref={() => logPrivacyColophon()}
+              class="board-workspace flex min-h-dvh flex-col bg-canvas"
+              data-board-print-ready={isPrinting() ? "" : undefined}
+              data-dramatic-reveal={isDramaticReveal() ? 'true' : undefined}
+            >
           <Show when={isPrinting()}>
             <PrintBoard board={board()} />
           </Show>
@@ -1557,8 +1576,10 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
               </div>
             )}
           </Show>
-        </div>
-      )}
+            </div>
+          </BoardWorkspaceContext>
+        );
+      }}
     </Show>
   );
 }
