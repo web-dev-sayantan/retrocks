@@ -1,0 +1,327 @@
+/* Route CSS can load before App.css during SSR. Keep Tailwind layers in the same order. */
+@layer ui-sdk, theme, base, components, utilities;
+
+@layer components {
+  .poker-snapshot {
+    --poker-snap-rail: color-mix(in oklab, var(--retrocks-surface-subtle) 52%, var(--retrocks-canvas));
+    --poker-snap-hairline: color-mix(in oklab, var(--retrocks-border) 62%, transparent);
+    --poker-snap-accent-tint: color-mix(in oklab, var(--retrocks-accent) 10%, transparent);
+    --poker-snap-accent-border: color-mix(in oklab, var(--retrocks-accent) 48%, var(--retrocks-border));
+    --poker-snap-self: #3744a6;
+    --poker-snap-self-border: color-mix(in oklab, var(--poker-snap-self) 48%, var(--retrocks-border));
+    container: poker-snapshot / inline-size;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+  }
+
+  :is([data-theme='dark'], [data-theme='retro']) .poker-snapshot {
+    --poker-snap-rail: color-mix(in oklab, var(--retrocks-surface) 44%, var(--retrocks-canvas));
+    --poker-snap-accent-tint: color-mix(in oklab, var(--retrocks-accent) 12%, transparent);
+  }
+
+  [data-theme='dark'] .poker-snapshot {
+    --poker-snap-self: #8db8ff;
+  }
+
+  [data-theme='retro'] .poker-snapshot {
+    --poker-snap-self: #67d4c4;
+  }
+
+  [data-theme='parchment'] .poker-snapshot {
+    --poker-snap-self: #1e5f6b;
+  }
+
+  .poker-snap-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.375rem 0.75rem;
+    padding: 0.5625rem 0.875rem;
+    border-block-end: 1px solid var(--poker-snap-hairline);
+    background: var(--retrocks-canvas);
+  }
+
+  .poker-snap-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1875rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-full);
+    background: color-mix(in oklab, var(--retrocks-surface-subtle) 75%, transparent);
+    color: var(--retrocks-text);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .poker-snap-chip-deck {
+    border-color: var(--poker-snap-hairline);
+    background: transparent;
+  }
+
+  .poker-snap-share {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.1875rem 0.5625rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 88%, transparent);
+    border-radius: var(--radius-full);
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.1;
+    white-space: nowrap;
+  }
+
+  .poker-snap-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    background: var(--retrocks-canvas);
+  }
+
+  .poker-snap-rail {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    border-block-end: 1px solid var(--poker-snap-hairline);
+    background: var(--poker-snap-rail);
+  }
+
+  .poker-snap-input {
+    display: flex;
+    align-items: center;
+    min-block-size: 1.625rem;
+    padding-inline: 0.5rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 82%, transparent);
+    border-radius: var(--radius-sm);
+    background: var(--retrocks-canvas);
+    color: var(--retrocks-text-muted);
+    font-size: 0.6875rem;
+  }
+
+  .poker-snap-quick-btn {
+    display: inline-flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    min-block-size: 1.5rem;
+    padding-inline: 0.4375rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 85%, transparent);
+    border-radius: var(--radius-sm);
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font-size: 0.625rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .poker-snap-quick-btn-primary {
+    border-color: transparent;
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+  }
+
+  .poker-snap-row {
+    position: relative;
+    padding: 0.4375rem 0.625rem 0.4375rem 0.75rem;
+  }
+
+  .poker-snap-row:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0.75rem 0.625rem;
+    inset-block-end: 0;
+    block-size: 1px;
+    background: var(--poker-snap-hairline);
+    opacity: 0.55;
+  }
+
+  .poker-snap-row-active {
+    background: var(--poker-snap-accent-tint);
+  }
+
+  .poker-snap-row-active::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block: 0.25rem;
+    inline-size: 2.5px;
+    border-radius: 0 var(--radius-full) var(--radius-full) 0;
+    background: var(--retrocks-accent);
+  }
+
+  .poker-snap-row-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.375rem;
+    border: 1px solid var(--poker-snap-hairline);
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklab, var(--retrocks-surface) 72%, transparent);
+    color: var(--retrocks-text-muted);
+    font-size: 0.625rem;
+    font-weight: 500;
+    line-height: 1.1;
+  }
+
+  .poker-snap-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-inline-size: 0;
+    padding: 1rem 0.875rem;
+    text-align: center;
+  }
+
+  .poker-snap-spread {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem 0.4375rem;
+    padding: 0.1875rem 0.5625rem;
+    border: 1px solid var(--poker-snap-hairline);
+    border-radius: var(--radius-full);
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text-muted);
+    font-size: 0.6875rem;
+  }
+
+  .poker-snap-seats {
+    display: flex;
+    flex-wrap: wrap;
+    flex-wrap: balance;
+    justify-content: center;
+    gap: 0.75rem 1rem;
+  }
+
+  .poker-snap-seat-card {
+    display: grid;
+    place-items: center;
+    inline-size: 2rem;
+    block-size: 2.75rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 95%, transparent);
+    border-radius: var(--radius-md);
+    corner-shape: squircle;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      0 5px 12px -6px rgb(0 0 0 / 0.24);
+  }
+
+  .poker-snap-seat-card[data-consensus='true'] {
+    border-color: var(--retrocks-accent);
+    color: var(--retrocks-accent);
+  }
+
+  .poker-snap-seat-card[data-self='true'] {
+    border-color: var(--poker-snap-self-border);
+    background: color-mix(in oklab, var(--poker-snap-self) 10%, var(--retrocks-surface));
+    color: var(--poker-snap-self);
+  }
+
+  .poker-snap-seat-card[data-self='true'][data-consensus='true'] {
+    border-color: var(--poker-snap-self);
+  }
+
+  .poker-snap-seat-self {
+    color: var(--poker-snap-self);
+    font-weight: 600;
+  }
+
+  .poker-snap-hand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    inline-size: 100%;
+    padding-block-start: 0.75rem;
+    border-block-start: 1px solid var(--poker-snap-hairline);
+  }
+
+  .poker-snap-deck {
+    display: flex;
+    flex-wrap: wrap;
+    flex-wrap: balance;
+    justify-content: center;
+    gap: 0.3125rem;
+  }
+
+  .poker-snap-tile {
+    display: inline-grid;
+    place-items: center;
+    min-inline-size: 1.875rem;
+    min-block-size: 1.6875rem;
+    padding-inline: 0.375rem;
+    border: 1px solid color-mix(in oklab, var(--retrocks-border) 95%, transparent);
+    border-radius: var(--radius-sm);
+    corner-shape: squircle;
+    background: var(--retrocks-surface);
+    color: var(--retrocks-text);
+    font-size: 0.6875rem;
+    font-weight: 650;
+    line-height: 1;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.08),
+      0 2px 5px -2px rgb(0 0 0 / 0.14);
+  }
+
+  .poker-snap-tile[data-voted-hint='true'] {
+    border-color: var(--poker-snap-accent-border);
+  }
+
+  .poker-snap-confirm {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.375rem 0.875rem;
+    border-radius: var(--radius-full);
+    background: var(--retrocks-accent);
+    color: var(--retrocks-accent-contrast);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  @container poker-snapshot (inline-size >= 29rem) {
+    .poker-snap-split {
+      grid-template-columns: minmax(11rem, 0.86fr) minmax(0, 1.45fr);
+    }
+
+    .poker-snap-rail {
+      border-block-end: 0;
+      border-inline-end: 1px solid var(--poker-snap-hairline);
+    }
+  }
+
+  @media (forced-colors: active) {
+    .poker-snap-row-active {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+
+    .poker-snap-seat-card[data-self='true'],
+    .poker-snap-seat-card[data-consensus='true'] {
+      border: 2px solid Highlight;
+    }
+
+    .poker-snap-quick-btn-primary,
+    .poker-snap-confirm {
+      border: 2px solid Highlight;
+      background: Highlight;
+      color: HighlightText;
+    }
+  }
+}

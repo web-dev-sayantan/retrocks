@@ -2,6 +2,7 @@
 
 @layer components {
   .poker-entry,
+  .poker-entry-studio,
   .poker-workspace,
   .poker-summary {
     --poker-rail: color-mix(in oklab, var(--retrocks-surface-subtle) 52%, var(--retrocks-canvas));
@@ -15,28 +16,29 @@
     --poker-error-text: #a63a50;
   }
 
-  :is([data-theme='dark'], [data-theme='retro']) :is(.poker-entry, .poker-workspace, .poker-summary) {
+  :is([data-theme='dark'], [data-theme='retro']) :is(.poker-entry, .poker-entry-studio, .poker-workspace, .poker-summary) {
     --poker-rail: color-mix(in oklab, var(--retrocks-surface) 44%, var(--retrocks-canvas));
     --poker-accent-tint: color-mix(in oklab, var(--retrocks-accent) 12%, transparent);
     --poker-self-tint: color-mix(in oklab, var(--poker-self-accent) 12%, transparent);
     --poker-error-text: var(--retrocks-col-rose);
   }
 
-  [data-theme='dark'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+  [data-theme='dark'] :is(.poker-entry, .poker-entry-studio, .poker-workspace, .poker-summary) {
     --poker-self-accent: #8db8ff;
   }
 
-  [data-theme='retro'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+  [data-theme='retro'] :is(.poker-entry, .poker-entry-studio, .poker-workspace, .poker-summary) {
     --poker-self-accent: #67d4c4;
   }
 
-  [data-theme='parchment'] :is(.poker-entry, .poker-workspace, .poker-summary) {
+  [data-theme='parchment'] :is(.poker-entry, .poker-entry-studio, .poker-workspace, .poker-summary) {
     --poker-self-accent: #1e5f6b;
     --poker-error-text: #8f2d3f;
   }
 
   @media (pointer: coarse) {
     .poker-entry,
+    .poker-entry-studio,
     .poker-workspace,
     .poker-summary {
       --poker-target: 2.75rem;

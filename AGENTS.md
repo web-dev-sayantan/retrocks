@@ -107,6 +107,7 @@ Also:
 ## Coding conventions
 
 - **DO NOT use `createEffect` unless absolutely necessary.** Prefer declarative JSX bindings (`class`, `style`, `data-*`), derived state (`createMemo`), event handlers, `ref` callbacks (for native DOM listeners/directives), and `onSettled` (for mount-time setup/teardown). Only reach for `createEffect(compute, apply)` when an imperative side effect must synchronize with reactive state changes that cannot be expressed declaratively or driven by a user event.
+- DON'T use vanilla CSS unless something cannot be achieved by Tailwindcss. For reusability, use tailwind utilites inside css to create utlitity class and then re-use them.
 
 ## Agent skills
 

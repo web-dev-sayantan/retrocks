@@ -54,15 +54,30 @@ function stubRouteResponse(value: unknown, status = 200) {
 }
 
 describe('Room name display surfaces', () => {
-  it('includes an optional Room name input with placeholder Poker Room on the creation form', async () => {
+  it('includes an optional Room name input with placeholder Poker Room and updates the live preview', async () => {
     window.history.replaceState(null, '', '/pointing-poker');
     render(() => <App />);
 
     const form = await screen.findByRole('form', { name: 'Pointing Poker' });
+    const displayNameInput = within(form).getByRole('textbox', { name: 'Display Name' });
     const roomNameInput = within(form).getByRole('textbox', { name: 'Room name' });
     expect(roomNameInput).toHaveAttribute('name', 'roomName');
     expect(roomNameInput).toHaveAttribute('placeholder', 'Poker Room');
     expect(roomNameInput).not.toBeRequired();
+
+    const preview = screen.getByRole('complementary', { name: 'Room preview' });
+    expect(within(preview).getByText('Poker Room')).toBeInTheDocument();
+    expect(within(preview).getByText('Sam (you)')).toBeInTheDocument();
+    expect(preview.querySelector(
+      'a[href], button, input, select, textarea, summary, iframe, [tabindex], [contenteditable]',
+    )).toBeNull();
+
+    fireEvent.input(displayNameInput, { target: { value: 'Aditya' } });
+    fireEvent.input(roomNameInput, { target: { value: 'Sprint 43 Sizing' } });
+    flush();
+
+    expect(within(preview).getByText('Sprint 43 Sizing')).toBeInTheDocument();
+    expect(within(preview).getByText('Aditya (you)')).toBeInTheDocument();
   });
 
   it('shows the Room name on the pre-join screen and in the page title', async () => {

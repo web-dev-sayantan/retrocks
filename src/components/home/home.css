@@ -79,7 +79,8 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .home-stage-inner .home-snapshot {
+  .home-stage-inner .home-snapshot,
+  .home-stage-inner .poker-snapshot {
     min-block-size: 19.5rem;
   }
 
@@ -111,20 +112,16 @@
     font-weight: 600;
   }
 
-  .home-snapshot-card,
-  .home-story-row {
+  .home-snapshot-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     min-inline-size: 0;
     overflow-wrap: anywhere;
     border: 1px solid var(--retrocks-border);
     border-radius: var(--radius-sm);
     padding: 0.375rem 0.5rem;
     background: var(--retrocks-surface);
-  }
-
-  .home-snapshot-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
   }
 
   .home-retro-columns,
@@ -134,11 +131,6 @@
 
   .home-retro-action-column {
     grid-column: 1 / -1;
-  }
-
-  .home-story-row {
-    display: grid;
-    gap: 0.125rem;
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -153,35 +145,6 @@
     }
   }
 
-  .home-poker-rail {
-    background: color-mix(in oklab, var(--retrocks-surface-subtle) 50%, var(--retrocks-canvas));
-  }
-
-  :is([data-theme='dark'], [data-theme='retro']) .home-poker-rail {
-    background: color-mix(in oklab, var(--retrocks-surface) 44%, var(--retrocks-canvas));
-  }
-
-  .home-poker-row {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    min-inline-size: 0;
-    padding: 0.375rem 0.4375rem;
-    border-block-end: 1px solid color-mix(in oklab, var(--retrocks-border) 55%, transparent);
-    overflow-wrap: break-word;
-  }
-
-  .home-poker-row:last-child {
-    border-block-end: 0;
-  }
-
-  .home-poker-row-active {
-    position: relative;
-    border-radius: var(--radius-sm);
-    background: color-mix(in oklab, var(--retrocks-accent) 12%, transparent);
-    border-block-end-color: transparent;
-  }
-
   @container (width >= 26rem) {
     .home-retro-columns {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -193,15 +156,6 @@
 
     .home-retro-action-cards {
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    .home-poker-layout {
-      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.45fr);
-    }
-
-    .home-poker-rail {
-      border-block-end: 0;
-      border-inline-end: 1px solid color-mix(in oklab, var(--retrocks-border) 70%, transparent);
     }
   }
 }
