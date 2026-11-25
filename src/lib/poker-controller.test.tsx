@@ -392,6 +392,7 @@ describe('createPokerRoomController', () => {
     let current = controller.room();
     if (!current.closed) {
       expect(current.stories[0]?.title).toBe('Renamed story');
+      expect(current.round).toBeNull();
     }
     resolveEdit({ ok: false, code: 'FORBIDDEN', message: 'Only a Facilitator can edit Stories.' });
     const editResult = await editPromise;
@@ -400,6 +401,7 @@ describe('createPokerRoomController', () => {
     current = controller.room();
     if (!current.closed) {
       expect(current.stories[0]?.title).toBe('First story');
+      expect(current.round?.id).toBe(ROUND_1_ID);
     }
 
     // 2. Move story optimistically, then reject with ROOM_CLOSED -> reverts.

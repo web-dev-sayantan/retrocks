@@ -94,11 +94,11 @@ test('a Participant can read Story statuses and the active Story without queue c
   expect(within(screen.getByRole('region', { name: 'Story queue' })).queryByRole('button')).toBeNull();
 });
 
-test('A Facilitator can stay with the current Voting Round or confirm picking a different Story', async () => {
+test('A Facilitator can cancel a Story switch and confirmation stays tied to the reviewed empty round', async () => {
   const current = { id: 'checkout', title: 'Save checkout', status: 'pending' } as const;
   const target = { id: 'receipt', title: 'Send receipt', status: 'pending' } as const;
   const facilitator = { id: 'alex', displayName: 'Alex', isFacilitator: true };
-  const room: PokerLiveRoomView = {
+  const [room, setRoom] = createSignal<PokerLiveRoomView>({
     closed: false, id: 'room', name: 'Poker Room',
     version: 1,
     viewer: facilitator,
@@ -108,11 +108,13 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
     deck: FIBONACCI_DECK,
     deckType: 'fibonacci',
     round: { id: 'checkout-round', phase: 'open', submittedParticipantIds: [], ownChoice: null },
-  };
-  const change = vi.fn(async (): Promise<PokerResult> => ({ ok: true, room }));
+  });
+  const change = vi.fn(async (): Promise<PokerResult> => ({
+    ok: false, code: 'ROUND_CHANGED', message: 'The Voting Round has changed. Check the active Story and try again.',
+  }));
   render(() => (
     <>
-      <PokerWorkspace room={room} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />
+      <PokerWorkspace room={room()} online={[]} status="live" onUnavailable={vi.fn()} onChange={change} />
       <BoardConfirmDialog />
     </>
   ));
@@ -126,10 +128,16 @@ test('A Facilitator can stay with the current Voting Round or confirm picking a 
 
   fireEvent.click(select);
   const reopened = await screen.findByRole('alertdialog', { name: 'Switch Stories?' });
+  setRoom((current) => ({
+    ...current, version: 2,
+    round: { id: 'replacement-round', phase: 'open', submittedParticipantIds: [], ownChoice: null },
+  }));
+  flush();
   fireEvent.click(within(reopened).getByRole('button', { name: 'Switch Story' }));
   await waitFor(() => expect(change).toHaveBeenCalledWith({
     type: 'select-story', storyId: target.id, discardRoundId: 'checkout-round',
   }));
+  expect(await screen.findByText('The Voting Round has changed. Check the active Story and try again.')).toBeVisible();
 });
 
 test('a Facilitator chooses an Accepted Estimate explicitly, then corrects it from the Story queue', async () => {
