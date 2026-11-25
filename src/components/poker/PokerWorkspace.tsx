@@ -3,14 +3,14 @@ import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, SquareCheck, Users, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, onSettled } from 'solid-js';
 
+import { projectedPokerDiscardPrompt } from '../../lib/poker-discard-policy';
+import { projectedDeckRoundChange } from '../../lib/poker-deck-policy';
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
-import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import { createInlineEditSession, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
 import {
   POKER_DEFAULT_ROOM_NAME,
   POKER_ROOM_NAME_LIMIT,
-  unresolvedPokerRoundId,
-  unresolvedPokerRoundWithVotesId,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -36,6 +36,10 @@ export default function PokerWorkspace(props: {
 }) {
   const activeStory = createMemo(() => props.room.stories.find((story) => story.id === props.room.activeStoryId));
   const onlineSet = createMemo(() => new Set(props.online));
+  const deckDiscardRoundId = createMemo(() => {
+    const change = projectedDeckRoundChange(props.room);
+    return change.type === 'confirm' ? change.roundId : undefined;
+  });
   const openRound = createMemo(() => (props.room.round?.phase === 'open' ? props.room.round : null));
   const revealedRound = createMemo(() => (props.room.round && props.room.round.phase !== 'open' ? props.room.round : null));
   const submitted = createMemo(() => {
@@ -73,7 +77,7 @@ export default function PokerWorkspace(props: {
     if (closeInProgress) return;
     closeInProgress = true;
     setCloseError('');
-    const discardRoundId = unresolvedPokerRoundId(props.room.round);
+    const discardRoundId = projectedPokerDiscardPrompt('close-room', true, props.room.round);
     try {
       const confirmed = await confirmBoardAction(
         discardRoundId !== undefined
@@ -137,14 +141,17 @@ export default function PokerWorkspace(props: {
     disabled: () => !canManage(),
   }));
   const roomNameEdit = roomNameField.api.edit;
-  let editingRoomId: string | undefined;
-  let disposed = false;
-  const roomNameSave = createInlineEditSave(
-    saveRoomNameText,
-    () => roomNameEdit.cancel(),
-    () => !disposed && canManage() && editingRoomId === props.room.id,
-  );
   const isRenamingRoom = () => roomNameField.present('input');
+  const roomNameSave = createInlineEditSession({
+    target: () => canManage() ? props.room.id : undefined,
+    isEditing: isRenamingRoom,
+    start: (id) => roomNameEdit.start(id),
+    close: () => {
+      roomNameTap.reset();
+      roomNameEdit.cancel();
+    },
+    save: saveRoomNameText,
+  });
   const roomNameTap = createDoubleTap(isRoomNameEditTarget, startRoomRename);
 
   function isRoomNameEditTarget(target: EventTarget | null): boolean {
@@ -154,21 +161,13 @@ export default function PokerWorkspace(props: {
 
   function startRoomRename(): void {
     roomNameTap.reset();
-    if (!canManage() || isRenamingRoom()) return;
-    editingRoomId = props.room.id;
-    roomNameEdit.start(editingRoomId);
+    roomNameSave.start();
   }
 
   function handleRoomNameDoubleClick(event: MouseEvent): void {
     if (!isRoomNameEditTarget(event.target)) return;
     roomNameTap.reset();
     startRoomRename();
-  }
-
-  function cancelRoomRename(): void {
-    roomNameTap.reset();
-    roomNameSave.reset();
-    roomNameEdit.cancel();
   }
 
   async function saveRoomNameText(text: string): Promise<InlineEditOutcome> {
@@ -182,13 +181,6 @@ export default function PokerWorkspace(props: {
     }
   }
 
-  createEffect(
-    () => canManage() ? props.room.id : undefined,
-    (roomId, previousRoomId) => {
-      if (previousRoomId !== undefined && roomId !== previousRoomId) cancelRoomRename();
-    },
-  );
-
   createEffect(isRenamingRoom, (renaming, wasRenaming) => {
     if (!renaming && wasRenaming && document.activeElement === document.body) {
       heading?.focus();
@@ -197,7 +189,6 @@ export default function PokerWorkspace(props: {
 
   onSettled(() => {
     if (props.focusHeading) heading.focus();
-    return () => { disposed = true; };
   });
 
   const alertMessage = () => closeError() || roomNameSave.error() || props.claimError || '';
@@ -219,8 +210,13 @@ export default function PokerWorkspace(props: {
                       placeholder={POKER_DEFAULT_ROOM_NAME}
                       maxlength={POKER_ROOM_NAME_LIMIT}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
-                        if (event.key === 'Escape') roomNameSave.reset();
+                        if (event.isComposing || event.keyCode === 229) return;
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          roomNameSave.cancel();
+                          return;
+                        }
                         roomNameEdit.inputKeydown(event);
                       }}
                       onFocusOut={(event) => {
@@ -247,7 +243,7 @@ export default function PokerWorkspace(props: {
                     type="button"
                     aria-label="Cancel Room rename"
                     title="Cancel Room rename"
-                    onClick={cancelRoomRename}
+                    onClick={roomNameSave.cancel}
                     class="poker-inline-action spring-press board-focus-ring"
                   >
                     <LucideIcon icon={X} class="size-3.5 shrink-0" strokeWidth={2} />
@@ -280,7 +276,7 @@ export default function PokerWorkspace(props: {
             deck={props.room.deck}
             deckType={props.room.deckType}
             canManage={props.room.viewer?.isFacilitator === true}
-            discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
+            discardRoundId={deckDiscardRoundId()}
             onChange={props.onChange}
           />
           <p
@@ -331,9 +327,7 @@ export default function PokerWorkspace(props: {
           activeStoryId={props.room.activeStoryId}
           canManage={props.room.viewer?.isFacilitator === true}
           deck={props.room.deck}
-          roundId={props.room.round?.id}
-          discardRoundId={unresolvedPokerRoundId(props.room.round)}
-          activeRoundWithVotesId={unresolvedPokerRoundWithVotesId(props.room.round)}
+          round={props.room.round}
           onChange={props.onChange}
         />
 
@@ -383,7 +377,7 @@ export default function PokerWorkspace(props: {
                   <PokerStoryTitleEditor
                     story={story()}
                     canEdit={props.room.viewer?.isFacilitator === true}
-                    discardRoundId={unresolvedPokerRoundWithVotesId(props.room.round)}
+                    discardRoundId={projectedPokerDiscardPrompt('edit-story', true, props.room.round)}
                     variant="stage"
                     onSave={editActiveStoryTitle}
                     fallbackFocus={() => activeHeading.focus()}

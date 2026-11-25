@@ -270,6 +270,8 @@ test('changing Deck between Fibonacci and T-shirt through createPokerRoomControl
     round: { id: 'round_1_12345678901234', phase: 'open', ownChoice: null, submittedParticipantIds: [] },
   };
 
+  let finishRestart!: () => void;
+  const restartPending = new Promise<void>((resolve) => { finishRestart = resolve; });
   const changeRoom = vi.fn(async (_id: string, command: PokerRoomChange): Promise<PokerResult> => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     if (command.type === 'vote') {
@@ -286,6 +288,7 @@ test('changing Deck between Fibonacci and T-shirt through createPokerRoomControl
       return { ok: true, room: serverState };
     }
     if (command.type === 'set-deck') {
+      if (command.discardRoundId) await restartPending;
       const nextDeck = command.deck.type === 'custom'
         ? command.deck.choices
         : [...POKER_DECK_PRESETS[command.deck.type]];
@@ -354,7 +357,26 @@ test('changing Deck between Fibonacci and T-shirt through createPokerRoomControl
     ],
   });
   expect(voteAndSwitch.ok, voteAndSwitch.error?.message).toBe(true);
+  try {
+    await waitFor(() => {
+      expect(changeRoom).toHaveBeenLastCalledWith(serverState.id, expect.objectContaining({
+        type: 'set-deck',
+        discardRoundId: 'round_1_12345678901234',
+      }));
+      expect(within(active).queryByRole('radiogroup', { name: 'Cast your vote' })).toBeNull();
+    });
+  } finally {
+    finishRestart();
+  }
   await waitFor(() => {
     expect(within(getVoteGroup()).getAllByRole('radio').map((el) => el.textContent)).toEqual([...FIBONACCI_DECK]);
+  });
+
+  const vote = await confirmAgent.act({
+    steps: [{ ref: 'Cast your vote', action: 'setValue', args: ['5'] }],
+  });
+  expect(vote.ok, vote.error?.message).toBe(true);
+  expect(changeRoom).toHaveBeenLastCalledWith(serverState.id, {
+    type: 'vote', roundId: 'round_4_1234567890123', choice: '5',
   });
 });

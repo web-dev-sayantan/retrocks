@@ -165,6 +165,13 @@ describe('Inplace top-bar Room name editing', () => {
     expect(input.value).toBe('Sprint 14 Planning');
 
     fireEvent.input(input, { target: { value: 'Discarded' } });
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Escape', keyCode: 229 });
+    flush();
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue('Discarded');
+    expect(change).not.toHaveBeenCalled();
+
     fireEvent.keyDown(input, { key: 'Escape' });
     flush();
     expect(change).not.toHaveBeenCalled();
@@ -259,6 +266,88 @@ describe('Inplace top-bar Room name editing', () => {
     flush();
     expect(freshInput).toHaveFocus();
     expect(freshInput).toHaveValue('Fresh draft');
+  });
+
+  it('can reopen Room name editing after submitting the unchanged name', () => {
+    const change = vi.fn();
+    render(() => (
+      <PokerWorkspace room={makeRoom()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1 }));
+    flush();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Room name' }), { key: 'Enter' });
+    flush();
+
+    expect(change).not.toHaveBeenCalled();
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1 }));
+    flush();
+    expect(screen.getByRole('textbox', { name: 'Room name' })).toHaveFocus();
+  });
+
+  it('serializes pointer and keyboard saves, then retains the failed draft for retry', async () => {
+    const initial = makeRoom();
+    const pending = Promise.withResolvers<PokerResult>();
+    const change = vi.fn()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ ok: true, room: initial });
+    render(() => (
+      <PokerWorkspace room={initial} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1 }));
+    flush();
+    const input = screen.getByRole('textbox', { name: 'Room name' });
+    fireEvent.input(input, { target: { value: 'Release Planning' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Room name' }));
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.focusOut(input);
+    expect(change).toHaveBeenCalledExactlyOnceWith({ type: 'rename-room', name: 'Release Planning' });
+
+    pending.resolve({ ok: false, code: 'INVALID_INPUT', message: 'Rename failed' });
+    expect(await screen.findByText('Rename failed')).toHaveAttribute('role', 'alert');
+    expect(input).toHaveValue('Release Planning');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveFocus());
+    expect(change).toHaveBeenCalledTimes(2);
+    expect(change).toHaveBeenLastCalledWith({ type: 'rename-room', name: 'Release Planning' });
+    expect(screen.queryByText('Rename failed')).not.toBeInTheDocument();
+  });
+
+  it.each(['replace', 'unmount'])('ignores a late rename failure after %s', async (transition) => {
+    const initial = makeRoom();
+    const replacement = makeRoom({ id: 'replacementroom1234567', name: 'Next Room' });
+    const [room, setRoom] = createSignal(initial);
+    const pending = Promise.withResolvers<PokerResult>();
+    const change = vi.fn(() => pending.promise);
+    const mount = () => render(() => (
+      <PokerWorkspace room={room()} online={['alex']} status="live" onUnavailable={vi.fn()} onChange={change} />
+    ));
+    const view = mount();
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1 }));
+    flush();
+    const input = screen.getByRole('textbox', { name: 'Room name' });
+    fireEvent.input(input, { target: { value: 'Old draft' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(change).toHaveBeenCalledOnce();
+
+    if (transition === 'unmount') view.unmount();
+    setRoom(replacement);
+    flush();
+    if (transition === 'unmount') mount();
+    fireEvent.dblClick(screen.getByRole('heading', { level: 1, name: 'Next Room' }));
+    flush();
+    const freshInput = screen.getByRole('textbox', { name: 'Room name' });
+    fireEvent.input(freshInput, { target: { value: 'New draft' } });
+
+    pending.resolve({ ok: false, code: 'INVALID_INPUT', message: 'Stale rename error' });
+    await pending.promise;
+    await Promise.resolve();
+    flush();
+    expect(screen.queryByText('Stale rename error')).not.toBeInTheDocument();
+    expect(freshInput).toHaveFocus();
+    expect(freshInput).toHaveValue('New draft');
   });
 
   it('lets a Facilitator open inplace editing via touch double-tap', () => {

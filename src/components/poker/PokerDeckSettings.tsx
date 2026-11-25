@@ -13,6 +13,7 @@ import { Textarea } from '@ui-sdk/solid/textarea';
 import { ChevronDown, Layers } from 'lucide';
 import { For, Show, createSignal, onSettled } from 'solid-js';
 
+import { isSamePokerDeck } from '../../lib/poker-deck-policy';
 import { confirmBoardAction } from '../../lib/board-confirm';
 
 import {
@@ -78,10 +79,7 @@ export default function PokerDeckSettings(props: {
     if (busy() || confirming() || !ready()) return;
     const type = selectedType();
     const choices = type === 'custom' ? parseCustomChoices(customChoices()) : POKER_DECK_PRESETS[type];
-    const unchanged = props.deckType === type
-      && props.deck.length === choices.length
-      && props.deck.every((choice, index) => choice === choices[index]);
-    if (unchanged) {
+    if (isSamePokerDeck(props, type, choices)) {
       setDraftType(undefined);
       setDraftChoices(undefined);
       setOpen(false);

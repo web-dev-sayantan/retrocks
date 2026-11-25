@@ -66,13 +66,6 @@ export function unresolvedPokerRoundId(round: Pick<PokerRoundView, 'id' | 'phase
   return round?.phase === 'open' || round?.phase === 'revealed' ? round.id : undefined;
 }
 
-export function unresolvedPokerRoundWithVotesId(round: PokerRoundView | null) {
-  if (!round) return undefined;
-  if (round.phase === 'open') return round.submittedParticipantIds.length > 0 ? round.id : undefined;
-  if (round.phase === 'revealed') return round.ballots.length > 0 ? round.id : undefined;
-  return undefined;
-}
-
 export type PokerStoryCommand =
   | { type: 'add-story'; title: string; makeActive?: boolean; discardRoundId?: string }
   | { type: 'edit-story'; storyId: string; title: string; discardRoundId?: string }

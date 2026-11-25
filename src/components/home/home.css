@@ -81,7 +81,7 @@
 
   .home-stage-inner .home-snapshot,
   .home-stage-inner .poker-snapshot {
-    min-block-size: 19.5rem;
+    min-block-size: 23rem;
   }
 
   .home-snapshot-pill {
@@ -146,6 +146,11 @@
   }
 
   @container (width >= 26rem) {
+    .home-stage-inner .home-snapshot,
+    .home-stage-inner .poker-snapshot {
+      min-block-size: 21rem;
+    }
+
     .home-retro-columns {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }

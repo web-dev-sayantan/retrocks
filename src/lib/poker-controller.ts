@@ -8,6 +8,8 @@ import {
   untrack,
 } from 'solid-js';
 
+import { projectedPokerDiscardDecision, type PokerDiscardIntent } from './poker-discard-policy';
+import { projectedDeckRoundChange, isSamePokerDeck } from './poker-deck-policy';
 import {
   createPokerLive,
   type PokerLiveStatus,
@@ -16,7 +18,7 @@ import {
 import {
   POKER_DECK_PRESETS,
   POKER_DEFAULT_ROOM_NAME,
-  unresolvedPokerRoundWithVotesId,
+  unresolvedPokerRoundId,
   type PokerLiveRoomView,
   type PokerResult,
   type PokerRoomChange,
@@ -45,10 +47,13 @@ function applyOptimisticVote(room: PokerLiveRoomView, roundId: string, choice: s
   }
 }
 
-function canDiscardActiveRound(room: PokerLiveRoomView, isActive: boolean, discardRoundId?: string): boolean {
-  if (discardRoundId !== undefined && (!isActive || discardRoundId !== room.round?.id)) return false;
-  if (isActive && unresolvedPokerRoundWithVotesId(room.round) !== undefined && discardRoundId === undefined) return false;
-  return true;
+function canProceedWithRoundChange(
+  room: PokerLiveRoomView,
+  command: { type: PokerDiscardIntent; discardRoundId?: string },
+  isActive: boolean,
+) {
+  const decision = projectedPokerDiscardDecision(command.type, isActive, room.round, command.discardRoundId);
+  return decision.type === 'proceed' || decision.type === 'discard';
 }
 
 function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange): void {
@@ -62,8 +67,10 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       if (!title) return;
       const story = room.stories.find((item) => item.id === command.storyId);
       if (!story || story.locked || story.title === title) return;
-      if (!canDiscardActiveRound(room, room.activeStoryId === story.id, command.discardRoundId)) return;
+      const isActive = room.activeStoryId === story.id;
+      if (!canProceedWithRoundChange(room, command, isActive)) return;
       story.title = title;
+      if (isActive && unresolvedPokerRoundId(room.round) !== undefined) room.round = null;
       break;
     }
     case 'move-story': {
@@ -99,7 +106,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       if (!story) return;
       if (command.locked) {
         const isActive = room.activeStoryId === story.id;
-        if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+        if (!canProceedWithRoundChange(room, command, isActive)) return;
         if (isActive) {
           room.activeStoryId = null;
           room.round = null;
@@ -114,7 +121,7 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       const story = room.stories[index];
       if (story.locked) return;
       const isActive = room.activeStoryId === story.id;
-      if (!canDiscardActiveRound(room, isActive, command.discardRoundId)) return;
+      if (!canProceedWithRoundChange(room, command, isActive)) return;
       if (isActive) {
         room.activeStoryId = null;
         room.round = null;
@@ -123,29 +130,19 @@ function applyOptimisticRoomChange(room: PokerRoomView, command: PokerRoomChange
       break;
     }
     case 'set-deck': {
-      if (!canDiscardActiveRound(room, room.activeStoryId !== null, command.discardRoundId)) return;
-      if (command.deck.type === 'custom') {
-        const choices = command.deck.choices.map((c) => c.trim()).filter(Boolean);
-        if (choices.length < 2 || new Set(choices).size !== choices.length) return;
-        room.deckType = 'custom';
-        room.deck = choices;
-      } else {
-        room.deckType = command.deck.type;
-        room.deck = [...POKER_DECK_PRESETS[command.deck.type]];
-      }
-      if (command.discardRoundId !== undefined && room.round?.id === command.discardRoundId) {
-        if (room.round.phase === 'open') {
-          room.round.ownChoice = null;
-          room.round.submittedParticipantIds = [];
-        } else if (room.round.phase === 'revealed') {
-          room.round = {
-            id: room.round.id,
-            phase: 'open',
-            ownChoice: null,
-            submittedParticipantIds: [],
-          };
-        }
-      }
+      const { deck } = command;
+      const choices = deck.type === 'custom'
+        ? deck.choices.map((choice) => choice.trim()).filter(Boolean)
+        : POKER_DECK_PRESETS[deck.type];
+      if (deck.type === 'custom' && (choices.length < 2 || new Set(choices).size !== choices.length)) return;
+      if (isSamePokerDeck(room, deck.type, choices)) return;
+
+      const change = projectedDeckRoundChange(room, command.discardRoundId);
+      if (change.type === 'confirm' || change.type === 'stale') return;
+      room.deckType = deck.type;
+      room.deck = [...choices];
+      // A replacement round becomes actionable once its authoritative ID arrives.
+      if (change.type === 'discard') room.round = null;
       break;
     }
     case 'confirm-estimate': {

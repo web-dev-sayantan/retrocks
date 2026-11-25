@@ -19,10 +19,12 @@ import {
 import { For, Show, createMemo, createSignal, createUniqueId, flush, onSettled } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
+import { projectedPokerDiscardPrompt } from '../../lib/poker-discard-policy';
 import type { InlineEditOutcome } from '../../lib/inline-edit';
 import {
   POKER_STORY_TITLE_LIMIT,
   type PokerResult,
+  type PokerRoundView,
   type PokerStory,
   type PokerStoryCommand,
 } from '../../lib/poker-types';
@@ -218,9 +220,7 @@ export default function PokerStoryQueue(props: {
   activeStoryId: string | null;
   canManage: boolean;
   deck: readonly string[];
-  roundId?: string;
-  discardRoundId?: string;
-  activeRoundWithVotesId?: string;
+  round?: PokerRoundView | null;
   onChange: (command: PokerStoryCommand) => Promise<PokerResult>;
 }) {
   const headingId = createUniqueId();
@@ -258,13 +258,15 @@ export default function PokerStoryQueue(props: {
     return null;
   }
 
+  const switchDiscardRoundId = () => projectedPokerDiscardPrompt('select-story', true, props.round ?? null);
+
   async function addStory(title: string, makeActive: boolean) {
     if (busy() || confirming()) return false;
     cancelDelete();
     if (!makeActive) {
       return Boolean(await change({ type: 'add-story', title }));
     }
-    const discardRoundId = props.activeRoundWithVotesId;
+    const discardRoundId = projectedPokerDiscardPrompt('add-story', true, props.round ?? null);
     if (discardRoundId !== undefined) {
       setConfirming(true);
       try {
@@ -290,7 +292,7 @@ export default function PokerStoryQueue(props: {
   async function selectStory(story: PokerStory) {
     if (story.locked || busy() || confirming()) return;
     cancelDelete();
-    const discardRoundId = props.discardRoundId;
+    const discardRoundId = switchDiscardRoundId();
     if (discardRoundId !== undefined) {
       setConfirming(true);
       try {
@@ -315,9 +317,9 @@ export default function PokerStoryQueue(props: {
     if (busy() || confirming()) return;
     cancelDelete();
     const locking = !story.locked;
-    const discardRoundId = locking && props.activeStoryId === story.id
-      ? props.activeRoundWithVotesId
-      : undefined;
+    const discardRoundId = projectedPokerDiscardPrompt(
+      'set-story-lock', locking && props.activeStoryId === story.id, props.round ?? null,
+    );
     if (discardRoundId !== undefined) {
       setConfirming(true);
       try {
@@ -450,7 +452,7 @@ export default function PokerStoryQueue(props: {
         <Show when={props.canManage}>
           <QuickAddStoryForm
             busy={busy() || confirming()}
-            smartEnterMakesActive={props.discardRoundId === undefined}
+            smartEnterMakesActive={switchDiscardRoundId() === undefined}
             onAdd={addStory}
           />
         </Show>
@@ -468,7 +470,7 @@ export default function PokerStoryQueue(props: {
               <For each={props.stories} keyed={(story) => story.id}>
                 {(story, index) => {
                   const active = () => props.activeStoryId === story().id;
-                  const selected = () => active() && props.roundId !== undefined;
+                  const selected = () => active() && props.round != null;
                   const estimateEditor = createMemo(() => {
                     const current = editingEstimate();
                     return current?.storyId === story().id ? current : undefined;
@@ -505,7 +507,7 @@ export default function PokerStoryQueue(props: {
                     const session = deletingStory();
                     return session?.storyId === story().id && !locked() ? session : undefined;
                   };
-                  const deleteDiscardRoundId = () => (active() ? props.activeRoundWithVotesId : undefined);
+                  const deleteDiscardRoundId = () => projectedPokerDiscardPrompt('delete-story', active(), props.round ?? null);
 
                   function bindSelectButton(el: HTMLButtonElement) {
                     selectButton = el;
@@ -549,7 +551,7 @@ export default function PokerStoryQueue(props: {
                         <PokerStoryTitleEditor
                           story={story()}
                           canEdit={props.canManage}
-                          discardRoundId={deleteDiscardRoundId()}
+                          discardRoundId={projectedPokerDiscardPrompt('edit-story', active(), props.round ?? null)}
                           variant="queue"
                           onSave={editStoryTitle}
                           onHandle={(handle) => { titleEditor = handle; }}

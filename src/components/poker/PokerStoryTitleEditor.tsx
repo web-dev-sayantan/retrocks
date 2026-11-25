@@ -1,11 +1,11 @@
 import { Button } from '@ui-sdk/solid/button';
 import { usePrimitive } from '@ui-sdk/solid/primitive';
 import { Check, X } from 'lucide';
-import { Show, createEffect, createSignal, onSettled, untrack } from 'solid-js';
+import { Show, createEffect, createSignal, untrack } from 'solid-js';
 
 import { confirmBoardAction } from '../../lib/board-confirm';
 import { createDoubleTap } from '../../lib/double-tap';
-import { createInlineEditSave, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
+import { createInlineEditSession, inlineEdit, type InlineEditOutcome } from '../../lib/inline-edit';
 import { POKER_STORY_TITLE_LIMIT, type PokerStory } from '../../lib/poker-types';
 import { InlineEditorMount } from '../InlineEditorMount';
 import LucideIcon from '../LucideIcon';
@@ -33,15 +33,17 @@ export default function PokerStoryTitleEditor(props: {
     disabled: () => !canEdit(),
   }));
   const titleEdit = titleField.api.edit;
-  let editingStoryId: string | undefined;
-  let disposed = false;
-  onSettled(() => () => { disposed = true; });
-  const titleSave = createInlineEditSave(
-    saveTitleText,
-    () => titleEdit.cancel(),
-    () => !disposed && canEdit() && editingStoryId === props.story.id,
-  );
   const isEditing = () => titleField.present('input');
+  const titleSave = createInlineEditSession({
+    target: () => canEdit() ? props.story.id : undefined,
+    isEditing,
+    start: (id) => titleEdit.start(id),
+    close: () => {
+      titleTap.reset();
+      titleEdit.cancel();
+    },
+    save: saveTitleText,
+  });
   const [hasText, setHasText] = createSignal(true);
   let editorEl: HTMLDivElement | undefined;
 
@@ -52,14 +54,11 @@ export default function PokerStoryTitleEditor(props: {
     if (!canEdit() || isEditing()) return;
     titleSave.resetError();
     setHasText(props.story.title.trim().length > 0);
-    editingStoryId = props.story.id;
-    titleEdit.start(editingStoryId);
+    titleSave.start();
   }
 
   function cancelEdit(): void {
-    titleTap.reset();
-    titleSave.reset();
-    titleEdit.cancel();
+    titleSave.cancel();
   }
 
   async function saveTitleText(text: string, isCurrent: () => boolean): Promise<InlineEditOutcome> {
@@ -93,16 +92,14 @@ export default function PokerStoryTitleEditor(props: {
     }
   });
 
-  createEffect(
-    () => canEdit() ? props.story.id : undefined,
-    (storyId, previousStoryId) => {
-      if (previousStoryId !== undefined && storyId !== previousStoryId) untrack(cancelEdit);
-    },
-  );
-
   function handleKeyDown(event: KeyboardEvent): void {
     if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape') titleSave.reset();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelEdit();
+      return;
+    }
     titleEdit.inputKeydown(event);
   }
 
