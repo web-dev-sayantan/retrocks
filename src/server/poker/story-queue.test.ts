@@ -1,14 +1,17 @@
 import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
-import { afterAll, beforeAll, expect, test, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 import { submitPokerRoomJoin } from '../../lib/poker-actions';
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
 import { runWithCloudflareEnv } from '../adapters/cloudflare-context';
 import { readSseStream } from '../live/sse-test-helper';
-import { checkBoardCreateRateLimit } from '../rate-limit';
+import {
+  checkBoardCreateRateLimit,
+  resetDefaultRateLimiterForTests,
+  setBoardCreateRateLimiterForTests,
+} from '../rate-limit';
 
-let testClient = 0;
 const origin = 'https://retrocks.test';
 
 let service: typeof import('./service');
@@ -16,6 +19,14 @@ let service: typeof import('./service');
 beforeAll(async () => {
   vi.stubEnv('SESSION_SECRET', 'story-queue-test-session-secret-at-least-32');
   service = await import('./service');
+});
+beforeEach(() => {
+  resetDefaultRateLimiterForTests();
+  setBoardCreateRateLimiterForTests(null);
+});
+afterEach(() => {
+  setBoardCreateRateLimiterForTests(null);
+  resetDefaultRateLimiterForTests();
 });
 afterAll(() => vi.unstubAllEnvs());
 
@@ -33,7 +44,7 @@ async function inRequest<T>(operation: () => Promise<T>, cookie?: string, method
 
 async function openRoom() {
   const { result: created, cookie: facilitator } = await inRequest(
-    () => service.createPokerRoomForRequest('Alex'), undefined, 'POST', `192.0.2.${++testClient}`,
+    () => service.createPokerRoomForRequest('Alex'),
   );
   if (!created.ok || !facilitator) throw new Error('Room creation failed.');
   const { id } = created.room;

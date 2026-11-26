@@ -7,14 +7,13 @@ export interface RateLimitResult {
   allowed: boolean;
 }
 
+export type CreateRateLimitScope = 'poker';
+
 export interface BoardCreateRateLimiter {
-  check(request: Request): Promise<RateLimitResult>;
+  check(request: Request, scope?: CreateRateLimitScope): Promise<RateLimitResult>;
 }
 
-type CreateRateLimitScope = 'poker';
-
 export interface InMemoryRateLimiter extends BoardCreateRateLimiter {
-  check(request: Request, scope?: CreateRateLimitScope): Promise<RateLimitResult>;
   reset(): void;
   getActiveKeySnapshotForTests(): string[];
 }
@@ -137,7 +136,7 @@ export function checkBoardCreateRateLimit(request: Request): Promise<RateLimitRe
 }
 
 export function checkPokerCreateRateLimit(request: Request): Promise<RateLimitResult> {
-  return checkCreateRateLimit(request, 'poker');
+  return testLimiterOverride?.check(request, 'poker') ?? checkCreateRateLimit(request, 'poker');
 }
 
 async function checkCreateRateLimit(request: Request, scope?: CreateRateLimitScope): Promise<RateLimitResult> {

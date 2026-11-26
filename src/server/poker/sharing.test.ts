@@ -13,14 +13,14 @@ beforeEach(async () => {
   vi.stubEnv('SESSION_SECRET', TEST_SECRET);
   vi.resetModules();
   const { openNodePokerRooms } = await import('./node');
-  const { setNodePokerRoomsForTests } = await import('./runtime');
+  const { setPokerRoomRuntimeForTests } = await import('./runtime');
   rooms = await openNodePokerRooms(':memory:');
-  setNodePokerRoomsForTests(rooms);
+  setPokerRoomRuntimeForTests(rooms);
 });
 
 afterEach(async () => {
-  const { setNodePokerRoomsForTests } = await import('./runtime');
-  setNodePokerRoomsForTests(null);
+  const { setPokerRoomRuntimeForTests } = await import('./runtime');
+  setPokerRoomRuntimeForTests(null);
   rooms.close();
   vi.unstubAllEnvs();
 });
@@ -167,7 +167,7 @@ test('re-encrypts a Room Co-Facilitator Link on SESSION_SECRET rotation so it su
     const rotatedSecret = 'rotated-poker-sharing-secret-at-least-32-characters';
     vi.stubEnv('SESSION_SECRET', `${rotatedSecret},${TEST_SECRET}`);
     vi.resetModules();
-    const { setNodePokerRoomsForTests: setRoomsDuringRotation } = await import('./runtime');
+    const { setPokerRoomRuntimeForTests: setRoomsDuringRotation } = await import('./runtime');
     setRoomsDuringRotation(rooms);
     const { getPokerFacilitatorLinkForRequest: getLinkDuringRotation } = await import('./sharing');
 
@@ -181,7 +181,7 @@ test('re-encrypts a Room Co-Facilitator Link on SESSION_SECRET rotation so it su
     // Retire the old secret; the link must still decrypt from Room storage.
     vi.stubEnv('SESSION_SECRET', rotatedSecret);
     vi.resetModules();
-    const { setNodePokerRoomsForTests: setRoomsAfterRetire } = await import('./runtime');
+    const { setPokerRoomRuntimeForTests: setRoomsAfterRetire } = await import('./runtime');
     setRoomsAfterRetire(rooms);
     const {
       claimPokerFacilitatorLinkForRequest: claimAfterRetire,
