@@ -2,6 +2,7 @@ import 'server-only';
 import { getRequestEvent, markSafeError } from '@solidjs/web';
 import * as v from 'valibot';
 
+import { decideBoardAction } from '../../lib/board-policy';
 import type {
   BoardErrorCode,
   BoardEvent,
@@ -262,8 +263,12 @@ async function deleteBoardById(boardId: string): Promise<BoardMutationSuccess> {
 
   const session = await ensureParticipantSession({ renew: true });
   const isFacilitator = isFacilitatorForBoard(session, boardId);
-  if (!isFacilitator) {
-    if (snapshot.board.isLocked) {
+  const decision = decideBoardAction(
+    { isFacilitator, isLocked: snapshot.board.isLocked },
+    'board:delete',
+  );
+  if (!decision.allowed) {
+    if (decision.reason === 'board-locked') {
       throw new BoardDomainError(
         'BOARD_LOCKED',
         'This Board is Locked and cannot be edited.',
