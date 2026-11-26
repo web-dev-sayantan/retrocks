@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { LIVE_CONNECTION_HEADER, LIVE_HEARTBEAT_MS, LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/board-live-protocol';
+import { LIVE_HEARTBEAT_MS, LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/live-protocol';
 import type { PokerLiveMessage, PokerRoomCommand } from '../../lib/poker-types';
 import { openNodeDatabase, wrapDatabaseSync } from '../adapters/node/sqlite';
 import {
@@ -156,14 +156,13 @@ export async function openNodePokerRooms(dbPath: string) {
       });
       return new Response(body, { headers: streamHeaders });
     },
-    heartbeat(id: string, hash: string, request: Request): Response {
-      const connectionId = request.headers.get(LIVE_CONNECTION_HEADER);
+    heartbeat(id: string, hash: string, connectionId: string): boolean {
       for (const connection of streams.get(id) ?? []) {
         if (connection.hash !== hash || connection.id !== connectionId) continue;
         const now = Date.now();
         if (!storage.isAvailable(id, now)) {
           publish(id, missingPokerRoom);
-          return new Response(null, { status: 204 });
+          return true;
         }
         if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
           connection.close();
@@ -171,9 +170,9 @@ export async function openNodePokerRooms(dbPath: string) {
         }
         connection.lastSeenAt = now;
         connection.send({ type: 'heartbeat' });
-        return new Response(null, { status: 204 });
+        return true;
       }
-      return new Response(null, { status: 404 });
+      return false;
     },
     close() {
       clearInterval(heartbeat);

@@ -117,7 +117,7 @@ export default defineConfig({
           {
             patterns: [
               {
-                group: ['*board-live', '*board-live-protocol', '*board-store', '*board-fixtures'],
+                group: ['*board-live', '*board-live-protocol', '*live-protocol', '*board-store', '*board-fixtures'],
                 message:
                   'UI components consume the Board controller (src/lib/board-controller.ts), not low-level transport/store internals (#53).',
               },

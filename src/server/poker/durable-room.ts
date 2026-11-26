@@ -1,8 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import { LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/board-live-protocol';
-import { POKER_LIVE_VIEWER_HEADER, type PokerLiveMessage, type PokerRoomCommand, type PokerRoomView } from '../../lib/poker-types';
+import { LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/live-protocol';
+import type { PokerLiveMessage, PokerRoomCommand, PokerRoomView } from '../../lib/poker-types';
 import { wrapDurableObjectSql } from '../adapters/cloudflare/sqlite';
+import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
 import {
   PokerRoomStorage, pokerParticipant, projectPokerRoom,
   type PokerFacilitatorCapability,

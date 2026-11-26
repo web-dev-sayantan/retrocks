@@ -1,8 +1,9 @@
 import 'server-only';
 import { env } from 'virtual:solid-env/server';
 
-import { POKER_LIVE_VIEWER_HEADER, type PokerRoomCommand } from '../../lib/poker-types';
+import type { PokerRoomCommand } from '../../lib/poker-types';
 import { getCloudflareEnv } from '../adapters/cloudflare-context';
+import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
 import { openNodePokerRooms, type NodePokerRooms } from './node';
 import type { PokerFacilitatorCapability } from './room';
 
@@ -34,7 +35,7 @@ export async function getPokerRoomAccess(id: string) {
         headers.set(POKER_LIVE_VIEWER_HEADER, hash);
         return room.fetch(new Request(request, { headers }));
       },
-      heartbeat: () => new Response(null, { status: 405, headers: { allow: 'GET' } }),
+      heartbeat: undefined,
     };
   }
 
@@ -53,6 +54,6 @@ export async function getPokerRoomAccess(id: string) {
       rooms.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted),
     claimFacilitator: (hash: string, candidate: string) => rooms.claimFacilitator(id, hash, candidate),
     connect: (hash: string, request: Request) => rooms.connect(id, hash, request),
-    heartbeat: (hash: string, request: Request) => rooms.heartbeat(id, hash, request),
+    heartbeat: (hash: string, connectionId: string) => rooms.heartbeat(id, hash, connectionId),
   };
 }

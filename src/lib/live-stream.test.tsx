@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   boardLivePath,
+  type BoardLiveMessage,
+} from './board-live-protocol';
+import {
   LIVE_CONNECTION_HEADER,
   LIVE_HEARTBEAT_MS,
   LIVE_HEARTBEAT_TIMEOUT_MS,
-  type BoardLiveMessage,
-} from './board-live-protocol';
+} from './live-protocol';
 import type { BoardViewDTO } from './board-types';
 import {
   createLiveStream,

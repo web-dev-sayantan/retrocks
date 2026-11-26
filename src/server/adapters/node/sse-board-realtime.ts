@@ -1,6 +1,7 @@
 import 'server-only';
 
-import { LIVE_HEARTBEAT_MS, LIVE_HEARTBEAT_TIMEOUT_MS, type BoardLiveMessage } from '../../../lib/board-live-protocol';
+import type { BoardLiveMessage } from '../../../lib/board-live-protocol';
+import { LIVE_HEARTBEAT_MS, LIVE_HEARTBEAT_TIMEOUT_MS } from '../../../lib/live-protocol';
 import { projectLivePublication, projectLiveSnapshot } from '../../domain/live-projection';
 import type { BoardRealtime, BoardStore, LiveViewerContext } from '../types';
 

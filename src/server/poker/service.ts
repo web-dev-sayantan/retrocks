@@ -5,8 +5,9 @@ import { safeParse } from 'valibot';
 import { PokerCommand, PokerRoomId } from '../../lib/poker-schemas';
 import { POKER_ROOM_NAME_LIMIT, type PokerDeleteResult, type PokerResult, type PokerRoomView } from '../../lib/poker-types';
 import { generateEntityId, hashTokenWithSalt } from '../crypto';
+import { createLiveHttpHandler } from '../live/http-guard';
 import { checkPokerCreateRateLimit } from '../rate-limit';
-import { ensureParticipantSession, getSessionFromRequest, type RetrocksSession } from '../session';
+import { ensureParticipantSession, type RetrocksSession } from '../session';
 import { pokerDisplayName, pokerRoomName } from './room';
 import { getPokerRoomAccess } from './runtime';
 
@@ -77,18 +78,17 @@ export async function deletePokerRoomForRequest(id: string): Promise<PokerDelete
   return room.delete(await hashPokerParticipant(id, session));
 }
 
-export async function handlePokerLiveRequest(id: string, request: Request): Promise<Response> {
-  const origin = request.headers.get('origin');
-  if (origin !== null && origin !== new URL(request.url).origin) {
-    return new Response(null, { status: 403 });
-  }
-  if (!safeParse(PokerRoomId, id).success) return new Response(null, { status: 404 });
-
-  const session = await getSessionFromRequest(request);
-  if (!session) return new Response(null, { status: 401 });
-  const hash = await hashPokerParticipant(id, session);
-  const room = await getPokerRoomAccess(id);
-  return request.method === 'POST'
-    ? room.heartbeat(hash, request)
-    : room.connect(hash, request);
-}
+export const handlePokerLiveRequest = createLiveHttpHandler<string>({
+  isValidId: (id) => safeParse(PokerRoomId, id).success,
+  async resolveTransport(id) {
+    const room = await getPokerRoomAccess(id);
+    const recordHeartbeat = room.heartbeat;
+    return {
+      connect: (_id, request, hash) => room.connect(hash, request),
+      heartbeat: recordHeartbeat
+        ? (_id, connectionId, hash) => recordHeartbeat(hash, connectionId)
+        : undefined,
+    };
+  },
+  resolveViewer: (id, session) => hashPokerParticipant(id, session),
+});

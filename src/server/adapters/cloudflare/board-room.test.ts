@@ -12,8 +12,8 @@ vi.mock('cloudflare:workers', () => ({
 
 import type { CreateBoardRecord } from '../../db/raw-types';
 import { MS_PER_DAY } from '../../db/sql-board-operations';
+import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from '../../live/headers';
 import { BoardRoom } from './board-room';
-import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from './cloudflare-board-store';
 
 interface FakeSocket {
   readyState: number;
