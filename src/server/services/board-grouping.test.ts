@@ -97,6 +97,9 @@ async function setup(options: Record<string, unknown> = {}) {
   const settings = (patch: Record<string, unknown>, cookie: Cookie = facilitator) =>
     dispatch({ type: 'voting:configure', ...patch }, cookie);
 
+  const setPrivateMode = (isBlurred: boolean, cookie: Cookie = facilitator) =>
+    dispatch({ type: 'board:set-private-mode', isBlurred }, cookie);
+
   const deleteCard = (cardId: string, cookie: Cookie = facilitator) =>
     dispatch({ type: 'card:delete', cardId }, cookie);
 
@@ -123,6 +126,7 @@ async function setup(options: Record<string, unknown> = {}) {
     moveGroup,
     vote,
     settings,
+    setPrivateMode,
   };
 }
 
@@ -489,4 +493,79 @@ it('grandfathers merged Votes, blocks new group Votes at the cap, and removes di
   expect(
     snapshot.cards.reduce((sum, card) => sum + card.myVotes, 0),
   ).toBe(1);
+});
+
+it('requires the entire Card Group to pass Private Mode on group:ungroup', async () => {
+  const {
+    facilitator,
+    participant,
+    read,
+    createCard,
+    merge,
+    groupIdFrom,
+    ungroup,
+    settings,
+    setPrivateMode,
+  } = await setup({ isBlurred: false });
+  await settings({ allowParticipantGroup: true });
+
+  // Mixed-authorship Card Group (Participant + Facilitator)
+  const participantCard = await createCard('Participant idea', participant);
+  const facilitatorCard = await createCard('Facilitator idea', facilitator);
+  const mixedGroupId = groupIdFrom(
+    (await merge(participantCard, 'card', facilitatorCard)).events,
+  );
+
+  // Same-author Card Group (both authored by Participant)
+  const ownCardA = await createCard('Own idea A', participant);
+  const ownCardB = await createCard('Own idea B', participant);
+  const ownGroupId = groupIdFrom(
+    (await merge(ownCardA, 'card', ownCardB, participant)).events,
+  );
+
+  await setPrivateMode(true);
+
+  // Neither the Participant nor the Facilitator can ungroup their own Card
+  // from a mixed-authorship Card Group while Private Mode is active.
+  await expect(ungroup(participantCard, participant)).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: "Cannot change another Participant's Card while Private Mode is active.",
+  });
+  await expect(ungroup(facilitatorCard, facilitator)).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: "Cannot change another Participant's Card while Private Mode is active.",
+  });
+
+  // Facilitator also cannot ungroup from the Participant's all-own Card Group.
+  await expect(ungroup(ownCardA, facilitator)).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: "Cannot change another Participant's Card while Private Mode is active.",
+  });
+
+  // Participant CAN ungroup from a Card Group where every member Card is theirs.
+  await expect(ungroup(ownCardA, participant)).resolves.toMatchObject({
+    ok: true,
+    events: expect.arrayContaining([
+      expect.objectContaining({ type: 'group:dissolved', groupId: ownGroupId }),
+      expect.objectContaining({
+        type: 'card:upserted',
+        card: expect.objectContaining({ id: ownCardA, groupId: null }),
+      }),
+    ]),
+  });
+
+  // The mixed-authorship Card Group remained intact throughout Private Mode.
+  const privateSnapshot = (await read(participant)).result!;
+  expect(privateSnapshot.groups).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: mixedGroupId })]),
+  );
+
+  // After Reveal All, ungrouping from the mixed-authorship Card Group succeeds.
+  await setPrivateMode(false);
+  await expect(ungroup(participantCard, participant)).resolves.toMatchObject({
+    ok: true,
+    events: expect.arrayContaining([
+      expect.objectContaining({ type: 'group:dissolved', groupId: mixedGroupId }),
+    ]),
+  });
 });

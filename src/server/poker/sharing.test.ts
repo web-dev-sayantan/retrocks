@@ -2,6 +2,8 @@ import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { parsePokerLiveMessage } from '../../lib/poker-schemas';
+import { readSseStream } from '../live/sse-test-helper';
 import type { NodePokerRooms } from './node';
 
 const TEST_SECRET = 'poker-sharing-test-secret-at-least-32-characters';
@@ -80,20 +82,20 @@ test('grants a joined browser Facilitator access and broadcasts the public role 
   const { handlePokerLiveRequest, mutatePokerRoomForRequest, readPokerRoomForRequest } = await import('./service');
   const { id, creatorCookie, link } = await shareRoom();
   const { cookie } = await runRequest(() => mutatePokerRoomForRequest(id, { type: 'join', displayName: 'Sam' }));
-  const stream = await handlePokerLiveRequest(id, new Request(`https://retrocks.test/api/poker/${id}/live`, {
-    headers: { cookie: creatorCookie },
-  }));
-  expect(stream.status).toBe(200);
-  const reader = stream.body!.getReader();
+  const stream = readSseStream(
+    await handlePokerLiveRequest(id, new Request(`https://retrocks.test/api/poker/${id}/live`, {
+      headers: { cookie: creatorCookie },
+    })),
+    parsePokerLiveMessage,
+  );
   try {
-    const decoder = new TextDecoder();
-    await reader.read();
-    await reader.read();
+    await stream.next();
+    await stream.next();
     const { result } = await runRequest(() => claimPokerFacilitatorLinkForRequest(id, tokenFromLink(link.href)), cookie);
     expect(result).toMatchObject({ ok: true, value: { viewer: { displayName: 'Sam', isFacilitator: true } } });
     expect(JSON.stringify(result)).not.toContain(tokenFromLink(link.href));
 
-    const live = decoder.decode((await reader.read()).value);
+    const live = await stream.nextRaw();
     expect(live).toContain('"displayName":"Sam","isFacilitator":true');
     expect(live).not.toContain(tokenFromLink(link.href));
     await expect(runRequest(() => readPokerRoomForRequest(id), cookie))
@@ -101,7 +103,7 @@ test('grants a joined browser Facilitator access and broadcasts the public role 
     await expect(runRequest(() => getPokerFacilitatorLinkForRequest(id), cookie))
       .resolves.toMatchObject({ result: { ok: true, value: link } });
   } finally {
-    await reader.cancel();
+    await stream.close();
   }
 });
 
@@ -152,14 +154,15 @@ test('re-encrypts a Room Co-Facilitator Link on SESSION_SECRET rotation so it su
   const { handlePokerLiveRequest } = await import('./service');
   const { id, creatorCookie, link: before } = await shareRoom();
 
-  const stream = await handlePokerLiveRequest(id, new Request(`https://retrocks.test/api/poker/${id}/live`, {
-    headers: { cookie: creatorCookie },
-  }));
-  expect(stream.status).toBe(200);
-  const reader = stream.body!.getReader();
+  const stream = readSseStream(
+    await handlePokerLiveRequest(id, new Request(`https://retrocks.test/api/poker/${id}/live`, {
+      headers: { cookie: creatorCookie },
+    })),
+    parsePokerLiveMessage,
+  );
   try {
-    await reader.read();
-    await reader.read();
+    await stream.next();
+    await stream.next();
 
     const rotatedSecret = 'rotated-poker-sharing-secret-at-least-32-characters';
     vi.stubEnv('SESSION_SECRET', `${rotatedSecret},${TEST_SECRET}`);
@@ -212,11 +215,11 @@ test('re-encrypts a Room Co-Facilitator Link on SESSION_SECRET rotation so it su
 
     // Verify no snapshot was published by rotation re-encryption: the first frame is the
     // pending claim (version 3) and the second is the join (version 4).
-    const claimFrame = new TextDecoder().decode((await reader.read()).value);
+    const claimFrame = await stream.nextRaw();
     expect(claimFrame).toContain('"version":3');
-    const joinFrame = new TextDecoder().decode((await reader.read()).value);
+    const joinFrame = await stream.nextRaw();
     expect(joinFrame).toContain('"displayName":"Rotated Facilitator","isFacilitator":true');
   } finally {
-    await reader.cancel();
+    await stream.close();
   }
 });

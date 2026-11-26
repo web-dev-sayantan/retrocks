@@ -1,6 +1,7 @@
 import 'server-only';
 import * as v from 'valibot';
 
+import { decideBoardAction } from '../../lib/board-policy';
 import type { BoardViewDTO } from '../../lib/board-types';
 import { BoardIdSchema } from '../../lib/schemas';
 import { getBoardStore } from '../adapters/runtime';
@@ -30,10 +31,20 @@ function parseBoardId(input: unknown): string {
   return parsed.output;
 }
 
-async function requireFacilitator(boardId: string): Promise<void> {
+async function requireFacilitator(
+  boardId: string,
+  action: 'facilitator:view-link' | 'facilitator:rotate',
+): Promise<void> {
   enforceNoStoreHeader();
 
-  if (!isFacilitatorForBoard(await getSession(), boardId)) {
+  const decision = decideBoardAction(
+    {
+      isFacilitator: isFacilitatorForBoard(await getSession(), boardId),
+      isLocked: false,
+    },
+    action,
+  );
+  if (!decision.allowed) {
     throw new BoardDomainError('FORBIDDEN', 'Facilitator access is required.');
   }
 }
@@ -46,7 +57,7 @@ export async function getFacilitatorLinkForRequest(
   input: unknown,
 ): Promise<string> {
   const boardId = parseBoardId(input);
-  await requireFacilitator(boardId);
+  await requireFacilitator(boardId, 'facilitator:view-link');
 
   const store = await getBoardStore();
   const capability = await store.getFacilitatorCapability(boardId);
@@ -119,7 +130,7 @@ export async function rotateFacilitatorLinkForRequest(
   input: unknown,
 ): Promise<string> {
   const boardId = parseBoardId(input);
-  await requireFacilitator(boardId);
+  await requireFacilitator(boardId, 'facilitator:rotate');
 
   const store = await getBoardStore();
   const tokenSalt = await store.getBoardTokenSalt(boardId);
