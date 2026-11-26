@@ -8,10 +8,8 @@ import type {
   FacilitatorCapability,
   RawBoardSnapshot,
 } from '../../db/raw-types';
+import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from '../../live/headers';
 import type { BoardPublication, BoardRealtime, BoardStore } from '../types';
-
-export const LIVE_PARTICIPANT_HEADER = 'x-retrocks-live-participant';
-export const LIVE_FACILITATOR_HEADER = 'x-retrocks-live-facilitator';
 
 export interface BoardRoomRpcStub {
   publishLive(publication: BoardPublication): Promise<void>;

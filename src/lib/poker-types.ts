@@ -22,8 +22,6 @@ export {
   type PokerVotingCommand,
 } from './poker-schemas';
 
-export const POKER_LIVE_VIEWER_HEADER = 'x-retrocks-poker-viewer';
-
 export function unresolvedPokerRoundId(round: Pick<PokerRoundView, 'id' | 'phase'> | null) {
   return round?.phase === 'open' || round?.phase === 'revealed' ? round.id : undefined;
 }

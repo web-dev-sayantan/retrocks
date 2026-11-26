@@ -2,7 +2,10 @@ import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { expect, it, vi } from 'vitest';
 
-import { LIVE_HEARTBEAT_MS, type BoardLiveMessage } from '../lib/board-live-protocol';
+import type { BoardLiveMessage } from '../lib/board-live-protocol';
+import { LIVE_CONNECTION_HEADER, LIVE_HEARTBEAT_MS } from '../lib/live-protocol';
+import { parsePokerLiveMessage } from '../lib/poker-schemas';
+import { runWithCloudflareEnv } from './adapters/cloudflare-context';
 
 async function withSession<T>(request: Request, run: () => Promise<T>) {
   const event = createRequestEvent(request);
@@ -477,6 +480,364 @@ it('broadcasts board:deleted to all live clients and immediately returns 404 on 
     expect(afterDeleteLive.status).toBe(404);
   } finally {
     await Promise.all(streams.map((stream) => stream.close()));
+    vi.unstubAllEnvs();
+  }
+});
+
+it('rejects unsupported HTTP methods with 405, Allow: GET, POST, and Cache-Control: no-store on Board and Room live endpoints', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  try {
+    const { handleLiveRequest } = await import('./live-handler');
+    const { handlePokerLiveRequest } = await import('./poker/service');
+    const origin = 'https://retrocks.app';
+    const validId = 'AbCdEfGhIjKlMnOpQrStUv';
+
+    for (const method of ['PUT', 'DELETE', 'PATCH', 'HEAD'] as const) {
+      const boardResponse = await handleLiveRequest(
+        validId,
+        new Request(`${origin}/api/boards/${validId}/live`, { method }),
+      );
+      expect(boardResponse.status).toBe(405);
+      expect(boardResponse.headers.get('allow')).toBe('GET, POST');
+      expect(boardResponse.headers.get('cache-control')).toBe('no-store');
+
+      const roomResponse = await handlePokerLiveRequest(
+        validId,
+        new Request(`${origin}/api/poker/${validId}/live`, { method }),
+      );
+      expect(roomResponse.status).toBe(405);
+      expect(roomResponse.headers.get('allow')).toBe('GET, POST');
+      expect(roomResponse.headers.get('cache-control')).toBe('no-store');
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it('enforces origin, ID, session, non-stream no-store, and SSE cache-control parity across Boards and Rooms', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  const { openNodePokerRooms } = await import('./poker/node');
+  const { setNodePokerRoomsForTests } = await import('./poker/runtime');
+  const rooms = await openNodePokerRooms(':memory:');
+  setNodePokerRoomsForTests(rooms);
+  const streams: ReturnType<typeof readLiveStream>[] = [];
+  let roomReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const { createBoardForRequest } = await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const { createPokerRoomForRequest, handlePokerLiveRequest, readPokerRoomForRequest } =
+      await import('./poker/service');
+    const origin = 'https://retrocks.app';
+
+    const { result: board, cookie: boardCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    const { result: createdRoom, cookie: roomFacilitatorCookie } = await withSession(
+      new Request(origin, { method: 'POST', headers: { 'cf-connecting-ip': '198.51.100.10' } }),
+      () => createPokerRoomForRequest('Alex'),
+    );
+    if (!createdRoom.ok || !roomFacilitatorCookie || !boardCookie) {
+      throw new Error('Expected Board and Room fixtures to be created.');
+    }
+    const roomId = createdRoom.room.id;
+    const { cookie: unjoinedVisitorCookie } = await withSession(
+      new Request(`${origin}/p/${roomId}`),
+      () => readPokerRoomForRequest(roomId),
+    );
+    expect(unjoinedVisitorCookie).toBeTruthy();
+
+    const boardLiveUrl = `${origin}/api/boards/${board.id}/live`;
+    const roomLiveUrl = `${origin}/api/poker/${roomId}/live`;
+
+    // Cross-origin -> 403 + Cache-Control: no-store
+    for (const [handler, id, url, cookie] of [
+      [handleLiveRequest, board.id, boardLiveUrl, boardCookie],
+      [handlePokerLiveRequest, roomId, roomLiveUrl, roomFacilitatorCookie],
+    ] as const) {
+      const crossOrigin = await handler(id, new Request(url, {
+        headers: { origin: 'https://evil.example', cookie },
+      }));
+      expect(crossOrigin.status).toBe(403);
+      expect(crossOrigin.headers.get('cache-control')).toBe('no-store');
+
+      // Invalid identifier -> 404 + Cache-Control: no-store
+      const invalidId = await handler('not-a-valid-id', new Request(`${origin}/api/live`, {
+        headers: { origin, cookie },
+      }));
+      expect(invalidId.status).toBe(404);
+      expect(invalidId.headers.get('cache-control')).toBe('no-store');
+
+      // Unauthenticated -> 401 + Cache-Control: no-store
+      const unauth = await handler(id, new Request(url, { headers: { origin } }));
+      expect(unauth.status).toBe(401);
+      expect(unauth.headers.get('cache-control')).toBe('no-store');
+
+      // Aborted signal -> 408 + Cache-Control: no-store
+      const aborted = new AbortController();
+      aborted.abort();
+      const abortedResponse = await handler(id, new Request(url, {
+        headers: { origin, cookie },
+        signal: aborted.signal,
+      }));
+      expect(abortedResponse.status).toBe(408);
+      expect(abortedResponse.headers.get('cache-control')).toBe('no-store');
+    }
+
+    // Missing Board (valid ID format) -> 404 + Cache-Control: no-store
+    const missingBoardId = 'AbCdEfGhIjKlMnOpQrStUv';
+    const missingBoard = await handleLiveRequest(
+      missingBoardId,
+      new Request(`${origin}/api/boards/${missingBoardId}/live`, { headers: { cookie: boardCookie } }),
+    );
+    expect(missingBoard.status).toBe(404);
+    expect(missingBoard.headers.get('cache-control')).toBe('no-store');
+
+    // Unjoined Participant on open Room -> 403 + Cache-Control: no-store
+    const unjoinedRoom = await handlePokerLiveRequest(
+      roomId,
+      new Request(roomLiveUrl, { headers: { cookie: unjoinedVisitorCookie! } }),
+    );
+    expect(unjoinedRoom.status).toBe(403);
+    expect(unjoinedRoom.headers.get('cache-control')).toBe('no-store');
+
+    // Same-origin SSE streams succeed and preserve `no-store, no-transform`.
+    const boardStreamResponse = await handleLiveRequest(
+      board.id,
+      new Request(boardLiveUrl, { headers: { origin, cookie: boardCookie } }),
+    );
+    expect(boardStreamResponse.headers.get('cache-control')).toBe('no-store, no-transform');
+    streams.push(readLiveStream(boardStreamResponse));
+
+    const roomStreamResponse = await handlePokerLiveRequest(
+      roomId,
+      new Request(roomLiveUrl, { headers: { origin, cookie: roomFacilitatorCookie } }),
+    );
+    expect(roomStreamResponse.status).toBe(200);
+    expect(roomStreamResponse.headers.get('content-type')).toBe('text/event-stream');
+    expect(roomStreamResponse.headers.get('cache-control')).toBe('no-store, no-transform');
+    roomReader = roomStreamResponse.body!.getReader();
+  } finally {
+    await roomReader?.cancel();
+    await Promise.all(streams.map((stream) => stream.close()));
+    setNodePokerRoomsForTests(null);
+    rooms.close();
+    vi.unstubAllEnvs();
+  }
+});
+
+it('enforces POST heartbeat header validation and Cache-Control: no-store parity on Node SSE for Boards and Rooms', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  const { openNodePokerRooms } = await import('./poker/node');
+  const { setNodePokerRoomsForTests } = await import('./poker/runtime');
+  const rooms = await openNodePokerRooms(':memory:');
+  setNodePokerRoomsForTests(rooms);
+  const boardStreams: ReturnType<typeof readLiveStream>[] = [];
+  let roomReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const { createBoardForRequest, getBoardForRequest } = await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const { createPokerRoomForRequest, handlePokerLiveRequest, mutatePokerRoomForRequest } =
+      await import('./poker/service');
+    const origin = 'https://retrocks.app';
+
+    const { result: board, cookie: boardCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    const { cookie: otherBoardCookie } = await withSession(
+      new Request(`${origin}/b/${board.id}`),
+      () => getBoardForRequest(board.id),
+    );
+    const { result: createdRoom, cookie: roomCookie } = await withSession(
+      new Request(origin, { method: 'POST', headers: { 'cf-connecting-ip': '198.51.100.11' } }),
+      () => createPokerRoomForRequest('Alex'),
+    );
+    if (!createdRoom.ok || !boardCookie || !otherBoardCookie || !roomCookie) {
+      throw new Error('Expected Board and Room fixtures to be created.');
+    }
+    const roomId = createdRoom.room.id;
+    const { cookie: otherRoomCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => mutatePokerRoomForRequest(roomId, { type: 'join', displayName: 'Sam' }),
+    );
+    expect(otherRoomCookie).toBeTruthy();
+
+    const boardLiveUrl = `${origin}/api/boards/${board.id}/live`;
+    const roomLiveUrl = `${origin}/api/poker/${roomId}/live`;
+
+    const boardStream = readLiveStream(
+      await handleLiveRequest(board.id, new Request(boardLiveUrl, { headers: { cookie: boardCookie } })),
+    );
+    boardStreams.push(boardStream);
+    const boardSnapshot = await boardStream.until('board:snapshot');
+    expect(boardSnapshot.connectionId).toBeTruthy();
+
+    const roomResponse = await handlePokerLiveRequest(
+      roomId,
+      new Request(roomLiveUrl, { headers: { cookie: roomCookie } }),
+    );
+    expect(roomResponse.status).toBe(200);
+    roomReader = roomResponse.body!.getReader();
+    const decoder = new TextDecoder();
+    let roomPending = '';
+    const nextRoomFrame = async () => {
+      while (true) {
+        const end = roomPending.indexOf('\n\n');
+        if (end >= 0) {
+          const frame = roomPending.slice(0, end);
+          roomPending = roomPending.slice(end + 2);
+          return parsePokerLiveMessage(frame.slice('data: '.length));
+        }
+        const chunk = await roomReader!.read();
+        if (chunk.done) throw new Error('Room live stream ended unexpectedly');
+        roomPending += decoder.decode(chunk.value, { stream: true });
+      }
+    };
+    const roomSnapshot = await nextRoomFrame();
+    if (roomSnapshot.type !== 'room:snapshot' || !roomSnapshot.connectionId) {
+      throw new Error('Expected Room snapshot with connectionId');
+    }
+    await nextRoomFrame(); // initial room:presence
+
+    for (const [handler, id, url, cookie, otherCookie, connectionId] of [
+      [handleLiveRequest, board.id, boardLiveUrl, boardCookie, otherBoardCookie, boardSnapshot.connectionId!],
+      [handlePokerLiveRequest, roomId, roomLiveUrl, roomCookie, otherRoomCookie!, roomSnapshot.connectionId],
+    ] as const) {
+      // Missing header -> 400 + Cache-Control: no-store
+      const missingHeader = await handler(id, new Request(url, {
+        method: 'POST',
+        headers: { cookie },
+      }));
+      expect(missingHeader.status).toBe(400);
+      expect(missingHeader.headers.get('cache-control')).toBe('no-store');
+
+      // Blank header -> 400 + Cache-Control: no-store
+      const blankHeader = await handler(id, new Request(url, {
+        method: 'POST',
+        headers: { cookie, [LIVE_CONNECTION_HEADER]: '   ' },
+      }));
+      expect(blankHeader.status).toBe(400);
+      expect(blankHeader.headers.get('cache-control')).toBe('no-store');
+
+      // Wrong Participant -> 404 + Cache-Control: no-store
+      const wrongParticipant = await handler(id, new Request(url, {
+        method: 'POST',
+        headers: { cookie: otherCookie, [LIVE_CONNECTION_HEADER]: connectionId },
+      }));
+      expect(wrongParticipant.status).toBe(404);
+      expect(wrongParticipant.headers.get('cache-control')).toBe('no-store');
+
+      // Valid heartbeat -> 204 + Cache-Control: no-store
+      const ok = await handler(id, new Request(url, {
+        method: 'POST',
+        headers: { cookie, [LIVE_CONNECTION_HEADER]: connectionId },
+      }));
+      expect(ok.status).toBe(204);
+      expect(ok.headers.get('cache-control')).toBe('no-store');
+    }
+
+    expect(await boardStream.until('heartbeat')).toEqual({ type: 'heartbeat' });
+    expect(await nextRoomFrame()).toEqual({ type: 'heartbeat' });
+  } finally {
+    await roomReader?.cancel();
+    await Promise.all(boardStreams.map((stream) => stream.close()));
+    setNodePokerRoomsForTests(null);
+    rooms.close();
+    vi.unstubAllEnvs();
+  }
+});
+
+it('rejects POST heartbeats with 405 Allow: GET without waking Durable Objects and leaves 101 upgrades untouched on Cloudflare', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  try {
+    const { createBoardForRequest } = await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const { handlePokerLiveRequest } = await import('./poker/service');
+    const origin = 'https://retrocks.app';
+    const { result: board, cookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    expect(cookie).toBeTruthy();
+
+    const boardDoFetch = vi.fn<() => Promise<Response>>();
+    const boardGetSalt = vi.fn(async () => 'board-salt');
+    const pokerDoFetch = vi.fn<() => Promise<Response>>();
+
+    const fakeEnv = {
+      BOARD_ROOM: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          getBoardTokenSalt: boardGetSalt,
+          fetch: boardDoFetch,
+        }),
+      },
+      POINTING_POKER_ROOM: {
+        getByName: () => ({
+          fetch: pokerDoFetch,
+        }),
+      },
+    } as unknown as Cloudflare.Env;
+
+    await runWithCloudflareEnv(fakeEnv, async () => {
+      const boardUrl = `${origin}/api/boards/${board.id}/live`;
+      const roomId = 'AbCdEfGhIjKlMnOpQrStUv';
+      const roomUrl = `${origin}/api/poker/${roomId}/live`;
+
+      // POST heartbeats (with or without connection header) -> 405 Allow: GET + no-store, without invoking DO.
+      const postHeaderVariants: Record<string, string>[] = [
+        { cookie: cookie! },
+        { cookie: cookie!, [LIVE_CONNECTION_HEADER]: 'conn-1' },
+      ];
+      for (const headers of postHeaderVariants) {
+        const boardPost = await handleLiveRequest(board.id, new Request(boardUrl, { method: 'POST', headers }));
+        expect(boardPost.status).toBe(405);
+        expect(boardPost.headers.get('allow')).toBe('GET');
+        expect(boardPost.headers.get('cache-control')).toBe('no-store');
+
+        const roomPost = await handlePokerLiveRequest(roomId, new Request(roomUrl, { method: 'POST', headers }));
+        expect(roomPost.status).toBe(405);
+        expect(roomPost.headers.get('allow')).toBe('GET');
+        expect(roomPost.headers.get('cache-control')).toBe('no-store');
+      }
+      expect(boardGetSalt).not.toHaveBeenCalled();
+      expect(boardDoFetch).not.toHaveBeenCalled();
+      expect(pokerDoFetch).not.toHaveBeenCalled();
+
+      // Non-WebSocket GET on Board returns 426 with Upgrade: websocket and Cache-Control: no-store.
+      const nonUpgrade = await handleLiveRequest(board.id, new Request(boardUrl, {
+        headers: { cookie: cookie! },
+      }));
+      expect(nonUpgrade.status).toBe(426);
+      expect(nonUpgrade.headers.get('upgrade')).toBe('websocket');
+      expect(nonUpgrade.headers.get('cache-control')).toBe('no-store');
+      expect(boardDoFetch).not.toHaveBeenCalled();
+
+      // WebSocket 101 responses pass through untouched so Cloudflare `.webSocket` stays intact.
+      const makeUpgradeSentinel = () => {
+        const sentinel = new Response(null, { status: 200 });
+        Object.defineProperty(sentinel, 'status', { value: 101 });
+        return sentinel;
+      };
+      const board101 = makeUpgradeSentinel();
+      const poker101 = makeUpgradeSentinel();
+      boardDoFetch.mockResolvedValueOnce(board101);
+      pokerDoFetch.mockResolvedValueOnce(poker101);
+
+      const boardUpgrade = await handleLiveRequest(board.id, new Request(boardUrl, {
+        headers: { cookie: cookie!, upgrade: 'websocket' },
+      }));
+      expect(boardUpgrade).toBe(board101);
+      expect(boardUpgrade.status).toBe(101);
+
+      const roomUpgrade = await handlePokerLiveRequest(roomId, new Request(roomUrl, {
+        headers: { cookie: cookie!, upgrade: 'websocket' },
+      }));
+      expect(roomUpgrade).toBe(poker101);
+      expect(roomUpgrade.status).toBe(101);
+    });
+  } finally {
     vi.unstubAllEnvs();
   }
 });
