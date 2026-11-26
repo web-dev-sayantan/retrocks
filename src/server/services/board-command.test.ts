@@ -2,7 +2,7 @@ import { commitEventResponse, createRequestEvent, isSafeError } from '@solidjs/w
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { applyBoardMutation } from '../../lib/board-store';
+import { reconcileBoardUpdate } from '../../lib/board-controller';
 import type { BoardCommand } from '../../lib/schemas';
 import { parseBoardLiveMessage } from '../../lib/wire-schemas';
 import type { NodeBoardStore } from '../adapters/node/sqlite-board-store';
@@ -138,28 +138,35 @@ describe('Unified Board command dispatcher', () => {
         ));
         streams.push(stream);
         const { board: current } = await stream.until('board:snapshot');
-        return { cookie, stream, current };
+        return { cookie, stream, state: { board: current as typeof board | null } };
       }));
 
       const change = async (actor: string, command: BoardCommand, elapsed = 1_000) => {
         now += elapsed;
         const { result } = await dispatch(actor, command);
         const snapshot = result.events.find((event) => event.type === 'board:snapshot');
-        const actorBoard = structuredClone(viewers.find((viewer) => viewer.cookie === actor)!.current);
-        if (!snapshot) applyBoardMutation(actorBoard, result);
+        const actorState = {
+          board: structuredClone(viewers.find((viewer) => viewer.cookie === actor)!.state.board),
+        };
+        const actorOutcome = reconcileBoardUpdate(actorState, board.id, {
+          type: 'board:mutation',
+          version: result.version,
+          lastActiveAt: result.lastActiveAt,
+          events: result.events,
+        });
+        expect(actorOutcome.needsResync).toBe(false);
 
         await Promise.all(viewers.map(async (viewer) => {
           const live = snapshot
             ? await viewer.stream.until('board:snapshot', (message) => message.version === result.version)
             : await viewer.stream.until('board:mutation', (message) => message.version === result.version);
           const parsed = parseBoardLiveMessage(JSON.stringify(live));
-          if (parsed.type === 'board:snapshot') viewer.current = parsed.board;
-          else if (parsed.type === 'board:mutation') applyBoardMutation(viewer.current, parsed);
-          else throw new Error('Expected a Board update');
+          const liveOutcome = reconcileBoardUpdate(viewer.state, board.id, parsed);
+          expect(liveOutcome.needsResync).toBe(false);
 
           const fresh = (await read(viewer.cookie)).result;
-          expect(viewer.current).toEqual(fresh);
-          if (viewer.cookie === actor) expect(snapshot?.board ?? actorBoard).toEqual(fresh);
+          expect(viewer.state.board).toEqual(fresh);
+          if (viewer.cookie === actor) expect(actorState.board).toEqual(fresh);
         }));
         return result.events;
       };

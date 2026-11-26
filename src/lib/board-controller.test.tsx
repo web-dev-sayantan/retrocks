@@ -1,5 +1,5 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { createEffect, createRoot, createSignal, flush } from 'solid-js';
+import { createEffect, createRoot, createSignal, flush, snapshot, untrack } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardLiveMessage } from './board-live-protocol';
@@ -1327,5 +1327,584 @@ describe('createBoardController', () => {
       { scenario: 'board-controller-concurrent-live-and-rollback' },
     );
     expectNoDiagnostics(artifact, { allow: ['OPTIMISTIC_REVERTED'] });
+  });
+
+  it('reconciles Card create, edit, cross-Column move, and delete idempotently while keeping Column cardCounts and Card Group members accurate', () => {
+    const board = makeBoardView({
+      columns: [
+        { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 0 },
+        { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 0 },
+      ],
+      cards: [],
+    });
+    const { controller, connections } = mountSession(board);
+    const card = makeCard({ id: 'card_1', columnId: 'col_1', content: 'Fast builds' });
+
+    // Create Card (applied twice in one batch to prove idempotency)
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        { type: 'card:upserted', version: 2, card },
+        { type: 'card:upserted', version: 2, card },
+      ],
+    });
+    flush();
+
+    const afterCreate = snapshot(controller.board()!);
+    expect(afterCreate.version).toBe(2);
+    expect(afterCreate.cards).toHaveLength(1);
+    expect(afterCreate.columns[0].cardCount).toBe(1);
+    expect(afterCreate.columns[1].cardCount).toBe(0);
+
+    // Move Card from col_1 to col_2
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [
+        {
+          type: 'card:upserted',
+          version: 3,
+          card: { ...card, columnId: 'col_2', content: 'Moved card' },
+        },
+      ],
+    });
+    flush();
+
+    const afterMove = snapshot(controller.board()!);
+    expect(afterMove.cards[0].columnId).toBe('col_2');
+    expect(afterMove.cards[0].content).toBe('Moved card');
+    expect(afterMove.columns[0].cardCount).toBe(0);
+    expect(afterMove.columns[1].cardCount).toBe(1);
+
+    // Group Card and delete it twice for idempotency: Column cardCount and group.cardIds both stay accurate
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 4,
+      events: [
+        {
+          type: 'group:upserted',
+          version: 4,
+          group: {
+            id: 'group_1',
+            columnId: 'col_2',
+            title: 'Theme',
+            cardIds: [card.id, 'card_other'],
+            votes: 0,
+            myVotes: 0,
+            createdAt: 1_760_000_002_000,
+          },
+        },
+      ],
+    });
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 5,
+      events: [
+        { type: 'card:deleted', version: 5, cardId: card.id },
+        { type: 'card:deleted', version: 5, cardId: card.id },
+      ],
+    });
+    flush();
+
+    const afterDelete = snapshot(controller.board()!);
+    expect(afterDelete.cards).toHaveLength(0);
+    expect(afterDelete.columns[1].cardCount).toBe(0);
+    expect(afterDelete.groups[0].cardIds).toEqual(['card_other']);
+  });
+
+  it('adopts whole Card and Card Group items in place while preserving store proxy identity', () => {
+    const board = makeBoardView({
+      columns: [
+        { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 2 },
+        { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 0 },
+      ],
+      cards: [
+        makeCard({ id: 'card_a', content: 'Fast builds' }),
+        makeCard({ id: 'card_b', content: 'Fast builds' }),
+      ],
+    });
+    const { controller, connections } = mountSession(board);
+    const cardSlotBefore = untrack(() => controller.board()!.cards[0]);
+    const otherSlotBefore = untrack(() => controller.board()!.cards[1]);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        {
+          type: 'card:upserted',
+          version: 2,
+          card: makeCard({ id: 'card_a', content: 'Edited in place', updatedAt: 1_760_000_002_000 }),
+        },
+      ],
+    });
+    flush();
+
+    expect(snapshot(controller.board()!).cards.map((card) => card.content)).toEqual([
+      'Edited in place',
+      'Fast builds',
+    ]);
+    expect(untrack(() => controller.board()!.cards[0])).toBe(cardSlotBefore);
+    expect(untrack(() => controller.board()!.cards[1])).toBe(otherSlotBefore);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [
+        {
+          type: 'group:upserted',
+          version: 3,
+          group: {
+            id: 'group_1',
+            columnId: 'col_1',
+            title: 'Merged theme',
+            cardIds: ['card_a', 'card_b'],
+            votes: 0,
+            myVotes: 0,
+            createdAt: 1_760_000_003_000,
+          },
+        },
+      ],
+    });
+    flush();
+
+    expect(snapshot(controller.board()!).groups[0].cardIds).toEqual(['card_a', 'card_b']);
+    const groupSlotAfterCreate = untrack(() => controller.board()!.groups[0]);
+    expect(untrack(() => controller.board()!.cards[1])).toBe(otherSlotBefore);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 4,
+      events: [
+        {
+          type: 'group:upserted',
+          version: 4,
+          group: {
+            id: 'group_1',
+            columnId: 'col_1',
+            title: 'Renamed theme',
+            cardIds: ['card_a', 'card_b'],
+            votes: 0,
+            myVotes: 0,
+            createdAt: 1_760_000_003_000,
+          },
+        },
+      ],
+    });
+    flush();
+
+    expect(snapshot(controller.board()!).groups[0].title).toBe('Renamed theme');
+    expect(untrack(() => controller.board()!.groups[0])).toBe(groupSlotAfterCreate);
+    expect(untrack(() => controller.board()!.cards[1])).toBe(otherSlotBefore);
+  });
+
+  it('reconciles viewer reactions and keeps the anonymous comment thread chronological and idempotent', () => {
+    const board = makeBoardView({
+      cards: [
+        makeCard({
+          id: 'card_1',
+          comments: [{ id: 'late', cardId: 'card_1', content: 'Later', isMine: false, createdAt: 300 }],
+          commentCount: 1,
+        }),
+      ],
+    });
+    const { controller, connections } = mountSession(board);
+    const early = { id: 'early', cardId: 'card_1', content: 'Earlier', isMine: true, createdAt: 100 };
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        { type: 'reaction:updated', version: 2, cardId: 'card_1', counts: { '👍': 2 }, myReactions: ['👍'] },
+        { type: 'comment:created', version: 2, cardId: 'card_1', comment: early },
+        { type: 'comment:created', version: 2, cardId: 'card_1', comment: early },
+      ],
+    });
+    flush();
+
+    let card = snapshot(controller.board()!).cards[0];
+    expect(card.reactions).toEqual({ '👍': 2 });
+    expect(card.myReactions).toEqual(['👍']);
+    expect(card.comments.map((comment) => comment.id)).toEqual(['early', 'late']);
+    expect(card.commentCount).toBe(2);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [
+        { type: 'reaction:updated', version: 3, cardId: 'card_1', counts: {}, myReactions: [] },
+        { type: 'comment:deleted', version: 3, cardId: 'card_1', commentId: 'late' },
+        { type: 'comment:deleted', version: 3, cardId: 'card_1', commentId: 'late' },
+      ],
+    });
+    flush();
+
+    card = snapshot(controller.board()!).cards[0];
+    expect(card.reactions).toEqual({});
+    expect(card.myReactions).toEqual([]);
+    expect(card.comments.map((comment) => comment.id)).toEqual(['early']);
+    expect(card.commentCount).toBe(1);
+  });
+
+  it('reconciles Card Group create, rename, Column move, and dissolve across member Cards', () => {
+    const first = makeCard({ id: 'card_1', columnId: 'col_1' });
+    const second = makeCard({ id: 'card_2', columnId: 'col_1' });
+    const board = makeBoardView({
+      columns: [
+        { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 2 },
+        { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 0 },
+      ],
+      cards: [first, second],
+    });
+    const { controller, connections } = mountSession(board);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        {
+          type: 'group:upserted',
+          version: 2,
+          group: {
+            id: 'group_1',
+            columnId: 'col_1',
+            title: 'CI stability',
+            cardIds: ['card_1', 'card_2'],
+            votes: 3,
+            myVotes: 1,
+            createdAt: 1_760_000_002_000,
+          },
+        },
+        { type: 'card:upserted', version: 2, card: { ...first, groupId: 'group_1' } },
+        { type: 'card:upserted', version: 2, card: { ...second, groupId: 'group_1' } },
+      ],
+    });
+    flush();
+
+    let next = snapshot(controller.board()!);
+    expect(next.groups).toEqual([
+      expect.objectContaining({ id: 'group_1', title: 'CI stability', votes: 3, myVotes: 1 }),
+    ]);
+    expect(next.cards.map((card) => card.groupId)).toEqual(['group_1', 'group_1']);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [
+        {
+          type: 'group:upserted',
+          version: 3,
+          group: { ...next.groups[0], columnId: 'col_2', title: 'CI reliability' },
+        },
+        { type: 'card:upserted', version: 3, card: { ...next.cards[0], columnId: 'col_2' } },
+        { type: 'card:upserted', version: 3, card: { ...next.cards[1], columnId: 'col_2' } },
+      ],
+    });
+    flush();
+
+    next = snapshot(controller.board()!);
+    expect(next.groups[0]).toMatchObject({ columnId: 'col_2', title: 'CI reliability' });
+    expect(next.cards.map((card) => card.columnId)).toEqual(['col_2', 'col_2']);
+    expect(next.columns.map((column) => column.cardCount)).toEqual([0, 2]);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 4,
+      events: [{ type: 'group:dissolved', version: 4, groupId: 'group_1' }],
+    });
+    flush();
+
+    next = snapshot(controller.board()!);
+    expect(next.groups).toEqual([]);
+    expect(next.cards.map((card) => card.groupId)).toEqual([null, null]);
+  });
+
+  it('reconciles Board settings, Locked transitions, and Column add, update, reorder, and delete', () => {
+    const board = makeBoardView({
+      columns: [
+        { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 0 },
+        { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 0 },
+      ],
+      cards: [],
+    });
+    const { controller, connections } = mountSession(board);
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        {
+          type: 'board:updated',
+          version: 2,
+          patch: {
+            title: 'Sprint 43 Retro',
+            subtitle: 'Core Platform',
+            isBlurred: true,
+            blindVoting: true,
+            isLocked: true,
+            allowParticipantGroup: true,
+            voteLimit: 10,
+            maxVotesPerCard: 1,
+            retentionDays: 180,
+          },
+        },
+        { type: 'board:updated', version: 2, patch: { isLocked: true } },
+        {
+          type: 'column:upserted',
+          version: 2,
+          column: {
+            id: 'col_3',
+            title: 'Kudos',
+            accent: 'violet',
+            position: 2,
+            isActionColumn: false,
+            cardCount: 0,
+          },
+        },
+        {
+          type: 'column:upserted',
+          version: 2,
+          column: {
+            id: 'col_3',
+            title: 'Shoutouts',
+            accent: 'coral',
+            position: 2,
+            isActionColumn: false,
+            cardCount: 0,
+          },
+        },
+        { type: 'columns:reordered', version: 2, columnIds: ['col_3', 'col_1', 'col_2'] },
+        {
+          type: 'card:upserted',
+          version: 2,
+          card: makeCard({ id: 'card_in_col3', columnId: 'col_3', groupId: 'group_in_col3' }),
+        },
+        {
+          type: 'group:upserted',
+          version: 2,
+          group: {
+            id: 'group_in_col3',
+            columnId: 'col_3',
+            title: 'Kudos cluster',
+            cardIds: ['card_in_col3'],
+            votes: 0,
+            myVotes: 0,
+            createdAt: 1_760_000_002_000,
+          },
+        },
+      ],
+    });
+    flush();
+
+    const afterUpdate = snapshot(controller.board()!);
+    expect(afterUpdate).toMatchObject({
+      title: 'Sprint 43 Retro',
+      subtitle: 'Core Platform',
+      isBlurred: true,
+      blindVoting: true,
+      isLocked: true,
+      allowParticipantGroup: true,
+      voteLimit: 10,
+      maxVotesPerCard: 1,
+      retentionDays: 180,
+    });
+    expect(afterUpdate.columns.map((c) => c.id)).toEqual(['col_3', 'col_1', 'col_2']);
+    expect(afterUpdate.columns[0]).toMatchObject({
+      title: 'Shoutouts',
+      accent: 'coral',
+      position: 0,
+      cardCount: 1,
+    });
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [
+        { type: 'board:updated', version: 3, patch: { isLocked: false } },
+        { type: 'column:deleted', version: 3, columnId: 'col_3' },
+      ],
+    });
+    flush();
+
+    const afterColDelete = snapshot(controller.board()!);
+    expect(afterColDelete.isLocked).toBe(false);
+    expect(afterColDelete.columns.map((c) => c.id)).toEqual(['col_1', 'col_2']);
+    expect(afterColDelete.columns.map((c) => c.position)).toEqual([0, 1]);
+    expect(afterColDelete.cards).toHaveLength(0);
+    expect(afterColDelete.groups).toHaveLength(0);
+  });
+
+  it('reconciles live timer clock sync, gap-healing snapshots, and terminal deletion in one pipeline', () => {
+    const board = makeBoardView({ version: 1, title: 'Initial' });
+    const { controller, connections } = mountSession(board);
+
+    // 1. Live timer:updated updates timer fields AND syncs server clock in one pass
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 2,
+      events: [
+        {
+          type: 'timer:updated',
+          version: 2,
+          serverNow: 7777,
+          timer: { endsAt: 67777, remainingMs: 60000, durationMs: 60000 },
+        },
+      ],
+    });
+    flush();
+    expect(controller.board()?.version).toBe(2);
+    expect(controller.board()?.timer).toEqual({ endsAt: 67777, remainingMs: 60000, durationMs: 60000 });
+    expect(controller.timerClock()?.serverNow).toBe(7777);
+    expect(controller.nowMs()).toBe(7777);
+
+    // 2. A board:mutation carrying a full board:snapshot heals a version gap without reconnecting
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 8,
+      events: [
+        {
+          type: 'board:snapshot',
+          version: 8,
+          serverNow: 8888,
+          board: { ...board, version: 8, title: 'Gap healed by snapshot' },
+        },
+      ],
+    });
+    flush();
+    expect(controller.board()?.version).toBe(8);
+    expect(controller.board()?.title).toBe('Gap healed by snapshot');
+    expect(controller.timerClock()?.serverNow).toBe(8888);
+    expect(connections).toHaveLength(1);
+
+    // 3. A terminal board:deleted inside a mutation clears both the Board and active error even across a version gap
+    controller.reportError('Transient error');
+    flush();
+    expect(controller.errorMessage()).toBe('Transient error');
+
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 15,
+      events: [{ type: 'board:deleted', version: 15 }],
+    });
+    flush();
+    expect(controller.board()).toBeNull();
+    expect(controller.errorMessage()).toBeNull();
+  });
+
+  it('reconciles 3-Card Group shrink, grandfathered Vote decrement, and dissolve with zero Solid 2.0 diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      () => {
+        const card1 = makeCard({ id: 'card_1', groupId: 'group_1', votes: 1, myVotes: 1 });
+        const card2 = makeCard({ id: 'card_2', groupId: 'group_1', votes: 1, myVotes: 1 });
+        const card3 = makeCard({ id: 'card_3', groupId: 'group_1', votes: 0, myVotes: 0 });
+        const board = makeBoardView({
+          remainingVotes: 3,
+          columns: [
+            { id: 'col_1', title: 'Went Well', accent: 'sage', position: 0, isActionColumn: false, cardCount: 3 },
+            { id: 'col_2', title: 'To Improve', accent: 'rose', position: 1, isActionColumn: false, cardCount: 0 },
+          ],
+          groups: [
+            {
+              id: 'group_1',
+              columnId: 'col_1',
+              title: 'Merged theme',
+              redacted: false,
+              cardIds: ['card_1', 'card_2', 'card_3'],
+              votes: 2,
+              myVotes: 2,
+              createdAt: 1_760_000_002_000,
+            },
+          ],
+          cards: [card1, card2, card3],
+        });
+        const { controller, connections, dispose } = mountSession(board);
+
+        try {
+          // 1. Ungrouping card_3 emits group:upserted + card:upserted
+          connections[0].emit({
+            type: 'board:mutation',
+            version: 2,
+            events: [
+              {
+                type: 'group:upserted',
+                version: 2,
+                group: {
+                  id: 'group_1',
+                  columnId: 'col_1',
+                  title: 'Merged theme',
+                  redacted: false,
+                  cardIds: ['card_1', 'card_2'],
+                  votes: 2,
+                  myVotes: 2,
+                  createdAt: 1_760_000_002_000,
+                },
+              },
+              { type: 'card:upserted', version: 2, card: { ...card3, groupId: null } },
+            ],
+          });
+          flush();
+
+          let current = snapshot(controller.board()!);
+          expect(current.groups[0].cardIds).toEqual(['card_1', 'card_2']);
+          expect(current.cards.find((c) => c.id === 'card_3')?.groupId).toBeNull();
+
+          // 2. Group -1 removes grandfathered vote on card_2, emitting both group and card vote:updated
+          connections[0].emit({
+            type: 'board:mutation',
+            version: 3,
+            events: [
+              {
+                type: 'vote:updated',
+                version: 3,
+                targetType: 'group',
+                targetId: 'group_1',
+                totalVotes: 1,
+                myVotes: 1,
+                remainingVotes: 4,
+              },
+              {
+                type: 'vote:updated',
+                version: 3,
+                targetType: 'card',
+                targetId: 'card_2',
+                totalVotes: 0,
+                myVotes: 0,
+                remainingVotes: 4,
+              },
+            ],
+          });
+          flush();
+
+          // 3. Dissolving the group displays exact remaining Card Votes (card_1: 1, card_2: 0)
+          connections[0].emit({
+            type: 'board:mutation',
+            version: 4,
+            events: [
+              { type: 'group:dissolved', version: 4, groupId: 'group_1' },
+              { type: 'vote:balance', version: 4, remainingVotes: 4 },
+            ],
+          });
+          flush();
+
+          current = snapshot(controller.board()!);
+          expect(current.groups).toEqual([]);
+          expect(current.cards.find((c) => c.id === 'card_1')).toMatchObject({
+            groupId: null,
+            votes: 1,
+            myVotes: 1,
+          });
+          expect(current.cards.find((c) => c.id === 'card_2')).toMatchObject({
+            groupId: null,
+            votes: 0,
+            myVotes: 0,
+          });
+        } finally {
+          dispose();
+        }
+      },
+      { scenario: 'board-controller-group-shrink-and-vote-dissolve' },
+    );
+    expectNoDiagnostics(artifact);
   });
 });
