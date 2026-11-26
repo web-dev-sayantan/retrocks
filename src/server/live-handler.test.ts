@@ -496,9 +496,9 @@ it('rejects unsupported HTTP methods with 405, Allow: GET, POST, and Cache-Contr
 it('enforces origin, ID, session, non-stream no-store, and SSE cache-control parity across Boards and Rooms', async () => {
   vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
   const { openNodePokerRooms } = await import('./poker/node');
-  const { setNodePokerRoomsForTests } = await import('./poker/runtime');
+  const { setPokerRoomRuntimeForTests } = await import('./poker/runtime');
   const rooms = await openNodePokerRooms(':memory:');
-  setNodePokerRoomsForTests(rooms);
+  setPokerRoomRuntimeForTests(rooms);
   const streams: ReturnType<typeof readLiveStream>[] = [];
   let roomStream: SseTestStream<ReturnType<typeof parsePokerLiveMessage>> | undefined;
   try {
@@ -597,7 +597,7 @@ it('enforces origin, ID, session, non-stream no-store, and SSE cache-control par
   } finally {
     await roomStream?.close();
     await Promise.all(streams.map((stream) => stream.close()));
-    setNodePokerRoomsForTests(null);
+    setPokerRoomRuntimeForTests(null);
     rooms.close();
     vi.unstubAllEnvs();
   }
@@ -606,9 +606,9 @@ it('enforces origin, ID, session, non-stream no-store, and SSE cache-control par
 it('enforces POST heartbeat header validation and Cache-Control: no-store parity on Node SSE for Boards and Rooms', async () => {
   vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
   const { openNodePokerRooms } = await import('./poker/node');
-  const { setNodePokerRoomsForTests } = await import('./poker/runtime');
+  const { setPokerRoomRuntimeForTests } = await import('./poker/runtime');
   const rooms = await openNodePokerRooms(':memory:');
-  setNodePokerRoomsForTests(rooms);
+  setPokerRoomRuntimeForTests(rooms);
   const boardStreams: ReturnType<typeof readLiveStream>[] = [];
   let roomStream: SseTestStream<ReturnType<typeof parsePokerLiveMessage>> | undefined;
   try {
@@ -705,7 +705,7 @@ it('enforces POST heartbeat header validation and Cache-Control: no-store parity
   } finally {
     await roomStream?.close();
     await Promise.all(boardStreams.map((stream) => stream.close()));
-    setNodePokerRoomsForTests(null);
+    setPokerRoomRuntimeForTests(null);
     rooms.close();
     vi.unstubAllEnvs();
   }
@@ -808,9 +808,9 @@ it('rejects POST heartbeats with 405 Allow: GET without waking Durable Objects a
 it('evicts stalled SSE connections under one unified backpressure policy across Boards and Rooms and broadcasts updated presence', async () => {
   vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
   const { openNodePokerRooms } = await import('./poker/node');
-  const { setNodePokerRoomsForTests } = await import('./poker/runtime');
+  const { setPokerRoomRuntimeForTests } = await import('./poker/runtime');
   const rooms = await openNodePokerRooms(':memory:');
-  setNodePokerRoomsForTests(rooms);
+  setPokerRoomRuntimeForTests(rooms);
 
   const streams: Array<{ close(): Promise<void> }> = [];
   try {
@@ -917,7 +917,7 @@ it('evicts stalled SSE connections under one unified backpressure policy across 
     expect(updatedPresence.online).toHaveLength(1);
   } finally {
     await Promise.all(streams.map((stream) => stream.close()));
-    setNodePokerRoomsForTests(null);
+    setPokerRoomRuntimeForTests(null);
     rooms.close();
     vi.unstubAllEnvs();
   }

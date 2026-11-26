@@ -316,8 +316,8 @@ describe('Node SSE Pointing Poker Room lifecycle', () => {
     const streams: Array<{ close(): Promise<void> }> = [];
     try {
       const roomId = generateEntityId();
-      const created = rooms.create(roomId, 'facilitator', 'Alex');
-      const join = rooms.mutate(roomId, 'participant', { type: 'join', displayName: 'Sam' });
+      const created = await rooms.create(roomId, 'facilitator', 'Alex');
+      const join = await rooms.mutate(roomId, 'participant', { type: 'join', displayName: 'Sam' });
       if (!join.ok || join.room.closed || created.closed || !created.viewer || !join.room.viewer) {
         throw new Error('Expected open Room with two Participants');
       }
@@ -390,7 +390,7 @@ describe('Node SSE Pointing Poker Room lifecycle', () => {
     try {
       // Case 1: Expiry detected on incoming POST heartbeat.
       const room1 = generateEntityId();
-      rooms.create(room1, 'facilitator', 'Alex');
+      await rooms.create(room1, 'facilitator', 'Alex');
       const stream1 = readSseStream(
         rooms.connect(room1, 'facilitator', new Request('https://retrocks.app/live')),
         parsePokerLiveMessage,
@@ -408,7 +408,7 @@ describe('Node SSE Pointing Poker Room lifecycle', () => {
       const baseTime = Date.UTC(2026, 6, 1);
       vi.setSystemTime(baseTime);
       const room2 = generateEntityId();
-      rooms.create(room2, 'facilitator', 'Alex');
+      await rooms.create(room2, 'facilitator', 'Alex');
       const stream2 = readSseStream(
         rooms.connect(room2, 'facilitator', new Request('https://retrocks.app/live')),
         parsePokerLiveMessage,
