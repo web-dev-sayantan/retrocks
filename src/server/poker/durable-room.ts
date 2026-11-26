@@ -1,6 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import type { PokerLiveMessage, PokerRoomCommand, PokerRoomView } from '../../lib/poker-types';
+import type { PokerSharingResult } from '../../lib/poker-sharing-types';
+import type {
+  PokerDeleteResult,
+  PokerLiveMessage,
+  PokerResult,
+  PokerRoomCommand,
+  PokerRoomView,
+} from '../../lib/poker-types';
 import { wrapDurableObjectSql } from '../adapters/cloudflare/sqlite';
 import {
   createDurableObjectWebSocketHub,
@@ -8,12 +15,16 @@ import {
 } from '../live/cloudflare-ws-hub';
 import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
 import {
-  PokerRoomStorage, pokerParticipant, projectPokerRoom,
+  pokerParticipant,
+  projectPokerRoom,
   type PokerFacilitatorCapability,
 } from './room';
 import {
+  createPokerRoomCore,
   missingPokerRoom,
   projectPokerPublication,
+  type PokerRoomCore,
+  type PokerRoomOperations,
   type PokerRoomPublication,
 } from './room-core';
 
@@ -22,21 +33,33 @@ interface PokerLiveViewer {
   participantId: string;
 }
 
-export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
-  private readonly storage: PokerRoomStorage;
+export class PointingPokerRoom extends DurableObject<Cloudflare.Env> implements PokerRoomOperations {
+  private readonly core: PokerRoomCore;
   private readonly live: DurableObjectWebSocketHub<PokerLiveViewer, PokerLiveMessage>;
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
-    this.storage = new PokerRoomStorage(wrapDurableObjectSql(ctx.storage));
+    this.core = createPokerRoomCore(wrapDurableObjectSql(ctx.storage), {
+      publisher: {
+        publish: (_id, publication) => {
+          this.publish(publication);
+        },
+      },
+      scheduleExpiry: async (_id, expiresAt) => {
+        await this.ctx.storage.setAlarm(expiresAt);
+      },
+      clearExpiry: async () => {
+        await this.wipeStorage();
+      },
+    });
     this.live = createDurableObjectWebSocketHub<string, PokerLiveViewer, PokerLiveMessage>(ctx, {
       parseIdentity(request) {
         const hash = request.headers.get(POKER_LIVE_VIEWER_HEADER)?.trim();
         return hash || null;
       },
-      onConnect: (hash) => {
+      onConnect: (hash, now) => {
         const id = this.ctx.id.name;
-        const room = id ? this.storage.snapshot(id) : null;
+        const room = id ? this.core.snapshot(id, now) : null;
         const participant = room && pokerParticipant(room, hash);
         if (room && room.closedAt === undefined && !participant) {
           return { type: 'reject', status: 403 };
@@ -65,9 +88,9 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
           initialMessage,
         };
       },
-      shouldBroadcastPresence: () => {
+      shouldBroadcastPresence: (now) => {
         const id = this.ctx.id.name;
-        const room = id ? this.storage.snapshot(id) : null;
+        const room = id ? this.core.snapshot(id, now) : null;
         return Boolean(room && room.closedAt === undefined);
       },
       createPresenceMessage(viewers) {
@@ -78,7 +101,7 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
       },
       onPing: (now) => {
         const id = this.ctx.id.name;
-        if (!id || !this.storage.isAvailable(id, now)) {
+        if (!id || !this.core.isAvailable(id, now)) {
           this.publish(missingPokerRoom);
           return false;
         }
@@ -87,59 +110,59 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
     });
   }
 
-  async create(id: string, hash: string, displayName: string, name?: string): Promise<PokerRoomView> {
-    const room = this.storage.create(id, hash, displayName, name);
-    await this.ctx.storage.setAlarm(room.expiresAt);
-    return projectPokerRoom(room, hash);
+  private async wipeStorage(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.core.resetSchemaState();
   }
 
-  async read(id: string, hash: string) {
-    return this.storage.read(id, hash);
+  create(id: string, hash: string, displayName: string, name?: string): Promise<PokerRoomView> {
+    return this.core.create(id, hash, displayName, name);
   }
 
-  async mutate(id: string, hash: string, command: PokerRoomCommand) {
-    const result = this.storage.mutate(id, hash, command);
-    if (!result.ok) return result;
-    if (result.updated) {
-      this.publish({ type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
-      if (command.type !== 'join') await this.ctx.storage.setAlarm(result.room.expiresAt);
-    }
-    return { ok: true as const, room: projectPokerRoom(result.room, hash) };
+  read(id: string, hash: string): Promise<PokerRoomView | null> {
+    return this.core.read(id, hash);
   }
 
-  async delete(id: string, hash: string) {
-    const result = this.storage.delete(id, hash);
-    if (result.ok) {
-      this.publish(missingPokerRoom);
-      await this.ctx.storage.deleteAlarm();
-    }
-    return result;
+  mutate(id: string, hash: string, command: PokerRoomCommand): Promise<PokerResult> {
+    return this.core.mutate(id, hash, command);
   }
 
-  async getFacilitatorCapability(id: string, hash: string) {
-    return this.storage.getFacilitatorCapability(id, hash);
+  delete(id: string, hash: string): Promise<PokerDeleteResult> {
+    return this.core.delete(id, hash);
   }
 
-  async replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
-    const result = this.storage.replaceFacilitatorCapability(id, hash, revision, capability);
-    if (!result.ok) return result;
-    if (result.updated) {
-      this.publish({ type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
-    }
-    return { ok: true as const, value: null };
+  getFacilitatorCapability(
+    id: string,
+    hash: string,
+  ): Promise<PokerSharingResult<PokerFacilitatorCapability | null>> {
+    return this.core.getFacilitatorCapability(id, hash);
   }
 
-  async updateFacilitatorCapabilityEncryption(id: string, hash: string, revision: number, encrypted: string) {
-    this.storage.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted);
+  replaceFacilitatorCapability(
+    id: string,
+    hash: string,
+    expectedRevision: number,
+    capability: PokerFacilitatorCapability,
+  ): Promise<PokerSharingResult<null>> {
+    return this.core.replaceFacilitatorCapability(id, hash, expectedRevision, capability);
   }
 
-  async claimFacilitator(id: string, hash: string, candidate: string) {
-    const result = this.storage.claimFacilitator(id, hash, candidate);
-    if (!result.ok) return result;
-    if (result.updated) {
-      this.publish({ type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
-    }
-    return { ok: true as const, value: projectPokerRoom(result.room, hash) };
+  updateFacilitatorCapabilityEncryption(
+    id: string,
+    hash: string,
+    expectedRevision: number,
+    encrypted: string,
+  ): Promise<void> {
+    return this.core.updateFacilitatorCapabilityEncryption(id, hash, expectedRevision, encrypted);
+  }
+
+  claimFacilitator(
+    id: string,
+    hash: string,
+    candidate: string,
+  ): Promise<PokerSharingResult<PokerRoomView>> {
+    return this.core.claimFacilitator(id, hash, candidate);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -159,15 +182,14 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   }
 
   async alarm(): Promise<void> {
-    const now = Date.now();
-    this.storage.purgeExpired(now);
     const id = this.ctx.id.name;
-    const room = id ? this.storage.snapshot(id, now) : null;
-    if (room) {
-      await this.ctx.storage.setAlarm(room.expiresAt);
+    if (id) {
+      await this.core.handleExpiry(id);
       return;
     }
+    this.core.purgeExpired();
     this.publish(missingPokerRoom);
+    await this.wipeStorage();
   }
 
   private publish(publication: PokerRoomPublication): void {

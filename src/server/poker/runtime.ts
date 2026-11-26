@@ -1,60 +1,59 @@
 import 'server-only';
 import { env } from 'virtual:solid-env/server';
 
-import type { PokerRoomCommand } from '../../lib/poker-types';
 import { getCloudflareEnv } from '../adapters/cloudflare-context';
 import { forwardWebSocketUpgrade } from '../live/cloudflare-ws-hub';
 import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
 import { openNodePokerRooms, type NodePokerRooms } from './node';
-import type { PokerFacilitatorCapability } from './room';
+import {
+  bindPokerRoomAccess,
+  type PokerRoomAccess,
+  type PokerRoomRuntime,
+} from './room-core';
 
-let testNodeRoomsOverride: NodePokerRooms | null = null;
+let testRuntimeOverride: PokerRoomRuntime | null = null;
 let nodeRooms: Promise<NodePokerRooms> | undefined;
 
-/** Replaces the active Node Pointing Poker Room store in server tests; pass `null` to restore default resolution. */
-export function setNodePokerRoomsForTests(rooms: NodePokerRooms | null): void {
-  testNodeRoomsOverride = rooms;
+/** Replaces the active Pointing Poker Room runtime in server tests; pass `null` to restore default resolution. */
+export function setPokerRoomRuntimeForTests(runtime: PokerRoomRuntime | null): void {
+  testRuntimeOverride = runtime;
 }
 
-export async function getPokerRoomAccess(id: string) {
-  const namespace = testNodeRoomsOverride ? undefined : getCloudflareEnv()?.POINTING_POKER_ROOM;
-  if (namespace) {
-    const room = namespace.getByName(id);
-    return {
-      read: (hash: string) => room.read(id, hash),
-      create: (hash: string, displayName: string, name?: string) => room.create(id, hash, displayName, name),
-      mutate: (hash: string, command: PokerRoomCommand) => room.mutate(id, hash, command),
-      delete: (hash: string) => room.delete(id, hash),
-      getFacilitatorCapability: (hash: string) => room.getFacilitatorCapability(id, hash),
-      replaceFacilitatorCapability: (hash: string, revision: number, capability: PokerFacilitatorCapability) =>
-        room.replaceFacilitatorCapability(id, hash, revision, capability),
-      updateFacilitatorCapabilityEncryption: (hash: string, revision: number, encrypted: string) =>
-        room.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted),
-      claimFacilitator: (hash: string, candidate: string) => room.claimFacilitator(id, hash, candidate),
-      connect(hash: string, request: Request) {
-        return forwardWebSocketUpgrade(room, request, {
-          [POKER_LIVE_VIEWER_HEADER]: hash,
-        });
-      },
-      heartbeat: undefined,
-    };
+function createCloudflarePokerRoomRuntime(
+  namespace: Cloudflare.Env['POINTING_POKER_ROOM'],
+): PokerRoomRuntime {
+  const stubFor = (id: string) => namespace.getByName(id);
+  return {
+    create: (id, hash, displayName, name) => stubFor(id).create(id, hash, displayName, name),
+    read: (id, hash) => stubFor(id).read(id, hash),
+    mutate: (id, hash, command) => stubFor(id).mutate(id, hash, command),
+    delete: (id, hash) => stubFor(id).delete(id, hash),
+    getFacilitatorCapability: (id, hash) => stubFor(id).getFacilitatorCapability(id, hash),
+    replaceFacilitatorCapability: (id, hash, expectedRevision, capability) =>
+      stubFor(id).replaceFacilitatorCapability(id, hash, expectedRevision, capability),
+    updateFacilitatorCapabilityEncryption: (id, hash, expectedRevision, encrypted) =>
+      stubFor(id).updateFacilitatorCapabilityEncryption(id, hash, expectedRevision, encrypted),
+    claimFacilitator: (id, hash, candidate) => stubFor(id).claimFacilitator(id, hash, candidate),
+    connect: (id, hash, request) =>
+      forwardWebSocketUpgrade(stubFor(id), request, { [POKER_LIVE_VIEWER_HEADER]: hash }),
+  };
+}
+
+async function getPokerRoomRuntime(): Promise<PokerRoomRuntime> {
+  if (testRuntimeOverride) {
+    return testRuntimeOverride;
   }
 
-  const rooms = testNodeRoomsOverride ?? await (nodeRooms ??= openNodePokerRooms(
+  const namespace = getCloudflareEnv()?.POINTING_POKER_ROOM;
+  if (namespace) {
+    return createCloudflarePokerRoomRuntime(namespace);
+  }
+
+  return (nodeRooms ??= openNodePokerRooms(
     process.env.VITEST ? ':memory:' : env.DATABASE_URL ?? './data/retrocks.sqlite',
   ));
-  return {
-    read: (hash: string) => rooms.read(id, hash),
-    create: (hash: string, displayName: string, name?: string) => rooms.create(id, hash, displayName, name),
-    mutate: (hash: string, command: PokerRoomCommand) => rooms.mutate(id, hash, command),
-    delete: (hash: string) => rooms.delete(id, hash),
-    getFacilitatorCapability: (hash: string) => rooms.getFacilitatorCapability(id, hash),
-    replaceFacilitatorCapability: (hash: string, revision: number, capability: PokerFacilitatorCapability) =>
-      rooms.replaceFacilitatorCapability(id, hash, revision, capability),
-    updateFacilitatorCapabilityEncryption: (hash: string, revision: number, encrypted: string) =>
-      rooms.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted),
-    claimFacilitator: (hash: string, candidate: string) => rooms.claimFacilitator(id, hash, candidate),
-    connect: (hash: string, request: Request) => rooms.connect(id, hash, request),
-    heartbeat: (hash: string, connectionId: string) => rooms.heartbeat(id, hash, connectionId),
-  };
+}
+
+export async function getPokerRoomAccess(id: string): Promise<PokerRoomAccess> {
+  return bindPokerRoomAccess(await getPokerRoomRuntime(), id);
 }
