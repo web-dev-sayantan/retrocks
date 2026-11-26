@@ -55,8 +55,11 @@ import {
 import {
   createBoardController,
   type BoardCommandDispatcher,
+  type BoardFacilitatorClaimer,
+  type BoardFragmentAdapter,
 } from '../lib/board-controller';
 import type { LiveTransport } from '../lib/live-stream';
+import { claimFacilitatorRole } from '../lib/sharing-actions';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -109,8 +112,33 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   dispatchCommand?: BoardCommandDispatcher;
+  claimFacilitatorLink?: BoardFacilitatorClaimer;
+  fragment?: BoardFragmentAdapter;
   liveTransport?: LiveTransport;
-  liveReconnectKey?: number;
+}
+
+function BoardAlertBanner(props: { message: string; onDismiss: () => void; class?: string }) {
+  return (
+    <div
+      role="alert"
+      class={[
+        'mx-auto mt-3 flex w-full items-center justify-between gap-3 px-4 sm:px-6',
+        props.class ?? 'max-w-[1600px]',
+      ]}
+    >
+      <div class="flex flex-1 items-center justify-between gap-3 rounded-md border border-col-rose/40 bg-col-rose-tint px-3.5 py-2 text-xs font-medium text-text">
+        <span>{props.message}</span>
+        <button
+          type="button"
+          aria-label="Dismiss error"
+          onClick={() => props.onDismiss()}
+          class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-sm text-text-muted hover:text-text"
+        >
+          <CloseIcon />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function BoardHomeLink(props: { href: string; class: string }) {
@@ -172,11 +200,14 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   // The Board controller owns the store, live stream, server clock,
   // mutation handlers, and pending state; this component keeps layout and UI state.
   const controller = createBoardController({
+    boardId: untrack(() => props.boardId),
     board: () => props.board,
     dispatchCommand: (boardId, command) =>
       (props.dispatchCommand ?? dispatchBoardCommand)(boardId, command),
+    claimFacilitatorLink: (input) =>
+      (props.claimFacilitatorLink ?? claimFacilitatorRole)(input),
+    fragment: untrack(() => props.fragment),
     liveTransport: untrack(() => props.liveTransport),
-    liveReconnectKey: () => props.liveReconnectKey ?? 0,
     onDramaticReveal: runDramaticReveal,
   });
 
@@ -760,6 +791,16 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             </div>
           </header>
 
+          <Show when={controller.claimError()}>
+            {(message) => (
+              <BoardAlertBanner
+                message={message()}
+                class="max-w-xl"
+                onDismiss={() => controller.clearClaimError()}
+              />
+            )}
+          </Show>
+
           <PageMessage
             title="Board not found or expired"
             message="This Board may have been deleted by a Facilitator or expired after inactivity."
@@ -1143,24 +1184,15 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
           />
 
           {/* Inline dismissible error feedback */}
-          <Show when={controller.errorMessage()}>
+          <Show when={controller.errorMessage() ?? controller.claimError()}>
             {(message) => (
-              <div
-                role="alert"
-                class="mx-auto mt-3 flex w-full max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6"
-              >
-                <div class="flex flex-1 items-center justify-between gap-3 rounded-md border border-col-rose/40 bg-col-rose-tint px-3.5 py-2 text-xs font-medium text-text">
-                  <span>{message()}</span>
-                  <button
-                    type="button"
-                    aria-label="Dismiss error"
-                    onClick={() => controller.clearError()}
-                    class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-sm text-text-muted hover:text-text"
-                  >
-                    <CloseIcon />
-                  </button>
-                </div>
-              </div>
+              <BoardAlertBanner
+                message={message()}
+                onDismiss={() => {
+                  if (controller.errorMessage()) controller.clearError();
+                  else controller.clearClaimError();
+                }}
+              />
             )}
           </Show>
 
