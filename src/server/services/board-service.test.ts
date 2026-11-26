@@ -1786,4 +1786,173 @@ describe('BoardService (Locked Board lifecycle & permanent Delete)', () => {
     });
     expect(await store.getBoardSnapshot(board.id)).toBeNull();
   });
+
+  it('preserves server check precedence for Locked Private Mode Action Items, column:delete, board:delete, and comment moderation', async () => {
+    const service = await import('./board-service');
+
+    // 1. column:delete checks last-Column floor before hidden Cards in Private Mode
+    const singleColCreated = await runRequest(
+      new Request('https://retrocks.app/', { method: 'POST' }),
+      () =>
+        service.createBoardForRequest({
+          templateId: 'custom',
+          columns: [{ title: 'Only Column', accent: 'sky' }],
+          isBlurred: true,
+        }),
+    );
+    const singleBoard = singleColCreated.result;
+    const singleFac = extractSessionCookie(singleColCreated.response);
+    const singleParticipant = extractSessionCookie(
+      (
+        await runRequest(
+          new Request(`https://retrocks.app/b/${singleBoard.id}`),
+          () => service.getBoardForRequest(singleBoard.id),
+        )
+      ).response,
+    );
+    await runRequest(
+      new Request(`https://retrocks.app/b/${singleBoard.id}`, {
+        method: 'POST',
+        headers: { cookie: singleParticipant },
+      }),
+      () =>
+        service.dispatchBoardCommandForRequest(singleBoard.id, {
+          type: 'card:create',
+          columnId: singleBoard.columns[0].id,
+          content: 'Hidden Participant Card',
+        }),
+    );
+    await runRequest(
+      new Request(`https://retrocks.app/b/${singleBoard.id}`, {
+        method: 'POST',
+        headers: { cookie: singleFac },
+      }),
+      async () => {
+        await expect(
+          service.dispatchBoardCommandForRequest(singleBoard.id, {
+            type: 'column:delete',
+            columnId: singleBoard.columns[0].id,
+          }),
+        ).rejects.toMatchObject({
+          code: 'VALIDATION_ERROR',
+          message: 'A Board must have at least 1 Column.',
+        });
+      },
+    );
+
+    // 2. Locked + Private Mode: Facilitator follow-up works on own Action Item,
+    //    but is blocked with FORBIDDEN on another Participant's hidden Action Item.
+    //    Also verify authoritative server comment:delete allows Facilitator moderation
+    //    on Facilitator's own visible Card while Private Mode is ON.
+    const {
+      board,
+      facilitatorCookie,
+      reader,
+      dispatch,
+      actionCard,
+      lock,
+    } = await createLifecycleFixture();
+
+    const facActionRes = await dispatch(facilitatorCookie, {
+      type: 'card:create',
+      columnId: board.columns[2].id,
+      content: 'Facilitator action item',
+    });
+    const facActionEvent = facActionRes.events[0];
+    if (facActionEvent?.type !== 'card:upserted') throw new Error('Expected Card');
+    const facActionCardId = facActionEvent.card.id;
+
+    const readerCommentRes = await dispatch(reader, {
+      type: 'comment:create',
+      cardId: facActionCardId,
+      content: 'Comment on Facilitator Card',
+    });
+    const readerCommentEvent = readerCommentRes.events[0];
+    if (readerCommentEvent?.type !== 'comment:created') {
+      throw new Error('Expected comment');
+    }
+
+    // Exact unlocked FORBIDDEN messages for board:set-lock and board:delete
+    await expect(
+      dispatch(reader, { type: 'board:set-lock', isLocked: true }),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only a Facilitator can Lock or Unlock the Board.',
+    });
+    await expect(
+      dispatch(reader, { type: 'board:delete' }),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only a Facilitator can delete this Board.',
+    });
+
+    await dispatch(facilitatorCookie, {
+      type: 'board:set-private-mode',
+      isBlurred: true,
+    });
+
+    // Authoritative server rule: Facilitator can delete another Participant's
+    // comment on Facilitator's own Card during Private Mode.
+    await expect(
+      dispatch(facilitatorCookie, {
+        type: 'comment:delete',
+        cardId: facActionCardId,
+        commentId: readerCommentEvent.comment.id,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: 'comment:deleted',
+          cardId: facActionCardId,
+          commentId: readerCommentEvent.comment.id,
+        },
+      ],
+    });
+
+    await lock();
+
+    // Locked non-Facilitator board:set-lock and board:delete -> BOARD_LOCKED
+    await expect(
+      dispatch(reader, { type: 'board:set-lock', isLocked: false }),
+    ).rejects.toMatchObject({
+      code: 'BOARD_LOCKED',
+      message: 'This Board is Locked and cannot be edited.',
+    });
+    await expect(
+      dispatch(reader, { type: 'board:delete' }),
+    ).rejects.toMatchObject({
+      code: 'BOARD_LOCKED',
+      message: 'This Board is Locked and cannot be edited.',
+    });
+
+    // Locked + Private Mode Facilitator Action Item follow-up:
+    // other Participant's hidden Action Item -> FORBIDDEN; own Action Item -> succeeds.
+    await expect(
+      dispatch(facilitatorCookie, {
+        type: 'card:set-action',
+        cardId: actionCard.id,
+        actionDone: true,
+      }),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: "Cannot change another Participant's Card while Private Mode is active.",
+    });
+    await expect(
+      dispatch(facilitatorCookie, {
+        type: 'card:set-action',
+        cardId: facActionCardId,
+        actionDone: true,
+        actionOwner: 'Ops',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: 'card:upserted',
+          card: { id: facActionCardId, actionDone: true, actionOwner: 'Ops' },
+        },
+      ],
+    });
+  });
 });

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { BoardViewDTO, CardGroupDTO, CardViewDTO, CommentViewDTO } from './board-types';
 import {
-  areAllGroupCardsMine,
   canAddColumn,
   canCastVote,
+  canChangeVote,
   canContribute,
   canControlFacilitation,
   canDeleteColumn,
@@ -14,11 +14,15 @@ import {
   canEditActionItems,
   canFacilitate,
   canInteractWithCard,
+  canInteractWithGroup,
   canManageCard,
   canManageGroup,
   canManageGrouping,
-  isGroupRedacted,
-  passesPrivateMode,
+  canMergeCard,
+  canRemoveVote,
+  canUngroupCard,
+  decideColumnDeletion,
+  getCardMergeTargets,
 } from './board-permissions';
 
 function makeCard(overrides: Partial<CardViewDTO> = {}): CardViewDTO {
@@ -96,32 +100,23 @@ function makeBoard(overrides: Partial<BoardViewDTO> = {}): BoardViewDTO {
 
 describe('board-permissions', () => {
   describe('facilitation gates', () => {
-    // board:set-lock (sql-board-operations.ts:798) and deleteBoardForRequest
-    // (board-service.ts:308–357) stay Facilitator-only even while Locked.
     it('canFacilitate tracks the Facilitator role regardless of lock state', () => {
       expect(canFacilitate(makeBoard({ isFacilitator: true, isLocked: true }))).toBe(true);
       expect(canFacilitate(makeBoard({ isFacilitator: true, isLocked: false }))).toBe(true);
       expect(canFacilitate(makeBoard({ isFacilitator: false }))).toBe(false);
     });
 
-    // timer:update (712), board:rename (737), board:set-private-mode (773) and
-    // voting:configure/voting:reset (656) are Facilitator-only and blocked while Locked.
     it('canControlFacilitation requires an unlocked Facilitator', () => {
       expect(canControlFacilitation(makeBoard({ isFacilitator: true }))).toBe(true);
       expect(canControlFacilitation(makeBoard({ isFacilitator: true, isLocked: true }))).toBe(false);
       expect(canControlFacilitation(makeBoard({ isFacilitator: false }))).toBe(false);
     });
 
-    // Global Locked gate (sql-board-operations.ts:603–617): while Locked every write except
-    // facilitator:rotate, board:set-lock and facilitator follow-up on existing Action Items
-    // fails with BOARD_LOCKED — so Cards, comments, reactions and Votes are all frozen.
     it('canContribute is exactly the inverse of the Locked gate', () => {
       expect(canContribute(makeBoard({ isLocked: false }))).toBe(true);
       expect(canContribute(makeBoard({ isLocked: true }))).toBe(false);
     });
 
-    // column:add (sql-board-operations.ts:1562) is Facilitator-only, blocked while
-    // Locked, and capped by MAX_COLUMNS_PER_BOARD (1575).
     it('canAddColumn caps Facilitators at MAX_COLUMNS_PER_BOARD unlocked Columns', () => {
       const columns = Array.from({ length: 10 }, (_, i) => ({
         id: `col-${i}`,
@@ -143,18 +138,27 @@ describe('board-permissions', () => {
   });
 
   describe('card gates', () => {
-    // checkPrivateCardPermission (card-permissions.ts:5–18) plus the Locked gate:
-    // reactions, comments and Votes need only a revealed Card on an unlocked Board.
-    it('canInteractWithCard needs an unlocked Board and a revealed Card', () => {
+    it('canInteractWithCard needs an unlocked Board and a revealed, confirmed Card', () => {
       expect(canInteractWithCard(makeBoard(), makeCard())).toBe(true);
       expect(canInteractWithCard(makeBoard({ isLocked: true }), makeCard())).toBe(false);
       expect(canInteractWithCard(makeBoard({ isBlurred: true }), makeCard({ redacted: true }))).toBe(false);
+      expect(canInteractWithCard(makeBoard({ isBlurred: true }), makeCard({ isMine: false }))).toBe(false);
+      expect(canInteractWithCard(makeBoard({ isBlurred: true }), makeCard({ isMine: true }))).toBe(true);
       expect(canInteractWithCard(makeBoard(), makeCard({ pending: true }))).toBe(false);
     });
 
-    // checkCardManagePermission (sql-board-operations.ts:547–563) on projected state:
-    // own Card, or any revealed Card as Facilitator — Private Mode blinds Facilitators
-    // because checkPrivateCardPermission applies even to them.
+    it('canInteractWithCard by id resolves the Card and rejects missing or pending rows', () => {
+      const board = makeBoard({
+        cards: [
+          makeCard({ id: 'real-1', isMine: true }),
+          makeCard({ id: 'pending-1', isMine: true, pending: true }),
+        ],
+      });
+      expect(canInteractWithCard(board, 'real-1')).toBe(true);
+      expect(canInteractWithCard(board, 'missing-1')).toBe(false);
+      expect(canInteractWithCard(board, 'pending-1')).toBe(false);
+    });
+
     it('canManageCard allows own Cards, or any revealed Card for an unlocked Facilitator', () => {
       const participant = makeBoard();
       expect(canManageCard(participant, makeCard({ isMine: true }))).toBe(true);
@@ -181,9 +185,7 @@ describe('board-permissions', () => {
   });
 
   describe('grouping gates', () => {
-    // checkGroupManagePermission (sql-board-operations.ts:512–524): Facilitators always,
-    // Participants only with allow_participant_group (default false) — behind the Locked gate.
-    it('canManageGrouping mirrors the facilitator-or-allow_participant_group rule', () => {
+    it('canManageGrouping mirrors the facilitator-or-allowParticipantGroup rule', () => {
       expect(canManageGrouping(makeBoard())).toBe(false);
       expect(canManageGrouping(makeBoard({ allowParticipantGroup: true }))).toBe(true);
       expect(canManageGrouping(makeBoard({ isFacilitator: true }))).toBe(true);
@@ -192,27 +194,15 @@ describe('board-permissions', () => {
       ).toBe(false);
     });
 
-    // checkGroupPrivacy (sql-board-operations.ts:526–545): while Private Mode is active
-    // every member Card's author must pass checkPrivateCardPermission — Facilitators included.
-    it('areAllGroupCardsMine demands every member Card while Private Mode is active', () => {
-      const mine = makeCard({ id: 'mine', isMine: true });
-      const foreign = makeCard({ id: 'foreign', isMine: false });
-      const group = makeGroup({ cardIds: ['mine', 'foreign'] });
-      const blurred = { isBlurred: true } as const;
-
-      expect(areAllGroupCardsMine({ isBlurred: false }, group, [mine, foreign])).toBe(true);
-      expect(areAllGroupCardsMine(blurred, group, [mine])).toBe(false);
-      expect(areAllGroupCardsMine(blurred, makeGroup({ cardIds: ['mine'] }), [mine])).toBe(true);
-      expect(areAllGroupCardsMine(blurred, makeGroup({ cardIds: ['mine'] }), [])).toBe(false);
-    });
-
-    it('canManageGroup combines the role gate with group visibility', () => {
+    it('canManageGroup combines the role gate with whole-Group Private Mode visibility', () => {
       const mine = makeCard({ id: 'mine', isMine: true });
       const foreign = makeCard({ id: 'foreign', isMine: false });
       const mixed = makeGroup({ cardIds: ['mine', 'foreign'], redacted: true });
+      const unredactedMixed = makeGroup({ cardIds: ['mine', 'foreign'] });
 
       expect(canManageGroup(makeBoard({ isFacilitator: true }), makeGroup({ cardIds: ['mine'] }), [mine])).toBe(true);
       expect(canManageGroup(makeBoard({ isFacilitator: true, isBlurred: true }), mixed, [mine, foreign])).toBe(false);
+      expect(canManageGroup(makeBoard({ isFacilitator: true, isBlurred: true }), unredactedMixed, [mine, foreign])).toBe(false);
       expect(
         canManageGroup(makeBoard({ isFacilitator: true, isBlurred: true }), makeGroup({ cardIds: ['mine'] }), [mine]),
       ).toBe(true);
@@ -221,31 +211,118 @@ describe('board-permissions', () => {
       expect(canManageGroup(makeBoard({ isFacilitator: true }), makeGroup({ redacted: true }), [mine])).toBe(false);
     });
 
-    it('isGroupRedacted treats an unset redacted flag as revealed', () => {
-      expect(isGroupRedacted(makeGroup())).toBe(false);
-      expect(isGroupRedacted(makeGroup({ redacted: true }))).toBe(true);
+    it('canInteractWithGroup allows Participants to vote on revealed Groups but blocks redacted or mixed Groups in Private Mode', () => {
+      const mine = makeCard({ id: 'mine', isMine: true });
+      const foreign = makeCard({ id: 'foreign', isMine: false });
+      const group = makeGroup({ cardIds: ['mine', 'foreign'] });
+
+      expect(canInteractWithGroup(makeBoard({ isFacilitator: false, allowParticipantGroup: false }), group, [mine, foreign])).toBe(true);
+      expect(canInteractWithGroup(makeBoard({ isLocked: true }), group, [mine, foreign])).toBe(false);
+      expect(canInteractWithGroup(makeBoard({ isBlurred: true }), group, [mine, foreign])).toBe(false);
+      expect(canInteractWithGroup(makeBoard({ isBlurred: true }), makeGroup({ cardIds: ['mine'] }), [mine])).toBe(true);
+      expect(canInteractWithGroup(makeBoard(), makeGroup({ cardIds: ['mine'], redacted: true }), [mine])).toBe(false);
     });
 
-    // The strict Private Mode rule used for ungrouping: checkPrivateCardPermission
-    // blocks Facilitators from touching another Participant's Card while blurred.
-    it('passesPrivateMode keeps only the actor own Cards touchable while blurred', () => {
-      expect(passesPrivateMode({ isBlurred: false }, makeCard({ isMine: false }))).toBe(true);
-      expect(passesPrivateMode({ isBlurred: true }, makeCard({ isMine: true }))).toBe(true);
-      expect(passesPrivateMode({ isBlurred: true }, makeCard({ isMine: false }))).toBe(false);
+    it('canUngroupCard enforces whole-Card-Group Private Mode for both Participants and Facilitators', () => {
+      const mine = makeCard({ id: 'mine', groupId: 'group-mixed', isMine: true });
+      const foreign = makeCard({ id: 'foreign', groupId: 'group-mixed', isMine: false });
+      const mixedGroup = makeGroup({ id: 'group-mixed', cardIds: ['mine', 'foreign'] });
+
+      const ownA = makeCard({ id: 'own-a', groupId: 'group-own', isMine: true });
+      const ownB = makeCard({ id: 'own-b', groupId: 'group-own', isMine: true });
+      const ownGroup = makeGroup({ id: 'group-own', cardIds: ['own-a', 'own-b'] });
+
+      const standalone = makeCard({ id: 'standalone', groupId: null, isMine: true });
+      const pending = makeCard({ id: 'pending', groupId: 'group-own', isMine: true, pending: true });
+
+      const blurredFacilitator = makeBoard({
+        isFacilitator: true,
+        isBlurred: true,
+        groups: [mixedGroup, ownGroup],
+        cards: [mine, foreign, ownA, ownB, standalone, pending],
+      });
+
+      expect(canUngroupCard(blurredFacilitator, 'mine')).toBe(false);
+      expect(canUngroupCard(blurredFacilitator, 'own-a')).toBe(true);
+      expect(canUngroupCard(blurredFacilitator, 'standalone')).toBe(false);
+      expect(canUngroupCard(blurredFacilitator, 'pending')).toBe(false);
+
+      const blurredParticipant = makeBoard({
+        isFacilitator: false,
+        allowParticipantGroup: true,
+        isBlurred: true,
+        groups: [mixedGroup, ownGroup],
+        cards: [mine, foreign, ownA, ownB],
+      });
+      expect(canUngroupCard(blurredParticipant, 'mine')).toBe(false);
+      expect(canUngroupCard(blurredParticipant, 'own-a')).toBe(true);
+
+      // Outside Private Mode, ungrouping from a mixed Group is allowed for Facilitators and permitted Participants.
+      const revealedBoard = makeBoard({
+        isFacilitator: false,
+        allowParticipantGroup: true,
+        isBlurred: false,
+        groups: [mixedGroup],
+        cards: [mine, foreign],
+      });
+      expect(canUngroupCard(revealedBoard, 'mine')).toBe(true);
+    });
+
+    it('getCardMergeTargets and canMergeCard exclude redacted and mixed Card Groups during Private Mode', () => {
+      const myLoose = makeCard({ id: 'my-loose', columnId: 'col-1', isMine: true });
+      const myOther = makeCard({ id: 'my-other', columnId: 'col-1', isMine: true });
+      const pendingOther = makeCard({ id: 'pending-other', columnId: 'col-1', isMine: true, pending: true });
+      const foreignHidden = makeCard({ id: 'foreign-hidden', columnId: 'col-1', isMine: false, redacted: true });
+
+      const ownGroupCard = makeCard({ id: 'own-g-1', columnId: 'col-1', groupId: 'g-own', isMine: true });
+      const ownGroup = makeGroup({ id: 'g-own', columnId: 'col-1', cardIds: ['own-g-1'] });
+
+      const redactedGroupCard = makeCard({ id: 'red-g-1', columnId: 'col-1', groupId: 'g-red', isMine: false, redacted: true });
+      const redactedGroup = makeGroup({ id: 'g-red', columnId: 'col-1', cardIds: ['red-g-1'], redacted: true });
+
+      const mixedGroupForeign = makeCard({ id: 'mix-g-2', columnId: 'col-1', groupId: 'g-mix', isMine: false });
+      const mixedGroupMine = makeCard({ id: 'mix-g-1', columnId: 'col-1', groupId: 'g-mix', isMine: true });
+      const mixedGroup = makeGroup({ id: 'g-mix', columnId: 'col-1', cardIds: ['mix-g-1', 'mix-g-2'] });
+
+      const cards = [
+        myLoose,
+        myOther,
+        pendingOther,
+        foreignHidden,
+        ownGroupCard,
+        redactedGroupCard,
+        mixedGroupMine,
+        mixedGroupForeign,
+      ];
+      const groups = [ownGroup, redactedGroup, mixedGroup];
+      const blurredBoard = makeBoard({
+        isFacilitator: true,
+        isBlurred: true,
+        cards,
+        groups,
+      });
+
+      const targets = getCardMergeTargets(blurredBoard, myLoose, cards, groups);
+      expect(targets.cards.map((c) => c.id)).toEqual(['my-other']);
+      expect(targets.groups.map((g) => g.id)).toEqual(['g-own']);
+
+      expect(canMergeCard(blurredBoard, 'my-loose', 'group', 'g-own')).toBe(true);
+      expect(canMergeCard(blurredBoard, 'my-loose', 'group', 'g-red')).toBe(false);
+      expect(canMergeCard(blurredBoard, 'my-loose', 'group', 'g-mix')).toBe(false);
+      expect(canMergeCard(blurredBoard, 'my-loose', 'card', 'pending-other')).toBe(false);
     });
   });
 
   describe('action item gates', () => {
-    // SPEC permission matrix: while Locked, only a Facilitator may still toggle
-    // actionDone and edit actionOwner on EXISTING Action Items.
     it('canEditActionItems follows the Locked carve-out for Facilitators', () => {
       expect(canEditActionItems(makeBoard())).toBe(true);
       expect(canEditActionItems(makeBoard({ isLocked: true }))).toBe(false);
       expect(canEditActionItems(makeBoard({ isLocked: true, isFacilitator: true }))).toBe(true);
     });
 
-    it('canEditActionItemFollowUp only applies to existing Action Items', () => {
-      const actionItem = makeCard({ isActionItem: true });
+    it('canEditActionItemFollowUp applies to existing revealed Action Items and respects Private Mode', () => {
+      const actionItem = makeCard({ isActionItem: true, isMine: true });
+      const foreignActionItem = makeCard({ isActionItem: true, isMine: false });
       expect(canEditActionItemFollowUp(makeBoard(), actionItem)).toBe(true);
       expect(canEditActionItemFollowUp(makeBoard(), makeCard())).toBe(false);
       expect(canEditActionItemFollowUp(makeBoard(), makeCard({ isActionItem: true, pending: true }))).toBe(false);
@@ -253,13 +330,22 @@ describe('board-permissions', () => {
       expect(
         canEditActionItemFollowUp(makeBoard({ isLocked: true, isFacilitator: true }), actionItem),
       ).toBe(true);
+      expect(
+        canEditActionItemFollowUp(
+          makeBoard({ isLocked: true, isFacilitator: true, isBlurred: true }),
+          foreignActionItem,
+        ),
+      ).toBe(false);
+      expect(
+        canEditActionItemFollowUp(
+          makeBoard({ isLocked: true, isFacilitator: true, isBlurred: true }),
+          actionItem,
+        ),
+      ).toBe(true);
     });
 
-    // card:set-action (sql-board-operations.ts:1387–1457) behind the global Locked gate
-    // (603–617): while Locked a Facilitator may only update EXISTING Action Items
-    // (done/owner) and only without re-flagging — isActionItem must stay undefined.
-    it('canEditActionItem enforces the Locked Action Item carve-out', () => {
-      const actionItem = makeCard({ isActionItem: true });
+    it('canEditActionItem enforces the Locked Action Item carve-out and Private Mode', () => {
+      const actionItem = makeCard({ isActionItem: true, isMine: true });
       expect(canEditActionItem(makeBoard(), actionItem, { actionDone: true })).toBe(true);
       expect(canEditActionItem(makeBoard(), actionItem, { isActionItem: false })).toBe(true);
 
@@ -279,9 +365,16 @@ describe('board-permissions', () => {
       expect(
         canEditActionItem(makeBoard({ isLocked: true, isFacilitator: true }), makeCard(), { actionDone: true }),
       ).toBe(false);
+      expect(
+        canEditActionItem(
+          makeBoard({ isLocked: true, isFacilitator: true, isBlurred: true }),
+          makeCard({ isActionItem: true, isMine: false }),
+          { actionDone: true },
+        ),
+      ).toBe(false);
     });
 
-    it('canEditActionItem never touches redacted Cards', () => {
+    it('canEditActionItem never touches redacted or pending Cards', () => {
       expect(
         canEditActionItem(makeBoard(), makeCard({ redacted: true, isActionItem: true }), { actionDone: true }),
       ).toBe(false);
@@ -292,53 +385,92 @@ describe('board-permissions', () => {
   });
 
   describe('comment gates', () => {
-    // comment:delete (sql-board-operations.ts:1541–1543): own comment, or any comment as
-    // Facilitator. The client additionally requires the Facilitator to wait for Reveal All
-    // (!isBlurred) because it cannot compare comment author hashes itself.
-    it('canDeleteComment allows own comments, or any revealed comment for Facilitators', () => {
+    it('canDeleteComment preserves intentional Private Mode moderation conservatism and parent Card checks', () => {
+      const myCard = makeCard({ id: 'card-1', isMine: true });
+      const pendingCard = makeCard({ id: 'card-pending', isMine: true, pending: true });
+
       expect(canDeleteComment(makeBoard(), makeComment({ isMine: true }))).toBe(true);
       expect(canDeleteComment(makeBoard(), makeComment({ isMine: false }))).toBe(false);
       expect(
         canDeleteComment(makeBoard({ isFacilitator: true }), makeComment({ isMine: false })),
       ).toBe(true);
       expect(
-        canDeleteComment(makeBoard({ isFacilitator: true, isBlurred: true }), makeComment({ isMine: false })),
+        canDeleteComment(makeBoard({ isFacilitator: true, isBlurred: true }), makeComment({ isMine: false }), myCard),
       ).toBe(false);
-      expect(canDeleteComment(makeBoard({ isLocked: true }), makeComment({ isMine: true }))).toBe(false);
+      expect(
+        canDeleteComment(makeBoard({ isFacilitator: true, isBlurred: true }), makeComment({ isMine: true }), myCard),
+      ).toBe(true);
+      expect(
+        canDeleteComment(makeBoard({ isLocked: true }), makeComment({ isMine: true }), myCard),
+      ).toBe(false);
+      expect(
+        canDeleteComment(makeBoard(), makeComment({ isMine: true }), pendingCard),
+      ).toBe(false);
     });
   });
 
   describe('vote gates', () => {
-    // sql-voting-operations.ts changeVote (16–84): a +1 cast must clear the remaining
-    // Board Vote balance and the per-Card cap. Blind Voting never restricts casting —
-    // it only hides totals in the projection — so canCastVote takes no blindVoting input.
-    it('canCastVote mirrors the per-Card cap and remaining Vote balance', () => {
+    it('canCastVote and canRemoveVote mirror Vote caps, balance, and zero-Vote floor', () => {
       const unlimited = { remainingVotes: null, maxVotesPerCard: null };
       expect(canCastVote(unlimited, 0)).toBe(true);
       expect(canCastVote({ remainingVotes: 1, maxVotesPerCard: null }, 0)).toBe(true);
       expect(canCastVote({ remainingVotes: 0, maxVotesPerCard: null }, 0)).toBe(false);
       expect(canCastVote({ remainingVotes: 3, maxVotesPerCard: 1 }, 0)).toBe(true);
       expect(canCastVote({ remainingVotes: 3, maxVotesPerCard: 1 }, 1)).toBe(false);
+
+      expect(canRemoveVote(0)).toBe(false);
+      expect(canRemoveVote(1)).toBe(true);
     });
 
     it('canCastVote ignores Blind Voting totals hiding', () => {
       const blindBoardVoting = { remainingVotes: 2, maxVotesPerCard: null };
       expect(canCastVote(blindBoardVoting, 0)).toBe(true);
     });
+
+    it('canChangeVote enforces lock, pending, grouped-Card routing, Private Mode, caps, and balance', () => {
+      const standalone = makeCard({ id: 'c1', myVotes: 1 });
+      const grouped = makeCard({ id: 'c2', groupId: 'g1', myVotes: 0 });
+      const pending = makeCard({ id: 'c3', pending: true, myVotes: 0 });
+      const group = makeGroup({ id: 'g1', cardIds: ['c2'], myVotes: 1 });
+
+      const board = makeBoard({
+        remainingVotes: 1,
+        maxVotesPerCard: 1,
+        cards: [standalone, grouped, pending],
+        groups: [group],
+      });
+
+      expect(canChangeVote(board, 'card', 'c1', 1)).toBe(false); // per-card cap reached
+      expect(canChangeVote(board, 'card', 'c1', -1)).toBe(true);
+      expect(canChangeVote(board, 'card', 'c2', 1)).toBe(false); // card is in a group
+      expect(canChangeVote(board, 'card', 'c3', 1)).toBe(false); // card is pending
+      expect(canChangeVote(board, 'group', 'g1', -1)).toBe(true);
+      expect(canChangeVote({ ...board, maxVotesPerCard: null, remainingVotes: 0 }, 'group', 'g1', 1)).toBe(false);
+      expect(canChangeVote({ ...board, isBlurred: true, cards: [makeCard({ id: 'c2', groupId: 'g1', isMine: false })] }, 'group', 'g1', -1)).toBe(false);
+    });
   });
 
   describe('column gates', () => {
-    // column:delete (sql-board-operations.ts:1695–1734): Facilitator only, more than one
-    // Column, and no hidden Cards while Private Mode is active.
-    it('canDeleteColumn requires an unlocked Facilitator, spare Column, and no hidden Cards', () => {
+    it('canDeleteColumn and decideColumnDeletion report last-column and hidden-cards denials', () => {
       const revealed = [makeCard()];
       const hidden = [makeCard({ redacted: true })];
+      const foreign = [makeCard({ isMine: false })];
 
       expect(canDeleteColumn(makeBoard({ isFacilitator: true }), 2, revealed)).toBe(true);
       expect(canDeleteColumn(makeBoard({ isFacilitator: true }), 1, revealed)).toBe(false);
       expect(canDeleteColumn(makeBoard({ isFacilitator: true, isLocked: true }), 2, revealed)).toBe(false);
       expect(canDeleteColumn(makeBoard({ isFacilitator: true }), 2, hidden)).toBe(false);
+      expect(canDeleteColumn(makeBoard({ isFacilitator: true, isBlurred: true }), 2, foreign)).toBe(false);
       expect(canDeleteColumn(makeBoard(), 2, revealed)).toBe(false);
+
+      expect(decideColumnDeletion(makeBoard({ isFacilitator: true }), 1, hidden)).toEqual({
+        allowed: false,
+        reason: 'last-column',
+      });
+      expect(decideColumnDeletion(makeBoard({ isFacilitator: true }), 2, hidden)).toEqual({
+        allowed: false,
+        reason: 'column-has-hidden-cards',
+      });
     });
   });
 });

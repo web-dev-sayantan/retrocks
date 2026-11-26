@@ -17,7 +17,7 @@ import { For, Show, createMemo, createSignal, createUniqueId, untrack } from 'so
 
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
-import { canControlFacilitation } from '../lib/board-permissions';
+import { canControlFacilitation, canFacilitate } from '../lib/board-permissions';
 import type { BoardCommand } from '../lib/schemas';
 import BoardOverlayHeader from './BoardOverlayHeader';
 import LucideIcon from './LucideIcon';
@@ -153,7 +153,7 @@ export default function BoardVotingSettings(props: {
   }
 
   async function toggleLock() {
-    if (pending()) return;
+    if (pending() || !canFacilitate(props.board)) return;
     const nextLocked = !props.board.isLocked;
     setPending('lock');
     setError(null);
@@ -165,7 +165,7 @@ export default function BoardVotingSettings(props: {
   }
 
   async function deleteBoard() {
-    if (pending()) return;
+    if (pending() || !canFacilitate(props.board)) return;
     const confirmed = await confirmBoardAction({
       title: 'Permanently delete this Board?',
       description: 'The Board and every Card, Column, Vote, and comment are erased immediately. This cannot be undone.',
@@ -341,7 +341,7 @@ export default function BoardVotingSettings(props: {
             <button
               type="button"
               class={mutedButtonClass}
-              disabled={pending() !== null}
+              disabled={pending() !== null || !canFacilitate(props.board)}
               onClick={() => void toggleLock()}
             >
               {pending() === 'lock'
@@ -380,7 +380,7 @@ export default function BoardVotingSettings(props: {
               <button
                 type="button"
                 class={destructiveButtonClass}
-                disabled={pending() !== null}
+                disabled={pending() !== null || !canFacilitate(props.board)}
                 onClick={() => void deleteBoard()}
               >
                 {pending() === 'delete' ? 'Deleting…' : 'Delete Board'}

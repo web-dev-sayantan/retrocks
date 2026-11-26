@@ -1,231 +1,669 @@
-// Client-side mirror of the server authorization truth table. Enforcement lives in
-// src/server/db/sql-board-operations.ts (mutateBoard), src/server/domain/card-permissions.ts
-// and src/server/db/sql-voting-operations.ts; the client cannot see author/voter token
-// hashes, so these predicates approximate them with the projected redacted/isMine/
-// isFacilitator/isBlurred flags — the established convention. Pure functions only:
-// no reactivity lives in this module, callers pass plain (possibly props-shaped) state.
+/**
+ * Thin client-side DTO adapter over the shared pure Board authorization policy
+ * (`src/lib/board-policy.ts`). Maps viewer-projected client state (`BoardViewDTO`,
+ * `BoardWorkspaceContextValue`, `CardViewDTO`, `CardGroupDTO`, `CommentViewDTO`)
+ * into plain policy facts with zero Solid reactivity.
+ */
 
 import {
-  MAX_COLUMNS_PER_BOARD,
-  type ActionItemPatch,
-  type BoardViewDTO,
-  type CardGroupDTO,
-  type CardViewDTO,
-  type CommentViewDTO,
+  decideActionItemAction,
+  decideBoardAction,
+  decideCardAction,
+  decideColumnAction,
+  decideCommentDelete,
+  decideGroupAction,
+  decideVoteChange,
+  type BoardPolicyContext,
+  type BoardPolicyDecision,
+  type CardGroupPolicyFacts,
+  type CardPolicyFacts,
+  type MergeCardFacts,
+  type MergeGroupFacts,
+  type VoteDelta,
+} from './board-policy';
+import type {
+  ActionItemPatch,
+  BoardViewDTO,
+  CardGroupDTO,
+  CardViewDTO,
+  CommentViewDTO,
 } from './board-types';
+
+type PolicyBoardInput = Pick<
+  BoardViewDTO,
+  'isFacilitator' | 'isLocked' | 'isBlurred' | 'allowParticipantGroup'
+>;
+
+export function toBoardPolicyContext(
+  board: PolicyBoardInput,
+): BoardPolicyContext {
+  return {
+    isFacilitator: board.isFacilitator,
+    isLocked: board.isLocked,
+    isPrivateMode: board.isBlurred,
+    allowParticipantGroup: board.allowParticipantGroup,
+  };
+}
+
+function toCardPolicyFacts(
+  card: Pick<CardViewDTO, 'isMine' | 'redacted' | 'pending'>,
+): CardPolicyFacts {
+  return {
+    isMine: card.isMine,
+    isRedacted: card.redacted,
+    isPending: card.pending,
+  };
+}
+
+function toGroupPolicyFacts(
+  group: Pick<CardGroupDTO, 'cardIds' | 'redacted'>,
+  cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
+): CardGroupPolicyFacts {
+  return {
+    allCardsAreMine: group.cardIds.every(
+      (id) => cards.find((card) => card.id === id)?.isMine === true,
+    ),
+    isRedacted: group.redacted,
+  };
+}
+
+function toMergeCardFacts(
+  card: Pick<
+    CardViewDTO,
+    'id' | 'columnId' | 'groupId' | 'isMine' | 'redacted' | 'pending'
+  >,
+): MergeCardFacts {
+  return {
+    id: card.id,
+    columnId: card.columnId,
+    groupId: card.groupId,
+    ...toCardPolicyFacts(card),
+  };
+}
+
+function toMergeGroupFacts(
+  group: Pick<CardGroupDTO, 'id' | 'columnId' | 'cardIds' | 'redacted'>,
+  cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
+): MergeGroupFacts {
+  return {
+    id: group.id,
+    columnId: group.columnId,
+    ...toGroupPolicyFacts(group, cards),
+  };
+}
 
 // ── Facilitation gates ──────────────────────────────────────────────────────────
 
-// board:set-lock (sql-board-operations.ts:798) and deleteBoardForRequest
-// (board-service.ts:308–357) stay Facilitator-only even while Locked.
-export function canFacilitate(board: Pick<BoardViewDTO, 'isFacilitator'>): boolean {
-  return board.isFacilitator;
+export function canFacilitate(
+  board: Pick<BoardViewDTO, 'isFacilitator'> &
+    Partial<Pick<BoardViewDTO, 'isLocked'>>,
+): boolean {
+  return decideBoardAction(
+    { isFacilitator: board.isFacilitator, isLocked: board.isLocked ?? false },
+    'board:set-lock',
+  ).allowed;
 }
 
-// timer:update (712), board:rename (737), board:set-private-mode (773),
-// voting:configure/voting:reset (656) and Column CRUD (1562–1734) are
-// Facilitator-only and blocked by the global Locked gate (603–617).
 export function canControlFacilitation(
   board: Pick<BoardViewDTO, 'isFacilitator' | 'isLocked'>,
 ): boolean {
-  return board.isFacilitator && !board.isLocked;
+  return decideBoardAction(board, 'board:rename').allowed;
 }
 
-// Global Locked gate (603–617): while Locked every write except facilitator:rotate,
-// board:set-lock and facilitator follow-up on existing Action Items fails with
-// BOARD_LOCKED — so Cards, comments, reactions and Votes are all frozen.
 export function canContribute(board: Pick<BoardViewDTO, 'isLocked'>): boolean {
-  return !board.isLocked;
+  return decideBoardAction(
+    { isFacilitator: false, isLocked: board.isLocked },
+    'board:contribute',
+  ).allowed;
 }
 
-// column:add (1562): Facilitator-only, blocked while Locked, capped at
-// MAX_COLUMNS_PER_BOARD (1575).
 export function canAddColumn(
   board: Pick<BoardViewDTO, 'isFacilitator' | 'isLocked' | 'columns'>,
 ): boolean {
-  return canControlFacilitation(board) && board.columns.length < MAX_COLUMNS_PER_BOARD;
+  return decideColumnAction(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: false,
+    },
+    { type: 'column:add', columnCount: board.columns.length },
+  ).allowed;
 }
 
 // ── Card gates ──────────────────────────────────────────────────────────────────
 
-// checkPrivateCardPermission (card-permissions.ts:5–18) plus the Locked gate:
-// reactions, comments and Votes need only a revealed, server-confirmed Card on
-// an unlocked Board; client-only optimistic rows stay untouchable.
+type CardInteractBoard = Pick<BoardViewDTO, 'isLocked'> &
+  Partial<Pick<BoardViewDTO, 'isBlurred'>>;
+type CardInteractState = Pick<CardViewDTO, 'redacted' | 'pending'> &
+  Partial<Pick<CardViewDTO, 'isMine'>>;
+
 export function canInteractWithCard(
-  board: Pick<BoardViewDTO, 'isLocked'>,
-  card: Pick<CardViewDTO, 'redacted' | 'pending'>,
+  board: CardInteractBoard,
+  card: CardInteractState,
+): boolean;
+export function canInteractWithCard(
+  board: CardInteractBoard & {
+    readonly cards: readonly (CardInteractState & { readonly id: string })[];
+  },
+  cardId: string,
+): boolean;
+export function canInteractWithCard(
+  board: CardInteractBoard & {
+    readonly cards?: readonly (CardInteractState & { readonly id: string })[];
+  },
+  cardOrId: CardInteractState | string,
 ): boolean {
-  return !board.isLocked && !card.redacted && !card.pending;
+  const card =
+    typeof cardOrId === 'string'
+      ? board.cards?.find((item) => item.id === cardOrId)
+      : cardOrId;
+  if (!card) return false;
+  return decideCardAction(
+    {
+      isFacilitator: false,
+      isLocked: board.isLocked,
+      isPrivateMode: board.isBlurred ?? false,
+    },
+    'card:interact',
+    {
+      isMine: card.isMine ?? true,
+      isRedacted: card.redacted,
+      isPending: card.pending,
+    },
+  ).allowed;
 }
 
-type CardManageBoard = Pick<BoardViewDTO, 'isLocked' | 'isFacilitator' | 'isBlurred'>;
+type CardManageBoard = Pick<
+  BoardViewDTO,
+  'isLocked' | 'isFacilitator' | 'isBlurred'
+>;
 type CardManageState = Pick<CardViewDTO, 'redacted' | 'isMine' | 'pending'>;
 
-// checkCardManagePermission (sql-board-operations.ts:547–563) on projected state:
-// own Card, or any revealed Card as Facilitator — Private Mode blinds Facilitators
-// because checkPrivateCardPermission applies even to them.
-export function canManageCard(board: CardManageBoard, card: CardManageState): boolean;
 export function canManageCard(
-  board: CardManageBoard & { cards: readonly (CardManageState & { id: string })[] },
+  board: CardManageBoard,
+  card: CardManageState,
+): boolean;
+export function canManageCard(
+  board: CardManageBoard & {
+    readonly cards: readonly (CardManageState & { readonly id: string })[];
+  },
   cardId: string,
 ): boolean;
 export function canManageCard(
-  board: CardManageBoard & { cards?: readonly (CardManageState & { id: string })[] },
+  board: CardManageBoard & {
+    readonly cards?: readonly (CardManageState & { readonly id: string })[];
+  },
   cardOrId: CardManageState | string,
 ): boolean {
-  const card = typeof cardOrId === 'string'
-    ? board.cards?.find((item) => item.id === cardOrId)
-    : cardOrId;
-  return (
-    !!card &&
-    !card.pending &&
-    canInteractWithCard(board, card) &&
-    (card.isMine || (board.isFacilitator && !board.isBlurred))
-  );
+  const card =
+    typeof cardOrId === 'string'
+      ? board.cards?.find((item) => item.id === cardOrId)
+      : cardOrId;
+  if (!card) return false;
+  return decideCardAction(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: board.isBlurred,
+    },
+    'card:update',
+    toCardPolicyFacts(card),
+  ).allowed;
 }
 
 // ── Grouping gates ──────────────────────────────────────────────────────────────
 
-// checkGroupManagePermission (sql-board-operations.ts:512–524) behind the Locked
-// gate: Facilitators always, Participants only with allow_participant_group.
 export function canManageGrouping(
   board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator' | 'allowParticipantGroup'>,
 ): boolean {
-  return !board.isLocked && (board.isFacilitator || board.allowParticipantGroup);
+  return decideGroupAction(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: false,
+      allowParticipantGroup: board.allowParticipantGroup,
+    },
+    { type: 'group:manage-access' },
+  ).allowed;
 }
 
-// checkGroupPrivacy (sql-board-operations.ts:526–545): while Private Mode is active
-// every member Card's author must pass checkPrivateCardPermission — Facilitators
-// are blinded like everyone else, so the client demands all members be the actor's.
-export function areAllGroupCardsMine(
-  board: Pick<BoardViewDTO, 'isBlurred'>,
-  group: Pick<CardGroupDTO, 'cardIds'>,
-  cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
-): boolean {
-  if (!board.isBlurred) return true;
-  return group.cardIds.every((id) => cards.find((card) => card.id === id)?.isMine === true);
-}
-
-// The grouping role gate plus group visibility: not redacted, and fully the
-// actor's under Private Mode.
 export function canManageGroup(
-  board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator' | 'allowParticipantGroup' | 'isBlurred'>,
+  board: PolicyBoardInput,
+  group: Pick<CardGroupDTO, 'redacted' | 'cardIds'>,
+  cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
+): boolean;
+export function canManageGroup(
+  board: PolicyBoardInput & {
+    readonly groups: readonly Pick<CardGroupDTO, 'id' | 'redacted' | 'cardIds'>[];
+    readonly cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[];
+  },
+  groupId: string,
+): boolean;
+export function canManageGroup(
+  board: PolicyBoardInput & {
+    readonly groups?: readonly Pick<CardGroupDTO, 'id' | 'redacted' | 'cardIds'>[];
+    readonly cards?: readonly Pick<CardViewDTO, 'id' | 'isMine'>[];
+  },
+  groupOrId: Pick<CardGroupDTO, 'redacted' | 'cardIds'> | string,
+  cards?: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
+): boolean {
+  const group =
+    typeof groupOrId === 'string'
+      ? board.groups?.find((item) => item.id === groupOrId)
+      : groupOrId;
+  const cardList = cards ?? board.cards;
+  if (!group || !cardList) return false;
+  return decideGroupAction(toBoardPolicyContext(board), {
+    type: 'group:rename',
+    group: toGroupPolicyFacts(group, cardList),
+  }).allowed;
+}
+
+export function canInteractWithGroup(
+  board: Pick<BoardViewDTO, 'isLocked' | 'isBlurred'>,
   group: Pick<CardGroupDTO, 'redacted' | 'cardIds'>,
   cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
 ): boolean {
-  return canManageGrouping(board) && !group.redacted && areAllGroupCardsMine(board, group, cards);
+  return decideVoteChange(
+    { isLocked: board.isLocked, isPrivateMode: board.isBlurred },
+    {
+      kind: 'group',
+      myVotes: 0,
+      ...toGroupPolicyFacts(group, cards),
+    },
+    { maxVotesPerCard: null, remainingVotes: null },
+    1,
+  ).allowed;
 }
 
+export function canUngroupCard(
+  board: PolicyBoardInput,
+  card: Pick<CardViewDTO, 'groupId' | 'isMine' | 'redacted' | 'pending'>,
+  groups: readonly Pick<CardGroupDTO, 'id' | 'cardIds' | 'redacted'>[],
+  cards: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
+): boolean;
+export function canUngroupCard(
+  board: PolicyBoardInput & {
+    readonly cards: readonly Pick<
+      CardViewDTO,
+      'id' | 'groupId' | 'isMine' | 'redacted' | 'pending'
+    >[];
+    readonly groups: readonly Pick<CardGroupDTO, 'id' | 'cardIds' | 'redacted'>[];
+  },
+  cardId: string,
+): boolean;
+export function canUngroupCard(
+  board: PolicyBoardInput & {
+    readonly cards?: readonly Pick<
+      CardViewDTO,
+      'id' | 'groupId' | 'isMine' | 'redacted' | 'pending'
+    >[];
+    readonly groups?: readonly Pick<CardGroupDTO, 'id' | 'cardIds' | 'redacted'>[];
+  },
+  cardOrId:
+    | Pick<CardViewDTO, 'groupId' | 'isMine' | 'redacted' | 'pending'>
+    | string,
+  groups?: readonly Pick<CardGroupDTO, 'id' | 'cardIds' | 'redacted'>[],
+  cards?: readonly Pick<CardViewDTO, 'id' | 'isMine'>[],
+): boolean {
+  const cardList = cards ?? board.cards;
+  const groupList = groups ?? board.groups;
+  const card =
+    typeof cardOrId === 'string'
+      ? board.cards?.find((item) => item.id === cardOrId)
+      : cardOrId;
+  if (!card || !cardList || !groupList) return false;
+  const group =
+    card.groupId !== null
+      ? (groupList.find((item) => item.id === card.groupId) ?? null)
+      : null;
+  return decideGroupAction(toBoardPolicyContext(board), {
+    type: 'group:ungroup',
+    card: toCardPolicyFacts(card),
+    group: group ? toGroupPolicyFacts(group, cardList) : null,
+  }).allowed;
+}
+
+type MergeBoard = PolicyBoardInput & {
+  readonly cards: readonly Pick<
+    CardViewDTO,
+    'id' | 'columnId' | 'groupId' | 'isMine' | 'redacted' | 'pending'
+  >[];
+  readonly groups: readonly Pick<
+    CardGroupDTO,
+    'id' | 'columnId' | 'cardIds' | 'redacted'
+  >[];
+};
+
 export function canMergeCard(
-  board: BoardViewDTO,
+  board: MergeBoard,
   cardId: string,
   targetType: 'card' | 'group',
   targetId: string,
 ): boolean {
-  if (!canManageGrouping(board)) return false;
-  const card = board.cards.find((item) => item.id === cardId);
-  if (!card || !canInteractWithCard(board, card) || !passesPrivateMode(board, card)) return false;
+  const sourceCard = board.cards.find((item) => item.id === cardId);
+  if (!sourceCard) return false;
+  const policyBoard = toBoardPolicyContext(board);
 
-  const target = targetType === 'card' ? board.cards.find((item) => item.id === targetId) : undefined;
-  if (targetType === 'card' &&
-      (!target || target.id === cardId || target.columnId !== card.columnId ||
-        !canInteractWithCard(board, target) || !passesPrivateMode(board, target))) return false;
+  if (targetType === 'group') {
+    const group = board.groups.find((item) => item.id === targetId);
+    if (!group) return false;
+    return decideGroupAction(policyBoard, {
+      type: 'group:merge',
+      sourceCard: toMergeCardFacts(sourceCard),
+      target: {
+        kind: 'group',
+        group: toMergeGroupFacts(group, board.cards),
+      },
+    }).allowed;
+  }
 
-  const groupId = targetType === 'group' ? targetId : target?.groupId;
-  if (groupId == null) return true;
-  const group = board.groups.find((item) => item.id === groupId);
-  return group !== undefined && group.columnId === card.columnId &&
-    !group.cardIds.includes(cardId) && canManageGroup(board, group, board.cards);
+  const targetCard = board.cards.find((item) => item.id === targetId);
+  if (!targetCard) return false;
+  const targetGroup =
+    targetCard.groupId !== null
+      ? board.groups.find((item) => item.id === targetCard.groupId)
+      : null;
+  if (targetCard.groupId !== null && !targetGroup) return false;
+
+  return decideGroupAction(policyBoard, {
+    type: 'group:merge',
+    sourceCard: toMergeCardFacts(sourceCard),
+    target: {
+      kind: 'card',
+      card: toMergeCardFacts(targetCard),
+      group: targetGroup ? toMergeGroupFacts(targetGroup, board.cards) : null,
+    },
+  }).allowed;
 }
 
-// Projected group privacy: the projection (projection.ts) redacts groups holding
-// other participants' Cards while Private Mode is active.
-export function isGroupRedacted(group: Pick<CardGroupDTO, 'redacted'>): boolean {
-  return Boolean(group.redacted);
-}
-
-// Strict checkPrivateCardPermission mirror for a single Card (group membership,
-// ungrouping): only the actor's own Cards stay touchable while blurred — even
-// for Facilitators.
-export function passesPrivateMode(
-  board: Pick<BoardViewDTO, 'isBlurred'>,
-  card: Pick<CardViewDTO, 'isMine'>,
-): boolean {
-  return !board.isBlurred || card.isMine;
+export function getCardMergeTargets(
+  board: PolicyBoardInput,
+  card: CardViewDTO,
+  columnCards: readonly CardViewDTO[],
+  columnGroups: readonly CardGroupDTO[],
+): { cards: CardViewDTO[]; groups: CardGroupDTO[] } {
+  const policyBoard = toBoardPolicyContext(board);
+  const sourceCard = toMergeCardFacts(card);
+  const cards = columnCards.filter(
+    (other) =>
+      other.groupId === null &&
+      decideGroupAction(policyBoard, {
+        type: 'group:merge',
+        sourceCard,
+        target: {
+          kind: 'card',
+          card: toMergeCardFacts(other),
+          group: null,
+        },
+      }).allowed,
+  );
+  const groups = columnGroups.filter(
+    (group) =>
+      decideGroupAction(policyBoard, {
+        type: 'group:merge',
+        sourceCard,
+        target: {
+          kind: 'group',
+          group: toMergeGroupFacts(group, columnCards),
+        },
+      }).allowed,
+  );
+  return { cards, groups };
 }
 
 // ── Action Item gates ───────────────────────────────────────────────────────────
 
-// SPEC permission matrix: while Locked, only a Facilitator may still toggle
-// actionDone and edit actionOwner on EXISTING Action Items.
 export function canEditActionItems(
   board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'>,
 ): boolean {
-  return !board.isLocked || board.isFacilitator;
+  return decideBoardAction(board, 'action-item:follow-up').allowed;
 }
+
+type ActionItemBoard = Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'> &
+  Partial<Pick<BoardViewDTO, 'isBlurred'>>;
+type ActionItemState = Pick<
+  CardViewDTO,
+  'redacted' | 'isActionItem' | 'pending'
+> &
+  Partial<Pick<CardViewDTO, 'isMine'>>;
 
 export function canEditActionItemFollowUp(
-  board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'>,
-  card: Pick<CardViewDTO, 'isActionItem' | 'pending'>,
+  board: ActionItemBoard,
+  card: Pick<CardViewDTO, 'isActionItem' | 'pending'> &
+    Partial<Pick<CardViewDTO, 'redacted' | 'isMine'>>,
 ): boolean {
-  return card.isActionItem && !card.pending && canEditActionItems(board);
+  return decideActionItemAction(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: board.isBlurred ?? false,
+    },
+    {
+      isMine: card.isMine ?? true,
+      isRedacted: card.redacted,
+      isPending: card.pending,
+      isActionItem: card.isActionItem,
+    },
+    { actionDone: true },
+  ).allowed;
 }
 
-// card:set-action (sql-board-operations.ts:1387–1457) behind the global Locked
-// gate (603–617): while Locked a Facilitator may only update EXISTING Action
-// Items (done/owner) and only without re-flagging — isActionItem must stay
-// undefined so the is_action_item !== 1 check in 1410 passes.
 export function canEditActionItem(
-  board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator'>,
-  card: Pick<CardViewDTO, 'redacted' | 'isActionItem' | 'pending'>,
+  board: ActionItemBoard,
+  card: ActionItemState,
+  patch: ActionItemPatch,
+): boolean;
+export function canEditActionItem(
+  board: ActionItemBoard & {
+    readonly cards: readonly (ActionItemState & { readonly id: string })[];
+  },
+  cardId: string,
+  patch: ActionItemPatch,
+): boolean;
+export function canEditActionItem(
+  board: ActionItemBoard & {
+    readonly cards?: readonly (ActionItemState & { readonly id: string })[];
+  },
+  cardOrId: ActionItemState | string,
   patch: ActionItemPatch,
 ): boolean {
-  if (card.redacted || card.pending) return false;
-  if (!board.isLocked) return true;
-  return board.isFacilitator && card.isActionItem && patch.isActionItem === undefined;
+  const card =
+    typeof cardOrId === 'string'
+      ? board.cards?.find((item) => item.id === cardOrId)
+      : cardOrId;
+  if (!card) return false;
+  return decideActionItemAction(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: board.isBlurred ?? false,
+    },
+    {
+      isMine: card.isMine ?? true,
+      isRedacted: card.redacted,
+      isPending: card.pending,
+      isActionItem: card.isActionItem,
+    },
+    patch,
+  ).allowed;
 }
 
 // ── Comment gates ───────────────────────────────────────────────────────────────
 
-// comment:delete (sql-board-operations.ts:1541–1543): own comment, or any comment
-// as Facilitator. The client additionally requires the Facilitator to wait for
-// Reveal All (!isBlurred) because it cannot compare comment author hashes —
-// stricter than the server, by established convention.
+type CommentDeleteBoard = Pick<
+  BoardViewDTO,
+  'isLocked' | 'isFacilitator' | 'isBlurred'
+>;
+
 export function canDeleteComment(
-  board: Pick<BoardViewDTO, 'isLocked' | 'isFacilitator' | 'isBlurred'>,
+  board: CommentDeleteBoard,
   comment: Pick<CommentViewDTO, 'isMine'>,
+  card?: Pick<CardViewDTO, 'isMine' | 'redacted' | 'pending'>,
+): boolean;
+export function canDeleteComment(
+  board: CommentDeleteBoard & {
+    readonly cards: readonly (Pick<
+      CardViewDTO,
+      'id' | 'isMine' | 'redacted' | 'pending'
+    > & {
+      readonly comments: readonly Pick<CommentViewDTO, 'id' | 'isMine'>[];
+    })[];
+  },
+  cardId: string,
+  commentId: string,
+): boolean;
+export function canDeleteComment(
+  board: CommentDeleteBoard & {
+    readonly cards?: readonly (Pick<
+      CardViewDTO,
+      'id' | 'isMine' | 'redacted' | 'pending'
+    > & {
+      readonly comments: readonly Pick<CommentViewDTO, 'id' | 'isMine'>[];
+    })[];
+  },
+  commentOrCardId: Pick<CommentViewDTO, 'isMine'> | string,
+  cardOrCommentId?:
+    | Pick<CardViewDTO, 'isMine' | 'redacted' | 'pending'>
+    | string,
 ): boolean {
-  return !board.isLocked && (comment.isMine || (board.isFacilitator && !board.isBlurred));
+  let comment: Pick<CommentViewDTO, 'isMine'> | undefined;
+  let card: Pick<CardViewDTO, 'isMine' | 'redacted' | 'pending'> | undefined;
+
+  if (typeof commentOrCardId === 'string') {
+    if (typeof cardOrCommentId !== 'string') return false;
+    const parentCard = board.cards?.find((item) => item.id === commentOrCardId);
+    card = parentCard;
+    comment = parentCard?.comments.find((item) => item.id === cardOrCommentId);
+    if (!card || !comment) return false;
+  } else {
+    comment = commentOrCardId;
+    card = typeof cardOrCommentId === 'object' ? cardOrCommentId : undefined;
+  }
+
+  return decideCommentDelete(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: board.isBlurred,
+    },
+    { isMine: comment.isMine },
+    {
+      card: card ? toCardPolicyFacts(card) : undefined,
+      mode: 'client-conservative',
+    },
+  ).allowed;
 }
 
 // ── Vote gates ──────────────────────────────────────────────────────────────────
 
-// sql-voting-operations.ts changeVote (16–84): a +1 cast must clear the remaining
-// Board Vote balance and the per-Card cap. Blind Voting never restricts casting —
-// it only hides totals in the projection — so no blindVoting input exists here.
 export function canCastVote(
   voting: { remainingVotes: number | null; maxVotesPerCard: number | null },
   myVotes: number,
 ): boolean {
-  return (
-    (voting.remainingVotes === null || voting.remainingVotes > 0) &&
-    (voting.maxVotesPerCard === null || myVotes < voting.maxVotesPerCard)
-  );
+  return decideVoteChange(
+    { isLocked: false, isPrivateMode: false },
+    { kind: 'card', groupId: null, myVotes, isMine: true },
+    {
+      maxVotesPerCard: voting.maxVotesPerCard,
+      remainingVotes: voting.remainingVotes,
+    },
+    1,
+  ).allowed;
+}
+
+export function canRemoveVote(myVotes: number): boolean {
+  return decideVoteChange(
+    { isLocked: false, isPrivateMode: false },
+    { kind: 'card', groupId: null, myVotes, isMine: true },
+    { maxVotesPerCard: null, remainingVotes: null },
+    -1,
+  ).allowed;
+}
+
+export function canChangeVote(
+  board: Pick<
+    BoardViewDTO,
+    | 'isLocked'
+    | 'isBlurred'
+    | 'maxVotesPerCard'
+    | 'remainingVotes'
+    | 'cards'
+    | 'groups'
+  >,
+  targetType: 'card' | 'group',
+  targetId: string,
+  delta: VoteDelta,
+): boolean {
+  const policyBoard = {
+    isLocked: board.isLocked,
+    isPrivateMode: board.isBlurred,
+  };
+  const limits = {
+    maxVotesPerCard: board.maxVotesPerCard,
+    remainingVotes: board.remainingVotes,
+  };
+
+  if (targetType === 'group') {
+    const group = board.groups.find((item) => item.id === targetId);
+    if (!group) return false;
+    return decideVoteChange(
+      policyBoard,
+      {
+        kind: 'group',
+        myVotes: group.myVotes,
+        ...toGroupPolicyFacts(group, board.cards),
+      },
+      limits,
+      delta,
+    ).allowed;
+  }
+
+  const card = board.cards.find((item) => item.id === targetId);
+  if (!card) return false;
+  return decideVoteChange(
+    policyBoard,
+    {
+      kind: 'card',
+      groupId: card.groupId,
+      myVotes: card.myVotes,
+      ...toCardPolicyFacts(card),
+    },
+    limits,
+    delta,
+  ).allowed;
 }
 
 // ── Column gates ────────────────────────────────────────────────────────────────
 
-// column:delete (sql-board-operations.ts:1695–1734): Facilitator only, more than
-// one Column, and no hidden Cards while Private Mode is active — the client reads
-// that as "no redacted Cards in the Column".
-export function canDeleteColumn(
-  board: Pick<BoardViewDTO, 'isFacilitator' | 'isLocked'>,
+export function decideColumnDeletion(
+  board: Pick<BoardViewDTO, 'isFacilitator' | 'isLocked'> &
+    Partial<Pick<BoardViewDTO, 'isBlurred'>>,
   totalColumns: number,
-  cards: readonly Pick<CardViewDTO, 'redacted'>[],
-): boolean {
-  return (
-    canControlFacilitation(board) &&
-    totalColumns > 1 &&
-    !cards.some((card) => card.redacted)
+  cards: readonly (Pick<CardViewDTO, 'redacted'> &
+    Partial<Pick<CardViewDTO, 'isMine'>>)[],
+): BoardPolicyDecision {
+  return decideColumnAction(
+    {
+      isFacilitator: board.isFacilitator,
+      isLocked: board.isLocked,
+      isPrivateMode: board.isBlurred ?? false,
+    },
+    {
+      type: 'column:delete',
+      columnCount: totalColumns,
+      hasRedactedCards: cards.some((card) => card.redacted),
+      hasOtherParticipantCards: cards.some((card) => card.isMine === false),
+    },
   );
+}
+
+export function canDeleteColumn(
+  board: Pick<BoardViewDTO, 'isFacilitator' | 'isLocked'> &
+    Partial<Pick<BoardViewDTO, 'isBlurred'>>,
+  totalColumns: number,
+  cards: readonly (Pick<CardViewDTO, 'redacted'> &
+    Partial<Pick<CardViewDTO, 'isMine'>>)[],
+): boolean {
+  return decideColumnDeletion(board, totalColumns, cards).allowed;
 }

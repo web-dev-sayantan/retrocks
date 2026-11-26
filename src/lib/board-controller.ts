@@ -19,20 +19,18 @@ import { createLiveStream, type LiveTransport } from './live-stream';
 import { parseBoardLiveMessage } from './wire-schemas';
 import {
   canAddColumn,
-  canContribute,
-  canControlFacilitation,
+  canChangeVote,
   canDeleteColumn,
   canDeleteComment,
   canEditActionItem,
-  canFacilitate,
   canInteractWithCard,
   canManageCard,
   canManageGroup,
-  canManageGrouping,
   canMergeCard,
-  isGroupRedacted,
-  passesPrivateMode,
+  canUngroupCard,
+  toBoardPolicyContext,
 } from './board-permissions';
+import { decideBoardAction, decideColumnAction } from './board-policy';
 import { applyBoardMutation } from './board-store';
 import type {
   ActionItemPatch,
@@ -156,115 +154,6 @@ function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
   };
 }
 
-/** Which permission/lock rule the mutation seam checks before dispatching. */
-type MutationGate =
-  | { kind: 'create-card'; columnId: string }
-  | { kind: 'update-card'; cardId: string }
-  | { kind: 'update-action-item'; cardId: string; patch: ActionItemPatch }
-  | { kind: 'move-card'; cardId: string }
-  | { kind: 'delete-card'; cardId: string }
-  | { kind: 'toggle-reaction'; cardId: string }
-  | { kind: 'create-comment'; cardId: string }
-  | { kind: 'delete-comment'; cardId: string; commentId: string }
-  | { kind: 'grouping'; cardIds?: readonly string[]; groupId?: string }
-  | { kind: 'merge-card'; cardId: string; targetType: 'card' | 'group'; targetId: string }
-  | { kind: 'vote'; targetType: 'card' | 'group'; targetId: string }
-  | { kind: 'add-column' }
-  | { kind: 'update-column' }
-  | { kind: 'move-column' }
-  | { kind: 'delete-column'; columnId: string }
-  | { kind: 'facilitate' }
-  | { kind: 'control-facilitation' };
-
-interface MutationDenial {
-  allowed: false;
-  message?: string;
-}
-
-/**
- * The single permission/lock guard at the mutation seam. Every controller
- * mutation routes through here and board-permissions.ts predicates; no
- * handler re-derives the rules.
- */
-function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDenial | null {
-  const deny = (message?: string): MutationDenial => ({ allowed: false, message });
-  const cardById = (id: string) => board.cards.find((item) => item.id === id);
-  const groupById = (id: string) => board.groups.find((item) => item.id === id);
-  switch (gate.kind) {
-    case 'create-card':
-      return canContribute(board) ? null : deny('This Board is not accepting new Cards.');
-    case 'update-card':
-      return canManageCard(board, gate.cardId) ? null : deny('This Card can no longer be edited.');
-    case 'move-card':
-    case 'delete-card':
-      return canManageCard(board, gate.cardId) ? null : deny();
-    case 'update-action-item': {
-      const card = cardById(gate.cardId);
-      return card && canEditActionItem(board, card, gate.patch) ? null : deny();
-    }
-    case 'toggle-reaction': {
-      const card = cardById(gate.cardId);
-      return card && canInteractWithCard(board, card)
-        ? null
-        : deny('This Card can no longer receive reactions.');
-    }
-    case 'create-comment': {
-      const card = cardById(gate.cardId);
-      return card && canInteractWithCard(board, card)
-        ? null
-        : deny('This Card can no longer receive comments.');
-    }
-    case 'delete-comment': {
-      const card = cardById(gate.cardId);
-      const comment = card?.comments.find((item) => item.id === gate.commentId);
-      return card && comment &&
-        canInteractWithCard(board, card) &&
-        canDeleteComment(board, comment)
-        ? null
-        : deny('This comment can no longer be deleted.');
-    }
-    case 'merge-card':
-      return canMergeCard(board, gate.cardId, gate.targetType, gate.targetId) ? null : deny();
-    case 'grouping': {
-      if (gate.groupId !== undefined) {
-        const group = groupById(gate.groupId);
-        return group && canManageGroup(board, group, board.cards) ? null : deny();
-      }
-      if (!canManageGrouping(board)) return deny();
-      const cards = gate.cardIds?.map(cardById);
-      return cards && cards.length > 0 &&
-        cards.every(
-          (card) =>
-            card && !card.pending && !card.redacted && passesPrivateMode(board, card),
-        )
-        ? null
-        : deny();
-    }
-    case 'vote': {
-      if (!canContribute(board)) return deny();
-      if (gate.targetType === 'group') {
-        const group = groupById(gate.targetId);
-        return group && !isGroupRedacted(group) ? null : deny();
-      }
-      const card = cardById(gate.targetId);
-      return card && !card.pending && canInteractWithCard(board, card) ? null : deny();
-    }
-    case 'add-column':
-      return canAddColumn(board) ? null : deny();
-    case 'update-column':
-    case 'move-column':
-      return canControlFacilitation(board) ? null : deny();
-    case 'delete-column': {
-      const cards = board.cards.filter((card) => card.columnId === gate.columnId);
-      return canDeleteColumn(board, board.columns.length, cards) ? null : deny();
-    }
-    case 'facilitate':
-      return canFacilitate(board) ? null : deny();
-    case 'control-facilitation':
-      return canControlFacilitation(board) ? null : deny();
-  }
-}
-
 /** A server rejection or stale-board answer; aborts the action so its guesses revert. */
 class MutationRejected extends Error {
   constructor(readonly response: ActionError) {
@@ -287,7 +176,9 @@ interface MutationRequest {
 }
 
 interface GuardedMutation extends Omit<MutationRequest, 'boardId' | 'send' | 'preserveError'> {
-  gate: MutationGate;
+  /** Shared Board authorization policy check evaluated once before opening the action. */
+  authorize: (board: BoardViewDTO) => boolean;
+  guardMessage?: string;
   failureMessage: string;
   reportFailure?: true | ReportMutationFailure;
   send: (boardId: string) => Promise<BoardMutationResponse>;
@@ -305,8 +196,8 @@ const GENERIC_FAILURE = 'Could not update the Board. Try again.';
  * mutation. All mutations share one Solid 2.0 `action` over an optimistic
  * store: handlers write the expected value inside the action, the server
  * response commits through `applyVersionedEvents`, and any rejection reverts
- * the guesses automatically. Permission/lock checks happen once, in
- * `authorizeMutation`, before an action opens.
+ * the guesses automatically. Permission/lock checks happen once, through the
+ * shared Board authorization policy, before an action opens.
  */
 export function createBoardController(options: BoardControllerOptions): BoardController {
   const { dispatchCommand } = options;
@@ -513,10 +404,11 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       if (typeof reportFailure === 'function') reportFailure(message);
       return { ok: false, reason: 'guard', message };
     }
-    const denial = authorizeMutation(board, mutation.gate);
-    if (denial) {
-      if (typeof reportFailure === 'function') reportFailure(denial.message ?? mutation.failureMessage);
-      return { ok: false, reason: 'guard', message: denial.message };
+    if (!mutation.authorize(board)) {
+      if (typeof reportFailure === 'function') {
+        reportFailure(mutation.guardMessage ?? mutation.failureMessage);
+      }
+      return { ok: false, reason: 'guard', message: mutation.guardMessage };
     }
     const boardId = board.id;
     try {
@@ -565,7 +457,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     change: TimerChange,
   ): Promise<BoardMutationResponse> {
     const outcome = await runGuardedMutation({
-      gate: { kind: 'control-facilitation' },
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'timer:update').allowed,
       send: () => dispatchCommand(boardId, { type: 'timer:update', change }),
       failureMessage: 'Could not update the Timer. Try again.',
     });
@@ -585,7 +477,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     setIsChangingPrivateMode(true);
     try {
       const outcome = await runGuardedMutation({
-        gate: { kind: 'control-facilitation' },
+        authorize: (current) =>
+          decideBoardAction(toBoardPolicyContext(current), 'board:set-private-mode').allowed,
         send: () =>
           dispatchCommand(board.id, {
             type: 'board:set-private-mode',
@@ -611,7 +504,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     setIsSavingBoardTitle(true);
     try {
       const outcome = await runGuardedMutation({
-        gate: { kind: 'control-facilitation' },
+        authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:rename').allowed,
         send: () => dispatchCommand(board.id, { type: 'board:rename', title: trimmed }),
         failureMessage: 'Could not rename the Board. Try again.',
         reportFailure: true,
@@ -652,7 +545,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     };
 
     const outcome = await runGuardedMutation({
-      gate: { kind: 'create-card', columnId },
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:contribute').allowed,
+      guardMessage: 'This Board is not accepting new Cards.',
       optimistic: (draft) => {
         draft.cards.push({ ...optimisticCard });
         const col = draft.columns.find((item) => item.id === columnId);
@@ -670,7 +564,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'This Card can no longer be edited.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'update-card', cardId },
+      authorize: (current) => canManageCard(current, cardId),
+      guardMessage: 'This Card can no longer be edited.',
       send: () => dispatchCommand(board.id, { type: 'card:update', cardId, content }),
       failureMessage: 'Could not save the Card. Try again.',
     });
@@ -684,7 +579,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board || isActionItemPending(cardId)) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'update-action-item', cardId, patch },
+      authorize: (current) => canEditActionItem(current, cardId, patch),
       begin: () => setPendingActionItems((ids) => [...ids, cardId]),
       optimistic: (draft) => {
         const card = draft.cards.find((item) => item.id === cardId);
@@ -715,7 +610,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
   async function moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
     const outcome = await runGuardedMutation({
-      gate: { kind: 'move-card', cardId },
+      authorize: (current) => canManageCard(current, cardId),
       send: (boardId) => dispatchCommand(boardId, { type: 'card:move', cardId, targetColumnId }),
       failureMessage: 'Could not move the Card. Try again.',
       reportFailure: onFailure ?? true,
@@ -727,7 +622,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'delete-card', cardId },
+      authorize: (current) => canManageCard(current, cardId),
       send: () => dispatchCommand(board.id, { type: 'card:delete', cardId }),
       failureMessage: 'Could not delete the Card. Try again.',
       reportFailure: true,
@@ -742,7 +637,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     onFailure?: ReportMutationFailure,
   ): Promise<boolean> {
     const outcome = await runGuardedMutation({
-      gate: { kind: 'merge-card', cardId, targetType, targetId },
+      authorize: (current) => canMergeCard(current, cardId, targetType, targetId),
       send: (boardId) => dispatchCommand(boardId, { type: 'group:merge', cardId, targetType, targetId }),
       failureMessage: 'Could not group the Card. Try again.',
       reportFailure: onFailure ?? true,
@@ -754,7 +649,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', groupId },
+      authorize: (current) => canManageGroup(current, groupId),
       send: () => dispatchCommand(board.id, { type: 'group:rename', groupId, title }),
       failureMessage: 'Could not rename the Card Group. Try again.',
       reportFailure: true,
@@ -766,7 +661,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', cardIds: [cardId] },
+      authorize: (current) => canUngroupCard(current, cardId),
       send: () => dispatchCommand(board.id, { type: 'group:ungroup', cardId }),
       failureMessage: 'Could not ungroup the Card. Try again.',
       reportFailure: true,
@@ -778,7 +673,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', groupId },
+      authorize: (current) => canManageGroup(current, groupId),
       send: () => dispatchCommand(board.id, { type: 'group:dissolve', groupId }),
       failureMessage: 'Could not dissolve the Card Group. Try again.',
       reportFailure: true,
@@ -788,7 +683,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
 
   async function moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
     const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', groupId },
+      authorize: (current) => canManageGroup(current, groupId),
       send: (boardId) => dispatchCommand(boardId, { type: 'group:move', groupId, targetColumnId }),
       failureMessage: 'Could not move the Card Group. Try again.',
       reportFailure: onFailure ?? true,
@@ -800,7 +695,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'This Card can no longer receive reactions.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'toggle-reaction', cardId },
+      authorize: (current) => canInteractWithCard(current, cardId),
+      guardMessage: 'This Card can no longer receive reactions.',
       optimistic: (draft) => {
         const card = draft.cards.find((item) => item.id === cardId);
         if (!card) return;
@@ -832,7 +728,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'This Card can no longer receive comments.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'create-comment', cardId },
+      authorize: (current) => canInteractWithCard(current, cardId),
+      guardMessage: 'This Card can no longer receive comments.',
       send: () => dispatchCommand(board.id, { type: 'comment:create', cardId, content }),
       failureMessage: 'Could not post comment. Try again.',
     });
@@ -845,7 +742,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'This comment can no longer be deleted.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'delete-comment', cardId, commentId },
+      authorize: (current) => canDeleteComment(current, cardId, commentId),
+      guardMessage: 'This comment can no longer be deleted.',
       send: () => dispatchCommand(board.id, { type: 'comment:delete', cardId, commentId }),
       failureMessage: 'Could not delete comment. Try again.',
     });
@@ -859,7 +757,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     try {
       const outcome = await runGuardedMutation(
         {
-          gate: { kind: 'add-column' },
+          authorize: (current) => canAddColumn(current),
           send: () =>
             dispatchCommand(board.id, {
               type: 'column:add',
@@ -888,7 +786,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'update-column' },
+      authorize: (current) =>
+        decideColumnAction(toBoardPolicyContext(current), { type: 'column:update' }).allowed,
       send: () => dispatchCommand(board.id, { type: 'column:update', columnId, ...patch }),
       failureMessage: 'Could not update the Column. Try again.',
       reportFailure: true,
@@ -909,7 +808,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
     const outcome = await runGuardedMutation({
-      gate: { kind: 'move-column' },
+      authorize: (current) =>
+        decideColumnAction(toBoardPolicyContext(current), { type: 'column:reorder' }).allowed,
       send: () => dispatchCommand(board.id, { type: 'column:reorder', columnIds: reordered }),
       failureMessage: 'Could not move the Column. Try again.',
       reportFailure: true,
@@ -921,7 +821,12 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return false;
     const outcome = await runGuardedMutation({
-      gate: { kind: 'delete-column', columnId },
+      authorize: (current) =>
+        canDeleteColumn(
+          current,
+          current.columns.length,
+          current.cards.filter((card) => card.columnId === columnId),
+        ),
       send: () => dispatchCommand(board.id, { type: 'column:delete', columnId }),
       failureMessage: 'Could not delete the Column. Try again.',
       reportFailure: true,
@@ -939,7 +844,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return;
     await runGuardedMutation({
-      gate: { kind: 'vote', targetType, targetId },
+      authorize: (current) => canChangeVote(current, targetType, targetId, delta),
       begin: () => setSavingVotes(true),
       optimistic: (draft) => {
         const targets = targetType === 'card' ? draft.cards : draft.groups;
@@ -973,7 +878,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'Voting settings are unavailable.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'control-facilitation' },
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), command.type).allowed,
       send: () => dispatchCommand(board.id, command),
       failureMessage: 'Could not update Voting. Try again.',
     });
@@ -995,7 +900,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'Only a Facilitator can Lock or Unlock the Board.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'facilitate' },
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:set-lock').allowed,
       send: () => dispatchCommand(board.id, { type: 'board:set-lock', isLocked }),
       failureMessage: 'Could not update Board lock state. Try again.',
     });
@@ -1009,7 +914,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     const board = store.board;
     if (!board) return 'Only a Facilitator can delete this Board.';
     const outcome = await runGuardedMutation({
-      gate: { kind: 'facilitate' },
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:delete').allowed,
       send: () => dispatchCommand(board.id, { type: 'board:delete' }),
       failureMessage: 'Could not delete this Board. Try again.',
     });
