@@ -4,12 +4,10 @@ import type { PokerLiveMessage, PokerRoomCommand } from '../../lib/poker-types';
 import { openNodeDatabase, wrapDatabaseSync } from '../adapters/node/sqlite';
 import { createNodeSseHub, createSseFrameResponse } from '../live/node-sse-hub';
 import {
-  committedPokerDeletion,
-  committedPokerMutation,
   missingPokerRoom,
   projectPokerPublication,
   type PokerRoomPublication,
-} from './publication';
+} from './room-core';
 import {
   PokerRoomStorage,
   pokerParticipant,
@@ -57,22 +55,23 @@ export async function openNodePokerRooms(dbPath: string) {
     mutate(id: string, hash: string, command: PokerRoomCommand) {
       const result = storage.mutate(id, hash, command);
       if (!result.ok) return result;
-      const publication = committedPokerMutation(result);
-      if (publication) publish(id, publication);
+      if (result.updated) {
+        publish(id, { type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
+      }
       return { ok: true as const, room: projectPokerRoom(result.room, hash) };
     },
     delete(id: string, hash: string) {
       const result = storage.delete(id, hash);
-      const publication = committedPokerDeletion(result);
-      if (publication) publish(id, publication);
+      if (result.ok) publish(id, missingPokerRoom);
       return result;
     },
     getFacilitatorCapability: (id: string, hash: string) => storage.getFacilitatorCapability(id, hash),
     replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
       const result = storage.replaceFacilitatorCapability(id, hash, revision, capability);
       if (!result.ok) return result;
-      const publication = committedPokerMutation(result);
-      if (publication) publish(id, publication);
+      if (result.updated) {
+        publish(id, { type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
+      }
       return { ok: true as const, value: null };
     },
     updateFacilitatorCapabilityEncryption(id: string, hash: string, revision: number, encrypted: string) {
@@ -81,8 +80,9 @@ export async function openNodePokerRooms(dbPath: string) {
     claimFacilitator(id: string, hash: string, candidate: string) {
       const result = storage.claimFacilitator(id, hash, candidate);
       if (!result.ok) return result;
-      const publication = committedPokerMutation(result);
-      if (publication) publish(id, publication);
+      if (result.updated) {
+        publish(id, { type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
+      }
       return { ok: true as const, value: projectPokerRoom(result.room, hash) };
     },
     connect(id: string, hash: string, request: Request): Response {
