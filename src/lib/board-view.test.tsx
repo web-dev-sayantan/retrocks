@@ -1,10 +1,12 @@
 import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
-import { createSignal, createStore, flush, untrack } from 'solid-js';
-import { describe, expect, it } from 'vitest';
+import { createRoot, createSignal, flush, untrack } from 'solid-js';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { makeBoardView } from './board-fixtures';
-import { applyBoardEvents } from './board-store';
-import type { BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from './board-types';
+import { createBoardController } from './board-controller';
+import { createFakeBoardDispatcher, makeBoardView } from './board-fixtures';
+import type { BoardLiveMessage } from './board-live-protocol';
+import type { BoardEvent, BoardViewDTO, CardGroupDTO, CardViewDTO, ColumnDTO } from './board-types';
+import type { LiveTransport } from './live-stream';
 import {
   createBoardProjection,
   formatMatchCountSummary,
@@ -411,12 +413,21 @@ describe('projectBoardView', () => {
 
 describe('createBoardProjection (keyed projection)', () => {
   interface ProjectionHarness {
-    setBoard: (fn: (draft: BoardViewDTO) => void) => void;
+    emitMutation: (version: number, events: BoardEvent[]) => void;
     view: BoardViewProjection;
     setQuery: (query: string) => void;
     setFilter: (filter: BoardQuickFilter) => void;
     setSortMode: (mode: BoardSortMode) => void;
+    dispose: () => void;
   }
+
+  const mounted: Array<() => void> = [];
+
+  afterEach(() => {
+    while (mounted.length > 0) {
+      mounted.pop()?.();
+    }
+  });
 
   /** Deliberate point-in-time reads: identity assertions ignore reactivity. */
   function read<T>(fn: () => T): T {
@@ -427,19 +438,46 @@ describe('createBoardProjection (keyed projection)', () => {
     cards?: CardViewDTO[];
     groups?: CardGroupDTO[];
   }): ProjectionHarness {
-    const [store, setStore] = createStore<BoardViewDTO>(
-      makeBoardView({
-        cards: initial.cards ?? [],
-        groups: initial.groups ?? [],
-      }),
-    );
-    const [query, setQuery] = createSignal('');
-    const [filter, setFilter] = createSignal<BoardQuickFilter>('all');
-    const [sortMode, setSortMode] = createSignal<BoardSortMode>('newest');
-    const inputs: BoardProjectionInputs = { query, filter, sortMode };
-    const view = createBoardProjection(() => store, inputs);
+    const initialBoard = makeBoardView({
+      cards: initial.cards ?? [],
+      groups: initial.groups ?? [],
+    });
+    let emitMessage: ((message: BoardLiveMessage) => void) | undefined;
+    const liveTransport: LiveTransport = {
+      connect(_path, handlers) {
+        emitMessage = (message) => handlers.onMessage(JSON.stringify(message));
+        return { ping() {}, close() {} };
+      },
+    };
+    const { dispatchCommand } = createFakeBoardDispatcher(initialBoard);
+
+    let harness!: ProjectionHarness;
+    const dispose = createRoot((disposeRoot) => {
+      const controller = createBoardController({
+        board: () => initialBoard,
+        dispatchCommand,
+        liveTransport,
+      });
+      const [query, setQuery] = createSignal('');
+      const [filter, setFilter] = createSignal<BoardQuickFilter>('all');
+      const [sortMode, setSortMode] = createSignal<BoardSortMode>('newest');
+      const inputs: BoardProjectionInputs = { query, filter, sortMode };
+      const view = createBoardProjection(controller.board, inputs);
+      harness = {
+        emitMutation(version, events) {
+          emitMessage?.({ type: 'board:mutation', version, events });
+        },
+        view,
+        setQuery,
+        setFilter,
+        setSortMode,
+        dispose: disposeRoot,
+      };
+      return disposeRoot;
+    });
     flush();
-    return { setBoard: setStore, view, setQuery, setFilter, setSortMode };
+    mounted.push(dispose);
+    return harness;
   }
 
   function makeStoreCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
@@ -458,7 +496,7 @@ describe('createBoardProjection (keyed projection)', () => {
       myVotes: 0,
       createdAt: 1_500,
     };
-    const { setBoard, view } = setupProjection({ cards: [cardA, cardB], groups: [group] });
+    const { emitMutation, view } = setupProjection({ cards: [cardA, cardB], groups: [group] });
 
     const colView = read(() => view.columnViews[0]);
     const groupedCard = read(() => view.columnViews[0].cards.find((card) => card.id === 'card_a'));
@@ -466,12 +504,10 @@ describe('createBoardProjection (keyed projection)', () => {
     const cardRow = read(() => view.columnViews[0].items.find((item) => item.key === 'card:card_b'));
     const bucketGroup = read(() => view.columnViews[0].groups[0]);
 
-    // Whole-item upsert through the reducer: identity survives the adoption.
-    setBoard((draft) => {
-      applyBoardEvents(draft, [
-        { type: 'card:upserted', version: 2, card: { ...cardA, content: 'Alpha edited' } },
-      ]);
-    });
+    // Whole-item upsert through the controller: identity survives the adoption.
+    emitMutation(2, [
+      { type: 'card:upserted', version: 2, card: { ...cardA, content: 'Alpha edited' } },
+    ]);
     flush();
     expect(read(() => view.columnViews[0]) === colView).toBe(true);
     expect(
@@ -487,11 +523,9 @@ describe('createBoardProjection (keyed projection)', () => {
     ).toBe(true);
 
     // Group upsert: the bucket's group and the stream row keep identity too.
-    setBoard((draft) => {
-      applyBoardEvents(draft, [
-        { type: 'group:upserted', version: 3, group: { ...group, title: 'Renamed theme' } },
-      ]);
-    });
+    emitMutation(3, [
+      { type: 'group:upserted', version: 3, group: { ...group, title: 'Renamed theme' } },
+    ]);
     flush();
     expect(read(() => view.columnViews[0].groups[0]) === bucketGroup).toBe(true);
     expect(read(() => view.columnViews[0].groups[0].title)).toBe('Renamed theme');
@@ -500,17 +534,15 @@ describe('createBoardProjection (keyed projection)', () => {
     ).toBe(true);
 
     // Reactions and comments adopted as whole values stay readable.
-    setBoard((draft) => {
-      applyBoardEvents(draft, [
-        {
-          type: 'reaction:updated',
-          version: 4,
-          cardId: 'card_b',
-          counts: { '👍': 2 },
-          myReactions: ['👍'],
-        },
-      ]);
-    });
+    emitMutation(4, [
+      {
+        type: 'reaction:updated',
+        version: 4,
+        cardId: 'card_b',
+        counts: { '👍': 2 },
+        myReactions: ['👍'],
+      },
+    ]);
     flush();
     expect(
       read(() => view.columnViews[0].cards.find((card) => card.id === 'card_b')?.reactions),
@@ -521,7 +553,7 @@ describe('createBoardProjection (keyed projection)', () => {
     const cardOld = makeStoreCard({ id: 'card_old', content: 'A1', createdAt: 1_000, updatedAt: 1_000 });
     const cardMid = makeStoreCard({ id: 'card_mid', content: 'B1', createdAt: 2_000, updatedAt: 2_000 });
     const cardNew = makeStoreCard({ id: 'card_new', content: 'A2', createdAt: 3_000, updatedAt: 3_000 });
-    const { setBoard, view, setQuery, setSortMode } = setupProjection({
+    const { emitMutation, view, setQuery, setSortMode } = setupProjection({
       cards: [cardOld, cardMid, cardNew],
     });
 
@@ -581,11 +613,9 @@ describe('createBoardProjection (keyed projection)', () => {
     ).toBe(false);
 
     // Deleting the middle Card splices it out; its bucket slot is gone.
-    setBoard((draft) => {
-      applyBoardEvents(draft, [
-        { type: 'card:deleted', version: 2, cardId: 'card_mid' },
-      ]);
-    });
+    emitMutation(2, [
+      { type: 'card:deleted', version: 2, cardId: 'card_mid' },
+    ]);
     flush();
     expect(read(() => view.columnViews[0].items.map((item) => item.key))).toEqual([
       'card:card_new',
@@ -599,20 +629,18 @@ describe('createBoardProjection (keyed projection)', () => {
   it('moves Cards between Column buckets on cross-Column upserts while Column buckets stay keyed', () => {
     const cardA = makeStoreCard({ id: 'card_a', content: 'Alpha', createdAt: 1_000, updatedAt: 1_000 });
     const cardB = makeStoreCard({ id: 'card_b', content: 'Beta', createdAt: 2_000, updatedAt: 2_000 });
-    const { setBoard, view } = setupProjection({ cards: [cardA, cardB] });
+    const { emitMutation, view } = setupProjection({ cards: [cardA, cardB] });
 
     const colView1 = read(() => view.columnViews[0]);
     const colView2 = read(() => view.columnViews[1]);
 
-    setBoard((draft) => {
-      applyBoardEvents(draft, [
-        {
-          type: 'card:upserted',
-          version: 2,
-          card: { ...cardA, columnId: 'col_2', content: 'Alpha moved' },
-        },
-      ]);
-    });
+    emitMutation(2, [
+      {
+        type: 'card:upserted',
+        version: 2,
+        card: { ...cardA, columnId: 'col_2', content: 'Alpha moved' },
+      },
+    ]);
     flush();
 
     expect(read(() => view.columnViews[0]) === colView1).toBe(true);
@@ -630,7 +658,7 @@ describe('createBoardProjection (keyed projection)', () => {
   it('keeps totals and per-Column lists intact through mutations and filter changes', () => {
     const cardMine = makeStoreCard({ id: 'card_mine', content: 'My card', isMine: true, createdAt: 1_000, updatedAt: 1_000 });
     const cardOther = makeStoreCard({ id: 'card_other', content: 'Their card', isMine: false, createdAt: 2_000, updatedAt: 2_000 });
-    const { setBoard, view, setFilter } = setupProjection({ cards: [cardMine, cardOther] });
+    const { emitMutation, view, setFilter } = setupProjection({ cards: [cardMine, cardOther] });
 
     expect(read(() => view.matchedCardCount)).toBe(2);
     expect(read(() => view.totalCardCount)).toBe(2);
@@ -650,15 +678,13 @@ describe('createBoardProjection (keyed projection)', () => {
     expect(read(() => view.hasActiveFilter)).toBe(true);
 
     // A new Card lands in the complete list and the stream while filtered.
-    setBoard((draft) => {
-      applyBoardEvents(draft, [
-        {
-          type: 'card:upserted',
-          version: 2,
-          card: makeStoreCard({ id: 'card_new', content: 'Fresh card', isMine: true, createdAt: 3_000, updatedAt: 3_000 }),
-        },
-      ]);
-    });
+    emitMutation(2, [
+      {
+        type: 'card:upserted',
+        version: 2,
+        card: makeStoreCard({ id: 'card_new', content: 'Fresh card', isMine: true, createdAt: 3_000, updatedAt: 3_000 }),
+      },
+    ]);
     flush();
     expect(read(() => view.columnViews[0].cards.map((card) => card.id))).toEqual([
       'card_new',
@@ -701,36 +727,36 @@ describe('createBoardProjection (keyed projection)', () => {
           myVotes: 0,
           createdAt: 1_500,
         };
-        const [store, setStore] = createStore<BoardViewDTO>(
-          makeBoardView({ cards: [cardA, cardB], groups: [group] }),
-        );
-        const [query, setQuery] = createSignal('');
-        const [filter, setFilter] = createSignal<BoardQuickFilter>('all');
-        const [sortMode, setSortMode] = createSignal<BoardSortMode>('newest');
-        const view = createBoardProjection(() => store, { query, filter, sortMode });
-        flush();
+        const { emitMutation, view, setQuery, setFilter, setSortMode, dispose } = setupProjection({
+          cards: [cardA, cardB],
+          groups: [group],
+        });
 
-        expect(untrack(() => view.columnViews[0].items.map((item) => item.key))).toEqual([
-          'card:card_b',
-          'group:group_1',
-        ]);
+        try {
+          expect(untrack(() => view.columnViews[0].items.map((item) => item.key))).toEqual([
+            'card:card_b',
+            'group:group_1',
+          ]);
 
-        setStore((draft) => {
-          applyBoardEvents(draft, [
+          emitMutation(2, [
             { type: 'card:upserted', version: 2, card: { ...cardA, content: 'Alpha edited' } },
+          ]);
+          emitMutation(3, [
             { type: 'group:upserted', version: 3, group: { ...group, title: 'Renamed' } },
           ]);
-        });
-        flush();
-        setQuery('alph');
-        flush();
-        setFilter('mine');
-        flush();
-        setSortMode('oldest');
-        flush();
+          flush();
+          setQuery('alph');
+          flush();
+          setFilter('mine');
+          flush();
+          setSortMode('oldest');
+          flush();
 
-        expect(untrack(() => view.columnViews[0].groups[0].title)).toBe('Renamed');
-        expect(untrack(() => view.matchedCardCount)).toBe(1);
+          expect(untrack(() => view.columnViews[0].groups[0].title)).toBe('Renamed');
+          expect(untrack(() => view.matchedCardCount)).toBe(1);
+        } finally {
+          dispose();
+        }
       },
       { scenario: 'board-view-keyed-projection' },
     );
