@@ -3,6 +3,7 @@ import { env } from 'virtual:solid-env/server';
 
 import type { PokerRoomCommand } from '../../lib/poker-types';
 import { getCloudflareEnv } from '../adapters/cloudflare-context';
+import { forwardWebSocketUpgrade } from '../live/cloudflare-ws-hub';
 import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
 import { openNodePokerRooms, type NodePokerRooms } from './node';
 import type { PokerFacilitatorCapability } from './room';
@@ -31,9 +32,9 @@ export async function getPokerRoomAccess(id: string) {
         room.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted),
       claimFacilitator: (hash: string, candidate: string) => room.claimFacilitator(id, hash, candidate),
       connect(hash: string, request: Request) {
-        const headers = new Headers(request.headers);
-        headers.set(POKER_LIVE_VIEWER_HEADER, hash);
-        return room.fetch(new Request(request, { headers }));
+        return forwardWebSocketUpgrade(room, request, {
+          [POKER_LIVE_VIEWER_HEADER]: hash,
+        });
       },
       heartbeat: undefined,
     };
