@@ -2,12 +2,12 @@ import { commitEventResponse, createRequestEvent, isSafeError } from '@solidjs/w
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BoardLiveMessage } from '../../lib/board-live-protocol';
 import { applyBoardMutation } from '../../lib/board-store';
 import type { BoardCommand } from '../../lib/schemas';
 import { parseBoardLiveMessage } from '../../lib/wire-schemas';
 import type { NodeBoardStore } from '../adapters/node/sqlite-board-store';
 import { setBoardStoreForTests } from '../adapters/runtime';
+import { readSseStream } from '../live/sse-test-helper';
 
 const TEST_SECRET = 'test-command-dispatcher-secret-at-least-32-chars-xyz';
 
@@ -32,35 +32,7 @@ async function runRequest<T>(
 }
 
 function readLiveStream(response: Response) {
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-type')).toBe('text/event-stream');
-  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-  let pending = '';
-
-  return {
-    close: () => reader.cancel(),
-    async until<T extends BoardLiveMessage['type']>(
-      type: T,
-      matches: (message: Extract<BoardLiveMessage, { type: T }>) => boolean = () => true,
-    ) {
-      while (true) {
-        const end = pending.indexOf('\n\n');
-        if (end >= 0) {
-          const frame = pending.slice(0, end);
-          pending = pending.slice(end + 2);
-          const message = JSON.parse(frame.slice('data: '.length)) as Extract<
-            BoardLiveMessage,
-            { type: T }
-          >;
-          if (message.type === type && matches(message)) return message;
-          continue;
-        }
-        const chunk = await reader.read();
-        if (chunk.done) throw new Error('Live stream ended before the event');
-        pending += chunk.value;
-      }
-    },
-  };
+  return readSseStream(response, parseBoardLiveMessage);
 }
 
 let store: NodeBoardStore;
