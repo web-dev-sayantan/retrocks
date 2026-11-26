@@ -12,9 +12,10 @@ import {
   type PokerFacilitatorCapability,
 } from './room';
 import {
-  committedPokerDeletion, committedPokerMutation, missingPokerRoom,
-  projectPokerPublication, type PokerRoomPublication,
-} from './publication';
+  missingPokerRoom,
+  projectPokerPublication,
+  type PokerRoomPublication,
+} from './room-core';
 
 interface PokerLiveViewer {
   hash: string;
@@ -99,9 +100,8 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async mutate(id: string, hash: string, command: PokerRoomCommand) {
     const result = this.storage.mutate(id, hash, command);
     if (!result.ok) return result;
-    const publication = committedPokerMutation(result);
-    if (publication) {
-      this.publish(publication);
+    if (result.updated) {
+      this.publish({ type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
       if (command.type !== 'join') await this.ctx.storage.setAlarm(result.room.expiresAt);
     }
     return { ok: true as const, room: projectPokerRoom(result.room, hash) };
@@ -109,9 +109,8 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
 
   async delete(id: string, hash: string) {
     const result = this.storage.delete(id, hash);
-    const publication = committedPokerDeletion(result);
-    if (publication) {
-      this.publish(publication);
+    if (result.ok) {
+      this.publish(missingPokerRoom);
       await this.ctx.storage.deleteAlarm();
     }
     return result;
@@ -124,8 +123,9 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
     const result = this.storage.replaceFacilitatorCapability(id, hash, revision, capability);
     if (!result.ok) return result;
-    const publication = committedPokerMutation(result);
-    if (publication) this.publish(publication);
+    if (result.updated) {
+      this.publish({ type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
+    }
     return { ok: true as const, value: null };
   }
 
@@ -136,8 +136,9 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> {
   async claimFacilitator(id: string, hash: string, candidate: string) {
     const result = this.storage.claimFacilitator(id, hash, candidate);
     if (!result.ok) return result;
-    const publication = committedPokerMutation(result);
-    if (publication) this.publish(publication);
+    if (result.updated) {
+      this.publish({ type: 'snapshot', room: result.room, terminal: result.room.closedAt !== undefined });
+    }
     return { ok: true as const, value: projectPokerRoom(result.room, hash) };
   }
 
