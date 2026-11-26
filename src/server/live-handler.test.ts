@@ -2,10 +2,11 @@ import { commitEventResponse, createRequestEvent } from '@solidjs/web';
 import { provideRequestEvent } from '@solidjs/web/storage';
 import { expect, it, vi } from 'vitest';
 
-import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import { LIVE_CONNECTION_HEADER, LIVE_HEARTBEAT_MS } from '../lib/live-protocol';
 import { parsePokerLiveMessage } from '../lib/poker-schemas';
+import { parseBoardLiveMessage } from '../lib/wire-schemas';
 import { runWithCloudflareEnv } from './adapters/cloudflare-context';
+import { readSseStream, type SseTestStream } from './live/sse-test-helper';
 
 async function withSession<T>(request: Request, run: () => Promise<T>) {
   const event = createRequestEvent(request);
@@ -18,29 +19,7 @@ async function withSession<T>(request: Request, run: () => Promise<T>) {
 }
 
 function readLiveStream(response: Response) {
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-type')).toBe('text/event-stream');
-  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-  let pending = '';
-
-  return {
-    close: () => reader.cancel(),
-    async until<T extends BoardLiveMessage['type']>(type: T, matches: (message: Extract<BoardLiveMessage, { type: T }>) => boolean = () => true) {
-      while (true) {
-        const end = pending.indexOf('\n\n');
-        if (end >= 0) {
-          const frame = pending.slice(0, end);
-          pending = pending.slice(end + 2);
-          const message = JSON.parse(frame.slice('data: '.length)) as Extract<BoardLiveMessage, { type: T }>;
-          if (message.type === type && matches(message)) return message;
-          continue;
-        }
-        const chunk = await reader.read();
-        if (chunk.done) throw new Error('Live stream ended before the event');
-        pending += chunk.value;
-      }
-    },
-  };
+  return readSseStream(response, parseBoardLiveMessage);
 }
 
 it('fans out a private Card over concurrent streams and counts tabs from one cookie once', async () => {
@@ -521,7 +500,7 @@ it('enforces origin, ID, session, non-stream no-store, and SSE cache-control par
   const rooms = await openNodePokerRooms(':memory:');
   setNodePokerRoomsForTests(rooms);
   const streams: ReturnType<typeof readLiveStream>[] = [];
-  let roomReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let roomStream: SseTestStream<ReturnType<typeof parsePokerLiveMessage>> | undefined;
   try {
     const { createBoardForRequest } = await import('./services/board-service');
     const { handleLiveRequest } = await import('./live-handler');
@@ -613,12 +592,10 @@ it('enforces origin, ID, session, non-stream no-store, and SSE cache-control par
       roomId,
       new Request(roomLiveUrl, { headers: { origin, cookie: roomFacilitatorCookie } }),
     );
-    expect(roomStreamResponse.status).toBe(200);
-    expect(roomStreamResponse.headers.get('content-type')).toBe('text/event-stream');
     expect(roomStreamResponse.headers.get('cache-control')).toBe('no-store, no-transform');
-    roomReader = roomStreamResponse.body!.getReader();
+    roomStream = readSseStream(roomStreamResponse, parsePokerLiveMessage);
   } finally {
-    await roomReader?.cancel();
+    await roomStream?.close();
     await Promise.all(streams.map((stream) => stream.close()));
     setNodePokerRoomsForTests(null);
     rooms.close();
@@ -633,7 +610,7 @@ it('enforces POST heartbeat header validation and Cache-Control: no-store parity
   const rooms = await openNodePokerRooms(':memory:');
   setNodePokerRoomsForTests(rooms);
   const boardStreams: ReturnType<typeof readLiveStream>[] = [];
-  let roomReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let roomStream: SseTestStream<ReturnType<typeof parsePokerLiveMessage>> | undefined;
   try {
     const { createBoardForRequest, getBoardForRequest } = await import('./services/board-service');
     const { handleLiveRequest } = await import('./live-handler');
@@ -673,32 +650,18 @@ it('enforces POST heartbeat header validation and Cache-Control: no-store parity
     const boardSnapshot = await boardStream.until('board:snapshot');
     expect(boardSnapshot.connectionId).toBeTruthy();
 
-    const roomResponse = await handlePokerLiveRequest(
-      roomId,
-      new Request(roomLiveUrl, { headers: { cookie: roomCookie } }),
+    roomStream = readSseStream(
+      await handlePokerLiveRequest(
+        roomId,
+        new Request(roomLiveUrl, { headers: { cookie: roomCookie } }),
+      ),
+      parsePokerLiveMessage,
     );
-    expect(roomResponse.status).toBe(200);
-    roomReader = roomResponse.body!.getReader();
-    const decoder = new TextDecoder();
-    let roomPending = '';
-    const nextRoomFrame = async () => {
-      while (true) {
-        const end = roomPending.indexOf('\n\n');
-        if (end >= 0) {
-          const frame = roomPending.slice(0, end);
-          roomPending = roomPending.slice(end + 2);
-          return parsePokerLiveMessage(frame.slice('data: '.length));
-        }
-        const chunk = await roomReader!.read();
-        if (chunk.done) throw new Error('Room live stream ended unexpectedly');
-        roomPending += decoder.decode(chunk.value, { stream: true });
-      }
-    };
-    const roomSnapshot = await nextRoomFrame();
+    const roomSnapshot = await roomStream.next();
     if (roomSnapshot.type !== 'room:snapshot' || !roomSnapshot.connectionId) {
       throw new Error('Expected Room snapshot with connectionId');
     }
-    await nextRoomFrame(); // initial room:presence
+    await roomStream.next(); // initial room:presence
 
     for (const [handler, id, url, cookie, otherCookie, connectionId] of [
       [handleLiveRequest, board.id, boardLiveUrl, boardCookie, otherBoardCookie, boardSnapshot.connectionId!],
@@ -738,9 +701,9 @@ it('enforces POST heartbeat header validation and Cache-Control: no-store parity
     }
 
     expect(await boardStream.until('heartbeat')).toEqual({ type: 'heartbeat' });
-    expect(await nextRoomFrame()).toEqual({ type: 'heartbeat' });
+    expect(await roomStream.next()).toEqual({ type: 'heartbeat' });
   } finally {
-    await roomReader?.cancel();
+    await roomStream?.close();
     await Promise.all(boardStreams.map((stream) => stream.close()));
     setNodePokerRoomsForTests(null);
     rooms.close();
@@ -838,6 +801,124 @@ it('rejects POST heartbeats with 405 Allow: GET without waking Durable Objects a
       expect(roomUpgrade.status).toBe(101);
     });
   } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it('evicts stalled SSE connections under one unified backpressure policy across Boards and Rooms and broadcasts updated presence', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-live-session-secret-with-at-least-32-chars');
+  const { openNodePokerRooms } = await import('./poker/node');
+  const { setNodePokerRoomsForTests } = await import('./poker/runtime');
+  const rooms = await openNodePokerRooms(':memory:');
+  setNodePokerRoomsForTests(rooms);
+
+  const streams: Array<{ close(): Promise<void> }> = [];
+  try {
+    const { createBoardForRequest, getBoardForRequest } = await import('./services/board-service');
+    const { handleLiveRequest } = await import('./live-handler');
+    const { createPokerRoomForRequest, handlePokerLiveRequest, mutatePokerRoomForRequest } =
+      await import('./poker/service');
+    const origin = 'https://retrocks.app';
+
+    // Board setup: one healthy Participant and one stalled Participant (whose body is never drained after handshake).
+    const { result: board, cookie: healthyBoardCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => createBoardForRequest({}),
+    );
+    const { cookie: stalledBoardCookie } = await withSession(
+      new Request(`${origin}/b/${board.id}`),
+      () => getBoardForRequest(board.id),
+    );
+    const boardLiveUrl = `${origin}/api/boards/${board.id}/live`;
+
+    const healthyBoard = readSseStream(
+      await handleLiveRequest(board.id, new Request(boardLiveUrl, { headers: { cookie: healthyBoardCookie! } })),
+      parseBoardLiveMessage,
+    );
+    streams.push(healthyBoard);
+    await healthyBoard.until('board:snapshot');
+
+    const stalledBoard = readSseStream(
+      await handleLiveRequest(board.id, new Request(boardLiveUrl, { headers: { cookie: stalledBoardCookie! } })),
+      parseBoardLiveMessage,
+    );
+    streams.push(stalledBoard);
+    const stalledBoardSnapshot = await stalledBoard.until('board:snapshot');
+    await healthyBoard.until('presence:count', (m) => m.count === 2);
+
+    // Queue heartbeats on the stalled Board connection without reading any more frames from it.
+    let boardEvictedAt = -1;
+    for (let i = 1; i <= 140; i += 1) {
+      const response = await handleLiveRequest(board.id, new Request(boardLiveUrl, {
+        method: 'POST',
+        headers: {
+          cookie: stalledBoardCookie!,
+          [LIVE_CONNECTION_HEADER]: stalledBoardSnapshot.connectionId!,
+        },
+      }));
+      if (response.status === 404) {
+        boardEvictedAt = i;
+        break;
+      }
+      expect(response.status).toBe(204);
+    }
+    expect(boardEvictedAt).toBeGreaterThan(0);
+    expect(boardEvictedAt).toBeLessThanOrEqual(135);
+    expect(await healthyBoard.until('presence:count', (m) => m.count === 1)).toEqual({
+      type: 'presence:count',
+      count: 1,
+    });
+
+    // Room setup: one healthy Facilitator and one stalled Participant.
+    const { result: createdRoom, cookie: healthyRoomCookie } = await withSession(
+      new Request(origin, { method: 'POST', headers: { 'cf-connecting-ip': '198.51.100.22' } }),
+      () => createPokerRoomForRequest('Alex'),
+    );
+    if (!createdRoom.ok || !healthyRoomCookie) throw new Error('Expected Room creation');
+    const roomId = createdRoom.room.id;
+    const { cookie: stalledRoomCookie } = await withSession(
+      new Request(origin, { method: 'POST' }),
+      () => mutatePokerRoomForRequest(roomId, { type: 'join', displayName: 'Sam' }),
+    );
+    const roomLiveUrl = `${origin}/api/poker/${roomId}/live`;
+
+    const healthyRoom = readSseStream(
+      await handlePokerLiveRequest(roomId, new Request(roomLiveUrl, { headers: { cookie: healthyRoomCookie } })),
+      parsePokerLiveMessage,
+    );
+    streams.push(healthyRoom);
+    await healthyRoom.until('room:snapshot');
+
+    const stalledRoom = readSseStream(
+      await handlePokerLiveRequest(roomId, new Request(roomLiveUrl, { headers: { cookie: stalledRoomCookie! } })),
+      parsePokerLiveMessage,
+    );
+    streams.push(stalledRoom);
+    const stalledRoomSnapshot = await stalledRoom.until('room:snapshot');
+    await healthyRoom.until('room:presence', (m) => m.online.length === 2);
+
+    let roomEvictedAt = -1;
+    for (let i = 1; i <= 140; i += 1) {
+      const response = await handlePokerLiveRequest(roomId, new Request(roomLiveUrl, {
+        method: 'POST',
+        headers: {
+          cookie: stalledRoomCookie!,
+          [LIVE_CONNECTION_HEADER]: stalledRoomSnapshot.connectionId!,
+        },
+      }));
+      if (response.status === 404) {
+        roomEvictedAt = i;
+        break;
+      }
+      expect(response.status).toBe(204);
+    }
+    expect(roomEvictedAt).toBe(boardEvictedAt);
+    const updatedPresence = await healthyRoom.until('room:presence', (m) => m.online.length === 1);
+    expect(updatedPresence.online).toHaveLength(1);
+  } finally {
+    await Promise.all(streams.map((stream) => stream.close()));
+    setNodePokerRoomsForTests(null);
+    rooms.close();
     vi.unstubAllEnvs();
   }
 });
