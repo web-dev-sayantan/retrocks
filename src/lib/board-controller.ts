@@ -31,18 +31,19 @@ import {
   toBoardPolicyContext,
 } from './board-permissions';
 import { decideBoardAction, decideColumnAction } from './board-policy';
-import { applyBoardMutation } from './board-store';
-import type {
-  ActionItemPatch,
-  ActionError,
-  BoardMutationResponse,
-  BoardMutationSuccess,
-  BoardMutationUpdate,
-  BoardViewDTO,
-  CardViewDTO,
-  ColumnAccent,
-  ColumnDTO,
-  ReactionEmoji,
+import {
+  cloneCardGroup,
+  cloneCardView,
+  type ActionItemPatch,
+  type ActionError,
+  type BoardEvent,
+  type BoardMutationResponse,
+  type BoardMutationSuccess,
+  type BoardViewDTO,
+  type CardViewDTO,
+  type ColumnAccent,
+  type ColumnDTO,
+  type ReactionEmoji,
 } from './board-types';
 import type { ServerClockSample } from './timer';
 import type { BoardCommand, TimerChange } from './schemas';
@@ -144,14 +145,336 @@ function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
     ...board,
     timer: { ...board.timer },
     columns: board.columns.map((c) => ({ ...c })),
-    groups: board.groups.map((g) => ({ ...g, cardIds: [...g.cardIds] })),
-    cards: board.cards.map((card) => ({
-      ...card,
-      reactions: { ...card.reactions },
-      myReactions: [...card.myReactions],
-      comments: card.comments.map((cm) => ({ ...cm })),
-    })),
+    groups: board.groups.map(cloneCardGroup),
+    cards: board.cards.map(cloneCardView),
   };
+}
+
+function adjustColumnCardCount(
+  draft: BoardViewDTO,
+  columnId: string,
+  delta: number,
+): void {
+  const column = draft.columns.find((c) => c.id === columnId);
+  if (column) {
+    column.cardCount = Math.max(0, column.cardCount + delta);
+  }
+}
+
+export interface BoardReconcileOutcome {
+  /** Server timestamp carried by a `board:snapshot` or `timer:updated` event. */
+  serverNow?: number;
+  /** True when a version gap (`version > current.version + 1`) requires a live resync. */
+  needsResync: boolean;
+  /** Updated online presence count from `presence:count`. */
+  presenceCount?: number;
+  /** True when `board:deleted` cleared the active Board. */
+  deleted: boolean;
+}
+
+/**
+ * Exhaustive, idempotent event patcher for Solid 2.0 `createStore` Board state.
+ * Handles snapshots, terminal deletions, presence updates, server timer clock
+ * samples, and all incremental Board mutations in one place. Card and Card Group
+ * upserts hand the whole cloned item to `reconcile(..., 'id')` so downstream
+ * keyed projections preserve item proxy identity.
+ */
+function applyBoardEvent(
+  draft: { board: BoardViewDTO | null },
+  boardId: string,
+  event: BoardEvent,
+  outcome: BoardReconcileOutcome,
+): void {
+  switch (event.type) {
+    case 'board:snapshot': {
+      const current = draft.board;
+      if (
+        !current ||
+        current.id !== boardId ||
+        event.board.id !== boardId ||
+        event.board.version < current.version
+      ) {
+        return;
+      }
+      reconcile({ board: cloneBoardView(event.board) }, 'id')(draft);
+      outcome.serverNow = event.serverNow;
+      return;
+    }
+
+    case 'board:deleted': {
+      if (draft.board?.id === boardId) {
+        reconcile({ board: null }, 'id')(draft);
+        outcome.deleted = true;
+      }
+      return;
+    }
+
+    case 'presence:count': {
+      outcome.presenceCount = event.count;
+      return;
+    }
+  }
+
+  const board = draft.board;
+  if (!board) return;
+
+  if (event.version > board.version) {
+    board.version = event.version;
+  }
+
+  switch (event.type) {
+    case 'board:updated': {
+      const { patch } = event;
+      if (patch.title !== undefined) board.title = patch.title;
+      if (patch.subtitle !== undefined) board.subtitle = patch.subtitle;
+      if (patch.isBlurred !== undefined) board.isBlurred = patch.isBlurred;
+      if (patch.blindVoting !== undefined) {
+        board.blindVoting = patch.blindVoting;
+      }
+      if (patch.isLocked !== undefined) board.isLocked = patch.isLocked;
+      if (patch.allowParticipantGroup !== undefined) {
+        board.allowParticipantGroup = patch.allowParticipantGroup;
+      }
+      if (patch.voteLimit !== undefined) board.voteLimit = patch.voteLimit;
+      if (patch.maxVotesPerCard !== undefined) {
+        board.maxVotesPerCard = patch.maxVotesPerCard;
+      }
+      if (patch.retentionDays !== undefined) {
+        board.retentionDays = patch.retentionDays;
+      }
+      break;
+    }
+
+    case 'timer:updated': {
+      board.timer.endsAt = event.timer.endsAt;
+      board.timer.remainingMs = event.timer.remainingMs;
+      board.timer.durationMs = event.timer.durationMs;
+      outcome.serverNow = event.serverNow;
+      break;
+    }
+
+    case 'column:upserted': {
+      const existing = board.columns.find((c) => c.id === event.column.id);
+      if (existing) {
+        existing.title = event.column.title;
+        existing.accent = event.column.accent;
+        existing.position = event.column.position;
+        existing.isActionColumn = event.column.isActionColumn;
+      } else {
+        board.columns.push({ ...event.column });
+      }
+      board.columns.sort((a, b) => a.position - b.position);
+      break;
+    }
+
+    case 'columns:reordered': {
+      const orderIndex = new Map(
+        event.columnIds.map((id, index) => [id, index]),
+      );
+      board.columns.sort((a, b) => {
+        const aIdx = orderIndex.get(a.id) ?? a.position;
+        const bIdx = orderIndex.get(b.id) ?? b.position;
+        return aIdx - bIdx;
+      });
+      for (let i = 0; i < board.columns.length; i += 1) {
+        board.columns[i].position = i;
+      }
+      break;
+    }
+
+    case 'column:deleted': {
+      const colIndex = board.columns.findIndex((c) => c.id === event.columnId);
+      if (colIndex !== -1) {
+        board.columns.splice(colIndex, 1);
+      }
+      for (let i = 0; i < board.columns.length; i += 1) {
+        board.columns[i].position = i;
+      }
+      for (let i = board.cards.length - 1; i >= 0; i -= 1) {
+        if (board.cards[i].columnId === event.columnId) {
+          board.cards.splice(i, 1);
+        }
+      }
+      for (let i = board.groups.length - 1; i >= 0; i -= 1) {
+        if (board.groups[i].columnId === event.columnId) {
+          board.groups.splice(i, 1);
+        }
+      }
+      break;
+    }
+
+    case 'card:upserted': {
+      const existingIndex = board.cards.findIndex(
+        (c) => c.id === event.card.id,
+      );
+      if (existingIndex !== -1) {
+        const previousColumnId = board.cards[existingIndex].columnId;
+        if (previousColumnId !== event.card.columnId) {
+          adjustColumnCardCount(board, previousColumnId, -1);
+          adjustColumnCardCount(board, event.card.columnId, 1);
+        }
+        reconcile(cloneCardView(event.card), 'id')(board.cards[existingIndex]);
+      } else {
+        const card = cloneCardView(event.card);
+        const insertAt = board.cards.findIndex((item) => item.createdAt < card.createdAt);
+        if (insertAt === -1) board.cards.push(card);
+        else board.cards.splice(insertAt, 0, card);
+        adjustColumnCardCount(board, event.card.columnId, 1);
+      }
+      break;
+    }
+
+    case 'card:deleted': {
+      const cardIndex = board.cards.findIndex((c) => c.id === event.cardId);
+      if (cardIndex !== -1) {
+        const [removed] = board.cards.splice(cardIndex, 1);
+        adjustColumnCardCount(board, removed.columnId, -1);
+        for (const group of board.groups) {
+          const memberIdx = group.cardIds.indexOf(event.cardId);
+          if (memberIdx !== -1) {
+            group.cardIds.splice(memberIdx, 1);
+          }
+        }
+      }
+      break;
+    }
+
+    case 'group:upserted': {
+      const existingIndex = board.groups.findIndex(
+        (g) => g.id === event.group.id,
+      );
+      if (existingIndex !== -1) {
+        reconcile(cloneCardGroup(event.group), 'id')(board.groups[existingIndex]);
+      } else {
+        const group = cloneCardGroup(event.group);
+        const insertAt = board.groups.findIndex((item) => item.createdAt > group.createdAt);
+        if (insertAt === -1) board.groups.push(group);
+        else board.groups.splice(insertAt, 0, group);
+      }
+      break;
+    }
+
+    case 'group:dissolved': {
+      const groupIndex = board.groups.findIndex((g) => g.id === event.groupId);
+      if (groupIndex !== -1) {
+        board.groups.splice(groupIndex, 1);
+      }
+      for (const card of board.cards) {
+        if (card.groupId === event.groupId) {
+          card.groupId = null;
+        }
+      }
+      break;
+    }
+
+    case 'vote:updated': {
+      const targets = event.targetType === 'card' ? board.cards : board.groups;
+      const target = targets.find((item) => item.id === event.targetId);
+      if (target) {
+        target.votes = event.totalVotes;
+        target.myVotes = event.myVotes;
+      }
+      board.remainingVotes = event.remainingVotes;
+      break;
+    }
+
+    case 'vote:balance':
+      board.remainingVotes = event.remainingVotes;
+      break;
+
+    case 'reaction:updated': {
+      const card = board.cards.find((c) => c.id === event.cardId);
+      if (card) {
+        reconcile({ ...event.counts })(card.reactions);
+        reconcile([...event.myReactions])(card.myReactions);
+      }
+      break;
+    }
+
+    case 'comment:created': {
+      const card = board.cards.find((c) => c.id === event.cardId);
+      if (card && !card.comments.some((c) => c.id === event.comment.id)) {
+        const insertAt = card.comments.findIndex(
+          (c) => c.createdAt > event.comment.createdAt,
+        );
+        if (insertAt === -1) card.comments.push({ ...event.comment });
+        else card.comments.splice(insertAt, 0, { ...event.comment });
+        card.commentCount = card.comments.length;
+      }
+      break;
+    }
+
+    case 'comment:deleted': {
+      const card = board.cards.find((c) => c.id === event.cardId);
+      if (card) {
+        const idx = card.comments.findIndex((c) => c.id === event.commentId);
+        if (idx !== -1) {
+          card.comments.splice(idx, 1);
+          card.commentCount = card.comments.length;
+        }
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Unified Board state reconciliation pipeline shared by live stream frames and
+ * HTTP mutation responses. Enforces version ordering and gap detection while
+ * returning side-effect metadata (server clock, presence count, deletion, resync)
+ * for the controller to apply outside the store draft.
+ */
+export function reconcileBoardUpdate(
+  draft: { board: BoardViewDTO | null },
+  boardId: string,
+  message: BoardLiveMessage,
+): BoardReconcileOutcome {
+  const outcome: BoardReconcileOutcome = {
+    needsResync: false,
+    deleted: false,
+  };
+
+  switch (message.type) {
+    case 'board:snapshot':
+    case 'board:deleted':
+    case 'presence:count':
+      applyBoardEvent(draft, boardId, message, outcome);
+      return outcome;
+
+    case 'board:mutation': {
+      const deletedEvent = message.events.find((event) => event.type === 'board:deleted');
+      if (deletedEvent) {
+        applyBoardEvent(draft, boardId, deletedEvent, outcome);
+        return outcome;
+      }
+      const snapshotEvent = message.events.find((event) => event.type === 'board:snapshot');
+      if (snapshotEvent) {
+        applyBoardEvent(draft, boardId, snapshotEvent, outcome);
+        return outcome;
+      }
+      const board = draft.board;
+      if (!board || board.id !== boardId || message.version <= board.version) {
+        return outcome;
+      }
+      if (message.version > board.version + 1) {
+        outcome.needsResync = true;
+        return outcome;
+      }
+      for (const event of message.events) {
+        applyBoardEvent(draft, boardId, event, outcome);
+      }
+      if (draft.board) {
+        draft.board.version = message.version;
+        if (message.lastActiveAt !== undefined) {
+          draft.board.lastActiveAt = message.lastActiveAt;
+        }
+      }
+      return outcome;
+    }
+
+    case 'heartbeat':
+      return outcome;
+  }
 }
 
 /** A server rejection or stale-board answer; aborts the action so its guesses revert. */
@@ -191,13 +514,14 @@ type MutationOutcome<T> =
 const GENERIC_FAILURE = 'Could not update the Board. Try again.';
 
 /**
- * Reactive Board client controller: owns the Board store, the live stream
- * application (version-gap resync included), the server clock, and every
- * mutation. All mutations share one Solid 2.0 `action` over an optimistic
- * store: handlers write the expected value inside the action, the server
- * response commits through `applyVersionedEvents`, and any rejection reverts
- * the guesses automatically. Permission/lock checks happen once, through the
- * shared Board authorization policy, before an action opens.
+ * Reactive Board client controller: owns the Board store, unified event
+ * reconciliation (snapshots, deletions, presence, version-gap resync, and
+ * server clock sync), and every mutation. All mutations share one Solid 2.0
+ * `action` over an optimistic store: handlers write the expected value inside
+ * the action, the server response commits through `reconcileServerUpdate`, and
+ * any rejection reverts the guesses automatically. Permission/lock checks
+ * happen once, through the shared Board authorization policy, before an action
+ * opens.
  */
 export function createBoardController(options: BoardControllerOptions): BoardController {
   const { dispatchCommand } = options;
@@ -236,15 +560,19 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
   const [isSavingColumn, setIsSavingColumn] = createSignal(false);
 
-  function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
+  function applyRouteSnapshot(nextBoard: BoardViewDTO | null): void {
     if (nextBoard === null) setErrorMessage(null);
     untrack(() => {
       setServerStore((draft) => {
         const current = draft.board;
         if (nextBoard && current?.id === nextBoard.id) {
           if (nextBoard.version < current.version) return;
-          if (!fromLive && nextBoard.version === current.version &&
-              nextBoard.isFacilitator === current.isFacilitator) return;
+          if (
+            nextBoard.version === current.version &&
+            nextBoard.isFacilitator === current.isFacilitator
+          ) {
+            return;
+          }
         }
         reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
       });
@@ -257,51 +585,20 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     setNowMs(serverNow);
   }
 
-  function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
-    // Point-in-time guard: judge the snapshot against the board as of this event, not a tracked dependency.
-    const stale = untrack(() => {
-      const current = serverStore.board;
-      return !current || current.id !== nextBoard.id || nextBoard.version < current.version;
-    });
-    if (stale) return;
-    syncServerClock(nextBoard.id, serverNow);
-    applySnapshot(nextBoard, true);
-  }
-
-  function applyVersionedEvents(boardId: string, update: BoardMutationUpdate): void {
-    const { version, events } = update;
-    if (events.some((event) => event.type === 'board:deleted')) {
-      if (untrack(() => serverStore.board?.id) === boardId) {
-        applySnapshot(null);
-      }
-      return;
-    }
-    const snapshot = events.find((event) => event.type === 'board:snapshot');
-    if (snapshot) {
-      applyServerSnapshot(snapshot.board, snapshot.serverNow);
-      return;
-    }
-    let needsResync = false;
-    let serverNow: number | undefined;
+  function reconcileServerUpdate(boardId: string, message: BoardLiveMessage): void {
+    let outcome: BoardReconcileOutcome = { needsResync: false, deleted: false };
     untrack(() => {
       setServerStore((draft) => {
-        const board = draft.board;
-        if (!board || board.id !== boardId || version <= board.version) return;
-        if (version > board.version + 1) {
-          needsResync = true;
-          return;
-        }
-        applyBoardMutation(board, update);
-        for (const event of events) {
-          if (event.type === 'timer:updated') serverNow = event.serverNow;
-        }
+        outcome = reconcileBoardUpdate(draft, boardId, message);
       });
     });
-    if (serverNow !== undefined) syncServerClock(boardId, serverNow);
-    if (needsResync) reconnectLive?.();
+    if (outcome.deleted) setErrorMessage(null);
+    if (outcome.presenceCount !== undefined) setOnlineCount(outcome.presenceCount);
+    if (outcome.serverNow !== undefined) syncServerClock(boardId, outcome.serverNow);
+    if (outcome.needsResync) reconnectLive?.();
   }
 
-  createEffect(() => options.board(), (nextBoard) => applySnapshot(nextBoard));
+  createEffect(() => options.board(), (nextBoard) => applyRouteSnapshot(nextBoard));
 
   const liveBoardId = createMemo(() => serverStore.board?.id);
   createEffect(liveBoardId, (boardId) => {
@@ -314,21 +611,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         handshake: (message) => (message.type === 'board:snapshot' ? message : undefined),
         isTerminal: (message) => message.type === 'board:deleted',
         onMessage(message) {
-          switch (message.type) {
-            case 'board:snapshot':
-              if (message.board.id !== boardId) break;
-              applyServerSnapshot(message.board, message.serverNow);
-              break;
-            case 'board:mutation':
-              applyVersionedEvents(boardId, message);
-              break;
-            case 'board:deleted':
-              applySnapshot(null);
-              break;
-            case 'presence:count':
-              setOnlineCount(message.count);
-              break;
-          }
+          reconcileServerUpdate(boardId, message);
         },
         onDisconnect: () => setOnlineCount(null),
       },
@@ -386,7 +669,12 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     }
     request.beforeCommit?.(response);
     if (!request.preserveError) setErrorMessage(null);
-    applyVersionedEvents(request.boardId, response);
+    reconcileServerUpdate(request.boardId, {
+      type: 'board:mutation',
+      version: response.version,
+      lastActiveAt: response.lastActiveAt,
+      events: response.events,
+    });
     return response;
   });
 
