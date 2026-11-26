@@ -66,4 +66,5 @@ export interface BoardRealtime {
     connectionId: string,
     viewer: LiveViewerContext,
   ): boolean;
+  close?(): void;
 }

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import { submitPokerRoomJoin } from '../../lib/poker-actions';
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
 import { runWithCloudflareEnv } from '../adapters/cloudflare-context';
+import { readSseStream } from '../live/sse-test-helper';
 import { checkBoardCreateRateLimit } from '../rate-limit';
 
 let testClient = 0;
@@ -64,25 +65,22 @@ test('a Room can be joined empty and a Facilitator’s first Story appears in th
   const { id, participant, joined, mutate } = await openRoom();
   expect(joined).toMatchObject({ stories: [], activeStoryId: null });
 
-  const response = await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
-    headers: { cookie: participant },
-  }));
-  expect(response.status).toBe(200);
-  const reader = response.body!.getReader();
-  async function readFrame() {
-    const { value } = await reader.read();
-    return parsePokerLiveMessage(new TextDecoder().decode(value).slice('data: '.length));
-  }
+  const stream = readSseStream(
+    await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+      headers: { cookie: participant },
+    })),
+    parsePokerLiveMessage,
+  );
 
   try {
-    expect(await readFrame()).toMatchObject({ type: 'room:snapshot', room: { stories: [] } });
-    expect(await readFrame()).toMatchObject({ type: 'room:presence' });
+    expect(await stream.next()).toMatchObject({ type: 'room:snapshot', room: { stories: [] } });
+    expect(await stream.next()).toMatchObject({ type: 'room:presence' });
 
     expect(await mutate({ type: 'add-story', title: '  Save checkout progress  ' })).toMatchObject({
       ok: true,
       room: { stories: [{ title: 'Save checkout progress', status: 'pending' }], activeStoryId: null },
     });
-    expect(await readFrame()).toMatchObject({
+    expect(await stream.next()).toMatchObject({
       type: 'room:snapshot',
       room: {
         viewer: { displayName: 'Sam', isFacilitator: false },
@@ -91,7 +89,7 @@ test('a Room can be joined empty and a Facilitator’s first Story appears in th
       },
     });
   } finally {
-    await reader.cancel();
+    await stream.close();
   }
 });
 
@@ -144,18 +142,17 @@ test('same-name Participants vote privately, keep their own choice on reconnect,
   const reveal = { type: 'reveal', roundId };
 
   async function connect(cookie: string) {
-    const response = await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
-      headers: { cookie },
-    }));
-    expect(response.status).toBe(200);
-    const reader = response.body!.getReader();
+    const stream = readSseStream(
+      await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+        headers: { cookie },
+      })),
+      parsePokerLiveMessage,
+    );
     return {
-      cancel: () => reader.cancel(),
+      cancel: () => stream.close(),
       async snapshot() {
         for (;;) {
-          const { value, done } = await reader.read();
-          if (done) throw new Error('Live stream ended before a snapshot.');
-          const json = new TextDecoder().decode(value).slice('data: '.length);
+          const json = await stream.nextRaw();
           const frame = parsePokerLiveMessage(json);
           if (frame.type === 'room:snapshot' && !frame.room.closed) {
             expect(JSON.parse(json)).toMatchObject({ room: { round: frame.room.round } });
@@ -290,10 +287,12 @@ test('a unanimous reveal needs explicit acceptance from the Deck before moving o
   expect(await mutate(confirm, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
   expect(await mutate({ ...confirm, choice: '4' })).toMatchObject({ ok: false, code: 'INVALID_INPUT' });
 
-  const response = await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
-    headers: { cookie: participant },
-  }));
-  const reader = response.body!.getReader();
+  const stream = readSseStream(
+    await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+      headers: { cookie: participant },
+    })),
+    parsePokerLiveMessage,
+  );
   try {
     const accepted = await mutate(confirm);
     expect(accepted).toMatchObject({
@@ -305,12 +304,10 @@ test('a unanimous reveal needs explicit acceptance from the Deck before moving o
         ] },
       },
     });
-    let snapshot;
-    do {
-      const { value, done } = await reader.read();
-      if (done) throw new Error('Live stream ended before the estimate was accepted.');
-      snapshot = parsePokerLiveMessage(new TextDecoder().decode(value).slice('data: '.length));
-    } while (snapshot.type !== 'room:snapshot' || snapshot.room.closed || snapshot.room.round?.phase !== 'accepted');
+    const snapshot = await stream.until(
+      'room:snapshot',
+      (frame) => !frame.room.closed && frame.room.round?.phase === 'accepted',
+    );
     expect(snapshot.room.stories[0].acceptedEstimate).toBe('0');
 
     expect(await mutate({ ...confirm, choice: '13' })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
@@ -323,7 +320,7 @@ test('a unanimous reveal needs explicit acceptance from the Deck before moving o
       activeStoryId: receipt.id,
     });
   } finally {
-    await reader.cancel();
+    await stream.close();
   }
 });
 
@@ -447,28 +444,25 @@ test('direct estimate and title corrections preserve the round and reject a stal
 
 test('the Facilitator can change the Deck and Participants receive its ordered choices live', async () => {
   const { id, participant, mutate, read } = await openRoom();
-  const response = await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
-    headers: { cookie: participant },
-  }));
-  expect(response.status).toBe(200);
-  const reader = response.body!.getReader();
-  async function readFrame() {
-    const { value } = await reader.read();
-    return parsePokerLiveMessage(new TextDecoder().decode(value).slice('data: '.length));
-  }
+  const stream = readSseStream(
+    await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+      headers: { cookie: participant },
+    })),
+    parsePokerLiveMessage,
+  );
 
   try {
-    expect(await readFrame()).toMatchObject({
+    expect(await stream.next()).toMatchObject({
       type: 'room:snapshot', room: { deckType: 'fibonacci' },
     });
-    expect(await readFrame()).toMatchObject({ type: 'room:presence' });
+    expect(await stream.next()).toMatchObject({ type: 'room:presence' });
     expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } }, participant)).toMatchObject({
       ok: false, code: 'FORBIDDEN',
     });
     expect(await mutate({ type: 'set-deck', deck: { type: 't-shirt' } })).toMatchObject({
       ok: true, room: { deckType: 't-shirt', deck: ['XS', 'S', 'M', 'L', 'XL'] },
     });
-    expect(await readFrame()).toMatchObject({
+    expect(await stream.next()).toMatchObject({
       type: 'room:snapshot', room: { deckType: 't-shirt', deck: ['XS', 'S', 'M', 'L', 'XL'] },
     });
 
@@ -481,10 +475,10 @@ test('the Facilitator can change the Deck and Participants receive its ordered c
     expect(await mutate({ type: 'set-deck', deck: { type: 'custom', choices: [4, ' Unexpected work ', 0] } })).toMatchObject({
       ok: true, room: { deckType: 'custom', deck },
     });
-    expect(await readFrame()).toMatchObject({ type: 'room:snapshot', room: { deckType: 'custom', deck } });
+    expect(await stream.next()).toMatchObject({ type: 'room:snapshot', room: { deckType: 'custom', deck } });
     expect(await read(participant)).toMatchObject({ deckType: 'custom', deck });
   } finally {
-    await reader.cancel();
+    await stream.close();
   }
 });
 
@@ -649,18 +643,18 @@ test('closing an unresolved Room publishes only the ordered summary and ends liv
   await mutate({ type: 'reveal', roundId: discardRoundId });
   await mutate({ type: 'add-story', title: 'Recover a cart' });
 
-  const connect = () => service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
-    headers: { cookie: participant },
-  }));
-  const reader = (await connect()).body!.getReader();
-  const nextJson = async (source: ReadableStreamDefaultReader<Uint8Array>) => {
-    const { value } = await source.read();
-    return new TextDecoder().decode(value).slice('data: '.length);
-  };
+  const connect = async () =>
+    readSseStream(
+      await service.handlePokerLiveRequest(id, new Request(`${origin}/api/poker/${id}/live`, {
+        headers: { cookie: participant },
+      })),
+      parsePokerLiveMessage,
+    );
+  const stream = await connect();
 
   try {
-    expect(parsePokerLiveMessage(await nextJson(reader))).toMatchObject({ room: { round: { phase: 'revealed' } } });
-    expect(parsePokerLiveMessage(await nextJson(reader))).toMatchObject({ type: 'room:presence' });
+    expect(await stream.next()).toMatchObject({ room: { round: { phase: 'revealed' } } });
+    expect(await stream.next()).toMatchObject({ type: 'room:presence' });
     expect(await mutateRoom({ type: 'close-room', discardRoundId }, participant)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
     expect(await mutateRoom({ type: 'close-room' })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
     expect(await mutateRoom({ type: 'close-room', discardRoundId: roundId })).toMatchObject({ ok: false, code: 'ROUND_CHANGED' });
@@ -679,20 +673,20 @@ test('closing an unresolved Room publishes only the ordered summary and ends liv
       ],
     };
     expect(result.room).toEqual({ ...summary, canDelete: true });
-    const finalFrame = await nextJson(reader);
+    const finalFrame = await stream.nextRaw();
     expect(JSON.parse(finalFrame)).toEqual({ type: 'room:snapshot', room: summary });
     expect(parsePokerLiveMessage(finalFrame)).toEqual({ type: 'room:snapshot', room: summary });
-    expect(await reader.read()).toMatchObject({ done: true });
+    await stream.expectClosed();
     expect((await inRequest(() => service.readPokerRoomForRequest(id), undefined, 'GET')).result).toEqual(summary);
     expect(await mutate({ type: 'join', displayName: 'Late Participant' }, '')).toMatchObject({ ok: false, code: 'ROOM_CLOSED' });
     expect(await mutate({ type: 'add-story', title: 'Too late' })).toMatchObject({ ok: false, code: 'ROOM_CLOSED' });
     expect(await mutateRoom({ type: 'close-room' })).toEqual({ ok: true, room: result.room });
 
-    const reconnect = (await connect()).body!.getReader();
-    expect(JSON.parse(await nextJson(reconnect))).toEqual({ type: 'room:snapshot', room: summary });
-    expect(await reconnect.read()).toMatchObject({ done: true });
+    const reconnect = await connect();
+    expect(await reconnect.next()).toEqual({ type: 'room:snapshot', room: summary });
+    await reconnect.expectClosed();
   } finally {
-    await reader.cancel();
+    await stream.close();
   }
 });
 
