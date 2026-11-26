@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import { LIVE_HEARTBEAT_TIMEOUT_MS, type BoardLiveMessage } from '../../../lib/board-live-protocol';
+import type { BoardLiveMessage } from '../../../lib/board-live-protocol';
+import { LIVE_HEARTBEAT_TIMEOUT_MS } from '../../../lib/live-protocol';
 
 import type {
   BoardMutationActor,
@@ -22,7 +23,7 @@ import {
 
 import { projectLivePublication, projectLiveSnapshot } from '../../domain/live-projection';
 import type { BoardPublication, LiveViewerContext } from '../types';
-import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from './cloudflare-board-store';
+import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from '../../live/headers';
 
 import { wrapDurableObjectSql } from './sqlite';
 
