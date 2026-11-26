@@ -63,6 +63,19 @@ describe('canGrabTransferItem', () => {
     expect(canGrabTransferItem(groupingAllowed, 'card:card_b')).toBe(true);
   });
 
+  it('rejects grabbing pending Cards or another Participant’s Card during Private Mode', () => {
+    const pending = makeCard({ id: 'card_pending', isMine: true, pending: true });
+    const foreign = makeCard({ id: 'card_foreign', isMine: false });
+    const board = makeBoardView({
+      ...unlocked,
+      isBlurred: true,
+      allowParticipantGroup: true,
+      cards: [pending, foreign],
+    });
+    expect(canGrabTransferItem(board, 'card:card_pending')).toBe(false);
+    expect(canGrabTransferItem(board, 'card:card_foreign')).toBe(false);
+  });
+
   it('grabs Card Groups only when every member is yours and grouping is allowed', () => {
     const mine = makeGroup({ cardIds: ['card_a'] });
     const board = makeBoardView({
@@ -180,6 +193,34 @@ describe('acceptsBoardDrop', () => {
     expect(acceptsBoardDrop(board, 'card:card_b', 'on:group:group_1')).toBe(
       false,
     );
+  });
+
+  it('rejects dropping onto redacted or mixed-authorship Card Groups during Private Mode', () => {
+    const ownCard = makeCard({ id: 'card_own_2', isMine: true, columnId: 'col_1' });
+    const ownGroup = makeGroup({ id: 'group_own', cardIds: ['card_own_2'] });
+    const redactedGroup = makeGroup({
+      id: 'group_redacted',
+      cardIds: ['card_b'],
+      redacted: true,
+    });
+    const mixedGroup = makeGroup({
+      id: 'group_mixed',
+      cardIds: ['card_own_2', 'card_b'],
+    });
+    const board = makeBoardView({
+      isLocked: false,
+      isFacilitator: true,
+      isBlurred: true,
+      groups: [ownGroup, redactedGroup, mixedGroup],
+      cards: [
+        myCard,
+        { ...ownCard, groupId: 'group_own' },
+        { ...teammateCard, groupId: 'group_redacted' },
+      ],
+    });
+    expect(acceptsBoardDrop(board, 'card:card_a', 'on:group:group_own')).toBe(true);
+    expect(acceptsBoardDrop(board, 'card:card_a', 'on:group:group_redacted')).toBe(false);
+    expect(acceptsBoardDrop(board, 'card:card_a', 'on:group:group_mixed')).toBe(false);
   });
 
   it('redirects cross-Column Card and Group targets to a Column move', () => {

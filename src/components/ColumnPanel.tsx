@@ -24,7 +24,7 @@ import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-e
 import {
   canContribute,
   canControlFacilitation,
-  canDeleteColumn as canDeleteColumnPermission,
+  decideColumnDeletion,
 } from '../lib/board-permissions';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
@@ -75,10 +75,14 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const canMoveRight = createMemo(
     () => props.columnIndex < workspace.columns.length - 1,
   );
-  const hasHiddenCards = createMemo(() => props.view.cards.some((card) => card.redacted));
-  const canDeleteColumn = createMemo(() =>
-    canDeleteColumnPermission(workspace, workspace.columns.length, props.view.cards),
+  const deleteColumnDecision = createMemo(() =>
+    decideColumnDeletion(workspace, workspace.columns.length, props.view.cards),
   );
+  const canDeleteColumn = () => deleteColumnDecision().allowed;
+  const deleteBlockedByHiddenCards = () => {
+    const decision = deleteColumnDecision();
+    return !decision.allowed && decision.reason === 'column-has-hidden-cards';
+  };
 
   // Inline title editing: unified session owns edit, input, IME, focus-out, and fallback focus.
   let titleButtonEl: HTMLButtonElement | undefined;
@@ -102,7 +106,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   async function submitNewCard(): Promise<void> {
     const draft = composerEl ? composerEl.value : cardDraft();
     const trimmed = draft.trim();
-    if (trimmed.length === 0 || isCreatingCard() || workspace.isLocked) return;
+    if (trimmed.length === 0 || isCreatingCard() || !canContribute(workspace)) return;
     if (cardDraft() !== draft) {
       setCardDraft(draft);
     }
@@ -400,7 +404,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     <MenuItem
                       value="delete"
                       disabled={!canDeleteColumn()}
-                      title={hasHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
+                      title={deleteBlockedByHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
                       onSelect={() => void requestDeleteColumn()}
                       class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"
                     >

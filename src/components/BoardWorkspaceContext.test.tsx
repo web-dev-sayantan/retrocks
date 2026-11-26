@@ -25,6 +25,7 @@ describe('BoardWorkspaceContext', () => {
     const [isLocked, setIsLocked] = createSignal(false);
     const [isBlurred, setIsBlurred] = createSignal(false);
     const [blindVoting, setBlindVoting] = createSignal(false);
+    const [allowParticipantGroup, setAllowParticipantGroup] = createSignal(false);
     let mountCount = 0;
 
     function StatusConsumer() {
@@ -34,7 +35,8 @@ describe('BoardWorkspaceContext', () => {
         <output>
           {workspace.isLocked ? 'locked' : 'unlocked'}-
           {workspace.isBlurred ? 'private' : 'revealed'}-
-          {workspace.blindVoting ? 'blind' : 'open'}
+          {workspace.blindVoting ? 'blind' : 'open'}-
+          {workspace.allowParticipantGroup ? 'groupable' : 'restricted'}
         </output>
       );
     }
@@ -44,6 +46,7 @@ describe('BoardWorkspaceContext', () => {
         isLocked={isLocked}
         isBlurred={isBlurred}
         blindVoting={blindVoting}
+        allowParticipantGroup={allowParticipantGroup}
       >
         <StatusConsumer />
       </TestBoardWorkspace>
@@ -51,14 +54,15 @@ describe('BoardWorkspaceContext', () => {
     flush();
 
     expect(mountCount).toBe(1);
-    expect(getByRole('status')).toHaveTextContent('unlocked-revealed-open');
+    expect(getByRole('status')).toHaveTextContent('unlocked-revealed-open-restricted');
 
     setIsLocked(true);
     setIsBlurred(true);
     setBlindVoting(true);
+    setAllowParticipantGroup(true);
     flush();
 
     expect(mountCount).toBe(1);
-    expect(getByRole('status')).toHaveTextContent('locked-private-blind');
+    expect(getByRole('status')).toHaveTextContent('locked-private-blind-groupable');
   });
 });

@@ -2,7 +2,7 @@ import { Minus, Plus } from 'lucide';
 import { Show, createMemo, latest } from 'solid-js';
 
 import type { CardViewDTO } from '../lib/board-types';
-import { canCastVote, canContribute } from '../lib/board-permissions';
+import { canCastVote, canContribute, canRemoveVote } from '../lib/board-permissions';
 import type { WorkspaceVoting } from '../lib/board-controller';
 import LucideIcon from './LucideIcon';
 
@@ -17,10 +17,12 @@ export default function VoteControls(props: {
   targetType?: 'card' | 'group';
   voting: WorkspaceVoting;
   isLocked: boolean;
+  disabled?: boolean;
 }) {
   const myVotes = createMemo(() => latest(() => props.target.myVotes));
   const votes = createMemo(() => latest(() => props.target.votes));
   const canCast = createMemo(() => canCastVote(props.voting, myVotes()));
+  const canRemove = createMemo(() => canRemoveVote(myVotes()));
 
   return (
     <div
@@ -37,7 +39,7 @@ export default function VoteControls(props: {
           data-print-hide="true"
           class={[buttonClass, 'rounded-l-md']}
           aria-label="Remove Vote"
-          disabled={props.voting.pending || myVotes() === 0}
+          disabled={props.disabled || props.voting.pending || !canRemove()}
           onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, -1)}
         >
           <LucideIcon icon={Minus} class="size-3.5" strokeWidth={2} />
@@ -55,7 +57,7 @@ export default function VoteControls(props: {
           data-print-hide="true"
           class={[buttonClass, 'rounded-r-md']}
           aria-label="Cast Vote"
-          disabled={props.voting.pending || !canCast()}
+          disabled={props.disabled || props.voting.pending || !canCast()}
           onClick={() => props.voting.onChange(props.targetType ?? 'card', props.target.id, 1)}
         >
           <LucideIcon icon={Plus} class="size-3.5" strokeWidth={2} />

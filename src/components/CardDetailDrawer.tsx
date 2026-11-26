@@ -24,10 +24,10 @@ import {
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createActionItemFollowUp } from '../lib/action-item-follow-up';
 import {
-  canContribute,
   canDeleteComment,
   canEditActionItem,
   canEditActionItemFollowUp,
+  canInteractWithCard,
 } from '../lib/board-permissions';
 import { formatRelativeTime } from '../lib/relative-time';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
@@ -83,6 +83,8 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     });
   });
 
+  const canInteract = createMemo(() => canInteractWithCard(workspace, props.card));
+
   const isAtCommentLimit = createMemo(
     () => props.card.comments.length >= MAX_COMMENTS_PER_CARD,
   );
@@ -107,7 +109,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     if (
       trimmed.length === 0 ||
       isPosting() ||
-      workspace.isLocked ||
+      !canInteract() ||
       isAtCommentLimit()
     ) {
       return;
@@ -230,7 +232,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
               cardId={props.card.id}
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
-              disabled={workspace.isLocked}
+              disabled={!canInteract()}
               onToggleReaction={workspace.actions.toggleReaction}
             />
 
@@ -361,7 +363,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                           </time>
                         </div>
 
-                        <Show when={canDeleteComment(workspace, comment)}>
+                        <Show when={canDeleteComment(workspace, comment, props.card)}>
                           <button
                             type="button"
                             aria-label="Delete"
@@ -394,7 +396,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
         </div>
 
         {/* Comment composer footer */}
-        <Show when={canContribute(workspace)}>
+        <Show when={canInteract()}>
           <div class="border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5 sm:pb-3">
             <Show
               when={!isAtCommentLimit()}

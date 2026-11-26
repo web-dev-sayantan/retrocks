@@ -287,4 +287,46 @@ describe('<ColumnPanel />', () => {
     flush();
     expect(queryByRole('textbox', { name: 'Column title' })).toBeNull();
   });
+
+  it('disables Delete column with hidden-Card guidance in Private Mode and omits it on the last Column', () => {
+    const board = makeBoardView({ isFacilitator: true, isBlurred: true });
+    const hiddenCard = makeCard({
+      id: 'card_hidden',
+      columnId: 'col_1',
+      isMine: false,
+      redacted: true,
+    });
+    const view = makeColumnView(board.columns[0], [hiddenCard]);
+    const [columns, setColumns] = createSignal<readonly ColumnDTO[]>(board.columns);
+
+    const { getByRole } = render(() => (
+      <TestBoardWorkspace board={board} columns={columns}>
+        <ColumnPanel
+          view={view}
+          columnIndex={0}
+          hasActiveFilter={false}
+          isMobile={false}
+          isMobileActive={true}
+          isHorizontalSnap={false}
+          onResetFilters={() => {}}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Column options for Went Well' }));
+    flush();
+    const deleteItem = getByRole('menuitem', { name: 'Delete column' });
+    expect(deleteItem).toHaveAttribute('aria-disabled', 'true');
+    expect(deleteItem).toHaveAttribute(
+      'title',
+      'Reveal All before deleting a Column with hidden Cards.',
+    );
+
+    // When only one Column remains, the last-column floor takes precedence over hidden Cards.
+    setColumns([board.columns[0]]);
+    flush();
+    expect(deleteItem).toHaveAttribute('aria-disabled', 'true');
+    expect(deleteItem).not.toHaveAttribute('title');
+  });
 });
