@@ -531,6 +531,171 @@ describe('createBoardController', () => {
     expect(lockedHarness.dispatchCommand).not.toHaveBeenCalled();
   });
 
+  it('enforces whole-Card-Group Private Mode on ungroupCard without dispatching', async () => {
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      groupId: 'group_mixed',
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: 'group_mixed',
+      isMine: false,
+      redacted: true,
+    });
+    const ownCardA = makeCard({
+      id: 'card_own_a',
+      columnId: 'col_1',
+      groupId: 'group_own',
+      isMine: true,
+    });
+    const ownCardB = makeCard({
+      id: 'card_own_b',
+      columnId: 'col_1',
+      groupId: 'group_own',
+      isMine: true,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      isBlurred: true,
+      groups: [
+        {
+          id: 'group_mixed',
+          columnId: 'col_1',
+          title: 'Mixed',
+          cardIds: [myCard.id, peerCard.id],
+          votes: 0,
+          myVotes: 0,
+          createdAt: 0,
+        },
+        {
+          id: 'group_own',
+          columnId: 'col_1',
+          title: 'Own',
+          cardIds: [ownCardA.id, ownCardB.id],
+          votes: 0,
+          myVotes: 0,
+          createdAt: 0,
+        },
+      ],
+      cards: [myCard, peerCard, ownCardA, ownCardB],
+    });
+    const { controller, dispatchCommand } = mountSession(board);
+
+    expect(await controller.ungroupCard(myCard.id)).toBe(false);
+    expect(dispatchCommand).not.toHaveBeenCalled();
+
+    expect(await controller.ungroupCard(ownCardA.id)).toBe(true);
+    expect(dispatchCommand).toHaveBeenCalledTimes(1);
+    expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
+      type: 'group:ungroup',
+      cardId: ownCardA.id,
+    });
+  });
+
+  it('rejects pending Cards, invalid Votes, Private Mode comment moderation, and Private Mode Locked Action Items at preflight with zero dispatches', async () => {
+    const pendingCard = makeCard({
+      id: 'card_pending',
+      columnId: 'col_1',
+      groupId: 'group_own',
+      isMine: true,
+      pending: true,
+      isActionItem: true,
+    });
+    const peerComment = {
+      id: 'comment_peer',
+      cardId: 'card_own',
+      content: 'Peer note',
+      isMine: false,
+      createdAt: 0,
+    };
+    const ownCard = makeCard({
+      id: 'card_own',
+      columnId: 'col_1',
+      isMine: true,
+      myVotes: 1,
+      votes: 1,
+      comments: [peerComment],
+      commentCount: 1,
+    });
+    const groupedCard = makeCard({
+      id: 'card_grouped',
+      columnId: 'col_1',
+      groupId: 'group_own',
+      isMine: true,
+      myVotes: 0,
+      votes: 0,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      isBlurred: true,
+      maxVotesPerCard: 1,
+      remainingVotes: 0,
+      groups: [
+        {
+          id: 'group_own',
+          columnId: 'col_1',
+          title: 'Own Group',
+          cardIds: [groupedCard.id],
+          votes: 0,
+          myVotes: 0,
+          createdAt: 0,
+        },
+      ],
+      cards: [pendingCard, ownCard, groupedCard],
+    });
+    const { controller, dispatchCommand } = mountSession(board);
+
+    // Optimistic pending Card is rejected across all Card mutations.
+    expect(await controller.toggleReaction(pendingCard.id, '👍')).toBe(
+      'This Card can no longer receive reactions.',
+    );
+    expect(await controller.createComment(pendingCard.id, 'Hello')).toBe(
+      'This Card can no longer receive comments.',
+    );
+    expect(await controller.updateActionItem(pendingCard.id, { actionDone: true })).toBe(false);
+    expect(await controller.updateCard(pendingCard.id, 'Edit')).toBe(
+      'This Card can no longer be edited.',
+    );
+    expect(await controller.moveCard(pendingCard.id, 'col_2')).toBe(false);
+    expect(await controller.deleteCard(pendingCard.id)).toBe(false);
+    expect(await controller.groupCard(pendingCard.id, 'card', ownCard.id)).toBe(false);
+    expect(await controller.ungroupCard(pendingCard.id)).toBe(false);
+    await controller.changeVote('card', pendingCard.id, 1);
+
+    // Vote policy preflight blocks cap/balance/zero-vote/grouped-Card violations.
+    await controller.changeVote('card', ownCard.id, 1);
+    await controller.changeVote('card', groupedCard.id, 1);
+    await controller.changeVote('group', 'group_own', -1);
+
+    // Client-conservative Private Mode comment moderation blocks Facilitator deleting peer comment.
+    expect(await controller.deleteComment(ownCard.id, peerComment.id)).toBe(
+      'This comment can no longer be deleted.',
+    );
+    expect(dispatchCommand).not.toHaveBeenCalled();
+
+    // Facilitator on a Locked Board in Private Mode cannot follow up on another Participant's Action Item.
+    const foreignAction = makeCard({
+      id: 'card_foreign_action',
+      columnId: 'col_1',
+      isMine: false,
+      isActionItem: true,
+    });
+    const lockedPrivate = makeBoardView({
+      isFacilitator: true,
+      isLocked: true,
+      isBlurred: true,
+      cards: [foreignAction],
+    });
+    const lockedHarness = mountSession(lockedPrivate);
+    expect(
+      await lockedHarness.controller.updateActionItem(foreignAction.id, { actionDone: true }),
+    ).toBe(false);
+    expect(lockedHarness.dispatchCommand).not.toHaveBeenCalled();
+  });
+
   it('drops stale mutation responses and resyncs on a version gap', async () => {
     const card = makeCard({ id: 'card_version', columnId: 'col_1' });
     const board = makeBoardView({ cards: [card], version: 3 });

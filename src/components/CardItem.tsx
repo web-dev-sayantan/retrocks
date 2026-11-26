@@ -13,10 +13,13 @@ import {
   REDACTED_WHISPER_DURATION_MS,
 } from '../lib/easter-eggs';
 import {
+  canContribute,
+  canEditActionItem,
   canEditActionItemFollowUp,
   canInteractWithCard,
   canManageCard,
-  passesPrivateMode,
+  canUngroupCard,
+  getCardMergeTargets,
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
@@ -41,7 +44,6 @@ export interface CardItemProps {
   revealIndex?: number;
   columnCards: readonly CardViewDTO[];
   columnGroups: readonly CardGroupDTO[];
-  canUngroup?: boolean;
 }
 
 const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
@@ -129,7 +131,13 @@ export default function CardItem(props: CardItemProps) {
     },
   );
 
+  const canInteract = createMemo(() => canInteractWithCard(workspace, props.card));
   const canManage = createMemo(() => canManageCard(workspace, props.card));
+  const canToggleActionItem = createMemo(() =>
+    canEditActionItem(workspace, props.card, {
+      isActionItem: !props.card.isActionItem,
+    }),
+  );
 
   // Card text inline editing: unified session owns edit, input, IME, focus-out, and fallback focus.
   const cardEdit = createInlineEditSession({
@@ -147,32 +155,21 @@ export default function CardItem(props: CardItemProps) {
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
 
-  const groupTargets = createMemo(
-    () => ({
-      cards: props.columnCards.filter(
-        (other) =>
-          other.id !== props.card.id &&
-          !other.redacted &&
-          !other.pending &&
-          other.groupId === null,
-      ),
-      groups: props.columnGroups.filter(
-        (group) => group.id !== props.card.groupId,
-      ),
-    }),
+  const groupTargets = createMemo(() =>
+    getCardMergeTargets(
+      workspace,
+      props.card,
+      props.columnCards,
+      props.columnGroups,
+    ),
   );
 
   const canGroup = createMemo(
-    () =>
-      workspace.canGroupCards &&
-      canInteractWithCard(workspace, props.card) &&
-      (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
+    () => groupTargets().cards.length > 0 || groupTargets().groups.length > 0,
   );
 
-  const canUngroup = createMemo(
-    () =>
-      props.canUngroup ??
-      (workspace.canGroupCards && passesPrivateMode(workspace, props.card)),
+  const canUngroup = createMemo(() =>
+    canUngroupCard(workspace, props.card, props.columnGroups, props.columnCards),
   );
 
   const canDrag = createMemo(() => (canMove() || canGroup()) && !cardEdit.isEditing());
@@ -431,7 +428,7 @@ export default function CardItem(props: CardItemProps) {
               cardId={props.card.id}
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
-              disabled={workspace.isLocked}
+              disabled={!canInteract()}
               onToggleReaction={workspace.actions.toggleReaction}
             />
 
@@ -446,7 +443,12 @@ export default function CardItem(props: CardItemProps) {
 
             <Show when={props.card.groupId === null}>
               <div class="flex sm:col-start-3">
-                <VoteControls target={props.card} voting={workspace.voting} isLocked={workspace.isLocked} />
+                <VoteControls
+                  target={props.card}
+                  voting={workspace.voting}
+                  isLocked={workspace.isLocked}
+                  disabled={!canInteract()}
+                />
               </div>
             </Show>
 
@@ -480,7 +482,7 @@ export default function CardItem(props: CardItemProps) {
                 <LucideIcon icon={PanelRightOpen} />
               </button>
 
-              <Show when={!workspace.isLocked}>
+              <Show when={canContribute(workspace)}>
                 <Menu
                   open={menuOpen()}
                   modal={false}
@@ -490,7 +492,8 @@ export default function CardItem(props: CardItemProps) {
                     ref={menuTrigger}
                     aria-label="Card actions"
                     title="Card actions"
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
+                    disabled={!canInteract()}
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text disabled:cursor-not-allowed disabled:opacity-50 data-disabled:cursor-not-allowed data-disabled:opacity-50 board-focus-ring sm:min-h-7 sm:min-w-7"
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" />
                   </MenuTrigger>
@@ -552,7 +555,7 @@ export default function CardItem(props: CardItemProps) {
                         </BoardMenuContent>
                       </MenuSub>
                     </Show>
-                    <Show when={props.card.groupId !== null && canUngroup()}>
+                    <Show when={canUngroup()}>
                       <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
                         Ungroup Card
                       </MenuItem>
@@ -560,8 +563,11 @@ export default function CardItem(props: CardItemProps) {
                     <MenuItem
                       value="flag"
                       class={menuItemClass}
-                      disabled={isUpdatingAction()}
-                      onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
+                      disabled={!canToggleActionItem() || isUpdatingAction()}
+                      onSelect={() => {
+                        if (!canToggleActionItem()) return;
+                        void updateAction({ isActionItem: !props.card.isActionItem });
+                      }}
                     >
                       <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
                     </MenuItem>

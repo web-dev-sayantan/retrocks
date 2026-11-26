@@ -111,10 +111,11 @@ describe('<CardItem />', () => {
     flush();
     expect(getByRole('menuitem', { name: 'Edit Card' })).toBeInTheDocument();
 
-    // Toggling Private Mode revokes Facilitator edit/delete on another participant's card
+    // Toggling Private Mode revokes Facilitator edit/delete and Action Item flagging on another participant's card
     setIsBlurred(true);
     flush();
     expect(queryByRole('menuitem', { name: 'Edit Card' })).not.toBeInTheDocument();
+    expect(getByRole('menuitem', { name: 'Flag as Action Item' })).toHaveAttribute('aria-disabled', 'true');
     expect(container.querySelector('article[data-card-id="card_other"]')).toBe(article);
 
     // Exhausting remaining ballots disables Cast Vote reactively
@@ -169,6 +170,192 @@ describe('<CardItem />', () => {
     fireEvent.click(getByRole('menuitem', { name: 'Ungroup Card' }));
     await Promise.resolve();
     expect(actions.ungroupCard).toHaveBeenCalledWith('card_1');
+  });
+
+  it('enforces whole-Card-Group Private Mode on Ungroup Card', () => {
+    const mixedGroup: CardGroupDTO = {
+      id: 'group_mixed',
+      columnId: 'col_1',
+      title: 'Mixed Group',
+      cardIds: ['card_mine', 'card_peer'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      isMine: false,
+      redacted: true,
+    });
+    const [isBlurred, setIsBlurred] = createSignal(true);
+
+    const { getByRole, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={isBlurred}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, peerCard]}
+          columnGroups={[mixedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(queryByRole('menuitem', { name: 'Ungroup Card' })).not.toBeInTheDocument();
+
+    setIsBlurred(false);
+    flush();
+    expect(getByRole('menuitem', { name: 'Ungroup Card' })).toBeInTheDocument();
+  });
+
+  it('excludes redacted and mixed-authorship Card Groups from the Group with… submenu during Private Mode', () => {
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      content: 'My loose note',
+      isMine: true,
+    });
+    const myOwnGroupCard = makeCard({
+      id: 'card_own_g',
+      columnId: 'col_1',
+      groupId: 'group_own',
+      content: 'Own group member',
+      isMine: true,
+    });
+    const peerGroupCard = makeCard({
+      id: 'card_peer_g',
+      columnId: 'col_1',
+      groupId: 'group_redacted',
+      content: '',
+      isMine: false,
+      redacted: true,
+    });
+    const ownGroup: CardGroupDTO = {
+      id: 'group_own',
+      columnId: 'col_1',
+      title: 'My Own Group',
+      cardIds: ['card_own_g'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+    const redactedGroup: CardGroupDTO = {
+      id: 'group_redacted',
+      columnId: 'col_1',
+      title: 'Secret Group',
+      cardIds: ['card_peer_g'],
+      redacted: true,
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+
+    const { getByRole, queryByRole, unmount } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={true}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, myOwnGroupCard, peerGroupCard]}
+          columnGroups={[ownGroup, redactedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Card actions' }));
+    flush();
+    const groupTrigger = getByRole('menuitem', { name: /Group with/i });
+    fireEvent.click(groupTrigger);
+    flush();
+
+    expect(getByRole('menuitem', { name: 'My Own Group' })).toBeInTheDocument();
+    expect(queryByRole('menuitem', { name: 'Secret Group' })).not.toBeInTheDocument();
+    unmount();
+
+    // When only a redacted Card Group exists in Private Mode, Group with… is hidden entirely.
+    const onlyRedacted = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={true}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, peerGroupCard]}
+          columnGroups={[redactedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+    fireEvent.click(onlyRedacted.getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(onlyRedacted.queryByRole('menuitem', { name: /Group with/i })).not.toBeInTheDocument();
+  });
+
+  it('disables reaction, Vote, edit, move, grouping, and Action Item controls on optimistic pending Cards', () => {
+    const pendingCard = makeCard({
+      id: 'card_pending',
+      columnId: 'col_1',
+      content: 'Optimistic note',
+      isMine: true,
+      pending: true,
+      isActionItem: true,
+      actionDone: false,
+      votes: 0,
+      myVotes: 0,
+      reactions: { '👍': 1 },
+      myReactions: ['👍'],
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      content: 'Peer note',
+      isMine: false,
+    });
+    const actions = createTestBoardMutations();
+
+    const { container, getByRole, getByText, queryByRole } = render(() => (
+      <TestBoardWorkspace
+        isFacilitator={true}
+        allowParticipantGroup={true}
+        actions={actions}
+        voting={{ remainingVotes: 5, maxVotesPerCard: 2 }}
+      >
+        <CardItem
+          card={pendingCard}
+          columnCards={[pendingCard, peerCard]}
+          columnGroups={[]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    const article = container.querySelector('article[data-card-id="card_pending"]');
+    expect(article).not.toHaveAttribute('tabindex');
+    expect(article).not.toHaveAttribute('aria-roledescription');
+
+    // Reactions are disabled and Add reaction trigger is hidden
+    expect(queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+    expect(getByRole('button', { name: /👍/ })).toBeDisabled();
+
+    // Vote controls are disabled
+    expect(getByRole('button', { name: 'Cast Vote' })).toBeDisabled();
+    expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
+
+    // Action Item Done checkbox is disabled
+    expect(getByRole('checkbox', { name: 'Mark Optimistic note as Done' })).toBeDisabled();
+
+    // Card actions menu trigger (Edit, Move, Group, Flag Action Item, Delete) is disabled
+    expect(getByRole('button', { name: 'Card actions' })).toBeDisabled();
+
+    // Double-click inline edit does not open
+    fireEvent.dblClick(getByText('Optimistic note'));
+    flush();
+    expect(queryByRole('textbox', { name: 'Edit card text' })).not.toBeInTheDocument();
   });
 
   it('handles Card inline editing with IME Enter, container focus-out, Escape cancel, Private Mode/Locked invalidation, error retention, and focus restoration', async () => {

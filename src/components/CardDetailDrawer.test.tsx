@@ -183,6 +183,42 @@ describe('<CardDetailDrawer />', () => {
     expect(getByRole('dialog', { name: 'Card details' })).toBe(drawer);
   });
 
+  it('disables reactions, Action Item controls, and comment composer for optimistic pending Cards', () => {
+    const pendingCard = makeCard({
+      id: 'card_pending',
+      columnId: 'col_1',
+      content: 'Pending card details',
+      isMine: true,
+      pending: true,
+      isActionItem: true,
+      actionDone: false,
+      actionOwner: 'Ops',
+      reactions: { '👍': 1 },
+      myReactions: ['👍'],
+    });
+
+    const { getByLabelText, getByRole, queryByLabelText, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true}>
+        <CardDetailDrawer
+          card={pendingCard}
+          isOpen={true}
+          side="right"
+          onClose={() => {}}
+          onExit={() => {}}
+          restoreFocusTarget={() => undefined}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    expect(queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+    expect(getByRole('button', { name: /👍/ })).toBeDisabled();
+    expect(getByRole('checkbox', { name: 'Action Item' })).toBeDisabled();
+    expect(getByRole('checkbox', { name: 'Done' })).toBeDisabled();
+    expect(getByLabelText('Action owner')).toBeDisabled();
+    expect(queryByLabelText('Comment')).not.toBeInTheDocument();
+  });
+
   it('invalidates stale Action Item owner saves on Card switch or close and retains failed drafts for retry', async () => {
     const cardA = makeCard({
       id: 'card_a',

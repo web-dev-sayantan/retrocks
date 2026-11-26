@@ -9,7 +9,6 @@ import {
 } from '../components/BoardWorkspaceContext';
 import type { BoardMutations, WorkspaceVoting } from './board-controller';
 import { makeBoardView } from './board-fixtures';
-import { canManageGrouping } from './board-permissions';
 import { boardTransfer } from './board-transfer';
 import type { BoardViewDTO, ColumnDTO } from './board-types';
 
@@ -61,7 +60,7 @@ export interface TestBoardWorkspaceProps {
   isLocked?: MaybeAccessor<boolean>;
   isBlurred?: MaybeAccessor<boolean>;
   blindVoting?: MaybeAccessor<boolean>;
-  canGroupCards?: MaybeAccessor<boolean>;
+  allowParticipantGroup?: MaybeAccessor<boolean>;
   nowMs?: MaybeAccessor<number>;
   actions?: Partial<BoardMutations>;
   openCardDetail?: (cardId: string, trigger: HTMLButtonElement) => void;
@@ -126,13 +125,10 @@ export function TestBoardWorkspace(props: TestBoardWorkspaceProps) {
         ? unwrap(props.blindVoting)
         : resolveBoard().blindVoting;
     },
-    get canGroupCards() {
-      if (props.canGroupCards !== undefined) return unwrap(props.canGroupCards);
-      return canManageGrouping({
-        isLocked: contextValue.isLocked,
-        isFacilitator: contextValue.isFacilitator,
-        allowParticipantGroup: resolveBoard().allowParticipantGroup,
-      });
+    get allowParticipantGroup() {
+      return props.allowParticipantGroup !== undefined
+        ? unwrap(props.allowParticipantGroup)
+        : resolveBoard().allowParticipantGroup;
     },
     get nowMs() {
       return props.nowMs !== undefined ? unwrap(props.nowMs) : Date.now();

@@ -48,9 +48,9 @@ import { dispatchBoardCommand } from '../lib/board-actions';
 import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
+  canContribute,
   canControlFacilitation,
   canFacilitate,
-  canManageGrouping,
 } from '../lib/board-permissions';
 import {
   createBoardController,
@@ -566,7 +566,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   useShortcut(
     () => {
       const board = controller.board();
-      return board && !board.isLocked ? 'n' : null;
+      return board && canContribute(board) ? 'n' : null;
     },
     () => {
       const targetCol = activeMobileColumn();
@@ -780,7 +780,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
           get isLocked() { return board().isLocked; },
           get isBlurred() { return board().isBlurred; },
           get blindVoting() { return board().blindVoting; },
-          get canGroupCards() { return canManageGrouping(board()); },
+          get allowParticipantGroup() { return board().allowParticipantGroup; },
           get nowMs() { return controller.nowMs(); },
           transfer,
           actions: controller,
@@ -1467,7 +1467,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
           <Show
-            when={!board().isLocked && activeMobileColumn()}
+            when={canContribute(board()) && activeMobileColumn()}
             fallback={
               <Show when={board().isLocked}>
                 <p data-print-hide="true" class="sticky bottom-0 z-20 border-t border-border bg-surface px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-sm text-text-muted sm:hidden">

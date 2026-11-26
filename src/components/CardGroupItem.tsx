@@ -8,7 +8,7 @@ import type {
   CardViewDTO,
 } from '../lib/board-types';
 import { MAX_GROUP_TITLE_LENGTH } from '../lib/board-types';
-import { areAllGroupCardsMine, isGroupRedacted } from '../lib/board-permissions';
+import { canInteractWithGroup, canManageGroup as canManageCardGroup } from '../lib/board-permissions';
 import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import { COLUMN_ACCENT_STYLES } from '../lib/templates';
 import BoardMenuContent from './BoardMenuContent';
@@ -44,11 +44,11 @@ export default function CardGroupItem(props: CardGroupItemProps) {
 
   const groupTitle = () => props.group.title || 'Card Group';
   const isRedacted = createMemo(() => Boolean(props.group.redacted));
-  const canManageGroup = createMemo(
-    () =>
-      workspace.canGroupCards &&
-      !isGroupRedacted(props.group) &&
-      areAllGroupCardsMine(workspace, props.group, props.columnCards),
+  const canInteractGroup = createMemo(() =>
+    canInteractWithGroup(workspace, props.group, props.columnCards),
+  );
+  const canManageGroup = createMemo(() =>
+    canManageCardGroup(workspace, props.group, props.columnCards),
   );
 
   // Inline title editing: unified session owns edit, input, IME, focus-out, and fallback focus.
@@ -127,13 +127,12 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         {...workspace.transfer.slot('group-members', () => ({ value: `group:${props.group.id}` }))}
         /* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
            grab–move–drop (APG): transfer items are focusable. */
-        tabindex={canManageGroup() && !workspace.isLocked ? 0 : undefined}
-        aria-roledescription={canManageGroup() && !workspace.isLocked ? 'draggable' : undefined}
+        tabindex={canManageGroup() ? 0 : undefined}
+        aria-roledescription={canManageGroup() ? 'draggable' : undefined}
         class={[
           'grid min-w-0 gap-1 px-0.5',
           {
-            'cursor-grab active:cursor-grabbing touch-none':
-              canManageGroup() && !workspace.isLocked,
+            'cursor-grab active:cursor-grabbing touch-none': canManageGroup(),
           },
           'data-moving:opacity-50 data-dragging:opacity-50',
         ]}
@@ -227,6 +226,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
               targetType="group"
               voting={workspace.voting}
               isLocked={workspace.isLocked}
+              disabled={!canInteractGroup()}
             />
 
             <Show when={canManageGroup()}>
@@ -313,7 +313,6 @@ export default function CardGroupItem(props: CardGroupItemProps) {
                 revealIndex={(props.revealIndexOffset ?? 0) + cardIndex()}
                 columnCards={props.columnCards}
                 columnGroups={props.columnGroups}
-                canUngroup={canManageGroup()}
               />
             )}
           </For>
