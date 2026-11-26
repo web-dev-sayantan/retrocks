@@ -1,9 +1,11 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/live-protocol';
 import { parsePokerLiveMessage } from '../../lib/poker-schemas';
 import { wrapDatabaseSync } from '../adapters/node/sqlite';
 import { generateEntityId } from '../crypto';
+import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
 import { PointingPokerRoom } from './durable-room';
 import { openNodePokerRooms } from './node';
 
@@ -42,6 +44,9 @@ beforeEach(async () => {
   const ctx = {
     id: { name: id },
     getWebSockets: () => [socket, ...sockets],
+    acceptWebSocket: (ws: ReturnType<typeof liveSocket>) => {
+      sockets.push(ws);
+    },
     storage: {
       sql: {
         exec(query: string, ...params: SQLInputValue[]) {
@@ -64,6 +69,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   db.close();
 });
 
@@ -129,21 +135,59 @@ test('reopening a closed Room resets the Durable Object alarm to 90 days from no
 });
 
 
-function liveSocket(hash: string, participantId: string) {
+function liveSocket(hash: string | null, participantId: string | null) {
   const events: unknown[] = [];
+  let attachment: unknown = hash && participantId ? { hash, participantId, lastSeenAt: start } : null;
   return {
     events,
     readyState: Number(WebSocket.OPEN),
-    deserializeAttachment: () => ({ hash, participantId, lastSeenAt: start }),
-    serializeAttachment() {},
+    closedWith: null as { code?: number; reason?: string } | null,
+    closeCalls: 0,
+    failNextSend: false,
+    deserializeAttachment: () => attachment,
+    serializeAttachment(value: unknown) {
+      attachment = value;
+    },
     send(data: string) {
+      if (this.failNextSend) {
+        this.failNextSend = false;
+        throw new Error('Socket send failed');
+      }
       events.push(JSON.parse(data));
     },
-    close() {
+    close(code?: number, reason?: string) {
+      this.closeCalls += 1;
+      this.closedWith = { code, reason };
       events.push(undefined);
       this.readyState = WebSocket.CLOSED;
     },
   };
+}
+
+function stubCloudflareWebSocketUpgrade() {
+  const NativeResponse = globalThis.Response;
+  class FakeWebSocketPair {
+    0: ReturnType<typeof liveSocket>;
+    1: ReturnType<typeof liveSocket>;
+    constructor() {
+      this[0] = liveSocket(null, null);
+      this[1] = liveSocket(null, null);
+    }
+  }
+  const PatchedResponse = new Proxy(NativeResponse, {
+    construct(target, args: [BodyInit | null | undefined, ResponseInit & { webSocket?: unknown }]) {
+      const [body, init] = args;
+      if (init?.status === 101) {
+        const res = new target(body, { ...init, status: 200 });
+        Object.defineProperty(res, 'status', { value: 101 });
+        Object.defineProperty(res, 'webSocket', { value: init.webSocket });
+        return res;
+      }
+      return new target(body, init);
+    },
+  });
+  vi.stubGlobal('WebSocketPair', FakeWebSocketPair);
+  vi.stubGlobal('Response', PatchedResponse);
 }
 
 async function connectViewers(
@@ -301,4 +345,158 @@ test.each(['Node', 'Durable Object'])('%s publishes effective Co-Facilitator Lin
   } finally {
     node?.close();
   }
+});
+
+test('PointingPokerRoom.fetch enforces fallback 426 with Upgrade: websocket, 401 on missing identity, open-Room 403, and terminal closed/missing delivery', async () => {
+  stubCloudflareWebSocketUpgrade();
+
+  // Fallback 426 includes Upgrade: websocket
+  const nonUpgrade = await room.fetch(
+    new Request(`https://retrocks.app/api/poker/${id}/live`, {
+      headers: { [POKER_LIVE_VIEWER_HEADER]: 'facilitator' },
+    }),
+  );
+  expect(nonUpgrade.status).toBe(426);
+  expect(nonUpgrade.headers.get('upgrade')).toBe('websocket');
+
+  // Missing internal identity header -> 401 (not 403)
+  const missingIdentity = await room.fetch(
+    new Request(`https://retrocks.app/api/poker/${id}/live`, {
+      headers: { upgrade: 'websocket' },
+    }),
+  );
+  expect(missingIdentity.status).toBe(401);
+
+  // Unjoined visitor on open Room -> 403
+  const unjoined = await room.fetch(
+    new Request(`https://retrocks.app/api/poker/${id}/live`, {
+      headers: { upgrade: 'websocket', [POKER_LIVE_VIEWER_HEADER]: 'stranger' },
+    }),
+  );
+  expect(unjoined.status).toBe(403);
+
+  // Joined Participant on open Room -> 101 + snapshot + room:presence
+  const joined = await room.fetch(
+    new Request(`https://retrocks.app/api/poker/${id}/live`, {
+      headers: { upgrade: 'websocket', [POKER_LIVE_VIEWER_HEADER]: 'facilitator' },
+    }),
+  );
+  expect(joined.status).toBe(101);
+  expect(sockets).toHaveLength(1);
+  const alexView = await room.read(id, 'facilitator');
+  if (!alexView || alexView.closed || !alexView.viewer) throw new Error('Expected open Room viewer');
+  expect(sockets[0].events).toEqual([
+    expect.objectContaining({ type: 'room:snapshot', room: expect.objectContaining({ closed: false }) }),
+    { type: 'room:presence', online: [alexView.viewer.id] },
+  ]);
+
+  // Close the Room -> new visitor receives terminal closed summary (canDelete: false) and closes 1000 without presence
+  await room.mutate(id, 'facilitator', { type: 'close-room' });
+  const beforeClosedConnect = sockets.length;
+  const closedVisit = await room.fetch(
+    new Request(`https://retrocks.app/api/poker/${id}/live`, {
+      headers: { upgrade: 'websocket', [POKER_LIVE_VIEWER_HEADER]: 'stranger' },
+    }),
+  );
+  expect(closedVisit.status).toBe(101);
+  const closedSocket = sockets[beforeClosedConnect];
+  expect(closedSocket.events).toEqual([
+    expect.objectContaining({
+      type: 'room:snapshot',
+      room: expect.objectContaining({ closed: true, canDelete: false }),
+    }),
+    undefined,
+  ]);
+  expect(closedSocket.closedWith).toEqual({ code: 1000, reason: 'Room closed' });
+
+  // Delete the Room -> new connect receives terminal room:missing and closes 1000
+  await room.delete(id, 'facilitator');
+  const beforeMissingConnect = sockets.length;
+  const missingVisit = await room.fetch(
+    new Request(`https://retrocks.app/api/poker/${id}/live`, {
+      headers: { upgrade: 'websocket', [POKER_LIVE_VIEWER_HEADER]: 'facilitator' },
+    }),
+  );
+  expect(missingVisit.status).toBe(101);
+  const missingSocket = sockets[beforeMissingConnect];
+  expect(missingSocket.events).toEqual([{ type: 'room:missing' }, undefined]);
+  expect(missingSocket.closedWith).toEqual({ code: 1000, reason: 'Room unavailable' });
+});
+
+test('PointingPokerRoom reciprocates CLOSING, broadcasts presence on stale-peer pruning and send failure, suppresses presence when closed, and delivers room:missing on ping expiry', async () => {
+  await room.mutate(id, 'voter', { type: 'join', displayName: 'Sam' });
+  const alexView = await room.read(id, 'facilitator');
+  const samView = await room.read(id, 'voter');
+  if (!alexView || alexView.closed || !alexView.viewer || !samView || samView.closed || !samView.viewer) {
+    throw new Error('Expected open Room Participants');
+  }
+
+  const alexSock = liveSocket('facilitator', alexView.viewer.id);
+  const samSock = liveSocket('voter', samView.viewer.id);
+  sockets.push(alexSock, samSock);
+
+  // Alex pings midway to stay fresh; then after Sam times out, Alex's ping prunes Sam (1001) and broadcasts updated presence!
+  clock.mockReturnValue(start + Math.floor(LIVE_HEARTBEAT_TIMEOUT_MS / 2));
+  room.webSocketMessage(alexSock as unknown as WebSocket, 'ping');
+  expect(alexSock.events).toEqual([{ type: 'heartbeat' }]);
+
+  clock.mockReturnValue(start + LIVE_HEARTBEAT_TIMEOUT_MS + 1);
+  alexSock.events.length = 0;
+  room.webSocketMessage(alexSock as unknown as WebSocket, 'ping');
+  expect(samSock.closedWith).toEqual({ code: 1001, reason: 'Live connection timed out' });
+  expect(alexSock.events).toEqual([
+    { type: 'heartbeat' },
+    { type: 'room:presence', online: [alexView.viewer.id] },
+  ]);
+
+  // Re-add Sam; send failure during mutation closes Sam (1011) and broadcasts updated presence to Alex!
+  const samFailing = liveSocket('voter', samView.viewer.id);
+  samFailing.serializeAttachment({ hash: 'voter', participantId: samView.viewer.id, lastSeenAt: clock() });
+  samFailing.failNextSend = true;
+  sockets.push(samFailing);
+  alexSock.events.length = 0;
+  await room.mutate(id, 'facilitator', { type: 'add-story', title: 'New Story' });
+  expect(samFailing.closedWith).toEqual({ code: 1011, reason: 'Live delivery failed' });
+  expect(alexSock.events).toEqual([
+    expect.objectContaining({ type: 'room:snapshot' }),
+    { type: 'room:presence', online: [alexView.viewer.id] },
+  ]);
+
+  // CLOSING reciprocation in webSocketClose broadcasts updated presence on open Room
+  const samClosing = liveSocket('voter', samView.viewer.id);
+  samClosing.serializeAttachment({ hash: 'voter', participantId: samView.viewer.id, lastSeenAt: clock() });
+  samClosing.readyState = WebSocket.CLOSING;
+  sockets.push(samClosing);
+  alexSock.events.length = 0;
+  room.webSocketClose(samClosing as unknown as WebSocket);
+  expect(samClosing.closeCalls).toBe(1);
+  expect(alexSock.events).toEqual([{ type: 'room:presence', online: [alexView.viewer.id] }]);
+
+  // Ping after Room expires pushes terminal room:missing and closes open sockets with 1000
+  clock.mockReturnValue(start + 91 * day);
+  alexSock.events.length = 0;
+  room.webSocketMessage(alexSock as unknown as WebSocket, 'ping');
+  expect(alexSock.events).toEqual([{ type: 'room:missing' }, undefined]);
+  expect(alexSock.closedWith).toEqual({ code: 1000, reason: 'Room unavailable' });
+});
+
+test('PointingPokerRoom suppresses presence broadcasts on webSocketClose after Room is closed', async () => {
+  await room.mutate(id, 'voter', { type: 'join', displayName: 'Sam' });
+  const alexView = await room.read(id, 'facilitator');
+  const samView = await room.read(id, 'voter');
+  if (!alexView || alexView.closed || !alexView.viewer || !samView || samView.closed || !samView.viewer) {
+    throw new Error('Expected open Room Participants');
+  }
+  const alexSock = liveSocket('facilitator', alexView.viewer.id);
+  const samSock = liveSocket('voter', samView.viewer.id);
+  sockets.push(alexSock, samSock);
+
+  await room.mutate(id, 'facilitator', { type: 'close-room' });
+  // Simulate a lingering open peer and a closing peer on a closed Room: no room:presence frame may be emitted.
+  const lingering = liveSocket('facilitator', alexView.viewer.id);
+  sockets.push(lingering);
+  samSock.readyState = WebSocket.CLOSING;
+  room.webSocketClose(samSock as unknown as WebSocket);
+  expect(samSock.closeCalls).toBe(2); // once on close-room, once reciprocating CLOSING
+  expect(lingering.events).toEqual([]);
 });
