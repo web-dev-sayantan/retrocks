@@ -15,8 +15,10 @@ import {
 } from 'solid-js';
 
 import { boardLivePath, type BoardLiveMessage } from './board-live-protocol';
+import { subscribeFacilitatorLinkClaim, takeFacilitatorLinkToken } from './facilitator-link';
 import { createLiveStream, type LiveTransport } from './live-stream';
-import { parseBoardLiveMessage } from './wire-schemas';
+import type { FacilitatorClaimInput, FacilitatorClaimResponse } from './sharing-actions';
+import { parseBoardLiveMessage, parseBoardView } from './wire-schemas';
 import {
   canAddColumn,
   canChangeVote,
@@ -107,6 +109,11 @@ export interface BoardController extends BoardMutations {
   errorMessage(): string | null;
   reportError(message: string): void;
   clearError(): void;
+  /** True while a `#f=` Co-Facilitator Link claim is in flight. */
+  claimPending(): boolean;
+  /** Error message from the most recent failed Co-Facilitator Link claim, or `null`. */
+  claimError(): string | null;
+  clearClaimError(): void;
   isChangingPrivateMode(): boolean;
   isSavingBoardTitle(): boolean;
   isSavingColumn(): boolean;
@@ -126,15 +133,40 @@ export type BoardCommandDispatcher = (
   command: BoardCommand,
 ) => Promise<BoardMutationResponse>;
 
+export type BoardFacilitatorClaimer = (
+  input: FacilitatorClaimInput,
+) => Promise<FacilitatorClaimResponse>;
+
+export interface BoardFragmentAdapter {
+  /** Reads and scrubs any `#f=<token>` fragment for `boardPath` from the current URL. */
+  takeToken(boardPath: string): string | null;
+  /** Subscribes to subsequent URL hash changes and returns an unsubscribe callback. */
+  onHashChange(listener: () => void): () => void;
+}
+
+const browserBoardFragmentAdapter: BoardFragmentAdapter = {
+  takeToken: (boardPath) =>
+    typeof window === 'undefined' ? null : takeFacilitatorLinkToken(boardPath),
+  onHashChange: (listener) => {
+    if (typeof window === 'undefined') return () => {};
+    window.addEventListener('hashchange', listener);
+    return () => window.removeEventListener('hashchange', listener);
+  },
+};
+
 export interface BoardControllerOptions {
+  /** Route-provided Board ID (used for `#f=` fragment scrubbing/claiming even when `board()` is `null`). */
+  boardId?: string;
   /** Route-provided Board snapshot; the controller reconciles it into the store on change. */
   board: () => BoardViewDTO | null;
   /** Single command-dispatch seam; production passes `dispatchBoardCommand`, tests inject a fake. */
   dispatchCommand: BoardCommandDispatcher;
+  /** Co-Facilitator Link claim seam; production passes `claimFacilitatorRole`, tests inject a fake. */
+  claimFacilitatorLink?: BoardFacilitatorClaimer;
+  /** Injectable URL fragment adapter for `#f=` reading/scrubbing; defaults to browser `window.location`/`history`. */
+  fragment?: BoardFragmentAdapter;
   /** Injectable live transport; defaults to SSE/WebSocket. */
   liveTransport?: LiveTransport;
-  /** Bumped when the viewer's session role changes (e.g. Co-Facilitator Link claim) to reconnect live updates. */
-  liveReconnectKey?: () => number;
   /** Private Mode reveal theater hook; invoked synchronously before the response applies. */
   onDramaticReveal?: () => void;
 }
@@ -525,13 +557,16 @@ const GENERIC_FAILURE = 'Could not update the Board. Try again.';
  */
 export function createBoardController(options: BoardControllerOptions): BoardController {
   const { dispatchCommand } = options;
+  const initialBoard = untrack(() => cloneBoardView(options.board()));
+  const boardId = options.boardId ?? initialBoard?.id ?? '';
+  const fragment = options.fragment ?? browserBoardFragmentAdapter;
 
   // Authoritative server state: the route snapshot, live events, and mutation
   // responses patch `serverStore` incrementally. `createOptimisticStore` chains
   // directly to `serverStore` so optimistic writes overlay it without cloning
   // the entire Board on every server revision.
   const [serverStore, setServerStore] = createStore<{ board: BoardViewDTO | null }>({
-    board: untrack(() => cloneBoardView(options.board())),
+    board: initialBoard,
   });
   const [store, setStore] = createOptimisticStore<{ board: BoardViewDTO | null }>(
     () => serverStore,
@@ -551,6 +586,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   let serverTimeOffsetMs = 0;
   let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
+  const [claimPending, setClaimPending] = createSignal(false);
+  const [claimError, setClaimError] = createSignal<string | null>(null);
   // Process affordances: optimistic flags show immediately and clear when the
   // action settles, without needing isPending on an optimistically-writable slot.
   const [savingVotes, setSavingVotes] = createOptimistic(false);
@@ -569,7 +606,8 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
           if (nextBoard.version < current.version) return;
           if (
             nextBoard.version === current.version &&
-            nextBoard.isFacilitator === current.isFacilitator
+            (nextBoard.isFacilitator === current.isFacilitator ||
+              (current.isFacilitator && !nextBoard.isFacilitator))
           ) {
             return;
           }
@@ -577,6 +615,35 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
       });
     });
+  }
+
+  function applyClaimedBoard(claimedBoard: BoardViewDTO): void {
+    if (claimedBoard.id !== boardId) return;
+    setClaimError(null);
+    const hadLiveBoard = untrack(() => serverStore.board?.id === boardId);
+    untrack(() => {
+      setServerStore((draft) => {
+        const current = draft.board;
+        if (current?.id === claimedBoard.id) {
+          if (claimedBoard.version < current.version) {
+            if (claimedBoard.isFacilitator && !current.isFacilitator) {
+              current.isFacilitator = true;
+            }
+            return;
+          }
+          if (
+            claimedBoard.version === current.version &&
+            claimedBoard.isFacilitator === current.isFacilitator
+          ) {
+            return;
+          }
+        }
+        reconcile({ board: cloneBoardView(claimedBoard) }, 'id')(draft);
+      });
+    });
+    if (hadLiveBoard) {
+      reconnectLive?.();
+    }
   }
 
   function syncServerClock(boardId: string, serverNow: number): void {
@@ -627,14 +694,33 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     };
   });
 
-  createEffect(
-    () => options.liveReconnectKey?.() ?? 0,
-    (key, previous) => {
-      if (previous !== undefined && key !== previous) {
-        reconnectLive?.();
-      }
-    },
-  );
+  onSettled(() => {
+    if (!boardId || typeof window === 'undefined') return;
+    const claimLink = options.claimFacilitatorLink;
+    return subscribeFacilitatorLinkClaim({
+      path: `/b/${boardId}`,
+      takeToken: fragment.takeToken,
+      onHashChange: fragment.onHashChange,
+      shouldClaim: () => Boolean(claimLink),
+      claim: (token) => (
+        claimLink
+          ? claimLink({ boardId, token })
+          : Promise.resolve({ ok: false as const, code: 'FORBIDDEN' as const, message: '' })
+      ),
+      onStart: () => setClaimError(null),
+      onPendingChange: setClaimPending,
+      onSuccess: (result) => {
+        if (result.ok) {
+          applyClaimedBoard(parseBoardView(result.board));
+        } else {
+          setClaimError(result.message);
+        }
+      },
+      onError: () => {
+        setClaimError('Could not claim Facilitator access. Reopen the link to try again.');
+      },
+    });
+  });
 
   // Keep relative timestamps fresh on the client
   onSettled(() => {
@@ -1222,6 +1308,9 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     errorMessage,
     reportError: (message) => setErrorMessage(message),
     clearError: () => setErrorMessage(null),
+    claimPending,
+    claimError,
+    clearClaimError: () => setClaimError(null),
     isChangingPrivateMode,
     isSavingBoardTitle,
     isSavingColumn,

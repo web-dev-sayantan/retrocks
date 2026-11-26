@@ -8,6 +8,8 @@ import {
   createBoardController,
   type BoardCommandDispatcher,
   type BoardController,
+  type BoardFacilitatorClaimer,
+  type BoardFragmentAdapter,
 } from './board-controller';
 import {
   createFakeBoardDispatcher,
@@ -15,6 +17,7 @@ import {
   makeCard,
 } from './board-fixtures';
 import type { BoardMutationResponse, BoardViewDTO } from './board-types';
+import type { FacilitatorClaimInput, FacilitatorClaimResponse } from './sharing-actions';
 
 // The controller seam under test: one reactive controller owning the Board store,
 // live stream application, server clock, and mutation handlers. No workspace
@@ -56,36 +59,91 @@ function createFakeLiveTransport(): {
   return { transport, connections };
 }
 
+interface FakeFragmentHarness {
+  adapter: BoardFragmentAdapter;
+  takenPaths: string[];
+  triggerHashChange(token?: string | null): void;
+  listenerCount(): number;
+}
+
+function createFakeFragmentAdapter(initialToken: string | null = null): FakeFragmentHarness {
+  let currentToken = initialToken;
+  const takenPaths: string[] = [];
+  const listeners = new Set<() => void>();
+  return {
+    takenPaths,
+    triggerHashChange(token) {
+      if (token !== undefined) currentToken = token;
+      for (const listener of listeners) listener();
+    },
+    listenerCount: () => listeners.size,
+    adapter: {
+      takeToken(boardPath) {
+        takenPaths.push(boardPath);
+        const token = currentToken;
+        currentToken = null;
+        return token;
+      },
+      onHashChange(listener) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+}
+
 interface SessionHarness {
   controller: BoardController;
   setBoardProp: (board: BoardViewDTO | null) => void;
-  setLiveReconnectKey: (key: number) => void;
   connections: FakeConnection[];
   dispatchCommand: ReturnType<typeof vi.fn<BoardCommandDispatcher>>;
+  claimLinkSpy: ReturnType<typeof vi.fn<BoardFacilitatorClaimer>>;
+  fragment: FakeFragmentHarness;
   dispose: () => void;
 }
 
 const mounted: SessionHarness[] = [];
 
-function mountSession(initialBoard: BoardViewDTO | null): SessionHarness {
+function mountSession(
+  initialBoard: BoardViewDTO | null,
+  options: {
+    boardId?: string;
+    initialFragmentToken?: string | null;
+    useBrowserFragment?: boolean;
+    claimFacilitatorLink?: BoardFacilitatorClaimer;
+  } = {},
+): SessionHarness {
   const { transport, connections } = createFakeLiveTransport();
   const { dispatchCommand } = createFakeBoardDispatcher(initialBoard ?? makeBoardView());
+  const fragment = createFakeFragmentAdapter(options.initialFragmentToken ?? null);
+  const claimLinkSpy = vi.fn<BoardFacilitatorClaimer>(
+    options.claimFacilitatorLink
+      ?? (async () => ({
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'This Co-Facilitator Link is invalid or has expired.',
+      })),
+  );
   let harness!: SessionHarness;
   const dispose = createRoot((disposeRoot) => {
     const [boardProp, setBoardProp] = createSignal<BoardViewDTO | null>(initialBoard);
-    const [liveReconnectKey, setLiveReconnectKey] = createSignal(0);
     const controller = createBoardController({
+      boardId: options.boardId ?? initialBoard?.id,
       board: boardProp,
       dispatchCommand,
+      claimFacilitatorLink: claimLinkSpy,
+      fragment: options.useBrowserFragment ? undefined : fragment.adapter,
       liveTransport: transport,
-      liveReconnectKey,
     });
     harness = {
       controller,
       setBoardProp,
-      setLiveReconnectKey,
       connections,
       dispatchCommand,
+      claimLinkSpy,
+      fragment,
       dispose: disposeRoot,
     };
     return disposeRoot;
@@ -99,6 +157,8 @@ afterEach(() => {
   while (mounted.length > 0) {
     mounted.pop()?.dispose();
   }
+  window.history.replaceState(null, '', '/');
+  vi.restoreAllMocks();
 });
 
 describe('createBoardController', () => {
@@ -977,14 +1037,18 @@ describe('createBoardController', () => {
     });
   });
 
-  it('applies in-place Facilitator claims and reconnects the live stream without diagnostics', async () => {
+  it('claims #f= Co-Facilitator Links in place, reconnects live updates (even when live advanced version), and keeps Solid 2.0 diagnostics clean', async () => {
     const { artifact } = await captureArtifact(
       async () => {
         const board = makeBoardView({ version: 2, isFacilitator: false });
-        const { controller, setBoardProp, setLiveReconnectKey, connections } = mountSession(board);
+        const pendingFirstClaim = Promise.withResolvers<FacilitatorClaimResponse>();
+        const { controller, setBoardProp, connections, claimLinkSpy, fragment } = mountSession(board);
 
         expect(connections).toHaveLength(1);
         expect(controller.board()?.isFacilitator).toBe(false);
+        expect(controller.claimPending()).toBe(false);
+        expect(controller.claimError()).toBeNull();
+        expect(fragment.takenPaths).toEqual([`/b/${board.id}`]);
 
         connections[0].emit({
           type: 'board:snapshot',
@@ -995,42 +1059,214 @@ describe('createBoardController', () => {
         flush();
         expect(controller.isLive()).toBe(true);
 
-        // Claim succeeds at the same Board version: Facilitator state applies in place
-        // and the live stream reconnects so subsequent events use the new Facilitator cookie.
+        // Claim succeeds at the same Board version: claimPending toggles, Facilitator
+        // state applies in place, and the live stream reconnects internally.
+        claimLinkSpy.mockReturnValueOnce(pendingFirstClaim.promise);
+        fragment.triggerHashChange('A'.repeat(43));
+        flush();
+        expect(claimLinkSpy).toHaveBeenCalledWith({ boardId: board.id, token: 'A'.repeat(43) });
+        expect(controller.claimPending()).toBe(true);
+
         const claimed = { ...board, isFacilitator: true };
-        setBoardProp(claimed);
-        setLiveReconnectKey(1);
+        pendingFirstClaim.resolve({ ok: true, board: claimed });
+        await Promise.resolve();
+        await Promise.resolve();
         flush();
 
+        expect(controller.claimPending()).toBe(false);
+        expect(controller.claimError()).toBeNull();
         expect(controller.board()?.isFacilitator).toBe(true);
         expect(connections[0].closed).toBe(true);
         expect(connections).toHaveLength(2);
+
+        // Equal-version Participant route prop must never downgrade Facilitator back to false.
+        setBoardProp({ ...board, isFacilitator: false });
+        flush();
+        expect(controller.board()?.isFacilitator).toBe(true);
 
         // Reconnected stream delivers a Facilitator-projected snapshot and restores live status.
         connections[1].emit({
           type: 'board:snapshot',
           version: 3,
-          board: { ...claimed, version: 3 },
+          board: { ...claimed, version: 3, title: 'Advanced Live Title' },
           serverNow: 2_000,
         });
         flush();
         expect(controller.isLive()).toBe(true);
         expect(controller.board()?.version).toBe(3);
+        expect(controller.board()?.title).toBe('Advanced Live Title');
         expect(controller.board()?.isFacilitator).toBe(true);
 
-        // Even if a live event advanced the client past a claimed snapshot's version,
-        // bumping liveReconnectKey still reconnects without regressing content.
-        setBoardProp({ ...claimed, version: 2, title: 'Older snapshot' });
-        setLiveReconnectKey(2);
+        // Even if live updates already advanced past a claimed snapshot's version,
+        // the claim still reconnects internally without regressing version or content.
+        claimLinkSpy.mockResolvedValueOnce({
+          ok: true,
+          board: { ...claimed, version: 2, title: 'Older snapshot' },
+        });
+        fragment.triggerHashChange('B'.repeat(43));
+        await Promise.resolve();
+        await Promise.resolve();
         flush();
+
         expect(controller.board()?.version).toBe(3);
-        expect(controller.board()?.title).toBe(board.title);
+        expect(controller.board()?.title).toBe('Advanced Live Title');
         expect(connections[1].closed).toBe(true);
         expect(connections).toHaveLength(3);
       },
       { scenario: 'board-controller-facilitator-claim-reconnect' },
     );
     expectNoDiagnostics(artifact);
+  });
+
+  it('scrubs #f= from browser history before claiming on mount, preserves query params, and upgrades after live version advance', async () => {
+    const board = makeBoardView({ id: 'board_browser_claim_01', version: 2, isFacilitator: false });
+    const token = 'C'.repeat(43);
+    window.history.replaceState(null, '', `/b/${board.id}?view=all#f=${token}`);
+    const pendingClaim = Promise.withResolvers<FacilitatorClaimResponse>();
+    const claim = vi.fn(async (input: FacilitatorClaimInput): Promise<FacilitatorClaimResponse> => {
+      // ADR-0001: URL fragment must be scrubbed before the server exchange starts.
+      expect(window.location.hash).toBe('');
+      expect(window.location.pathname + window.location.search).toBe(`/b/${board.id}?view=all`);
+      expect(input).toEqual({ boardId: board.id, token });
+      return pendingClaim.promise;
+    });
+
+    const { controller, connections } = mountSession(board, {
+      useBrowserFragment: true,
+      claimFacilitatorLink: claim,
+    });
+
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(window.location.hash).toBe('');
+    expect(controller.claimPending()).toBe(true);
+
+    // Live mutation advances the Board to version 3 while the initial claim is in flight.
+    connections[0].emit({
+      type: 'board:mutation',
+      version: 3,
+      events: [{ type: 'board:updated', version: 3, patch: { title: 'Version 3 Live' } }],
+    });
+    flush();
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.board()?.isFacilitator).toBe(false);
+
+    // Claim resolves with version 2 Facilitator snapshot: must keep version 3 content,
+    // immediately upgrade isFacilitator, and reconnect the live stream.
+    pendingClaim.resolve({
+      ok: true,
+      board: { ...board, version: 2, title: 'Version 2 Claim', isFacilitator: true },
+    });
+    await vi.waitFor(() => {
+      flush();
+      expect(controller.claimPending()).toBe(false);
+    });
+
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.board()?.title).toBe('Version 3 Live');
+    expect(controller.board()?.isFacilitator).toBe(true);
+    expect(connections[0].closed).toBe(true);
+    expect(connections).toHaveLength(2);
+  });
+
+  it('surfaces server and network claim errors, recovers on hashchange, ignores superseded races, and stops claiming after dispose', async () => {
+    const board = makeBoardView({ id: 'board_claim_errors_01', version: 2, isFacilitator: false });
+    const { controller, connections, claimLinkSpy, fragment, dispose } = mountSession(board);
+
+    // 1. Server rejection surfaces message without reconnecting live stream.
+    claimLinkSpy.mockResolvedValueOnce({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'This Co-Facilitator Link is invalid or has expired.',
+    });
+    fragment.triggerHashChange('bad-token');
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+
+    expect(controller.claimError()).toBe('This Co-Facilitator Link is invalid or has expired.');
+    expect(controller.claimPending()).toBe(false);
+    expect(controller.board()?.isFacilitator).toBe(false);
+    expect(connections).toHaveLength(1);
+
+    // Clear helper clears claimError cleanly.
+    controller.clearClaimError();
+    flush();
+    expect(controller.claimError()).toBeNull();
+
+    // 2. Network rejection surfaces fallback error copy.
+    claimLinkSpy.mockRejectedValueOnce(new Error('network down'));
+    fragment.triggerHashChange('offline-token');
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(controller.claimError()).toBe(
+      'Could not claim Facilitator access. Reopen the link to try again.',
+    );
+    expect(controller.claimPending()).toBe(false);
+
+    // 3. Superseded claim race: newer succeeds and clears prior error; older late result is ignored.
+    const older = Promise.withResolvers<FacilitatorClaimResponse>();
+    const newer = Promise.withResolvers<FacilitatorClaimResponse>();
+    claimLinkSpy.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+    fragment.triggerHashChange('old-token');
+    flush();
+    expect(controller.claimError()).toBeNull();
+    expect(controller.claimPending()).toBe(true);
+
+    fragment.triggerHashChange('new-token');
+    flush();
+    expect(claimLinkSpy).toHaveBeenCalledTimes(4);
+
+    newer.resolve({ ok: true, board: { ...board, version: 3, isFacilitator: true } });
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(controller.claimPending()).toBe(false);
+    expect(controller.claimError()).toBeNull();
+    expect(controller.board()?.version).toBe(3);
+    expect(controller.board()?.isFacilitator).toBe(true);
+    expect(connections).toHaveLength(2);
+
+    older.resolve({ ok: false, code: 'FORBIDDEN', message: 'Stale error must be ignored' });
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(controller.claimError()).toBeNull();
+    expect(connections).toHaveLength(2);
+
+    // 4. After dispose, hashchange listeners are removed and subsequent fragments are not claimed.
+    dispose();
+    expect(fragment.listenerCount()).toBe(0);
+    fragment.triggerHashChange('after-dispose');
+    expect(claimLinkSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it('scrubs #f= and exposes claimError on a missing or unavailable Board', async () => {
+    const missingBoardId = 'board_missing_claim_01';
+    const token = 'D'.repeat(43);
+    window.history.replaceState(null, '', `/b/${missingBoardId}#f=${token}`);
+    const claim = vi.fn(async (): Promise<FacilitatorClaimResponse> => ({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'This Co-Facilitator Link is invalid or has expired.',
+    }));
+
+    const { controller, connections } = mountSession(null, {
+      boardId: missingBoardId,
+      useBrowserFragment: true,
+      claimFacilitatorLink: claim,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+
+    expect(window.location.hash).toBe('');
+    expect(claim).toHaveBeenCalledWith({ boardId: missingBoardId, token });
+    expect(controller.board()).toBeNull();
+    expect(connections).toHaveLength(0);
+    expect(controller.claimError()).toBe('This Co-Facilitator Link is invalid or has expired.');
+    expect(controller.claimPending()).toBe(false);
   });
 
   it('keeps live updates, snapshot reconciliation, and mutations free of Solid 2.0 diagnostics', async () => {

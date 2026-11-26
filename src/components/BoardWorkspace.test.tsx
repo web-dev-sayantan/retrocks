@@ -11,7 +11,9 @@ import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import { createFakeBoardDispatcher, makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { BoardMutationResponse, BoardViewDTO, CardGroupDTO } from '../lib/board-types';
 import { logPrivacyColophon } from '../lib/easter-eggs';
+import type { LiveTransport } from '../lib/live-stream';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
+import type { FacilitatorClaimInput, FacilitatorClaimResponse } from '../lib/sharing-actions';
 import BoardConfirmDialog from './BoardConfirmDialog';
 import BoardWorkspace from './BoardWorkspace';
 
@@ -61,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   toast.dismiss();
+  window.history.replaceState(null, '', '/');
 });
 
 function openBoardSettings(view: Pick<ReturnType<typeof render>, 'getByRole'>) {
@@ -5896,5 +5899,162 @@ describe('<BoardWorkspace />', () => {
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, { type: 'board:rename', title: 'Q2 Retro' });
     expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
     expect(view.getByRole('heading', { level: 1, name: 'Q2 Retro' })).toBeInTheDocument();
+  });
+
+  it('claims a Co-Facilitator Link in place via hashchange, activates Facilitator controls, preserves local filter state, and reconnects live updates without diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      async () => {
+        const boardId = 'board_0123456789abcdef';
+        const boardPath = `/b/${boardId}`;
+        const validToken = 'A'.repeat(43);
+        const participantBoard = makeBoardView({
+          id: boardId,
+          version: 2,
+          isFacilitator: false,
+        });
+        const facilitatorBoard: BoardViewDTO = {
+          ...participantBoard,
+          isFacilitator: true,
+        };
+        const { dispatchCommand } = createFakeBoardDispatcher(facilitatorBoard);
+        const connections: Array<{ path: string; closed: boolean }> = [];
+        const transport: LiveTransport = {
+          connect(path) {
+            const connection = { path, closed: false };
+            connections.push(connection);
+            return {
+              ping() {},
+              close() {
+                connection.closed = true;
+              },
+            };
+          },
+        };
+        const claim = vi.fn(async (input: FacilitatorClaimInput): Promise<FacilitatorClaimResponse> => {
+          expect(window.location.hash).toBe('');
+          expect(input).toEqual({ boardId, token: validToken });
+          return { ok: true, board: facilitatorBoard };
+        });
+
+        window.history.replaceState(null, '', boardPath);
+
+        const view = render(() => (
+          <BoardWorkspace
+            board={participantBoard}
+            boardId={boardId}
+            dispatchCommand={dispatchCommand}
+            claimFacilitatorLink={claim}
+            liveTransport={transport}
+          />
+        ));
+
+        try {
+          flush();
+          expect(connections).toHaveLength(1);
+          expect(view.queryByRole('button', { name: /Private Mode/i })).not.toBeInTheDocument();
+
+          // Local search filter state must survive the in-place Facilitator upgrade.
+          const searchInput = view.getByPlaceholderText('Search cards…') as HTMLInputElement;
+          fireEvent.input(searchInput, { target: { value: 'deploy' } });
+          flush();
+          expect(searchInput.value).toBe('deploy');
+
+          // Trigger an in-page Co-Facilitator Link claim via hashchange.
+          window.history.replaceState(null, '', `${boardPath}#f=${validToken}`);
+          window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+          await waitFor(() =>
+            expect(view.getByRole('button', { name: /Private Mode/i })).toBeInTheDocument(),
+          );
+          expect(searchInput.value).toBe('deploy');
+          expect(window.location.hash).toBe('');
+          expect(view.queryByRole('alert')).not.toBeInTheDocument();
+          expect(connections[0].closed).toBe(true);
+          expect(connections).toHaveLength(2);
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'board-workspace-facilitator-link-claim-in-place' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('scrubs an invalid Co-Facilitator Link on an active Board, shows a single dismissible alert, and clears it on valid hashchange', async () => {
+    const boardId = 'board_active_claim_err';
+    const boardPath = `/b/${boardId}`;
+    const validToken = 'B'.repeat(43);
+    const participantBoard = makeBoardView({
+      id: boardId,
+      version: 2,
+      isFacilitator: false,
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(participantBoard);
+    const claim = vi
+      .fn<(input: FacilitatorClaimInput) => Promise<FacilitatorClaimResponse>>()
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'This Co-Facilitator Link is invalid or has expired.',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        board: { ...participantBoard, isFacilitator: true },
+      });
+
+    window.history.replaceState(null, '', `${boardPath}#f=rotated-or-invalid`);
+
+    const view = render(() => (
+      <BoardWorkspace
+        board={participantBoard}
+        boardId={boardId}
+        dispatchCommand={dispatchCommand}
+        claimFacilitatorLink={claim}
+      />
+    ));
+
+    const alert = await view.findByRole('alert');
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(alert).toHaveTextContent('This Co-Facilitator Link is invalid or has expired.');
+    expect(window.location.hash).toBe('');
+
+    // Opening a valid Co-Facilitator Link via hashchange clears the error and unlocks Facilitator controls.
+    window.history.replaceState(null, '', `${boardPath}#f=${validToken}`);
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: /Private Mode/i })).toBeInTheDocument(),
+    );
+    expect(view.queryByRole('alert')).not.toBeInTheDocument();
+    expect(window.location.hash).toBe('');
+  });
+
+  it('scrubs an invalid Co-Facilitator Link and renders a single dismissible alert on a missing or unavailable Board', async () => {
+    const missingId = 'board_missing_01234567';
+    window.history.replaceState(null, '', `/b/${missingId}#f=expired-token`);
+    const claim = vi.fn(async (): Promise<FacilitatorClaimResponse> => ({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'This Co-Facilitator Link is invalid or has expired.',
+    }));
+
+    const view = render(() => (
+      <BoardWorkspace
+        board={null}
+        boardId={missingId}
+        homeHref="/"
+        claimFacilitatorLink={claim}
+      />
+    ));
+
+    expect(view.getByRole('heading', { name: 'Board not found or expired' })).toBeInTheDocument();
+    const alert = await view.findByRole('alert');
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(alert).toHaveTextContent('This Co-Facilitator Link is invalid or has expired.');
+    expect(window.location.hash).toBe('');
+
+    fireEvent.click(view.getByRole('button', { name: 'Dismiss error' }));
+    flush();
+    expect(view.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
