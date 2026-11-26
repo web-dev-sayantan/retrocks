@@ -58,9 +58,9 @@ describe('Room name display surfaces', () => {
     window.history.replaceState(null, '', '/pointing-poker');
     render(() => <App />);
 
-    const form = await screen.findByRole('form', { name: 'Pointing Poker' });
+    const form = await screen.findByRole('form', { name: 'Create a room' });
     const displayNameInput = within(form).getByRole('textbox', { name: 'Display Name' });
-    const roomNameInput = within(form).getByRole('textbox', { name: 'Room name' });
+    const roomNameInput = within(form).getByRole('textbox', { name: /Room name/ });
     expect(roomNameInput).toHaveAttribute('name', 'roomName');
     expect(roomNameInput).toHaveAttribute('placeholder', 'Poker Room');
     expect(roomNameInput).not.toBeRequired();

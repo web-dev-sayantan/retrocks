@@ -44,7 +44,7 @@ export default function PokerSnapshot(props: PokerSnapshotProps) {
   return (
     <div
       aria-hidden={props.decorative === false ? undefined : 'true'}
-      class="home-preview-frame poker-snapshot flex min-w-0 flex-col overflow-clip rounded-lg border border-border bg-canvas select-none"
+      class="home-preview-frame poker-snapshot flex h-full min-w-0 flex-col overflow-clip rounded-lg border border-border bg-canvas select-none"
     >
       {/* Top room bar */}
       <div class="poker-snap-bar">

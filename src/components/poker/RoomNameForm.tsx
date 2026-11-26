@@ -32,21 +32,18 @@ export default function RoomNameForm(props: ParentProps<{
         ref={heading}
         id={headingId}
         tabindex={props.focusHeading ? -1 : undefined}
-        class="poker-entry-title board-focus-ring rounded-sm"
+        class="board-focus-ring text-[2rem] leading-[1.12] font-semibold tracking-[-0.03em] text-text sm:text-[2.25rem]"
       >
         {props.heading}
       </h1>
       <Show when={props.description}>
-        <p class="mt-2.5 text-sm leading-relaxed text-text-muted [text-wrap:pretty]">{props.description}</p>
+        <p class="mt-2 max-w-[42ch] text-[15px] leading-relaxed text-text-muted [text-wrap:pretty]">{props.description}</p>
       </Show>
-      <form action={props.action} aria-labelledby={headingId} class="poker-form mt-7 grid gap-5" method="post">
-        <Field name="displayName" class="grid gap-1.5">
-          <FieldLabel class="text-sm font-semibold">Display Name</FieldLabel>
-          <FieldDescription class="text-xs leading-relaxed text-text-muted">
-            Others in this Room can see your Display Name. Use your name or an alias.
-          </FieldDescription>
+      <form action={props.action} aria-labelledby={headingId} class="mt-7 grid gap-5" method="post">
+        <Field name="displayName" class="grid gap-2">
+          <FieldLabel class="text-sm font-medium text-text">Display Name</FieldLabel>
           <Input
-            class="poker-input board-focus-ring mt-1"
+            class="board-input board-focus-ring"
             autocomplete="nickname"
             enterkeyhint="go"
             required
@@ -54,16 +51,25 @@ export default function RoomNameForm(props: ParentProps<{
             pattern={'.*\\S.*'}
             onValueChange={(value) => props.onDisplayNameChange?.(value)}
           />
+          <FieldDescription class="text-xs leading-relaxed text-text-muted">
+            Others in this Room can see your Display Name. Use your name or an alias.
+          </FieldDescription>
         </Field>
         {props.children}
+        <Show when={props.error}>
+          {(error) => (
+            <p role="alert" class="disclosure-reveal rounded-md border border-col-rose bg-col-rose-tint px-3.5 py-2.5 text-sm text-text">
+              {error()}
+            </p>
+          )}
+        </Show>
         <Button
           type="submit"
           disabled={props.pending}
-          class="poker-primary spring-press board-focus-ring justify-self-start !rounded-full !px-5 disabled:opacity-60"
+          class="spring-press board-focus-ring inline-flex min-h-11 w-full cursor-pointer items-center justify-center rounded-md bg-accent px-5 py-2.5 text-base font-semibold text-accent-contrast hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {props.submitLabel}
         </Button>
-        <p aria-live="polite" class="poker-error-text text-sm font-medium [&:empty]:hidden">{props.error}</p>
       </form>
     </div>
   );
@@ -82,10 +88,10 @@ export default function RoomNameForm(props: ParentProps<{
     >
       {(preview) => (
         <main class="poker-entry-studio mx-auto max-w-xl px-4 pt-6 pb-12 sm:px-6 sm:pt-10 sm:pb-16 lg:max-w-6xl lg:pt-12 lg:pb-20">
-          <div class="grid min-w-0 grid-cols-1 gap-y-8 lg:grid-cols-[minmax(0,26.5rem)_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
+          <div class="grid min-w-0 grid-cols-1 gap-y-8 lg:grid-cols-[minmax(0,26.5rem)_minmax(0,1fr)] lg:items-stretch lg:gap-x-12 xl:gap-x-16">
             <div class="min-w-0 lg:col-start-1">{formColumn()}</div>
-            <div class="min-w-0 space-y-6 lg:sticky lg:top-20 lg:col-start-2 lg:row-start-1">
-              {preview()}
+            <div class="flex min-w-0 flex-col gap-6 lg:sticky lg:top-20 lg:col-start-2 lg:row-start-1">
+              <div class="min-h-0 lg:flex-1">{preview()}</div>
               {props.secondary}
             </div>
           </div>

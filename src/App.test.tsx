@@ -46,7 +46,7 @@ it('navigates between Home and both tool setup pages from the header', async () 
     expect(poker).not.toHaveAttribute('aria-current', 'page');
 
     fireEvent.click(poker);
-    expect(await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 }))
+    expect(await screen.findByRole('heading', { name: 'Create a room', level: 1 }))
       .toBeInTheDocument();
     expect(poker).toHaveAttribute('aria-current', 'page');
     expect(home).not.toHaveAttribute('aria-current', 'page');
@@ -62,7 +62,7 @@ it('navigates between Home and both tool setup pages from the header', async () 
 
 it.each([
   ['/retro/?source=link', 'Create a board', 'Retrospectives'],
-  ['/pointing-poker/?source=link', 'Pointing Poker', 'Pointing Poker'],
+  ['/pointing-poker/?source=link', 'Create a room', 'Pointing Poker'],
 ])('marks the active destination when opening %s directly', async (path, heading, activeTool) => {
   window.history.replaceState(null, '', path);
   render(() => <App />);
@@ -119,7 +119,7 @@ it('reopens a created Room from Home and Pointing Poker setup', async () => {
   const tools = within(screen.getByRole('navigation', { name: 'Retrocks tools' }));
   const poker = tools.getByRole('link', { name: 'Pointing Poker' });
   fireEvent.click(poker);
-  const setup = await screen.findByRole('form', { name: 'Pointing Poker' });
+  const setup = await screen.findByRole('form', { name: 'Create a room' });
   expect(poker).toHaveAttribute('aria-current', 'page');
 
   fireEvent.input(within(setup).getByRole('textbox', { name: 'Display Name' }), {
@@ -325,7 +325,7 @@ it('opens Pointing Poker directly at /pointing-poker', async () => {
   window.history.replaceState(null, '', '/pointing-poker');
   render(() => <App />);
 
-  expect(await screen.findByRole('heading', { name: 'Pointing Poker', level: 1 }))
+  expect(await screen.findByRole('heading', { name: 'Create a room', level: 1 }))
     .toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Display Name' })).toBeInTheDocument();
 });

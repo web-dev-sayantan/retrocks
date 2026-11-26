@@ -20,16 +20,16 @@ export default function PointingPoker() {
 
   return (
     <>
-      <Title>Pointing Poker — Retrocks</Title>
+      <Title>Create a Room — Retrocks</Title>
       <RoomNameForm
-        heading="Pointing Poker"
-        description="Estimate Stories together in a live Room. Share the link to invite your team. No account required."
+        heading="Create a room"
+        description="Name your Room, share the link, and estimate Stories together."
         submitLabel="Create Room"
         action={createPokerRoom}
         onDisplayNameChange={setDisplayName}
         secondary={<RecentPokerRoomsList />}
         preview={
-          <aside aria-label="Room preview">
+          <aside aria-label="Room preview" class="h-full">
             <PokerSnapshot
               decorative={false}
               roomName={roomName()}
@@ -51,17 +51,19 @@ export default function PointingPoker() {
         }
         error={latest()?.result?.message ?? (latest()?.error ? 'Could not create the Room. Try again.' : undefined)}
       >
-        <Field name="roomName" class="grid gap-1.5">
-          <FieldLabel class="text-sm font-semibold">Room name</FieldLabel>
-          <FieldDescription class="text-xs leading-relaxed text-text-muted">
-            Optional. Defaults to {POKER_DEFAULT_ROOM_NAME}.
-          </FieldDescription>
+        <Field name="roomName" class="grid gap-2">
+          <FieldLabel class="text-sm font-medium text-text">
+            Room name <span class="font-normal text-text-muted">(optional)</span>
+          </FieldLabel>
           <Input
-            class="poker-input board-focus-ring mt-1"
+            class="board-input board-focus-ring"
             placeholder={POKER_DEFAULT_ROOM_NAME}
             maxlength={POKER_ROOM_NAME_LIMIT}
             onValueChange={setRoomName}
           />
+          <FieldDescription class="text-xs leading-relaxed text-text-muted">
+            Defaults to {POKER_DEFAULT_ROOM_NAME}.
+          </FieldDescription>
         </Field>
       </RoomNameForm>
     </>

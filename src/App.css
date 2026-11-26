@@ -192,6 +192,10 @@
     @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus;
   }
 
+  .board-input {
+    @apply h-11 w-full rounded-md border border-control/75 bg-surface px-3.5 text-base text-text placeholder:text-text-muted/80 transition-colors hover:border-control;
+  }
+
   :is(input, textarea, select).board-focus-ring:focus-visible {
     border-color: var(--retrocks-focus);
     outline: 2px solid var(--retrocks-focus);

@@ -1,6 +1,6 @@
 import { Meta, Title } from '@solidjs/meta';
 import { useParams, useSubmissions, type RouteDefinition } from '@solidjs/router';
-import { Match, Show, Switch, createMemo, createSignal, onSettled, untrack } from 'solid-js';
+import { Match, Show, Switch, createMemo, createSignal, untrack } from 'solid-js';
 
 import PageMessage from '../../components/PageMessage';
 import PokerRoomSummary from '../../components/poker/PokerRoomSummary';
@@ -19,17 +19,11 @@ export const route = {
 } satisfies RouteDefinition;
 
 function RoomUnavailable(props: { focusHeading?: boolean }) {
-  let heading!: HTMLHeadingElement;
-
-  onSettled(() => {
-    if (props.focusHeading) heading.focus();
-  });
-
   return (
     <PageMessage
       title="Room unavailable"
       message="This link does not lead to an available Pointing Poker Room."
-      headingRef={props.focusHeading ? (element) => { heading = element; } : undefined}
+      focusHeading={props.focusHeading}
     >
       <a class="page-message-action" href={pokerSetupPath}>Create a Room</a>
     </PageMessage>
