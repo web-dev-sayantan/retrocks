@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { CardGroupDTO } from '../lib/board-types';
 import CardItem from './CardItem';
@@ -367,12 +368,12 @@ describe('<CardItem />', () => {
     });
     const [isLocked, setIsLocked] = createSignal(false);
     const [isBlurred, setIsBlurred] = createSignal(false);
-    const pending = Promise.withResolvers<string | null>();
+    const pending = Promise.withResolvers<BoardMutationResult>();
     const updateCard = vi
-      .fn<() => Promise<string | null>>()
+      .fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce('Could not save card.')
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce({ ok: false, message: 'Could not save card.' })
+      .mockResolvedValueOnce({ ok: true });
     const actions = createTestBoardMutations({ updateCard });
 
     const { getByRole, getByText, queryByRole } = render(() => (
@@ -413,7 +414,7 @@ describe('<CardItem />', () => {
     flush();
     expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
     expect(getByRole('button', { name: 'Card actions' })).toHaveFocus();
-    pending.resolve('Stale error');
+    pending.resolve({ ok: false, message: 'Stale error' });
     await pending.promise;
     await Promise.resolve();
     flush();
@@ -458,5 +459,45 @@ describe('<CardItem />', () => {
     setIsLocked(true);
     flush();
     expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+  });
+
+  it('surfaces real server rejection messages and reads controller-backed Card pending state', async () => {
+    const card = makeCard({
+      id: 'card_err',
+      columnId: 'col_1',
+      content: 'Server error card',
+      isMine: true,
+      isActionItem: true,
+      actionDone: false,
+    });
+    const [moving, setMoving] = createSignal(false);
+    const actions = createTestBoardMutations({
+      isCardPending: (id, action) => id === card.id && action === 'move' && moving(),
+      updateActionItem: vi.fn(async () => ({
+        ok: false as const,
+        message: 'Board was locked before Action Item saved.',
+      })),
+    });
+
+    const { getByRole, getByText } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} actions={actions}>
+        <CardItem card={card} columnCards={[card]} columnGroups={[]} />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    setMoving(true);
+    flush();
+    expect(getByText('Moving Card…')).toBeInTheDocument();
+    setMoving(false);
+    flush();
+
+    const checkbox = getByRole('checkbox', { name: 'Mark Server error card as Done' });
+    fireEvent.click(checkbox);
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(getByRole('alert')).toHaveTextContent('Board was locked before Action Item saved.');
+    expect(checkbox).not.toBeChecked();
   });
 });

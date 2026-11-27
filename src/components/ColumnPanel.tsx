@@ -57,7 +57,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   const [isCreatingCard, setIsCreatingCard] = createSignal(false);
 
   const [menuOpen, setMenuOpen] = createSignal(false);
-  const [isDeletingColumn, setIsDeletingColumn] = createSignal(false);
+  const isDeletingColumn = () => workspace.actions.isColumnPending(props.view.column.id, 'delete');
 
   createEffect(
     () => workspace.isLocked,
@@ -113,11 +113,11 @@ export default function ColumnPanel(props: ColumnPanelProps) {
     setIsCreatingCard(true);
     setCardError(null);
     try {
-      const error = await workspace.actions.createCard(props.view.column.id, trimmed);
+      const result = await workspace.actions.createCard(props.view.column.id, trimmed);
       const currentDraft = composerEl ? composerEl.value : cardDraft();
       if (currentDraft === draft) {
-        setCardError(error);
-        if (error === null) {
+        setCardError(result.ok ? null : result.message);
+        if (result.ok) {
           setCardDraft('');
           if (composerEl) composerEl.value = '';
         }
@@ -142,9 +142,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
   async function saveColumnTitle(text: string): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return (await workspace.actions.updateColumn(props.view.column.id, { title: trimmed }))
-      ? true
-      : false;
+    return (await workspace.actions.updateColumn(props.view.column.id, { title: trimmed })).ok;
   }
 
   async function handleSelectAccent(accent: ColumnAccent): Promise<void> {
@@ -167,12 +165,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
       confirmLabel: 'Delete column',
     });
     if (!confirmed) return;
-    setIsDeletingColumn(true);
-    try {
-      await workspace.actions.deleteColumn(props.view.column.id);
-    } finally {
-      setIsDeletingColumn(false);
-    }
+    await workspace.actions.deleteColumn(props.view.column.id);
   }
 
   return (
@@ -403,7 +396,7 @@ export default function ColumnPanel(props: ColumnPanelProps) {
                     <MenuSeparator class="my-2 border-t border-border/80" />
                     <MenuItem
                       value="delete"
-                      disabled={!canDeleteColumn()}
+                      disabled={!canDeleteColumn() || isDeletingColumn()}
                       title={deleteBlockedByHiddenCards() ? 'Reveal All before deleting a Column with hidden Cards.' : undefined}
                       onSelect={() => void requestDeleteColumn()}
                       class="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-xs font-medium text-rose-700 hover:bg-surface-subtle data-highlighted:bg-surface-subtle data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-rose-300 sm:min-h-9"

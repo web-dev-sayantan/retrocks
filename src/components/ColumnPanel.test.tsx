@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-li
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { CardViewDTO, ColumnDTO } from '../lib/board-types';
 import type { ColumnViewProjection } from '../lib/board-view';
@@ -211,12 +212,12 @@ describe('<ColumnPanel />', () => {
     const board = makeBoardView({ isFacilitator: true });
     const view = makeColumnView(board.columns[0], []);
     const [isLocked, setIsLocked] = createSignal(false);
-    const pending = Promise.withResolvers<boolean>();
+    const pending = Promise.withResolvers<BoardMutationResult>();
     const updateColumn = vi
-      .fn<() => Promise<boolean>>()
+      .fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: false, message: 'Could not update the Column.' })
+      .mockResolvedValueOnce({ ok: true });
     const actions = createTestBoardMutations({ updateColumn });
 
     const { getByRole, queryByRole } = render(() => (
@@ -260,7 +261,7 @@ describe('<ColumnPanel />', () => {
     flush();
     expect(queryByRole('textbox', { name: 'Column title' })).toBeNull();
     expect(getByRole('button', { name: 'Went Well' })).toHaveFocus();
-    pending.resolve(true);
+    pending.resolve({ ok: true });
     await pending.promise;
     await Promise.resolve();
     flush();

@@ -15,6 +15,7 @@ import {
 import { ChevronDown } from 'lucide';
 import { For, Show, createMemo, createSignal, createUniqueId, untrack } from 'solid-js';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { VOTE_LIMIT_OPTIONS, type BoardViewDTO } from '../lib/board-types';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { canControlFacilitation, canFacilitate } from '../lib/board-permissions';
@@ -55,10 +56,10 @@ export default function BoardVotingSettings(props: {
   >;
   open: boolean;
   onClose: () => void;
-  onUpdate: (patch: VotingSettingsPatch) => Promise<string | null>;
-  onReset: () => Promise<string | null>;
-  onToggleLock: (isLocked: boolean) => Promise<string | null>;
-  onDeleteBoard: () => Promise<string | null>;
+  onUpdate: (patch: VotingSettingsPatch) => Promise<BoardMutationResult>;
+  onReset: () => Promise<BoardMutationResult>;
+  onToggleLock: (isLocked: boolean) => Promise<BoardMutationResult>;
+  onDeleteBoard: () => Promise<BoardMutationResult>;
 }) {
   const destructiveActionsId = createUniqueId();
   const openingSettings = createMemo<Pick<
@@ -127,9 +128,9 @@ export default function BoardVotingSettings(props: {
     setPending('save');
     setError(null);
     try {
-      const message = await props.onUpdate(patch);
-      setError(message);
-      if (message === null) props.onClose();
+      const result = await props.onUpdate(patch);
+      setError(result.ok ? null : result.message);
+      if (result.ok) props.onClose();
     } finally {
       setPending(null);
     }
@@ -146,7 +147,8 @@ export default function BoardVotingSettings(props: {
     setPending('reset');
     setError(null);
     try {
-      setError(await props.onReset());
+      const result = await props.onReset();
+      setError(result.ok ? null : result.message);
     } finally {
       setPending(null);
     }
@@ -158,7 +160,8 @@ export default function BoardVotingSettings(props: {
     setPending('lock');
     setError(null);
     try {
-      setError(await props.onToggleLock(nextLocked));
+      const result = await props.onToggleLock(nextLocked);
+      setError(result.ok ? null : result.message);
     } finally {
       setPending(null);
     }
@@ -175,9 +178,9 @@ export default function BoardVotingSettings(props: {
     setPending('delete');
     setError(null);
     try {
-      const message = await props.onDeleteBoard();
-      setError(message);
-      if (message === null) props.onClose();
+      const result = await props.onDeleteBoard();
+      setError(result.ok ? null : result.message);
+      if (result.ok) props.onClose();
     } finally {
       setPending(null);
     }

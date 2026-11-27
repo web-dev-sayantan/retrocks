@@ -1191,6 +1191,7 @@ describe('<BoardWorkspace />', () => {
     select('Move to…');
     select('To Improve');
     await flushPromises();
+    expect(view.getAllByRole('alert')).toHaveLength(1);
     expect(mine.getByRole('alert')).toHaveTextContent('Could not move the Card.');
     expect(trigger).toHaveFocus();
 
@@ -1199,7 +1200,8 @@ describe('<BoardWorkspace />', () => {
     select('Group with…');
     select('Group target');
     await flushPromises();
-    expect(mine.getByRole('alert')).toHaveTextContent('Could not group the Card.');
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(mine.getByRole('alert')).toHaveTextContent('Grouping failed.');
 
     // A failed delete stays confirmable for a retry through the shared dialog.
     fireEvent.click(trigger);
@@ -1214,6 +1216,7 @@ describe('<BoardWorkspace />', () => {
     await waitFor(() =>
       expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.'),
     );
+    expect(view.getAllByRole('alert')).toHaveLength(1);
     fireEvent.click(trigger);
     flush();
     select('Delete Card');
@@ -3041,7 +3044,7 @@ describe('<BoardWorkspace />', () => {
     expect(pendingMove).toHaveClass('sr-only');
     rejectMove({ ok: false, code: 'VALIDATION_ERROR', message: 'Move was rejected.' });
     await flushPromises();
-    expect(within(wentWell).getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
+    expect(within(wentWell).getByRole('alert')).toHaveTextContent('Move was rejected.');
     expect(moveGroup).toBeEnabled();
     expect(moveGroup).toHaveFocus();
 
@@ -3136,7 +3139,8 @@ describe('<BoardWorkspace />', () => {
         expect(trigger).toBeEnabled();
         expect(trigger).toHaveFocus();
         expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
-        expect(view.getByText('Could not move the Card Group. Try again.')).toBeVisible();
+        expect(view.getAllByRole('alert')).toHaveLength(1);
+        expect(view.getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
         focus.mockRestore();
       } finally {
         view.unmount();
@@ -6056,5 +6060,70 @@ describe('<BoardWorkspace />', () => {
     fireEvent.click(view.getByRole('button', { name: 'Dismiss error' }));
     flush();
     expect(view.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('renders a single inline alert with the server reason on failed Card ungroup and Action Item updates without triggering the global banner', async () => {
+    const groupedCard = makeCard({
+      id: 'card_grouped',
+      columnId: 'col_1',
+      groupId: 'group_1',
+      content: 'Grouped note',
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: 'group_1',
+      content: 'Peer note',
+      isMine: true,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      groups: [
+        {
+          id: 'group_1',
+          columnId: 'col_1',
+          title: 'Cluster',
+          cardIds: ['card_grouped', 'card_peer'],
+          votes: 0,
+          myVotes: 0,
+          createdAt: Date.now(),
+        },
+      ],
+      cards: [groupedCard, peerCard],
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Card Group changed while ungrouping.',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'Action Item flag rejected by Board Lock.',
+      });
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const cardEl = view.getByText('Grouped note').closest('article')!;
+    const cardScope = within(cardEl);
+    fireEvent.click(cardScope.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(cardScope.getByRole('menuitem', { name: 'Ungroup Card' }));
+    await flushPromises();
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(cardScope.getByRole('alert')).toHaveTextContent('Card Group changed while ungrouping.');
+
+    fireEvent.click(cardScope.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(cardScope.getByRole('menuitem', { name: 'Flag as Action Item' }));
+    await flushPromises();
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(cardScope.getByRole('alert')).toHaveTextContent('Action Item flag rejected by Board Lock.');
   });
 });

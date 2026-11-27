@@ -68,35 +68,52 @@ export interface WorkspaceVoting {
   onChange: (targetType: 'card' | 'group', targetId: string, delta: VoteDelta) => void;
 }
 
-type ReportMutationFailure = (message: string) => void;
+/**
+ * Uniform typed outcome for every Board controller mutation. Void mutations
+ * settle to `{ ok: true } | { ok: false; message: string }`; payload-bearing
+ * mutations (such as `addColumn`) carry `{ ok: true; value: T }`.
+ */
+export type BoardMutationResult<T = void> =
+  [T] extends [void]
+    ? { ok: true } | { ok: false; message: string }
+    : { ok: true; value: T } | { ok: false; message: string };
+
+export type CardPendingAction = 'move' | 'group' | 'ungroup' | 'delete';
+export type GroupPendingAction = 'move' | 'dissolve';
+export type ColumnPendingAction = 'delete';
 
 /** Card, Card Group, and Column mutations the workspace panels call. */
 export interface BoardMutations {
-  createCard(columnId: string, content: string): Promise<string | null>;
-  updateCard(cardId: string, content: string): Promise<string | null>;
-  updateActionItem(cardId: string, patch: ActionItemPatch): Promise<boolean>;
-  moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
-  deleteCard(cardId: string): Promise<boolean>;
-  toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<string | null>;
-  createComment(cardId: string, content: string): Promise<string | null>;
-  deleteComment(cardId: string, commentId: string): Promise<string | null>;
-  groupCard(cardId: string, targetType: 'card' | 'group', targetId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
-  ungroupCard(cardId: string): Promise<boolean>;
-  renameCardGroup(groupId: string, title: string): Promise<boolean>;
-  dissolveCardGroup(groupId: string): Promise<boolean>;
-  moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
+  createCard(columnId: string, content: string): Promise<BoardMutationResult>;
+  updateCard(cardId: string, content: string): Promise<BoardMutationResult>;
+  updateActionItem(cardId: string, patch: ActionItemPatch): Promise<BoardMutationResult>;
+  moveCard(cardId: string, targetColumnId: string): Promise<BoardMutationResult>;
+  deleteCard(cardId: string): Promise<BoardMutationResult>;
+  toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<BoardMutationResult>;
+  createComment(cardId: string, content: string): Promise<BoardMutationResult>;
+  deleteComment(cardId: string, commentId: string): Promise<BoardMutationResult>;
+  groupCard(cardId: string, targetType: 'card' | 'group', targetId: string): Promise<BoardMutationResult>;
+  ungroupCard(cardId: string): Promise<BoardMutationResult>;
+  renameCardGroup(groupId: string, title: string): Promise<BoardMutationResult>;
+  dissolveCardGroup(groupId: string): Promise<BoardMutationResult>;
+  moveCardGroup(groupId: string, targetColumnId: string): Promise<BoardMutationResult>;
   updateColumn(
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
-  ): Promise<boolean>;
-  moveColumn(columnId: string, direction: -1 | 1): Promise<boolean>;
-  deleteColumn(columnId: string): Promise<boolean>;
+  ): Promise<BoardMutationResult>;
+  moveColumn(columnId: string, direction: -1 | 1): Promise<BoardMutationResult>;
+  deleteColumn(columnId: string): Promise<BoardMutationResult>;
   /** True while this Card's Action Item patch is in flight (`isPending`). */
   isActionItemPending(cardId: string): boolean;
+  /** True while a scoped Card mutation is in flight. */
+  isCardPending(cardId: string, action?: CardPendingAction): boolean;
+  /** True while a scoped Card Group mutation is in flight. */
+  isGroupPending(groupId: string, action?: GroupPendingAction): boolean;
+  /** True while a scoped Column mutation is in flight. */
+  isColumnPending(columnId: string, action?: ColumnPendingAction): boolean;
+  /** True while deleting a comment on this Card (or a specific comment when `commentId` is given) is in flight. */
+  isCommentPending(cardId: string, commentId?: string): boolean;
 }
-
-/** Result of a Private Mode toggle; 'revealed' requests the reveal theater. */
-export type PrivateModeOutcome = 'revealed' | 'applied' | 'rejected' | 'ignored';
 
 export interface BoardController extends BoardMutations {
   /** Current viewer-projected Board snapshot (reactive store read). */
@@ -115,17 +132,16 @@ export interface BoardController extends BoardMutations {
   claimError(): string | null;
   clearClaimError(): void;
   isChangingPrivateMode(): boolean;
-  isSavingBoardTitle(): boolean;
   isSavingColumn(): boolean;
-  changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse>;
-  renameBoard(title: string): Promise<boolean>;
-  addColumn(input: AddColumnPayload): Promise<ColumnDTO | null>;
-  togglePrivateMode(dramaticRequested: boolean): Promise<PrivateModeOutcome>;
-  changeVote(targetType: 'card' | 'group', targetId: string, delta: VoteDelta): Promise<void>;
-  saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null>;
-  resetAllVotes(): Promise<string | null>;
-  toggleBoardLock(isLocked: boolean): Promise<string | null>;
-  deleteCurrentBoard(): Promise<string | null>;
+  changeCountdown(change: TimerChange): Promise<BoardMutationResult>;
+  renameBoard(title: string): Promise<BoardMutationResult>;
+  addColumn(input: AddColumnPayload): Promise<BoardMutationResult<ColumnDTO>>;
+  togglePrivateMode(dramaticRequested: boolean): Promise<BoardMutationResult>;
+  changeVote(targetType: 'card' | 'group', targetId: string, delta: VoteDelta): Promise<BoardMutationResult>;
+  saveVotingSettings(patch: VotingSettingsPatch): Promise<BoardMutationResult>;
+  resetAllVotes(): Promise<BoardMutationResult>;
+  toggleBoardLock(isLocked: boolean): Promise<BoardMutationResult>;
+  deleteCurrentBoard(): Promise<BoardMutationResult>;
 }
 
 export type BoardCommandDispatcher = (
@@ -526,24 +542,50 @@ interface MutationRequest {
   pending?: (board: BoardViewDTO) => void;
   /** Runs after a successful response is known, before its events apply. */
   beforeCommit?: (response: BoardMutationSuccess) => void;
-  preserveError?: boolean;
+  clearGlobalError?: boolean;
   send: () => Promise<BoardMutationResponse>;
 }
 
-interface GuardedMutation extends Omit<MutationRequest, 'boardId' | 'send' | 'preserveError'> {
+interface GuardedMutation extends Omit<MutationRequest, 'boardId' | 'send' | 'clearGlobalError'> {
   /** Shared Board authorization policy check evaluated once before opening the action. */
   authorize: (board: BoardViewDTO) => boolean;
   guardMessage?: string;
   failureMessage: string;
-  reportFailure?: true | ReportMutationFailure;
+  /**
+   * When true, failures write to the global Board error banner (`errorMessage`)
+   * and successes clear it. Inline-error mutations leave this false so at most
+   * one `role="alert"` renders per failure.
+   */
+  reportGlobalError?: boolean;
+  /** Scoped entity pending keys held while this mutation is in flight. */
+  pendingKeys?: readonly string[];
   send: (boardId: string) => Promise<BoardMutationResponse>;
 }
 
-type MutationOutcome<T> =
-  | { ok: true; response: BoardMutationSuccess; value?: T }
-  | { ok: false; message?: string; reason: 'guard' | 'rejection' | 'network' };
-
 const GENERIC_FAILURE = 'Could not update the Board. Try again.';
+const CARD_PENDING_ACTIONS: readonly CardPendingAction[] = ['move', 'group', 'ungroup', 'delete'];
+const GROUP_PENDING_ACTIONS: readonly GroupPendingAction[] = ['move', 'dissolve'];
+const COLUMN_PENDING_ACTIONS: readonly ColumnPendingAction[] = ['delete'];
+
+function cardPendingKey(cardId: string, action: CardPendingAction): string {
+  return `card:${cardId}:${action}`;
+}
+
+function groupPendingKey(groupId: string, action: GroupPendingAction): string {
+  return `group:${groupId}:${action}`;
+}
+
+function columnPendingKey(columnId: string, action: ColumnPendingAction): string {
+  return `column:${columnId}:${action}`;
+}
+
+function commentCardPendingKey(cardId: string): string {
+  return `comment:${cardId}`;
+}
+
+function commentItemPendingKey(cardId: string, commentId: string): string {
+  return `comment:${cardId}:${commentId}`;
+}
 
 /**
  * Reactive Board client controller: owns the Board store, unified event
@@ -592,10 +634,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   // action settles, without needing isPending on an optimistically-writable slot.
   const [savingVotes, setSavingVotes] = createOptimistic(false);
   const [pendingActionItems, setPendingActionItems] = createOptimistic<readonly string[]>([]);
-
-  const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
-  const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
-  const [isSavingColumn, setIsSavingColumn] = createSignal(false);
+  const [pendingCounts, setPendingCounts] = createStore<Record<string, number>>({});
 
   function applyRouteSnapshot(nextBoard: BoardViewDTO | null): void {
     if (nextBoard === null) setErrorMessage(null);
@@ -730,6 +769,33 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     return () => clearInterval(intervalId);
   });
 
+  function isPendingKey(key: string): boolean {
+    return (pendingCounts[key] ?? 0) > 0;
+  }
+
+  function incrementPending(keys: readonly string[] | undefined): void {
+    if (!keys || keys.length === 0) return;
+    setPendingCounts((draft) => {
+      for (const key of keys) {
+        draft[key] = (draft[key] ?? 0) + 1;
+      }
+    });
+  }
+
+  function decrementPending(keys: readonly string[] | undefined): void {
+    if (!keys || keys.length === 0) return;
+    setPendingCounts((draft) => {
+      for (const key of keys) {
+        const next = (draft[key] ?? 1) - 1;
+        if (next <= 0) delete draft[key];
+        else draft[key] = next;
+      }
+    });
+  }
+
+  const isChangingPrivateMode = () => isPendingKey('board:private-mode');
+  const isSavingColumn = () => isPendingKey('board:add-column');
+
   /**
    * The one mutation transaction: optimistic writes first, then the server
    * round-trip, then the versioned commit. Rejections throw so Solid reverts
@@ -754,7 +820,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       });
     }
     request.beforeCommit?.(response);
-    if (!request.preserveError) setErrorMessage(null);
+    if (request.clearGlobalError) setErrorMessage(null);
     reconcileServerUpdate(request.boardId, {
       type: 'board:mutation',
       version: response.version,
@@ -764,48 +830,61 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     return response;
   });
 
+  async function runGuardedMutation(
+    mutation: GuardedMutation,
+  ): Promise<BoardMutationResult>;
   async function runGuardedMutation<T>(
     mutation: GuardedMutation,
-    select?: (response: BoardMutationSuccess) => T,
-  ): Promise<MutationOutcome<T>> {
-    // Commit caller-owned process flags written in this tick before the action
-    // opens; the action's transaction would otherwise hold them until it settles.
-    flush();
-    const reportFailure = mutation.reportFailure;
+    select: (response: BoardMutationSuccess) => T | null,
+  ): Promise<BoardMutationResult<T>>;
+  async function runGuardedMutation<T = void>(
+    mutation: GuardedMutation,
+    select?: (response: BoardMutationSuccess) => T | null,
+  ): Promise<{ ok: true } | { ok: true; value: T } | { ok: false; message: string }> {
     const board = store.board;
     if (!board) {
-      const message = 'This Board is no longer available.';
-      if (typeof reportFailure === 'function') reportFailure(message);
-      return { ok: false, reason: 'guard', message };
+      return {
+        ok: false,
+        message: mutation.guardMessage ?? 'This Board is no longer available.',
+      };
     }
     if (!mutation.authorize(board)) {
-      if (typeof reportFailure === 'function') {
-        reportFailure(mutation.guardMessage ?? mutation.failureMessage);
-      }
-      return { ok: false, reason: 'guard', message: mutation.guardMessage };
+      return {
+        ok: false,
+        message: mutation.guardMessage ?? mutation.failureMessage,
+      };
     }
-    const boardId = board.id;
+    const activeBoardId = board.id;
+    incrementPending(mutation.pendingKeys);
+    // Commit scoped pending flags written in this tick before the action opens;
+    // the action's transaction would otherwise hold them until it settles.
+    flush();
     try {
       const response = await performMutation({
-        boardId,
+        boardId: activeBoardId,
         begin: mutation.begin,
         optimistic: mutation.optimistic,
         pending: mutation.pending,
         beforeCommit: mutation.beforeCommit,
-        preserveError: typeof reportFailure === 'function',
-        send: () => mutation.send(boardId),
+        clearGlobalError: mutation.reportGlobalError,
+        send: () => mutation.send(activeBoardId),
       });
-      return { ok: true, response, value: select?.(response) };
+      if (select) {
+        const value = select(response);
+        if (value === null) {
+          if (mutation.reportGlobalError) setErrorMessage(mutation.failureMessage);
+          return { ok: false, message: mutation.failureMessage };
+        }
+        return { ok: true, value };
+      }
+      return { ok: true };
     } catch (error) {
       const rejection = error instanceof MutationRejected ? error : undefined;
       const message = rejection?.message ?? mutation.failureMessage ?? GENERIC_FAILURE;
-      if (typeof reportFailure === 'function') reportFailure(message);
-      else if (reportFailure) setErrorMessage(message);
-      return {
-        ok: false,
-        reason: rejection ? 'rejection' : 'network',
-        message,
-      };
+      if (mutation.reportGlobalError) setErrorMessage(message);
+      return { ok: false, message };
+    } finally {
+      decrementPending(mutation.pendingKeys);
     }
   }
 
@@ -826,75 +905,79 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     });
   }
 
-  async function changeCountdown(
-    boardId: string,
-    change: TimerChange,
-  ): Promise<BoardMutationResponse> {
-    const outcome = await runGuardedMutation({
+  function isCardPending(cardId: string, action?: CardPendingAction): boolean {
+    if (action) return isPendingKey(cardPendingKey(cardId, action));
+    return CARD_PENDING_ACTIONS.some((kind) => isPendingKey(cardPendingKey(cardId, kind)));
+  }
+
+  function isGroupPending(groupId: string, action?: GroupPendingAction): boolean {
+    if (action) return isPendingKey(groupPendingKey(groupId, action));
+    return GROUP_PENDING_ACTIONS.some((kind) => isPendingKey(groupPendingKey(groupId, kind)));
+  }
+
+  function isColumnPending(columnId: string, action?: ColumnPendingAction): boolean {
+    if (action) return isPendingKey(columnPendingKey(columnId, action));
+    return COLUMN_PENDING_ACTIONS.some((kind) => isPendingKey(columnPendingKey(columnId, kind)));
+  }
+
+  function isCommentPending(cardId: string, commentId?: string): boolean {
+    return commentId
+      ? isPendingKey(commentItemPendingKey(cardId, commentId))
+      : isPendingKey(commentCardPendingKey(cardId));
+  }
+
+  async function changeCountdown(change: TimerChange): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'timer:update').allowed,
-      send: () => dispatchCommand(boardId, { type: 'timer:update', change }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'timer:update', change }),
       failureMessage: 'Could not update the Timer. Try again.',
     });
-    return outcome.ok
-      ? outcome.response
-      : {
-          ok: false,
-          code: 'INTERNAL_ERROR',
-          message: outcome.message ?? 'Could not update the Timer. Try again.',
-        };
   }
 
-  async function togglePrivateMode(dramaticRequested: boolean): Promise<PrivateModeOutcome> {
+  async function togglePrivateMode(dramaticRequested: boolean): Promise<BoardMutationResult> {
     const board = store.board;
-    if (!board || isChangingPrivateMode()) return 'ignored';
-    const revealed = dramaticRequested;
-    setIsChangingPrivateMode(true);
-    try {
-      const outcome = await runGuardedMutation({
-        authorize: (current) =>
-          decideBoardAction(toBoardPolicyContext(current), 'board:set-private-mode').allowed,
-        send: () =>
-          dispatchCommand(board.id, {
-            type: 'board:set-private-mode',
-            isBlurred: !board.isBlurred,
-          }),
-        beforeCommit: () => {
-          if (revealed) options.onDramaticReveal?.();
-        },
-        failureMessage: 'Could not update Private Mode. Try again.',
-        reportFailure: true,
-      });
-      if (!outcome.ok) return outcome.reason === 'guard' ? 'ignored' : 'rejected';
-      return revealed ? 'revealed' : 'applied';
-    } finally {
-      setIsChangingPrivateMode(false);
+    if (!board) return { ok: false, message: 'This Board is no longer available.' };
+    if (isChangingPrivateMode()) {
+      return { ok: false, message: 'Could not update Private Mode. Try again.' };
     }
+    const nextBlurred = !board.isBlurred;
+    return runGuardedMutation({
+      authorize: (current) =>
+        decideBoardAction(toBoardPolicyContext(current), 'board:set-private-mode').allowed,
+      pendingKeys: ['board:private-mode'],
+      send: (activeBoardId) =>
+        dispatchCommand(activeBoardId, {
+          type: 'board:set-private-mode',
+          isBlurred: nextBlurred,
+        }),
+      beforeCommit: () => {
+        if (dramaticRequested) options.onDramaticReveal?.();
+      },
+      failureMessage: 'Could not update Private Mode. Try again.',
+      reportGlobalError: true,
+    });
   }
 
-  async function renameBoard(title: string): Promise<boolean> {
-    const board = store.board;
+  async function renameBoard(title: string): Promise<BoardMutationResult> {
     const trimmed = title.trim();
-    if (!board || trimmed.length === 0 || isSavingBoardTitle()) return false;
-    setIsSavingBoardTitle(true);
-    try {
-      const outcome = await runGuardedMutation({
-        authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:rename').allowed,
-        send: () => dispatchCommand(board.id, { type: 'board:rename', title: trimmed }),
-        failureMessage: 'Could not rename the Board. Try again.',
-        reportFailure: true,
-      });
-      return outcome.ok;
-    } finally {
-      setIsSavingBoardTitle(false);
+    if (trimmed.length === 0 || isPendingKey('board:rename')) {
+      return { ok: false, message: 'Could not rename the Board. Try again.' };
     }
+    return runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:rename').allowed,
+      pendingKeys: ['board:rename'],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'board:rename', title: trimmed }),
+      failureMessage: 'Could not rename the Board. Try again.',
+      reportGlobalError: true,
+    });
   }
 
-  async function createCard(columnId: string, content: string): Promise<string | null> {
+  async function createCard(columnId: string, content: string): Promise<BoardMutationResult> {
     const board = store.board;
     const trimmed = content.trim();
-    if (!board) return 'This Board is not accepting new Cards.';
+    if (!board) return { ok: false, message: 'This Board is not accepting new Cards.' };
     const column = board.columns.find((col) => col.id === columnId);
-    if (!column) return 'This Column is no longer available.';
+    if (!column) return { ok: false, message: 'This Column is no longer available.' };
 
     const createdAt = Date.now() + serverTimeOffsetMs;
     const optimisticCard: CardViewDTO = {
@@ -918,7 +1001,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       updatedAt: createdAt,
     };
 
-    const outcome = await runGuardedMutation({
+    const result = await runGuardedMutation({
       authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:contribute').allowed,
       guardMessage: 'This Board is not accepting new Cards.',
       optimistic: (draft) => {
@@ -926,33 +1009,30 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         const col = draft.columns.find((item) => item.id === columnId);
         if (col) col.cardCount += 1;
       },
-      send: () => dispatchCommand(board.id, { type: 'card:create', columnId, content }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:create', columnId, content }),
       failureMessage: 'Could not create Card. Try again.',
     });
-    if (!outcome.ok) return outcome.message ?? 'Could not create Card. Try again.';
-    setNowMs(Date.now() + serverTimeOffsetMs);
-    return null;
+    if (result.ok) setNowMs(Date.now() + serverTimeOffsetMs);
+    return result;
   }
 
-  async function updateCard(cardId: string, content: string): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This Card can no longer be edited.';
-    const outcome = await runGuardedMutation({
+  async function updateCard(cardId: string, content: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => canManageCard(current, cardId),
       guardMessage: 'This Card can no longer be edited.',
-      send: () => dispatchCommand(board.id, { type: 'card:update', cardId, content }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:update', cardId, content }),
       failureMessage: 'Could not save the Card. Try again.',
     });
-    return outcome.ok ? null : outcome.message ?? 'Could not save the Card. Try again.';
   }
 
   async function updateActionItem(
     cardId: string,
     patch: ActionItemPatch,
-  ): Promise<boolean> {
-    const board = store.board;
-    if (!board || isActionItemPending(cardId)) return false;
-    const outcome = await runGuardedMutation({
+  ): Promise<BoardMutationResult> {
+    if (isActionItemPending(cardId)) {
+      return { ok: false, message: 'Could not update the Action Item. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) => canEditActionItem(current, cardId, patch),
       begin: () => setPendingActionItems((ids) => [...ids, cardId]),
       optimistic: (draft) => {
@@ -976,99 +1056,90 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         if (patch.actionDone !== undefined) affects(card, 'actionDone');
         if (patch.actionOwner !== undefined) affects(card, 'actionOwner');
       },
-      send: () => dispatchCommand(board.id, { type: 'card:set-action', cardId, ...patch }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:set-action', cardId, ...patch }),
       failureMessage: 'Could not update the Action Item. Try again.',
     });
-    return outcome.ok;
   }
 
-  async function moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
-    const outcome = await runGuardedMutation({
+  async function moveCard(cardId: string, targetColumnId: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => canManageCard(current, cardId),
-      send: (boardId) => dispatchCommand(boardId, { type: 'card:move', cardId, targetColumnId }),
+      pendingKeys: [cardPendingKey(cardId, 'move')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:move', cardId, targetColumnId }),
       failureMessage: 'Could not move the Card. Try again.',
-      reportFailure: onFailure ?? true,
     });
-    return outcome.ok;
   }
 
-  async function deleteCard(cardId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
+  async function deleteCard(cardId: string): Promise<BoardMutationResult> {
+    if (isCardPending(cardId, 'delete')) {
+      return { ok: false, message: 'Could not delete the Card. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) => canManageCard(current, cardId),
-      send: () => dispatchCommand(board.id, { type: 'card:delete', cardId }),
+      pendingKeys: [cardPendingKey(cardId, 'delete')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:delete', cardId }),
       failureMessage: 'Could not delete the Card. Try again.',
-      reportFailure: true,
     });
-    return outcome.ok;
   }
 
   async function groupCard(
     cardId: string,
     targetType: 'card' | 'group',
     targetId: string,
-    onFailure?: ReportMutationFailure,
-  ): Promise<boolean> {
-    const outcome = await runGuardedMutation({
+  ): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => canMergeCard(current, cardId, targetType, targetId),
-      send: (boardId) => dispatchCommand(boardId, { type: 'group:merge', cardId, targetType, targetId }),
+      pendingKeys: [cardPendingKey(cardId, 'group')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:merge', cardId, targetType, targetId }),
       failureMessage: 'Could not group the Card. Try again.',
-      reportFailure: onFailure ?? true,
     });
-    return outcome.ok;
   }
 
-  async function renameCardGroup(groupId: string, title: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
+  async function renameCardGroup(groupId: string, title: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => canManageGroup(current, groupId),
-      send: () => dispatchCommand(board.id, { type: 'group:rename', groupId, title }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:rename', groupId, title }),
       failureMessage: 'Could not rename the Card Group. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function ungroupCard(cardId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
+  async function ungroupCard(cardId: string): Promise<BoardMutationResult> {
+    if (isCardPending(cardId, 'ungroup')) {
+      return { ok: false, message: 'Could not ungroup the Card. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) => canUngroupCard(current, cardId),
-      send: () => dispatchCommand(board.id, { type: 'group:ungroup', cardId }),
+      pendingKeys: [cardPendingKey(cardId, 'ungroup')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:ungroup', cardId }),
       failureMessage: 'Could not ungroup the Card. Try again.',
-      reportFailure: true,
     });
-    return outcome.ok;
   }
 
-  async function dissolveCardGroup(groupId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
+  async function dissolveCardGroup(groupId: string): Promise<BoardMutationResult> {
+    if (isGroupPending(groupId, 'dissolve')) {
+      return { ok: false, message: 'Could not dissolve the Card Group. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) => canManageGroup(current, groupId),
-      send: () => dispatchCommand(board.id, { type: 'group:dissolve', groupId }),
+      pendingKeys: [groupPendingKey(groupId, 'dissolve')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:dissolve', groupId }),
       failureMessage: 'Could not dissolve the Card Group. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
-    const outcome = await runGuardedMutation({
+  async function moveCardGroup(groupId: string, targetColumnId: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => canManageGroup(current, groupId),
-      send: (boardId) => dispatchCommand(boardId, { type: 'group:move', groupId, targetColumnId }),
+      pendingKeys: [groupPendingKey(groupId, 'move')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:move', groupId, targetColumnId }),
       failureMessage: 'Could not move the Card Group. Try again.',
-      reportFailure: onFailure ?? true,
     });
-    return outcome.ok;
   }
 
-  async function toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This Card can no longer receive reactions.';
-    const outcome = await runGuardedMutation({
+  async function toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => canInteractWithCard(current, cardId),
       guardMessage: 'This Card can no longer receive reactions.',
       optimistic: (draft) => {
@@ -1092,132 +1163,122 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         affects(card, 'reactions');
         affects(card, 'myReactions');
       },
-      send: () => dispatchCommand(board.id, { type: 'reaction:toggle', cardId, emoji }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'reaction:toggle', cardId, emoji }),
       failureMessage: 'Could not update reaction. Try again.',
     });
-    return outcome.ok ? null : outcome.message ?? 'Could not update reaction. Try again.';
   }
 
-  async function createComment(cardId: string, content: string): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This Card can no longer receive comments.';
-    const outcome = await runGuardedMutation({
+  async function createComment(cardId: string, content: string): Promise<BoardMutationResult> {
+    const result = await runGuardedMutation({
       authorize: (current) => canInteractWithCard(current, cardId),
       guardMessage: 'This Card can no longer receive comments.',
-      send: () => dispatchCommand(board.id, { type: 'comment:create', cardId, content }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'comment:create', cardId, content }),
       failureMessage: 'Could not post comment. Try again.',
     });
-    if (!outcome.ok) return outcome.message ?? 'Could not post comment. Try again.';
-    setNowMs(Date.now() + serverTimeOffsetMs);
-    return null;
+    if (result.ok) setNowMs(Date.now() + serverTimeOffsetMs);
+    return result;
   }
 
-  async function deleteComment(cardId: string, commentId: string): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This comment can no longer be deleted.';
-    const outcome = await runGuardedMutation({
+  async function deleteComment(cardId: string, commentId: string): Promise<BoardMutationResult> {
+    if (isCommentPending(cardId)) {
+      return { ok: false, message: 'Could not delete comment. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) => canDeleteComment(current, cardId, commentId),
       guardMessage: 'This comment can no longer be deleted.',
-      send: () => dispatchCommand(board.id, { type: 'comment:delete', cardId, commentId }),
+      pendingKeys: [commentCardPendingKey(cardId), commentItemPendingKey(cardId, commentId)],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'comment:delete', cardId, commentId }),
       failureMessage: 'Could not delete comment. Try again.',
     });
-    return outcome.ok ? null : outcome.message ?? 'Could not delete comment. Try again.';
   }
 
-  async function addColumn(input: AddColumnPayload): Promise<ColumnDTO | null> {
-    const board = store.board;
-    if (!board || input.title.trim().length === 0 || isSavingColumn()) return null;
-    setIsSavingColumn(true);
-    try {
-      const outcome = await runGuardedMutation(
-        {
-          authorize: (current) => canAddColumn(current),
-          send: () =>
-            dispatchCommand(board.id, {
-              type: 'column:add',
-              title: input.title,
-              accent: input.accent,
-              isActionColumn: input.isActionColumn,
-            }),
-          failureMessage: 'Could not add the Column. Try again.',
-          reportFailure: true,
-        },
-        (response) => {
-          const upserted = response.events.find((event) => event.type === 'column:upserted');
-          return upserted?.type === 'column:upserted' ? upserted.column : null;
-        },
-      );
-      return outcome.ok ? outcome.value ?? null : null;
-    } finally {
-      setIsSavingColumn(false);
+  async function addColumn(input: AddColumnPayload): Promise<BoardMutationResult<ColumnDTO>> {
+    if (input.title.trim().length === 0 || isSavingColumn()) {
+      return { ok: false, message: 'Could not add the Column. Try again.' };
     }
+    return runGuardedMutation(
+      {
+        authorize: (current) => canAddColumn(current),
+        pendingKeys: ['board:add-column'],
+        send: (activeBoardId) =>
+          dispatchCommand(activeBoardId, {
+            type: 'column:add',
+            title: input.title,
+            accent: input.accent,
+            isActionColumn: input.isActionColumn,
+          }),
+        failureMessage: 'Could not add the Column. Try again.',
+        reportGlobalError: true,
+      },
+      (response) => {
+        const upserted = response.events.find((event) => event.type === 'column:upserted');
+        return upserted?.type === 'column:upserted' ? upserted.column : null;
+      },
+    );
   }
 
   async function updateColumn(
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
-  ): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
+  ): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) =>
         decideColumnAction(toBoardPolicyContext(current), { type: 'column:update' }).allowed,
-      send: () => dispatchCommand(board.id, { type: 'column:update', columnId, ...patch }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'column:update', columnId, ...patch }),
       failureMessage: 'Could not update the Column. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function moveColumn(columnId: string, direction: -1 | 1): Promise<boolean> {
+  async function moveColumn(columnId: string, direction: -1 | 1): Promise<BoardMutationResult> {
     const board = store.board;
-    if (!board) return false;
+    if (!board) return { ok: false, message: 'This Board is no longer available.' };
     const ids = board.columns.map((column) => column.id);
     const currentIndex = ids.indexOf(columnId);
     const nextIndex = currentIndex + direction;
     if (currentIndex === -1 || nextIndex < 0 || nextIndex >= ids.length) {
-      return false;
+      return { ok: false, message: 'Could not move the Column. Try again.' };
     }
     const reordered = [...ids];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const outcome = await runGuardedMutation({
+    return runGuardedMutation({
       authorize: (current) =>
         decideColumnAction(toBoardPolicyContext(current), { type: 'column:reorder' }).allowed,
-      send: () => dispatchCommand(board.id, { type: 'column:reorder', columnIds: reordered }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'column:reorder', columnIds: reordered }),
       failureMessage: 'Could not move the Column. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function deleteColumn(columnId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
+  async function deleteColumn(columnId: string): Promise<BoardMutationResult> {
+    if (isColumnPending(columnId, 'delete')) {
+      return { ok: false, message: 'Could not delete the Column. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) =>
         canDeleteColumn(
           current,
           current.columns.length,
           current.cards.filter((card) => card.columnId === columnId),
         ),
-      send: () => dispatchCommand(board.id, { type: 'column:delete', columnId }),
+      pendingKeys: [columnPendingKey(columnId, 'delete')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'column:delete', columnId }),
       failureMessage: 'Could not delete the Column. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
   async function changeVote(
     targetType: 'card' | 'group',
     targetId: string,
     delta: VoteDelta,
-  ): Promise<void> {
+  ): Promise<BoardMutationResult> {
     // A cast already in flight drops the next one.
-    if (savingVotes() || isPending(() => store.board?.remainingVotes)) return;
-    const board = store.board;
-    if (!board) return;
-    await runGuardedMutation({
+    if (savingVotes() || isPending(() => store.board?.remainingVotes)) {
+      return { ok: false, message: 'Could not update your Vote. Try again.' };
+    }
+    return runGuardedMutation({
       authorize: (current) => canChangeVote(current, targetType, targetId, delta),
       begin: () => setSavingVotes(true),
       optimistic: (draft) => {
@@ -1239,63 +1300,48 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         }
         if (draft.remainingVotes !== null) affects(draft, 'remainingVotes');
       },
-      send: () =>
-        dispatchCommand(board.id, { type: 'vote:change', targetType, targetId, delta }),
+      send: (activeBoardId) =>
+        dispatchCommand(activeBoardId, { type: 'vote:change', targetType, targetId, delta }),
       failureMessage: 'Could not update your Vote. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
   }
 
-  async function runVotingSettingsMutation(
+  function runVotingSettingsMutation(
     command: Extract<BoardCommand, { type: 'voting:configure' | 'voting:reset' }>,
-  ): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'Voting settings are unavailable.';
-    const outcome = await runGuardedMutation({
+  ): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => decideBoardAction(toBoardPolicyContext(current), command.type).allowed,
-      send: () => dispatchCommand(board.id, command),
+      guardMessage: 'Voting settings are unavailable.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, command),
       failureMessage: 'Could not update Voting. Try again.',
     });
-    if (outcome.ok) return null;
-    return outcome.reason === 'guard'
-      ? 'Voting settings are unavailable.'
-      : outcome.message ?? 'Could not update Voting. Try again.';
   }
 
-  function saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null> {
+  function saveVotingSettings(patch: VotingSettingsPatch): Promise<BoardMutationResult> {
     return runVotingSettingsMutation({ type: 'voting:configure', ...patch });
   }
 
-  function resetAllVotes(): Promise<string | null> {
+  function resetAllVotes(): Promise<BoardMutationResult> {
     return runVotingSettingsMutation({ type: 'voting:reset' });
   }
 
-  async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'Only a Facilitator can Lock or Unlock the Board.';
-    const outcome = await runGuardedMutation({
+  function toggleBoardLock(isLocked: boolean): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:set-lock').allowed,
-      send: () => dispatchCommand(board.id, { type: 'board:set-lock', isLocked }),
+      guardMessage: 'Only a Facilitator can Lock or Unlock the Board.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'board:set-lock', isLocked }),
       failureMessage: 'Could not update Board lock state. Try again.',
     });
-    if (outcome.ok) return null;
-    return outcome.reason === 'guard'
-      ? 'Only a Facilitator can Lock or Unlock the Board.'
-      : outcome.message ?? 'Could not update Board lock state. Try again.';
   }
 
-  async function deleteCurrentBoard(): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'Only a Facilitator can delete this Board.';
-    const outcome = await runGuardedMutation({
+  function deleteCurrentBoard(): Promise<BoardMutationResult> {
+    return runGuardedMutation({
       authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:delete').allowed,
-      send: () => dispatchCommand(board.id, { type: 'board:delete' }),
+      guardMessage: 'Only a Facilitator can delete this Board.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'board:delete' }),
       failureMessage: 'Could not delete this Board. Try again.',
     });
-    if (outcome.ok) return null;
-    return outcome.reason === 'guard'
-      ? 'Only a Facilitator can delete this Board.'
-      : outcome.message ?? 'Could not delete this Board. Try again.';
   }
 
   return {
@@ -1312,7 +1358,6 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     claimError,
     clearClaimError: () => setClaimError(null),
     isChangingPrivateMode,
-    isSavingBoardTitle,
     isSavingColumn,
     changeCountdown,
     togglePrivateMode,
@@ -1321,6 +1366,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     updateCard,
     updateActionItem,
     isActionItemPending,
+    isCardPending,
+    isGroupPending,
+    isColumnPending,
+    isCommentPending,
     moveCard,
     deleteCard,
     toggleReaction,

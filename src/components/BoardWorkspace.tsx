@@ -520,15 +520,12 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     pendingTransfers.clear();
   });
 
-  function sendTransferMove(
-    move: BoardTransferMove,
-    onFailure: (message: string) => void,
-  ): Promise<boolean> {
+  function sendTransferMove(move: BoardTransferMove) {
     switch (move.kind) {
-      case 'move-card': return controller.moveCard(move.cardId, move.targetColumnId, onFailure);
-      case 'move-group': return controller.moveCardGroup(move.groupId, move.targetColumnId, onFailure);
-      case 'group-with-card': return controller.groupCard(move.cardId, 'card', move.targetCardId, onFailure);
-      case 'group-with-group': return controller.groupCard(move.cardId, 'group', move.targetGroupId, onFailure);
+      case 'move-card': return controller.moveCard(move.cardId, move.targetColumnId);
+      case 'move-group': return controller.moveCardGroup(move.groupId, move.targetColumnId);
+      case 'group-with-card': return controller.groupCard(move.cardId, 'card', move.targetCardId);
+      case 'group-with-group': return controller.groupCard(move.cardId, 'group', move.targetGroupId);
     }
   }
 
@@ -537,11 +534,14 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const item = move.kind === 'move-group' ? `group:${move.groupId}` : `card:${move.cardId}`;
     pendingTransfers.set(item, transferId);
     controller.clearError();
-    const moved = await sendTransferMove(move, (message) => {
-      if (pendingTransfers.get(item) === transferId) controller.reportError(message);
-    });
-    if (pendingTransfers.get(item) === transferId) pendingTransfers.delete(item);
-    if (moved && transferId === latestTransfer) announce('Move saved.');
+    const result = await sendTransferMove(move);
+    const isCurrent = pendingTransfers.get(item) === transferId;
+    if (isCurrent) pendingTransfers.delete(item);
+    if (!result.ok) {
+      if (isCurrent) controller.reportError(result.message);
+      return;
+    }
+    if (transferId === latestTransfer) announce('Move saved.');
   }
 
   const transfer = usePrimitive(boardTransfer, () => ({
@@ -655,7 +655,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const board = controller.board();
     const trimmed = text.trim();
     if (!board || trimmed.length === 0) return false;
-    return (await controller.renameBoard(trimmed)) ? true : false;
+    return (await controller.renameBoard(trimmed)).ok;
   }
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
@@ -677,13 +677,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const board = controller.board();
     const trimmed = newColumnTitle().trim();
     if (!board || trimmed.length === 0 || controller.isSavingColumn()) return;
-    const column = await controller.addColumn({
+    const result = await controller.addColumn({
       title: trimmed,
       accent: newColumnAccent(),
       isActionColumn: newColumnIsAction(),
     });
-    if (column) {
-      setActiveColumnId(column.id);
+    if (result.ok) {
+      setActiveColumnId(result.value.id);
       setNewColumnTitle('');
       setNewColumnAccent('slate');
       setNewColumnIsAction(false);
@@ -706,11 +706,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     setIsSubmittingMobileCard(true);
     updateMobileDraft(id, draft);
     try {
-      const error = await controller.createCard(id, draft.trim());
+      const result = await controller.createCard(id, draft.trim());
       setMobileDrafts((drafts) => {
         const current = drafts[id];
         if (current?.content === draft) {
-          drafts[id] = error === null ? { content: '', error: null } : { content: draft, error };
+          drafts[id] = result.ok
+            ? { content: '', error: null }
+            : { content: draft, error: result.message };
         }
       });
     } finally {
@@ -933,12 +935,12 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                 <div class="flex min-w-0 flex-wrap items-center justify-end gap-1 sm:gap-2">
                   <div data-print-hide="true">
                     <Show when={board().id} keyed>
-                      {(boardId) => (
+                      {(_boardId) => (
                         <CountdownTimer
                           timer={board().timer}
                           clock={controller.timerClock()}
                           canControl={canControlFacilitation(board())}
-                          onChange={(change) => controller.changeCountdown(boardId, change)}
+                          onChange={controller.changeCountdown}
                         />
                       )}
                     </Show>

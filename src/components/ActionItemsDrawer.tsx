@@ -13,6 +13,7 @@ import {
   filterActionItems,
   type ActionItemFilter,
 } from '../lib/action-items';
+import type { BoardMutationResult } from '../lib/board-controller';
 import {
   MAX_ACTION_OWNER_LENGTH,
   type ActionItemPatch,
@@ -49,7 +50,7 @@ export interface ActionItemsDrawerProps {
   onUpdateActionItem: (
     cardId: string,
     patch: ActionItemPatch,
-  ) => Promise<boolean>;
+  ) => Promise<BoardMutationResult>;
   /** Controller-owned in-flight Action Item patch for a Card (isPending). */
   isActionItemPending?: (cardId: string) => boolean;
 }
@@ -62,7 +63,7 @@ function ActionItemRow(props: {
   isPending: boolean;
   onUpdate: ActionItemsDrawerProps['onUpdateActionItem'];
 }) {
-  const { ownerEdit, bindOwnerInput, changeDone, isSaving, doneChecked, doneDisabled, doneFailed } =
+  const { ownerEdit, bindOwnerInput, changeDone, isSaving, doneChecked, doneDisabled, doneError } =
     createActionItemFollowUp({
       target: () => props.canEdit ? props.card.id : undefined,
       open: () => props.open,
@@ -119,13 +120,10 @@ function ActionItemRow(props: {
           <Show when={isSaving()}>
             <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
           </Show>
-          <Show when={ownerEdit.error()}>
+          <Show when={doneError() ?? ownerEdit.error()}>
             {(error) => (
               <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">{error()}</p>
             )}
-          </Show>
-          <Show when={doneFailed()}>
-            <p role="alert" class="text-xs text-rose-700 dark:text-rose-300">Could not update Done. Try again.</p>
           </Show>
         </div>
       </div>
