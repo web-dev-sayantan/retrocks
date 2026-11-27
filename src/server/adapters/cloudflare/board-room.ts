@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import { LIVE_HEARTBEAT_TIMEOUT_MS, type BoardLiveMessage } from '../../../lib/board-live-protocol';
+import type { BoardLiveMessage } from '../../../lib/board-live-protocol';
 
 import type {
   BoardMutationActor,
@@ -21,14 +21,14 @@ import {
 } from '../../rate-limit';
 
 import { projectLivePublication, projectLiveSnapshot } from '../../domain/live-projection';
+import {
+  createDurableObjectWebSocketHub,
+  type DurableObjectWebSocketHub,
+} from '../../live/cloudflare-ws-hub';
+import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from '../../live/headers';
 import type { BoardPublication, LiveViewerContext } from '../types';
-import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from './cloudflare-board-store';
 
 import { wrapDurableObjectSql } from './sqlite';
-
-interface LiveAttachment extends LiveViewerContext {
-  lastSeenAt: number;
-}
 
 /**
  * SQLite-backed Cloudflare Durable Object managing one Board's serialized state,
@@ -37,11 +37,43 @@ interface LiveAttachment extends LiveViewerContext {
 export class BoardRoom extends DurableObject<Cloudflare.Env> {
   private readonly ops: SqlBoardOperations;
   private readonly writeLimiter: BoardWriteRateLimiter;
+  private readonly live: DurableObjectWebSocketHub<LiveViewerContext, BoardLiveMessage>;
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
     this.ops = new SqlBoardOperations(wrapDurableObjectSql(ctx.storage));
     this.writeLimiter = createBoardWriteRateLimiter();
+    this.live = createDurableObjectWebSocketHub<
+      LiveViewerContext,
+      LiveViewerContext,
+      BoardLiveMessage
+    >(ctx, {
+      parseIdentity(request) {
+        // The Worker seals identity at the cookie-authenticated public entry point.
+        const participantHash = request.headers.get(LIVE_PARTICIPANT_HEADER)?.trim();
+        if (!participantHash) return null;
+        return {
+          participantHash,
+          isFacilitator: request.headers.get(LIVE_FACILITATOR_HEADER) === 'true',
+        };
+      },
+      onConnect: (viewer) => {
+        const boardId = this.ctx.id.name;
+        const snapshot = boardId ? this.ops.getBoardSnapshot(boardId) : null;
+        if (!snapshot) return { type: 'reject', status: 404 };
+        return {
+          type: 'accept',
+          viewer,
+          initialMessage: projectLiveSnapshot(snapshot, viewer),
+        };
+      },
+      createPresenceMessage(viewers) {
+        return {
+          type: 'presence:count',
+          count: new Set(viewers.map((viewer) => viewer.participantHash)).size,
+        };
+      },
+    });
   }
 
   private async wipeStorage(): Promise<void> {
@@ -164,10 +196,7 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
         now,
       )
     ) {
-      for (const { socket } of this.liveConnections()) {
-        this.sendLive(socket, { type: 'board:deleted', version: row.version + 1 });
-        socket.close(1000, 'Board expired');
-      }
+      this.live.closeAll({ type: 'board:deleted', version: row.version + 1 }, 'Board expired');
       await this.wipeStorage();
     } else {
       await this.ctx.storage.setAlarm(
@@ -177,101 +206,39 @@ export class BoardRoom extends DurableObject<Cloudflare.Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-      return new Response(null, { status: 426 });
-    }
-    // The Worker seals identity at the cookie-authenticated public entry point.
-    const participantHash = request.headers.get(LIVE_PARTICIPANT_HEADER);
-    if (!participantHash) return new Response(null, { status: 401 });
-
-    const boardId = this.ctx.id.name;
-    const snapshot = boardId ? this.ops.getBoardSnapshot(boardId) : null;
-    if (!snapshot) return new Response(null, { status: 404 });
-
-    const { 0: client, 1: server } = new WebSocketPair();
-    this.ctx.acceptWebSocket(server);
-    const viewer: LiveAttachment = {
-      participantHash,
-      isFacilitator: request.headers.get(LIVE_FACILITATOR_HEADER) === 'true',
-      lastSeenAt: Date.now(),
-    };
-    server.serializeAttachment(viewer);
-    this.sendLive(server, projectLiveSnapshot(snapshot, viewer));
-    this.broadcastPresence();
-    return new Response(null, { status: 101, webSocket: client });
+    return this.live.fetch(request);
   }
 
   async publishLive(publication: BoardPublication): Promise<void> {
-    const connections = this.liveConnections();
-    if (connections.length === 0) return;
-    if ('snapshot' in publication) {
-      const { id, version } = publication.snapshot.board;
-      // Concurrent RPCs can arrive after a newer write, including a privacy change.
-      if (this.ops.getBoardVersion(id) !== version) return;
-    }
     const isDeleted = !('snapshot' in publication) && publication.type === 'board:deleted';
-    for (const { socket, viewer } of connections) {
-      this.sendLive(socket, projectLivePublication(publication, viewer));
-      if (isDeleted) {
-        socket.close(1000, 'Board deleted');
-      }
-    }
+    this.live.publish(
+      (viewer) => projectLivePublication(publication, viewer),
+      {
+        shouldPublish: 'snapshot' in publication
+          ? () => {
+              const { id, version } = publication.snapshot.board;
+              // Concurrent RPCs can arrive after a newer write, including a privacy change.
+              return this.ops.getBoardVersion(id) === version;
+            }
+          : undefined,
+        closeReason: isDeleted ? 'Board deleted' : undefined,
+      },
+    );
   }
 
   async getPresenceCount(): Promise<number> {
-    return new Set(this.liveConnections().map(({ viewer }) => viewer.participantHash)).size;
+    return new Set(this.live.getActiveViewers().map((viewer) => viewer.participantHash)).size;
   }
 
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
-    if (message !== 'ping') return;
-    const viewer = socket.deserializeAttachment() as LiveAttachment;
-    const now = Date.now();
-    if (now - viewer.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
-      socket.close(1001, 'Live connection timed out');
-      this.broadcastPresence(socket);
-      return;
-    }
-    socket.serializeAttachment({ ...viewer, lastSeenAt: now });
-    this.sendLive(socket, { type: 'heartbeat' });
-    // Active Clients' heartbeats prune stale peers, including after hibernation.
-    this.liveConnections();
+    this.live.webSocketMessage(socket, message);
   }
 
   webSocketClose(socket: WebSocket): void {
-    this.broadcastPresence(socket);
+    this.live.webSocketClose(socket);
   }
 
   webSocketError(socket: WebSocket): void {
-    socket.close(1011, 'Live connection failed');
-    this.broadcastPresence(socket);
-  }
-
-  private liveConnections(excluded?: WebSocket) {
-    const active = [];
-    const now = Date.now();
-    for (const socket of this.ctx.getWebSockets()) {
-      if (socket === excluded || socket.readyState !== WebSocket.OPEN) continue;
-      const viewer = socket.deserializeAttachment() as LiveAttachment;
-      if (now - viewer.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
-        socket.close(1001, 'Live connection timed out');
-        continue;
-      }
-      active.push({ socket, viewer });
-    }
-    return active;
-  }
-
-  private broadcastPresence(excluded?: WebSocket): void {
-    const active = this.liveConnections(excluded);
-    const count = new Set(active.map(({ viewer }) => viewer.participantHash)).size;
-    for (const { socket } of active) this.sendLive(socket, { type: 'presence:count', count });
-  }
-
-  private sendLive(socket: WebSocket, message: BoardLiveMessage): void {
-    try {
-      socket.send(JSON.stringify(message));
-    } catch {
-      socket.close(1011, 'Live delivery failed');
-    }
+    this.live.webSocketError(socket);
   }
 }

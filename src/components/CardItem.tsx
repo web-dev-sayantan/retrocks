@@ -2,6 +2,7 @@ import { Menu, MenuItem, MenuSub, MenuSubTrigger, MenuTrigger } from '@ui-sdk/so
 import { ChevronRight, Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import {
   MAX_CARD_CONTENT_LENGTH,
   type ActionItemPatch,
@@ -13,10 +14,13 @@ import {
   REDACTED_WHISPER_DURATION_MS,
 } from '../lib/easter-eggs';
 import {
+  canContribute,
+  canEditActionItem,
   canEditActionItemFollowUp,
   canInteractWithCard,
   canManageCard,
-  passesPrivateMode,
+  canUngroupCard,
+  getCardMergeTargets,
 } from '../lib/board-permissions';
 import { confirmBoardAction } from '../lib/board-confirm';
 import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
@@ -41,7 +45,6 @@ export interface CardItemProps {
   revealIndex?: number;
   columnCards: readonly CardViewDTO[];
   columnGroups: readonly CardGroupDTO[];
-  canUngroup?: boolean;
 }
 
 const menuItemClass = 'flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-text hover:bg-surface-subtle data-highlighted:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-focus data-disabled:cursor-not-allowed data-disabled:opacity-50 sm:min-h-8';
@@ -51,11 +54,11 @@ const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
 
 export default function CardItem(props: CardItemProps) {
   const workspace = useBoardWorkspace();
-  const [isDeleting, setIsDeleting] = createSignal(false);
-  const [isMoving, setIsMoving] = createSignal(false);
-  const [isGrouping, setIsGrouping] = createSignal(false);
-  const [isUngrouping, setIsUngrouping] = createSignal(false);
-  const isUpdatingAction = createMemo(() => workspace.actions.isActionItemPending(props.card.id));
+  const isDeleting = () => workspace.actions.isCardPending(props.card.id, 'delete');
+  const isMoving = () => workspace.actions.isCardPending(props.card.id, 'move');
+  const isGrouping = () => workspace.actions.isCardPending(props.card.id, 'group');
+  const isUngrouping = () => workspace.actions.isCardPending(props.card.id, 'ungroup');
+  const isUpdatingAction = () => workspace.actions.isActionItemPending(props.card.id);
   // The optimistic store is the draft: the pending value is the checkbox value.
   const actionDone = () => props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
@@ -129,7 +132,13 @@ export default function CardItem(props: CardItemProps) {
     },
   );
 
+  const canInteract = createMemo(() => canInteractWithCard(workspace, props.card));
   const canManage = createMemo(() => canManageCard(workspace, props.card));
+  const canToggleActionItem = createMemo(() =>
+    canEditActionItem(workspace, props.card, {
+      isActionItem: !props.card.isActionItem,
+    }),
+  );
 
   // Card text inline editing: unified session owns edit, input, IME, focus-out, and fallback focus.
   const cardEdit = createInlineEditSession({
@@ -147,32 +156,21 @@ export default function CardItem(props: CardItemProps) {
 
   const canMove = createMemo(() => canManage() && otherColumns().length > 0);
 
-  const groupTargets = createMemo(
-    () => ({
-      cards: props.columnCards.filter(
-        (other) =>
-          other.id !== props.card.id &&
-          !other.redacted &&
-          !other.pending &&
-          other.groupId === null,
-      ),
-      groups: props.columnGroups.filter(
-        (group) => group.id !== props.card.groupId,
-      ),
-    }),
+  const groupTargets = createMemo(() =>
+    getCardMergeTargets(
+      workspace,
+      props.card,
+      props.columnCards,
+      props.columnGroups,
+    ),
   );
 
   const canGroup = createMemo(
-    () =>
-      workspace.canGroupCards &&
-      canInteractWithCard(workspace, props.card) &&
-      (groupTargets().cards.length > 0 || groupTargets().groups.length > 0),
+    () => groupTargets().cards.length > 0 || groupTargets().groups.length > 0,
   );
 
-  const canUngroup = createMemo(
-    () =>
-      props.canUngroup ??
-      (workspace.canGroupCards && passesPrivateMode(workspace, props.card)),
+  const canUngroup = createMemo(() =>
+    canUngroupCard(workspace, props.card, props.columnGroups, props.columnCards),
   );
 
   const canDrag = createMemo(() => (canMove() || canGroup()) && !cardEdit.isEditing());
@@ -197,26 +195,24 @@ export default function CardItem(props: CardItemProps) {
     if (!canManage()) return false;
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    const error = await workspace.actions.updateCard(props.card.id, trimmed);
-    return error === null ? true : error;
+    const result = await workspace.actions.updateCard(props.card.id, trimmed);
+    return result.ok ? true : result.message;
   }
 
-  async function runCardAction(
-    request: () => Promise<boolean>,
-    failureMessage: string,
-    setPending?: (pending: boolean) => void,
+  async function settleCardAction(
+    pending: Promise<BoardMutationResult>,
+    fallbackMessage: string,
   ): Promise<boolean> {
-    setPending?.(true);
     setActionError('');
     try {
-      if (await request()) return true;
+      const result = await pending;
+      if (result.ok) return true;
+      if (!props.card.redacted) setActionError(result.message);
+      return false;
     } catch {
-      // Report rejected requests alongside unsuccessful mutation responses.
-    } finally {
-      setPending?.(false);
+      if (!props.card.redacted) setActionError(fallbackMessage);
+      return false;
     }
-    if (!props.card.redacted) setActionError(failureMessage);
-    return false;
   }
 
   async function handleDeleteCard(): Promise<void> {
@@ -227,27 +223,24 @@ export default function CardItem(props: CardItemProps) {
       confirmLabel: 'Delete Card',
     });
     if (!confirmed) return;
-    await runCardAction(
-      () => workspace.actions.deleteCard(props.card.id),
+    await settleCardAction(
+      workspace.actions.deleteCard(props.card.id),
       'Could not delete the Card. Try again.',
-      setIsDeleting,
     );
   }
 
   function updateAction(patch: ActionItemPatch): Promise<boolean> {
-    return runCardAction(
-      // eslint-disable-next-line solid/reactivity -- invoked from event handlers only
-      () => workspace.actions.updateActionItem(props.card.id, patch),
+    return settleCardAction(
+      workspace.actions.updateActionItem(props.card.id, patch),
       'Could not update the Action Item. Try again.',
     );
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    await runCardAction(
-      () => workspace.actions.moveCard(props.card.id, targetColumnId),
+    await settleCardAction(
+      workspace.actions.moveCard(props.card.id, targetColumnId),
       'Could not move the Card. Try again.',
-      setIsMoving,
     );
   }
 
@@ -257,19 +250,17 @@ export default function CardItem(props: CardItemProps) {
     targetId: string,
   ): Promise<void> {
     if (isGrouping()) return;
-    await runCardAction(
-      () => workspace.actions.groupCard(cardId, targetType, targetId),
+    await settleCardAction(
+      workspace.actions.groupCard(cardId, targetType, targetId),
       'Could not group the Card. Try again.',
-      setIsGrouping,
     );
   }
 
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
-    await runCardAction(
-      () => workspace.actions.ungroupCard(props.card.id),
+    await settleCardAction(
+      workspace.actions.ungroupCard(props.card.id),
       'Could not ungroup the Card. Try again.',
-      setIsUngrouping,
     );
   }
 
@@ -400,7 +391,7 @@ export default function CardItem(props: CardItemProps) {
                 <input
                   type="checkbox"
                   checked={actionDone()}
-                  disabled={!canEditActionItemFollowUp(workspace, props.card)}
+                  disabled={!canEditActionItemFollowUp(workspace, props.card) || isUpdatingAction()}
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {
                     const checkbox = event.currentTarget;
@@ -431,7 +422,7 @@ export default function CardItem(props: CardItemProps) {
               cardId={props.card.id}
               reactions={props.card.reactions}
               myReactions={props.card.myReactions}
-              disabled={workspace.isLocked}
+              disabled={!canInteract()}
               onToggleReaction={workspace.actions.toggleReaction}
             />
 
@@ -446,7 +437,12 @@ export default function CardItem(props: CardItemProps) {
 
             <Show when={props.card.groupId === null}>
               <div class="flex sm:col-start-3">
-                <VoteControls target={props.card} voting={workspace.voting} isLocked={workspace.isLocked} />
+                <VoteControls
+                  target={props.card}
+                  voting={workspace.voting}
+                  isLocked={workspace.isLocked}
+                  disabled={!canInteract()}
+                />
               </div>
             </Show>
 
@@ -480,7 +476,7 @@ export default function CardItem(props: CardItemProps) {
                 <LucideIcon icon={PanelRightOpen} />
               </button>
 
-              <Show when={!workspace.isLocked}>
+              <Show when={canContribute(workspace)}>
                 <Menu
                   open={menuOpen()}
                   modal={false}
@@ -490,7 +486,8 @@ export default function CardItem(props: CardItemProps) {
                     ref={menuTrigger}
                     aria-label="Card actions"
                     title="Card actions"
-                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text board-focus-ring sm:min-h-7 sm:min-w-7"
+                    disabled={!canInteract()}
+                    class="spring-press inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text data-open:bg-surface-subtle data-open:text-text disabled:cursor-not-allowed disabled:opacity-50 data-disabled:cursor-not-allowed data-disabled:opacity-50 board-focus-ring sm:min-h-7 sm:min-w-7"
                   >
                     <LucideIcon icon={Ellipsis} class="size-4" />
                   </MenuTrigger>
@@ -552,7 +549,7 @@ export default function CardItem(props: CardItemProps) {
                         </BoardMenuContent>
                       </MenuSub>
                     </Show>
-                    <Show when={props.card.groupId !== null && canUngroup()}>
+                    <Show when={canUngroup()}>
                       <MenuItem value="ungroup" class={menuItemClass} disabled={isUngrouping()} onSelect={() => { void handleUngroup(); }}>
                         Ungroup Card
                       </MenuItem>
@@ -560,8 +557,11 @@ export default function CardItem(props: CardItemProps) {
                     <MenuItem
                       value="flag"
                       class={menuItemClass}
-                      disabled={isUpdatingAction()}
-                      onSelect={() => { void updateAction({ isActionItem: !props.card.isActionItem }); }}
+                      disabled={!canToggleActionItem() || isUpdatingAction()}
+                      onSelect={() => {
+                        if (!canToggleActionItem()) return;
+                        void updateAction({ isActionItem: !props.card.isActionItem });
+                      }}
                     >
                       <FlagIcon /> {props.card.isActionItem ? 'Unflag Action Item' : 'Flag as Action Item'}
                     </MenuItem>

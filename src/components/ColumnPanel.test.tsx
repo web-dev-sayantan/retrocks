@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-li
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { CardViewDTO, ColumnDTO } from '../lib/board-types';
 import type { ColumnViewProjection } from '../lib/board-view';
@@ -211,12 +212,12 @@ describe('<ColumnPanel />', () => {
     const board = makeBoardView({ isFacilitator: true });
     const view = makeColumnView(board.columns[0], []);
     const [isLocked, setIsLocked] = createSignal(false);
-    const pending = Promise.withResolvers<boolean>();
+    const pending = Promise.withResolvers<BoardMutationResult>();
     const updateColumn = vi
-      .fn<() => Promise<boolean>>()
+      .fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: false, message: 'Could not update the Column.' })
+      .mockResolvedValueOnce({ ok: true });
     const actions = createTestBoardMutations({ updateColumn });
 
     const { getByRole, queryByRole } = render(() => (
@@ -260,7 +261,7 @@ describe('<ColumnPanel />', () => {
     flush();
     expect(queryByRole('textbox', { name: 'Column title' })).toBeNull();
     expect(getByRole('button', { name: 'Went Well' })).toHaveFocus();
-    pending.resolve(true);
+    pending.resolve({ ok: true });
     await pending.promise;
     await Promise.resolve();
     flush();
@@ -286,5 +287,47 @@ describe('<ColumnPanel />', () => {
     setIsLocked(true);
     flush();
     expect(queryByRole('textbox', { name: 'Column title' })).toBeNull();
+  });
+
+  it('disables Delete column with hidden-Card guidance in Private Mode and omits it on the last Column', () => {
+    const board = makeBoardView({ isFacilitator: true, isBlurred: true });
+    const hiddenCard = makeCard({
+      id: 'card_hidden',
+      columnId: 'col_1',
+      isMine: false,
+      redacted: true,
+    });
+    const view = makeColumnView(board.columns[0], [hiddenCard]);
+    const [columns, setColumns] = createSignal<readonly ColumnDTO[]>(board.columns);
+
+    const { getByRole } = render(() => (
+      <TestBoardWorkspace board={board} columns={columns}>
+        <ColumnPanel
+          view={view}
+          columnIndex={0}
+          hasActiveFilter={false}
+          isMobile={false}
+          isMobileActive={true}
+          isHorizontalSnap={false}
+          onResetFilters={() => {}}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Column options for Went Well' }));
+    flush();
+    const deleteItem = getByRole('menuitem', { name: 'Delete column' });
+    expect(deleteItem).toHaveAttribute('aria-disabled', 'true');
+    expect(deleteItem).toHaveAttribute(
+      'title',
+      'Reveal All before deleting a Column with hidden Cards.',
+    );
+
+    // When only one Column remains, the last-column floor takes precedence over hidden Cards.
+    setColumns([board.columns[0]]);
+    flush();
+    expect(deleteItem).toHaveAttribute('aria-disabled', 'true');
+    expect(deleteItem).not.toHaveAttribute('title');
   });
 });

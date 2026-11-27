@@ -16,7 +16,7 @@ export interface BoardWorkspaceContextValue {
   readonly isLocked: boolean;
   readonly isBlurred: boolean;
   readonly blindVoting: boolean;
-  readonly canGroupCards: boolean;
+  readonly allowParticipantGroup: boolean;
   readonly nowMs: number;
   readonly transfer: BoardTransferHandle;
   readonly actions: BoardMutations;

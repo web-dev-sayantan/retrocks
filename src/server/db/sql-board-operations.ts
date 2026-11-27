@@ -1,6 +1,19 @@
 import 'server-only';
 
 import {
+  decideActionItemAction,
+  decideBoardAction,
+  decideCardAction,
+  decideColumnAction,
+  decideCommentDelete,
+  decideGroupAction,
+  type BoardPolicyContext,
+  type BoardPolicyDenialReason,
+  type CardGroupPolicyFacts,
+  type GroupPolicyAction,
+  type MergeGroupFacts,
+} from '../../lib/board-policy';
+import {
   MAX_ACTION_OWNER_LENGTH,
   MAX_CARDS_PER_BOARD,
   MAX_CARD_CONTENT_LENGTH,
@@ -13,22 +26,24 @@ import {
   type ColumnAccent,
 } from '../../lib/board-types';
 import { applyTimerChange } from '../domain/timer';
-import { checkPrivateCardPermission } from '../domain/card-permissions';
-import type {
-  BoardMutationActor,
-  BoardMutationCommand,
-  BoardMutationOutcome,
-  CreateBoardRecord,
-  FacilitatorCapability,
-  RawBoardMutationEvent,
-  RawBoardRow,
-  RawBoardSnapshot,
-  RawCardGroupRow,
-  RawCardRow,
-  RawColumnRow,
-  RawCommentRow,
-  RawReactionRow,
-  RawVoteRow,
+import {
+  BOARD_LOCKED_ERROR,
+  PRIVATE_MODE_ERROR,
+  type BoardMutationActor,
+  type BoardMutationCommand,
+  type BoardMutationFailure,
+  type BoardMutationOutcome,
+  type CreateBoardRecord,
+  type FacilitatorCapability,
+  type RawBoardMutationEvent,
+  type RawBoardRow,
+  type RawBoardSnapshot,
+  type RawCardGroupRow,
+  type RawCardRow,
+  type RawColumnRow,
+  type RawCommentRow,
+  type RawReactionRow,
+  type RawVoteRow,
 } from './raw-types';
 import { BOARD_SCHEMA_STATEMENTS } from './schema';
 import type { SqlRunner } from './sql-runner';
@@ -222,6 +237,231 @@ export function computeBoardExpiryAt(
   retentionDays: number,
 ): number {
   return lastActiveAt + retentionDays * MS_PER_DAY;
+}
+
+const BOARD_FACILITATOR_MESSAGES: Record<
+  | 'voting:configure'
+  | 'voting:reset'
+  | 'facilitator:rotate'
+  | 'timer:update'
+  | 'board:rename'
+  | 'board:set-private-mode'
+  | 'board:set-lock',
+  string
+> = {
+  'voting:configure': 'Only a Facilitator can change Voting settings or reset Votes.',
+  'voting:reset': 'Only a Facilitator can change Voting settings or reset Votes.',
+  'facilitator:rotate': 'Only a Facilitator can rotate the Co-Facilitator Link.',
+  'timer:update': 'Only a Facilitator can control the timer.',
+  'board:rename': 'Only a Facilitator can rename the Board.',
+  'board:set-private-mode': 'Only a Facilitator can change Private Mode.',
+  'board:set-lock': 'Only a Facilitator can Lock or Unlock the Board.',
+};
+
+const COLUMN_FACILITATOR_MESSAGES: Record<
+  'column:add' | 'column:update' | 'column:reorder' | 'column:delete',
+  string
+> = {
+  'column:add': 'Only a Facilitator can add Columns.',
+  'column:update': 'Only a Facilitator can edit Columns.',
+  'column:reorder': 'Only a Facilitator can reorder Columns.',
+  'column:delete': 'Only a Facilitator can delete Columns.',
+};
+
+function authorizeCommandAccess(
+  policyBoard: BoardPolicyContext,
+  command: BoardMutationCommand,
+): BoardMutationFailure | null {
+  switch (command.type) {
+    case 'voting:configure':
+    case 'voting:reset':
+    case 'facilitator:rotate':
+    case 'timer:update':
+    case 'board:rename':
+    case 'board:set-private-mode':
+    case 'board:set-lock': {
+      const decision = decideBoardAction(policyBoard, command.type);
+      if (decision.allowed) return null;
+      return decision.reason === 'board-locked'
+        ? BOARD_LOCKED_ERROR
+        : {
+            ok: false,
+            code: 'FORBIDDEN',
+            message: BOARD_FACILITATOR_MESSAGES[command.type],
+          };
+    }
+
+    case 'card:set-action': {
+      const decision = decideBoardAction(
+        policyBoard,
+        command.isActionItem === undefined
+          ? 'action-item:follow-up'
+          : 'board:contribute',
+      );
+      return decision.allowed ? null : BOARD_LOCKED_ERROR;
+    }
+
+    case 'vote:change':
+    case 'card:create':
+    case 'card:update':
+    case 'card:move':
+    case 'card:delete':
+    case 'reaction:toggle':
+    case 'comment:create':
+    case 'comment:delete': {
+      const decision = decideBoardAction(policyBoard, 'board:contribute');
+      return decision.allowed ? null : BOARD_LOCKED_ERROR;
+    }
+
+    case 'group:merge':
+    case 'group:rename':
+    case 'group:ungroup':
+    case 'group:dissolve':
+    case 'group:move': {
+      const decision = decideGroupAction(policyBoard, {
+        type: 'group:manage-access',
+      });
+      if (decision.allowed) return null;
+      return mapGroupPolicyDenial(decision.reason);
+    }
+
+    case 'column:add':
+    case 'column:update':
+    case 'column:reorder':
+    case 'column:delete': {
+      const decision = decideColumnAction(
+        policyBoard,
+        command.type === 'column:add'
+          ? { type: 'column:add', columnCount: 0 }
+          : command.type === 'column:delete'
+            ? { type: 'column:delete', columnCount: 2 }
+            : { type: command.type },
+      );
+      if (decision.allowed) return null;
+      return mapColumnPolicyDenial(decision.reason, command.type);
+    }
+  }
+}
+
+function mapCardPolicyDenial(
+  reason: BoardPolicyDenialReason,
+  verb?: 'edit' | 'move' | 'delete',
+): BoardMutationFailure {
+  switch (reason) {
+    case 'board-locked':
+      return BOARD_LOCKED_ERROR;
+    case 'private-mode-restricted':
+      return PRIVATE_MODE_ERROR;
+    case 'not-card-author':
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: `You can only ${verb ?? 'edit'} your own Cards.`,
+      };
+    case 'not-action-item':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Only Action Items can have completion and owner fields.',
+      };
+    case 'not-comment-author':
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'You can only delete your own comments.',
+      };
+    default:
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'You do not have permission to perform this action.',
+      };
+  }
+}
+
+function mapGroupPolicyDenial(reason: BoardPolicyDenialReason): BoardMutationFailure {
+  switch (reason) {
+    case 'board-locked':
+      return BOARD_LOCKED_ERROR;
+    case 'grouping-restricted':
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'Only a Facilitator can group Cards.',
+      };
+    case 'private-mode-restricted':
+      return PRIVATE_MODE_ERROR;
+    case 'same-card':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Choose a different Card to group with.',
+      };
+    case 'different-column':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Cards can only be grouped within the same Column.',
+      };
+    case 'already-in-group':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'This Card is already in that Card Group.',
+      };
+    case 'card-not-in-group':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Card is not in a Card Group.',
+      };
+    default:
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'You do not have permission to group Cards.',
+      };
+  }
+}
+
+function mapColumnPolicyDenial(
+  reason: BoardPolicyDenialReason,
+  actionType: 'column:add' | 'column:update' | 'column:reorder' | 'column:delete',
+): BoardMutationFailure {
+  switch (reason) {
+    case 'board-locked':
+      return BOARD_LOCKED_ERROR;
+    case 'facilitator-required':
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: COLUMN_FACILITATOR_MESSAGES[actionType],
+      };
+    case 'column-limit-reached':
+      return {
+        ok: false,
+        code: 'LIMIT_EXCEEDED',
+        message: `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns.`,
+      };
+    case 'last-column':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'A Board must have at least 1 Column.',
+      };
+    case 'column-has-hidden-cards':
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'Reveal All before deleting a Column with hidden Cards.',
+      };
+    default:
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: COLUMN_FACILITATOR_MESSAGES[actionType],
+      };
+  }
 }
 
 /**
@@ -509,57 +749,18 @@ export class SqlBoardOperations {
     rawEvents.push({ type: 'group:dissolved', version, groupId });
   }
 
-  private checkGroupManagePermission(
-    board: RawBoardRow,
-    actor: BoardMutationActor,
-  ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
-    if (actor.isFacilitator || board.allowParticipantGroup) {
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      code: 'FORBIDDEN',
-      message: 'Only a Facilitator can group Cards.',
-    };
-  }
-
-  private checkGroupPrivacy(
-    board: RawBoardRow,
-    actor: BoardMutationActor,
+  private getGroupPolicyFacts(
+    boardId: string,
     groupId: string,
-  ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
-    const members = this.sql.all<{ author_token_hash: string }>(
-      'SELECT author_token_hash FROM cards WHERE board_id = ? AND group_id = ?',
-      board.id,
-      groupId,
-    );
-    for (const member of members) {
-      const permission = checkPrivateCardPermission(
-        board,
-        actor,
-        member.author_token_hash,
-      );
-      if (!permission.ok) return permission;
-    }
-    return { ok: true };
-  }
-
-  private checkCardManagePermission(
-    board: RawBoardRow,
-    card: CardDbRow,
     actor: BoardMutationActor,
-    verb: 'edit' | 'move' | 'delete',
-  ): { ok: true } | { ok: false; code: 'FORBIDDEN'; message: string } {
-    const privacy = checkPrivateCardPermission(board, actor, card.author_token_hash);
-    if (!privacy.ok) return privacy;
-    if (!actor.isFacilitator && card.author_token_hash !== actor.participantHash) {
-      return {
-        ok: false,
-        code: 'FORBIDDEN',
-        message: `You can only ${verb} your own Cards.`,
-      };
-    }
-    return { ok: true };
+  ): CardGroupPolicyFacts {
+    const otherAuthorCard = this.sql.get<{ id: string }>(
+      'SELECT id FROM cards WHERE board_id = ? AND group_id = ? AND author_token_hash != ? LIMIT 1',
+      boardId,
+      groupId,
+      actor.participantHash,
+    );
+    return { allCardsAreMine: !otherAuthorCard };
   }
 
   mutateBoard(
@@ -600,20 +801,16 @@ export class SqlBoardOperations {
         };
       }
 
-      if (board.isLocked) {
-        const canWriteWhileLocked =
-          command.type === 'facilitator:rotate' ||
-          (actor.isFacilitator &&
-            (command.type === 'board:set-lock' ||
-              (command.type === 'card:set-action' &&
-                command.isActionItem === undefined)));
-        if (!canWriteWhileLocked) {
-          return {
-            ok: false,
-            code: 'BOARD_LOCKED',
-            message: 'This Board is Locked and cannot be edited.',
-          };
-        }
+      const policyBoard: BoardPolicyContext = {
+        isFacilitator: actor.isFacilitator,
+        isLocked: board.isLocked,
+        isPrivateMode: board.isBlurred,
+        allowParticipantGroup: board.allowParticipantGroup,
+      };
+
+      const accessFailure = authorizeCommandAccess(policyBoard, command);
+      if (accessFailure) {
+        return accessFailure;
       }
 
       const nextVersion = board.version + 1;
@@ -653,9 +850,6 @@ export class SqlBoardOperations {
       switch (command.type) {
         case 'voting:configure':
         case 'voting:reset': {
-          if (!actor.isFacilitator) {
-            return { ok: false, code: 'FORBIDDEN', message: 'Only a Facilitator can change Voting settings or reset Votes.' };
-          }
           if (command.type === 'voting:configure') {
             configureVoting(this.sql, board, command);
           } else {
@@ -687,14 +881,6 @@ export class SqlBoardOperations {
         }
 
         case 'facilitator:rotate': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can rotate the Co-Facilitator Link.',
-            };
-          }
-
           this.sql.run(
             `UPDATE boards SET facilitator_token_hash = ?, facilitator_token_encrypted = ?,
                                version = ?, last_active_at = ? WHERE id = ?`,
@@ -709,13 +895,6 @@ export class SqlBoardOperations {
         }
 
         case 'timer:update': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can control the timer.',
-            };
-          }
           const timer = applyTimerChange(board, command.change, now);
           if (!timer) return finalize(board.version, board.lastActiveAt);
 
@@ -734,13 +913,6 @@ export class SqlBoardOperations {
         }
 
         case 'board:rename': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can rename the Board.',
-            };
-          }
           const patch: Partial<BoardSettingsDTO> = { title: command.title };
           if (command.subtitle !== undefined) {
             patch.subtitle = command.subtitle;
@@ -770,14 +942,6 @@ export class SqlBoardOperations {
         }
 
         case 'board:set-private-mode': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can change Private Mode.',
-            };
-          }
-
           if (command.isBlurred === board.isBlurred) {
             rawEvents.push({ type: 'board:snapshot', version: board.version });
             return finalize(board.version, board.lastActiveAt);
@@ -795,14 +959,6 @@ export class SqlBoardOperations {
         }
 
         case 'board:set-lock': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can Lock or Unlock the Board.',
-            };
-          }
-
           if (command.isLocked === board.isLocked) {
             return finalize(board.version, board.lastActiveAt);
           }
@@ -897,14 +1053,11 @@ export class SqlBoardOperations {
             };
           }
 
-          const perm = this.checkCardManagePermission(
-            board,
-            card,
-            actor,
-            'edit',
-          );
-          if (!perm.ok) {
-            return perm;
+          const decision = decideCardAction(policyBoard, 'card:update', {
+            isMine: card.author_token_hash === actor.participantHash,
+          });
+          if (!decision.allowed) {
+            return mapCardPolicyDenial(decision.reason, 'edit');
           }
 
           if (
@@ -948,14 +1101,11 @@ export class SqlBoardOperations {
             };
           }
 
-          const perm = this.checkCardManagePermission(
-            board,
-            card,
-            actor,
-            'move',
-          );
-          if (!perm.ok) {
-            return perm;
+          const decision = decideCardAction(policyBoard, 'card:move', {
+            isMine: card.author_token_hash === actor.participantHash,
+          });
+          if (!decision.allowed) {
+            return mapCardPolicyDenial(decision.reason, 'move');
           }
 
           const targetColumn = this.sql.get<ColumnDbRow>(
@@ -1019,14 +1169,11 @@ export class SqlBoardOperations {
             };
           }
 
-          const perm = this.checkCardManagePermission(
-            board,
-            card,
-            actor,
-            'delete',
-          );
-          if (!perm.ok) {
-            return perm;
+          const decision = decideCardAction(policyBoard, 'card:delete', {
+            isMine: card.author_token_hash === actor.participantHash,
+          });
+          if (!decision.allowed) {
+            return mapCardPolicyDenial(decision.reason, 'delete');
           }
 
           const previousGroupId = card.group_id;
@@ -1058,9 +1205,6 @@ export class SqlBoardOperations {
         }
 
         case 'group:merge': {
-          const managePermission = this.checkGroupManagePermission(board, actor);
-          if (!managePermission.ok) return managePermission;
-
           const source = this.sql.get<CardDbRow>(
             'SELECT * FROM cards WHERE board_id = ? AND id = ?',
             boardId,
@@ -1069,85 +1213,93 @@ export class SqlBoardOperations {
           if (!source) {
             return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
           }
-          const sourcePrivacy = checkPrivateCardPermission(
-            board,
-            actor,
-            source.author_token_hash,
-          );
-          if (!sourcePrivacy.ok) return sourcePrivacy;
+          const sourcePrivacy = decideCardAction(policyBoard, 'card:interact', {
+            isMine: source.author_token_hash === actor.participantHash,
+          });
+          if (!sourcePrivacy.allowed) {
+            return mapGroupPolicyDenial(sourcePrivacy.reason);
+          }
 
           let targetCard: CardDbRow | null = null;
           let group: CardGroupDbRow | null = null;
+          let mergeTarget: Extract<GroupPolicyAction, { type: 'group:merge' }>['target'];
           if (command.targetType === 'card') {
-            targetCard = this.sql.get<CardDbRow>(
+            const foundCard = this.sql.get<CardDbRow>(
               'SELECT * FROM cards WHERE board_id = ? AND id = ?',
               boardId,
               command.targetId,
-            ) ?? null;
-            if (!targetCard) {
+            );
+            if (!foundCard) {
               return { ok: false, code: 'NOT_FOUND', message: 'Target Card not found.' };
             }
-            if (targetCard.id === source.id) {
-              return {
-                ok: false,
-                code: 'VALIDATION_ERROR',
-                message: 'Choose a different Card to group with.',
-              };
-            }
-            const targetPrivacy = checkPrivateCardPermission(
-              board,
-              actor,
-              targetCard.author_token_hash,
-            );
-            if (!targetPrivacy.ok) return targetPrivacy;
-            if (targetCard.group_id !== null) {
-              group = this.sql.get<CardGroupDbRow>(
+            targetCard = foundCard;
+            let targetGroupFacts: MergeGroupFacts | null = null;
+            if (foundCard.group_id !== null) {
+              const foundGroup = this.sql.get<CardGroupDbRow>(
                 'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
                 boardId,
-                targetCard.group_id,
-              ) ?? null;
-              if (!group) {
+                foundCard.group_id,
+              );
+              if (!foundGroup) {
                 return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
               }
+              group = foundGroup;
+              targetGroupFacts = {
+                id: foundGroup.id,
+                columnId: foundGroup.column_id,
+                ...this.getGroupPolicyFacts(boardId, foundGroup.id, actor),
+              };
             }
+            mergeTarget = {
+              kind: 'card',
+              card: {
+                id: foundCard.id,
+                columnId: foundCard.column_id,
+                groupId: foundCard.group_id,
+                isMine: foundCard.author_token_hash === actor.participantHash,
+              },
+              group: targetGroupFacts,
+            };
           } else {
-            group = this.sql.get<CardGroupDbRow>(
+            const foundGroup = this.sql.get<CardGroupDbRow>(
               'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
               boardId,
               command.targetId,
-            ) ?? null;
-            if (!group) {
+            );
+            if (!foundGroup) {
               return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
             }
-          }
-
-          // Only one of `group`/`targetCard` is set per target type; a guard
-          // keeps the impossible both-null case a clean NOT_FOUND instead of a
-          // thrown TypeError mid-transaction.
-          const targetColumnId = group?.column_id ?? targetCard?.column_id;
-          if (targetColumnId === undefined) {
-            return { ok: false, code: 'NOT_FOUND', message: 'Target Card not found.' };
-          }
-          if (source.column_id !== targetColumnId) {
-            return {
-              ok: false,
-              code: 'VALIDATION_ERROR',
-              message: 'Cards can only be grouped within the same Column.',
+            group = foundGroup;
+            mergeTarget = {
+              kind: 'group',
+              group: {
+                id: foundGroup.id,
+                columnId: foundGroup.column_id,
+                ...this.getGroupPolicyFacts(boardId, foundGroup.id, actor),
+              },
             };
           }
-          if (group) {
-            const groupPrivacy = this.checkGroupPrivacy(board, actor, group.id);
-            if (!groupPrivacy.ok) return groupPrivacy;
+
+          const sourceGroup =
+            source.group_id !== null
+              ? this.getGroupPolicyFacts(boardId, source.group_id, actor)
+              : null;
+          const mergeDecision = decideGroupAction(policyBoard, {
+            type: 'group:merge',
+            sourceCard: {
+              id: source.id,
+              columnId: source.column_id,
+              groupId: source.group_id,
+              isMine: source.author_token_hash === actor.participantHash,
+            },
+            sourceGroup,
+            target: mergeTarget,
+          });
+          if (!mergeDecision.allowed) {
+            return mapGroupPolicyDenial(mergeDecision.reason);
           }
 
           const targetGroupId = group?.id ?? command.groupId;
-          if (source.group_id === targetGroupId) {
-            return {
-              ok: false,
-              code: 'VALIDATION_ERROR',
-              message: 'This Card is already in that Card Group.',
-            };
-          }
 
           if (!group && targetCard) {
             const title = targetCard.content.trim().slice(0, MAX_GROUP_TITLE_LENGTH);
@@ -1207,9 +1359,6 @@ export class SqlBoardOperations {
         }
 
         case 'group:rename': {
-          const managePermission = this.checkGroupManagePermission(board, actor);
-          if (!managePermission.ok) return managePermission;
-
           const group = this.sql.get<CardGroupDbRow>(
             'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
             boardId,
@@ -1218,8 +1367,13 @@ export class SqlBoardOperations {
           if (!group) {
             return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
           }
-          const privacy = this.checkGroupPrivacy(board, actor, group.id);
-          if (!privacy.ok) return privacy;
+          const decision = decideGroupAction(policyBoard, {
+            type: 'group:rename',
+            group: this.getGroupPolicyFacts(boardId, group.id, actor),
+          });
+          if (!decision.allowed) {
+            return mapGroupPolicyDenial(decision.reason);
+          }
 
           if (
             command.title.length === 0 ||
@@ -1248,9 +1402,6 @@ export class SqlBoardOperations {
         }
 
         case 'group:ungroup': {
-          const managePermission = this.checkGroupManagePermission(board, actor);
-          if (!managePermission.ok) return managePermission;
-
           const card = this.sql.get<CardDbRow>(
             'SELECT * FROM cards WHERE board_id = ? AND id = ?',
             boardId,
@@ -1259,20 +1410,21 @@ export class SqlBoardOperations {
           if (!card) {
             return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
           }
-          const privacy = checkPrivateCardPermission(
-            board,
-            actor,
-            card.author_token_hash,
-          );
-          if (!privacy.ok) return privacy;
 
           const previousGroupId = card.group_id;
+          const decision = decideGroupAction(policyBoard, {
+            type: 'group:ungroup',
+            card: { isMine: card.author_token_hash === actor.participantHash },
+            group:
+              previousGroupId !== null
+                ? this.getGroupPolicyFacts(boardId, previousGroupId, actor)
+                : null,
+          });
+          if (!decision.allowed) {
+            return mapGroupPolicyDenial(decision.reason);
+          }
           if (!previousGroupId) {
-            return {
-              ok: false,
-              code: 'VALIDATION_ERROR',
-              message: 'Card is not in a Card Group.',
-            };
+            return mapGroupPolicyDenial('card-not-in-group');
           }
 
           this.sql.run(
@@ -1297,9 +1449,6 @@ export class SqlBoardOperations {
         }
 
         case 'group:dissolve': {
-          const managePermission = this.checkGroupManagePermission(board, actor);
-          if (!managePermission.ok) return managePermission;
-
           const group = this.sql.get<CardGroupDbRow>(
             'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
             boardId,
@@ -1308,8 +1457,13 @@ export class SqlBoardOperations {
           if (!group) {
             return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
           }
-          const privacy = this.checkGroupPrivacy(board, actor, group.id);
-          if (!privacy.ok) return privacy;
+          const decision = decideGroupAction(policyBoard, {
+            type: 'group:dissolve',
+            group: this.getGroupPolicyFacts(boardId, group.id, actor),
+          });
+          if (!decision.allowed) {
+            return mapGroupPolicyDenial(decision.reason);
+          }
 
           this.dissolveGroup(boardId, group.id, nextVersion, rawEvents);
           bumpBoard();
@@ -1317,9 +1471,6 @@ export class SqlBoardOperations {
         }
 
         case 'group:move': {
-          const managePermission = this.checkGroupManagePermission(board, actor);
-          if (!managePermission.ok) return managePermission;
-
           const group = this.sql.get<CardGroupDbRow>(
             'SELECT * FROM card_groups WHERE board_id = ? AND id = ?',
             boardId,
@@ -1328,8 +1479,13 @@ export class SqlBoardOperations {
           if (!group) {
             return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
           }
-          const privacy = this.checkGroupPrivacy(board, actor, group.id);
-          if (!privacy.ok) return privacy;
+          const decision = decideGroupAction(policyBoard, {
+            type: 'group:move',
+            group: this.getGroupPolicyFacts(boardId, group.id, actor),
+          });
+          if (!decision.allowed) {
+            return mapGroupPolicyDenial(decision.reason);
+          }
 
           const targetColumn = this.sql.get<ColumnDbRow>(
             'SELECT * FROM columns WHERE board_id = ? AND id = ?',
@@ -1404,36 +1560,24 @@ export class SqlBoardOperations {
             };
           }
 
-          const permission = checkPrivateCardPermission(
-            board,
-            actor,
-            card.author_token_hash,
+          const decision = decideActionItemAction(
+            policyBoard,
+            {
+              isMine: card.author_token_hash === actor.participantHash,
+              isActionItem: card.is_action_item === 1,
+            },
+            {
+              isActionItem: command.isActionItem,
+              actionDone: command.actionDone,
+              actionOwner: command.actionOwner,
+            },
           );
-          if (!permission.ok) return permission;
-
-          if (board.isLocked && card.is_action_item !== 1) {
-            return {
-              ok: false,
-              code: 'BOARD_LOCKED',
-              message: 'This Board is Locked and cannot be edited.',
-            };
+          if (!decision.allowed) {
+            return mapCardPolicyDenial(decision.reason);
           }
 
           const isActionItem =
             command.isActionItem ?? card.is_action_item === 1;
-          if (
-            !isActionItem &&
-            (command.actionDone !== undefined ||
-              command.actionOwner !== undefined)
-          ) {
-            return {
-              ok: false,
-              code: 'VALIDATION_ERROR',
-              message:
-                'Only Action Items can have completion and owner fields.',
-            };
-          }
-
           const actionOwner = command.actionOwner ?? card.action_owner;
           if (actionOwner.length > MAX_ACTION_OWNER_LENGTH) {
             return {
@@ -1470,8 +1614,17 @@ export class SqlBoardOperations {
             command.cardId,
           );
           if (!card) return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
-          const permission = checkPrivateCardPermission(board, actor, card.author_token_hash);
-          if (!permission.ok) return permission;
+          const cardFacts = {
+            isMine: card.author_token_hash === actor.participantHash,
+          };
+          const interactDecision = decideCardAction(
+            policyBoard,
+            'card:interact',
+            cardFacts,
+          );
+          if (!interactDecision.allowed) {
+            return mapCardPolicyDenial(interactDecision.reason);
+          }
 
           if (command.type === 'reaction:toggle') {
             const { changes } = this.sql.run(
@@ -1544,8 +1697,13 @@ export class SqlBoardOperations {
             if (!comment) {
               return { ok: false, code: 'NOT_FOUND', message: 'Comment not found.' };
             }
-            if (!actor.isFacilitator && comment.author_token_hash !== actor.participantHash) {
-              return { ok: false, code: 'FORBIDDEN', message: 'You can only delete your own comments.' };
+            const commentDecision = decideCommentDelete(
+              policyBoard,
+              { isMine: comment.author_token_hash === actor.participantHash },
+              { card: cardFacts, mode: 'authoritative' },
+            );
+            if (!commentDecision.allowed) {
+              return mapCardPolicyDenial(commentDecision.reason);
             }
             this.sql.run(
               'DELETE FROM comments WHERE board_id = ? AND card_id = ? AND id = ?',
@@ -1565,25 +1723,17 @@ export class SqlBoardOperations {
         }
 
         case 'column:add': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can add Columns.',
-            };
-          }
-
           const countRow = this.sql.get<{ count: number }>(
             'SELECT COUNT(*) AS count FROM columns WHERE board_id = ?',
             boardId,
           );
           const currentCount = countRow?.count ?? 0;
-          if (currentCount >= MAX_COLUMNS_PER_BOARD) {
-            return {
-              ok: false,
-              code: 'LIMIT_EXCEEDED',
-              message: `A Board can have at most ${MAX_COLUMNS_PER_BOARD} Columns.`,
-            };
+          const decision = decideColumnAction(policyBoard, {
+            type: 'column:add',
+            columnCount: currentCount,
+          });
+          if (!decision.allowed) {
+            return mapColumnPolicyDenial(decision.reason, 'column:add');
           }
 
           this.sql.run(
@@ -1606,14 +1756,6 @@ export class SqlBoardOperations {
         }
 
         case 'column:update': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can edit Columns.',
-            };
-          }
-
           const column = this.sql.get<ColumnDbRow>(
             'SELECT * FROM columns WHERE board_id = ? AND id = ?',
             boardId,
@@ -1654,14 +1796,6 @@ export class SqlBoardOperations {
         }
 
         case 'column:reorder': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can reorder Columns.',
-            };
-          }
-
           const existingColumns = this.sql.all<{ id: string }>(
             'SELECT id FROM columns WHERE board_id = ? ORDER BY position ASC',
             boardId,
@@ -1699,14 +1833,6 @@ export class SqlBoardOperations {
         }
 
         case 'column:delete': {
-          if (!actor.isFacilitator) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Only a Facilitator can delete Columns.',
-            };
-          }
-
           const existingColumns = this.sql.all<{ id: string }>(
             'SELECT id FROM columns WHERE board_id = ? ORDER BY position ASC',
             boardId,
@@ -1718,25 +1844,25 @@ export class SqlBoardOperations {
               message: 'Column not found.',
             };
           }
-          if (existingColumns.length <= 1) {
-            return {
-              ok: false,
-              code: 'VALIDATION_ERROR',
-              message: 'A Board must have at least 1 Column.',
-            };
-          }
 
-          if (board.isBlurred && this.sql.get<{ id: string }>(
-            'SELECT id FROM cards WHERE board_id = ? AND column_id = ? AND author_token_hash != ? LIMIT 1',
-            boardId,
-            command.columnId,
-            actor.participantHash,
-          )) {
-            return {
-              ok: false,
-              code: 'FORBIDDEN',
-              message: 'Reveal All before deleting a Column with hidden Cards.',
-            };
+          const hasOtherParticipantCards =
+            board.isBlurred &&
+            existingColumns.length > 1 &&
+            Boolean(
+              this.sql.get<{ id: string }>(
+                'SELECT id FROM cards WHERE board_id = ? AND column_id = ? AND author_token_hash != ? LIMIT 1',
+                boardId,
+                command.columnId,
+                actor.participantHash,
+              ),
+            );
+          const decision = decideColumnAction(policyBoard, {
+            type: 'column:delete',
+            columnCount: existingColumns.length,
+            hasOtherParticipantCards,
+          });
+          if (!decision.allowed) {
+            return mapColumnPolicyDenial(decision.reason, 'column:delete');
           }
 
           // Clean up polymorphic votes targeting cards or groups in this Column

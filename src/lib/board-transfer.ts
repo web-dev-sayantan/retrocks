@@ -14,6 +14,7 @@ import {
 import type { PrimitiveHandle } from '@ui-sdk/solid/primitive';
 
 import {
+  canContribute,
   canInteractWithCard,
   canManageCard,
   canManageGroup,
@@ -87,7 +88,7 @@ function planBoardDrop(
   itemKey: string,
   targetKey: string,
 ): BoardTransferMove | null | false {
-  if (!board || board.isLocked) return false;
+  if (!board || !canContribute(board)) return false;
   const item = findTransferTarget(board, itemKey);
   if (!item) return false;
 

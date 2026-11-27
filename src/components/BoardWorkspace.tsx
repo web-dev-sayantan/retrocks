@@ -48,15 +48,18 @@ import { dispatchBoardCommand } from '../lib/board-actions';
 import { createInlineEditSession, type InlineEditOutcome } from '../lib/inline-edit';
 import {
   canAddColumn as canAddBoardColumn,
+  canContribute,
   canControlFacilitation,
   canFacilitate,
-  canManageGrouping,
 } from '../lib/board-permissions';
 import {
   createBoardController,
   type BoardCommandDispatcher,
+  type BoardFacilitatorClaimer,
+  type BoardFragmentAdapter,
 } from '../lib/board-controller';
 import type { LiveTransport } from '../lib/live-stream';
+import { claimFacilitatorRole } from '../lib/sharing-actions';
 import {
   buildBoardTransferLists,
   boardTransfer,
@@ -109,8 +112,49 @@ export interface BoardWorkspaceProps {
   boardId: string;
   homeHref?: string;
   dispatchCommand?: BoardCommandDispatcher;
+  claimFacilitatorLink?: BoardFacilitatorClaimer;
+  fragment?: BoardFragmentAdapter;
   liveTransport?: LiveTransport;
-  liveReconnectKey?: number;
+}
+
+function BoardStatusBanner(props: { message: string; class?: string }) {
+  return (
+    <div
+      role="status"
+      class={[
+        'mx-auto mt-3 flex w-full items-center px-4 sm:px-6',
+        props.class ?? 'max-w-[1600px]',
+      ]}
+    >
+      <div class="flex flex-1 items-center gap-2 rounded-md border border-border bg-surface-subtle px-3.5 py-2 text-xs font-medium text-text-muted">
+        <span>{props.message}</span>
+      </div>
+    </div>
+  );
+}
+
+function BoardAlertBanner(props: { message: string; onDismiss: () => void; class?: string }) {
+  return (
+    <div
+      role="alert"
+      class={[
+        'mx-auto mt-3 flex w-full items-center justify-between gap-3 px-4 sm:px-6',
+        props.class ?? 'max-w-[1600px]',
+      ]}
+    >
+      <div class="flex flex-1 items-center justify-between gap-3 rounded-md border border-col-rose/40 bg-col-rose-tint px-3.5 py-2 text-xs font-medium text-text">
+        <span>{props.message}</span>
+        <button
+          type="button"
+          aria-label="Dismiss error"
+          onClick={() => props.onDismiss()}
+          class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-sm text-text-muted hover:text-text"
+        >
+          <CloseIcon />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function BoardHomeLink(props: { href: string; class: string }) {
@@ -172,11 +216,14 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   // The Board controller owns the store, live stream, server clock,
   // mutation handlers, and pending state; this component keeps layout and UI state.
   const controller = createBoardController({
+    boardId: untrack(() => props.boardId),
     board: () => props.board,
     dispatchCommand: (boardId, command) =>
       (props.dispatchCommand ?? dispatchBoardCommand)(boardId, command),
+    claimFacilitatorLink: (input) =>
+      (props.claimFacilitatorLink ?? claimFacilitatorRole)(input),
+    fragment: untrack(() => props.fragment),
     liveTransport: untrack(() => props.liveTransport),
-    liveReconnectKey: () => props.liveReconnectKey ?? 0,
     onDramaticReveal: runDramaticReveal,
   });
 
@@ -489,15 +536,12 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     pendingTransfers.clear();
   });
 
-  function sendTransferMove(
-    move: BoardTransferMove,
-    onFailure: (message: string) => void,
-  ): Promise<boolean> {
+  function sendTransferMove(move: BoardTransferMove) {
     switch (move.kind) {
-      case 'move-card': return controller.moveCard(move.cardId, move.targetColumnId, onFailure);
-      case 'move-group': return controller.moveCardGroup(move.groupId, move.targetColumnId, onFailure);
-      case 'group-with-card': return controller.groupCard(move.cardId, 'card', move.targetCardId, onFailure);
-      case 'group-with-group': return controller.groupCard(move.cardId, 'group', move.targetGroupId, onFailure);
+      case 'move-card': return controller.moveCard(move.cardId, move.targetColumnId);
+      case 'move-group': return controller.moveCardGroup(move.groupId, move.targetColumnId);
+      case 'group-with-card': return controller.groupCard(move.cardId, 'card', move.targetCardId);
+      case 'group-with-group': return controller.groupCard(move.cardId, 'group', move.targetGroupId);
     }
   }
 
@@ -506,11 +550,14 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const item = move.kind === 'move-group' ? `group:${move.groupId}` : `card:${move.cardId}`;
     pendingTransfers.set(item, transferId);
     controller.clearError();
-    const moved = await sendTransferMove(move, (message) => {
-      if (pendingTransfers.get(item) === transferId) controller.reportError(message);
-    });
-    if (pendingTransfers.get(item) === transferId) pendingTransfers.delete(item);
-    if (moved && transferId === latestTransfer) announce('Move saved.');
+    const result = await sendTransferMove(move);
+    const isCurrent = pendingTransfers.get(item) === transferId;
+    if (isCurrent) pendingTransfers.delete(item);
+    if (!result.ok) {
+      if (isCurrent) controller.reportError(result.message);
+      return;
+    }
+    if (transferId === latestTransfer) announce('Move saved.');
   }
 
   const transfer = usePrimitive(boardTransfer, () => ({
@@ -566,7 +613,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
   useShortcut(
     () => {
       const board = controller.board();
-      return board && !board.isLocked ? 'n' : null;
+      return board && canContribute(board) ? 'n' : null;
     },
     () => {
       const targetCol = activeMobileColumn();
@@ -624,7 +671,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const board = controller.board();
     const trimmed = text.trim();
     if (!board || trimmed.length === 0) return false;
-    return (await controller.renameBoard(trimmed)) ? true : false;
+    return (await controller.renameBoard(trimmed)).ok;
   }
 
   function handleOpenCardDetail(cardId: string, trigger: HTMLButtonElement): void {
@@ -646,13 +693,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     const board = controller.board();
     const trimmed = newColumnTitle().trim();
     if (!board || trimmed.length === 0 || controller.isSavingColumn()) return;
-    const column = await controller.addColumn({
+    const result = await controller.addColumn({
       title: trimmed,
       accent: newColumnAccent(),
       isActionColumn: newColumnIsAction(),
     });
-    if (column) {
-      setActiveColumnId(column.id);
+    if (result.ok) {
+      setActiveColumnId(result.value.id);
       setNewColumnTitle('');
       setNewColumnAccent('slate');
       setNewColumnIsAction(false);
@@ -675,11 +722,13 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
     setIsSubmittingMobileCard(true);
     updateMobileDraft(id, draft);
     try {
-      const error = await controller.createCard(id, draft.trim());
+      const result = await controller.createCard(id, draft.trim());
       setMobileDrafts((drafts) => {
         const current = drafts[id];
         if (current?.content === draft) {
-          drafts[id] = error === null ? { content: '', error: null } : { content: draft, error };
+          drafts[id] = result.ok
+            ? { content: '', error: null }
+            : { content: draft, error: result.message };
         }
       });
     } finally {
@@ -760,6 +809,20 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             </div>
           </header>
 
+          <Show when={controller.claimPending()}>
+            <BoardStatusBanner message="Claiming Facilitator access…" class="max-w-xl" />
+          </Show>
+
+          <Show when={controller.claimError()}>
+            {(message) => (
+              <BoardAlertBanner
+                message={message()}
+                class="max-w-xl"
+                onDismiss={() => controller.clearClaimError()}
+              />
+            )}
+          </Show>
+
           <PageMessage
             title="Board not found or expired"
             message="This Board may have been deleted by a Facilitator or expired after inactivity."
@@ -780,7 +843,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
           get isLocked() { return board().isLocked; },
           get isBlurred() { return board().isBlurred; },
           get blindVoting() { return board().blindVoting; },
-          get canGroupCards() { return canManageGrouping(board()); },
+          get allowParticipantGroup() { return board().allowParticipantGroup; },
           get nowMs() { return controller.nowMs(); },
           transfer,
           actions: controller,
@@ -892,12 +955,12 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
                 <div class="flex min-w-0 flex-wrap items-center justify-end gap-1 sm:gap-2">
                   <div data-print-hide="true">
                     <Show when={board().id} keyed>
-                      {(boardId) => (
+                      {(_boardId) => (
                         <CountdownTimer
                           timer={board().timer}
                           clock={controller.timerClock()}
                           canControl={canControlFacilitation(board())}
-                          onChange={(change) => controller.changeCountdown(boardId, change)}
+                          onChange={controller.changeCountdown}
                         />
                       )}
                     </Show>
@@ -1142,25 +1205,20 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             }}
           />
 
+          <Show when={controller.claimPending()}>
+            <BoardStatusBanner message="Claiming Facilitator access…" />
+          </Show>
+
           {/* Inline dismissible error feedback */}
-          <Show when={controller.errorMessage()}>
+          <Show when={controller.errorMessage() ?? controller.claimError()}>
             {(message) => (
-              <div
-                role="alert"
-                class="mx-auto mt-3 flex w-full max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6"
-              >
-                <div class="flex flex-1 items-center justify-between gap-3 rounded-md border border-col-rose/40 bg-col-rose-tint px-3.5 py-2 text-xs font-medium text-text">
-                  <span>{message()}</span>
-                  <button
-                    type="button"
-                    aria-label="Dismiss error"
-                    onClick={() => controller.clearError()}
-                    class="inline-flex min-h-11 min-w-11 cursor-pointer sm:min-h-8 sm:min-w-8 items-center justify-center rounded-sm text-text-muted hover:text-text"
-                  >
-                    <CloseIcon />
-                  </button>
-                </div>
-              </div>
+              <BoardAlertBanner
+                message={message()}
+                onDismiss={() => {
+                  if (controller.errorMessage()) controller.clearError();
+                  else controller.clearClaimError();
+                }}
+              />
             )}
           </Show>
 
@@ -1467,7 +1525,7 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
 
           {/* Mobile (< 640px) bottom-anchored quick-add Card bar */}
           <Show
-            when={!board().isLocked && activeMobileColumn()}
+            when={canContribute(board()) && activeMobileColumn()}
             fallback={
               <Show when={board().isLocked}>
                 <p data-print-hide="true" class="sticky bottom-0 z-20 border-t border-border bg-surface px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-sm text-text-muted sm:hidden">

@@ -15,36 +15,37 @@ import {
 } from 'solid-js';
 
 import { boardLivePath, type BoardLiveMessage } from './board-live-protocol';
+import { subscribeFacilitatorLinkClaim, takeFacilitatorLinkToken } from './facilitator-link';
 import { createLiveStream, type LiveTransport } from './live-stream';
-import { parseBoardLiveMessage } from './wire-schemas';
+import type { FacilitatorClaimInput, FacilitatorClaimResponse } from './sharing-actions';
+import { parseBoardLiveMessage, parseBoardView } from './wire-schemas';
 import {
   canAddColumn,
-  canContribute,
-  canControlFacilitation,
+  canChangeVote,
   canDeleteColumn,
   canDeleteComment,
   canEditActionItem,
-  canFacilitate,
   canInteractWithCard,
   canManageCard,
   canManageGroup,
-  canManageGrouping,
   canMergeCard,
-  isGroupRedacted,
-  passesPrivateMode,
+  canUngroupCard,
+  toBoardPolicyContext,
 } from './board-permissions';
-import { applyBoardMutation } from './board-store';
-import type {
-  ActionItemPatch,
-  ActionError,
-  BoardMutationResponse,
-  BoardMutationSuccess,
-  BoardMutationUpdate,
-  BoardViewDTO,
-  CardViewDTO,
-  ColumnAccent,
-  ColumnDTO,
-  ReactionEmoji,
+import { decideBoardAction, decideColumnAction } from './board-policy';
+import {
+  cloneCardGroup,
+  cloneCardView,
+  type ActionItemPatch,
+  type ActionError,
+  type BoardEvent,
+  type BoardMutationResponse,
+  type BoardMutationSuccess,
+  type BoardViewDTO,
+  type CardViewDTO,
+  type ColumnAccent,
+  type ColumnDTO,
+  type ReactionEmoji,
 } from './board-types';
 import type { ServerClockSample } from './timer';
 import type { BoardCommand, TimerChange } from './schemas';
@@ -67,35 +68,52 @@ export interface WorkspaceVoting {
   onChange: (targetType: 'card' | 'group', targetId: string, delta: VoteDelta) => void;
 }
 
-type ReportMutationFailure = (message: string) => void;
+/**
+ * Uniform typed outcome for every Board controller mutation. Void mutations
+ * settle to `{ ok: true } | { ok: false; message: string }`; payload-bearing
+ * mutations (such as `addColumn`) carry `{ ok: true; value: T }`.
+ */
+export type BoardMutationResult<T = void> =
+  [T] extends [void]
+    ? { ok: true } | { ok: false; message: string }
+    : { ok: true; value: T } | { ok: false; message: string };
+
+export type CardPendingAction = 'move' | 'group' | 'ungroup' | 'delete';
+export type GroupPendingAction = 'move' | 'dissolve';
+export type ColumnPendingAction = 'delete';
 
 /** Card, Card Group, and Column mutations the workspace panels call. */
 export interface BoardMutations {
-  createCard(columnId: string, content: string): Promise<string | null>;
-  updateCard(cardId: string, content: string): Promise<string | null>;
-  updateActionItem(cardId: string, patch: ActionItemPatch): Promise<boolean>;
-  moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
-  deleteCard(cardId: string): Promise<boolean>;
-  toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<string | null>;
-  createComment(cardId: string, content: string): Promise<string | null>;
-  deleteComment(cardId: string, commentId: string): Promise<string | null>;
-  groupCard(cardId: string, targetType: 'card' | 'group', targetId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
-  ungroupCard(cardId: string): Promise<boolean>;
-  renameCardGroup(groupId: string, title: string): Promise<boolean>;
-  dissolveCardGroup(groupId: string): Promise<boolean>;
-  moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean>;
+  createCard(columnId: string, content: string): Promise<BoardMutationResult>;
+  updateCard(cardId: string, content: string): Promise<BoardMutationResult>;
+  updateActionItem(cardId: string, patch: ActionItemPatch): Promise<BoardMutationResult>;
+  moveCard(cardId: string, targetColumnId: string): Promise<BoardMutationResult>;
+  deleteCard(cardId: string): Promise<BoardMutationResult>;
+  toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<BoardMutationResult>;
+  createComment(cardId: string, content: string): Promise<BoardMutationResult>;
+  deleteComment(cardId: string, commentId: string): Promise<BoardMutationResult>;
+  groupCard(cardId: string, targetType: 'card' | 'group', targetId: string): Promise<BoardMutationResult>;
+  ungroupCard(cardId: string): Promise<BoardMutationResult>;
+  renameCardGroup(groupId: string, title: string): Promise<BoardMutationResult>;
+  dissolveCardGroup(groupId: string): Promise<BoardMutationResult>;
+  moveCardGroup(groupId: string, targetColumnId: string): Promise<BoardMutationResult>;
   updateColumn(
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
-  ): Promise<boolean>;
-  moveColumn(columnId: string, direction: -1 | 1): Promise<boolean>;
-  deleteColumn(columnId: string): Promise<boolean>;
+  ): Promise<BoardMutationResult>;
+  moveColumn(columnId: string, direction: -1 | 1): Promise<BoardMutationResult>;
+  deleteColumn(columnId: string): Promise<BoardMutationResult>;
   /** True while this Card's Action Item patch is in flight (`isPending`). */
   isActionItemPending(cardId: string): boolean;
+  /** True while a scoped Card mutation is in flight. */
+  isCardPending(cardId: string, action?: CardPendingAction): boolean;
+  /** True while a scoped Card Group mutation is in flight. */
+  isGroupPending(groupId: string, action?: GroupPendingAction): boolean;
+  /** True while a scoped Column mutation is in flight. */
+  isColumnPending(columnId: string, action?: ColumnPendingAction): boolean;
+  /** True while deleting a comment on this Card (or a specific comment when `commentId` is given) is in flight. */
+  isCommentPending(cardId: string, commentId?: string): boolean;
 }
-
-/** Result of a Private Mode toggle; 'revealed' requests the reveal theater. */
-export type PrivateModeOutcome = 'revealed' | 'applied' | 'rejected' | 'ignored';
 
 export interface BoardController extends BoardMutations {
   /** Current viewer-projected Board snapshot (reactive store read). */
@@ -108,18 +126,22 @@ export interface BoardController extends BoardMutations {
   errorMessage(): string | null;
   reportError(message: string): void;
   clearError(): void;
+  /** True while a `#f=` Co-Facilitator Link claim is in flight. */
+  claimPending(): boolean;
+  /** Error message from the most recent failed Co-Facilitator Link claim, or `null`. */
+  claimError(): string | null;
+  clearClaimError(): void;
   isChangingPrivateMode(): boolean;
-  isSavingBoardTitle(): boolean;
   isSavingColumn(): boolean;
-  changeCountdown(boardId: string, change: TimerChange): Promise<BoardMutationResponse>;
-  renameBoard(title: string): Promise<boolean>;
-  addColumn(input: AddColumnPayload): Promise<ColumnDTO | null>;
-  togglePrivateMode(dramaticRequested: boolean): Promise<PrivateModeOutcome>;
-  changeVote(targetType: 'card' | 'group', targetId: string, delta: VoteDelta): Promise<void>;
-  saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null>;
-  resetAllVotes(): Promise<string | null>;
-  toggleBoardLock(isLocked: boolean): Promise<string | null>;
-  deleteCurrentBoard(): Promise<string | null>;
+  changeCountdown(change: TimerChange): Promise<BoardMutationResult>;
+  renameBoard(title: string): Promise<BoardMutationResult>;
+  addColumn(input: AddColumnPayload): Promise<BoardMutationResult<ColumnDTO>>;
+  togglePrivateMode(dramaticRequested: boolean): Promise<BoardMutationResult>;
+  changeVote(targetType: 'card' | 'group', targetId: string, delta: VoteDelta): Promise<BoardMutationResult>;
+  saveVotingSettings(patch: VotingSettingsPatch): Promise<BoardMutationResult>;
+  resetAllVotes(): Promise<BoardMutationResult>;
+  toggleBoardLock(isLocked: boolean): Promise<BoardMutationResult>;
+  deleteCurrentBoard(): Promise<BoardMutationResult>;
 }
 
 export type BoardCommandDispatcher = (
@@ -127,15 +149,40 @@ export type BoardCommandDispatcher = (
   command: BoardCommand,
 ) => Promise<BoardMutationResponse>;
 
+export type BoardFacilitatorClaimer = (
+  input: FacilitatorClaimInput,
+) => Promise<FacilitatorClaimResponse>;
+
+export interface BoardFragmentAdapter {
+  /** Reads and scrubs any `#f=<token>` fragment for `boardPath` from the current URL. */
+  takeToken(boardPath: string): string | null;
+  /** Subscribes to subsequent URL hash changes and returns an unsubscribe callback. */
+  onHashChange(listener: () => void): () => void;
+}
+
+const browserBoardFragmentAdapter: BoardFragmentAdapter = {
+  takeToken: (boardPath) =>
+    typeof window === 'undefined' ? null : takeFacilitatorLinkToken(boardPath),
+  onHashChange: (listener) => {
+    if (typeof window === 'undefined') return () => {};
+    window.addEventListener('hashchange', listener);
+    return () => window.removeEventListener('hashchange', listener);
+  },
+};
+
 export interface BoardControllerOptions {
+  /** Route-provided Board ID (used for `#f=` fragment scrubbing/claiming even when `board()` is `null`). */
+  boardId?: string;
   /** Route-provided Board snapshot; the controller reconciles it into the store on change. */
   board: () => BoardViewDTO | null;
   /** Single command-dispatch seam; production passes `dispatchBoardCommand`, tests inject a fake. */
   dispatchCommand: BoardCommandDispatcher;
+  /** Co-Facilitator Link claim seam; production passes `claimFacilitatorRole`, tests inject a fake. */
+  claimFacilitatorLink?: BoardFacilitatorClaimer;
+  /** Injectable URL fragment adapter for `#f=` reading/scrubbing; defaults to browser `window.location`/`history`. */
+  fragment?: BoardFragmentAdapter;
   /** Injectable live transport; defaults to SSE/WebSocket. */
   liveTransport?: LiveTransport;
-  /** Bumped when the viewer's session role changes (e.g. Co-Facilitator Link claim) to reconnect live updates. */
-  liveReconnectKey?: () => number;
   /** Private Mode reveal theater hook; invoked synchronously before the response applies. */
   onDramaticReveal?: () => void;
 }
@@ -146,122 +193,335 @@ function cloneBoardView(board: BoardViewDTO | null): BoardViewDTO | null {
     ...board,
     timer: { ...board.timer },
     columns: board.columns.map((c) => ({ ...c })),
-    groups: board.groups.map((g) => ({ ...g, cardIds: [...g.cardIds] })),
-    cards: board.cards.map((card) => ({
-      ...card,
-      reactions: { ...card.reactions },
-      myReactions: [...card.myReactions],
-      comments: card.comments.map((cm) => ({ ...cm })),
-    })),
+    groups: board.groups.map(cloneCardGroup),
+    cards: board.cards.map(cloneCardView),
   };
 }
 
-/** Which permission/lock rule the mutation seam checks before dispatching. */
-type MutationGate =
-  | { kind: 'create-card'; columnId: string }
-  | { kind: 'update-card'; cardId: string }
-  | { kind: 'update-action-item'; cardId: string; patch: ActionItemPatch }
-  | { kind: 'move-card'; cardId: string }
-  | { kind: 'delete-card'; cardId: string }
-  | { kind: 'toggle-reaction'; cardId: string }
-  | { kind: 'create-comment'; cardId: string }
-  | { kind: 'delete-comment'; cardId: string; commentId: string }
-  | { kind: 'grouping'; cardIds?: readonly string[]; groupId?: string }
-  | { kind: 'merge-card'; cardId: string; targetType: 'card' | 'group'; targetId: string }
-  | { kind: 'vote'; targetType: 'card' | 'group'; targetId: string }
-  | { kind: 'add-column' }
-  | { kind: 'update-column' }
-  | { kind: 'move-column' }
-  | { kind: 'delete-column'; columnId: string }
-  | { kind: 'facilitate' }
-  | { kind: 'control-facilitation' };
+function adjustColumnCardCount(
+  draft: BoardViewDTO,
+  columnId: string,
+  delta: number,
+): void {
+  const column = draft.columns.find((c) => c.id === columnId);
+  if (column) {
+    column.cardCount = Math.max(0, column.cardCount + delta);
+  }
+}
 
-interface MutationDenial {
-  allowed: false;
-  message?: string;
+export interface BoardReconcileOutcome {
+  /** Server timestamp carried by a `board:snapshot` or `timer:updated` event. */
+  serverNow?: number;
+  /** True when a version gap (`version > current.version + 1`) requires a live resync. */
+  needsResync: boolean;
+  /** Updated online presence count from `presence:count`. */
+  presenceCount?: number;
+  /** True when `board:deleted` cleared the active Board. */
+  deleted: boolean;
 }
 
 /**
- * The single permission/lock guard at the mutation seam. Every controller
- * mutation routes through here and board-permissions.ts predicates; no
- * handler re-derives the rules.
+ * Exhaustive, idempotent event patcher for Solid 2.0 `createStore` Board state.
+ * Handles snapshots, terminal deletions, presence updates, server timer clock
+ * samples, and all incremental Board mutations in one place. Card and Card Group
+ * upserts hand the whole cloned item to `reconcile(..., 'id')` so downstream
+ * keyed projections preserve item proxy identity.
  */
-function authorizeMutation(board: BoardViewDTO, gate: MutationGate): MutationDenial | null {
-  const deny = (message?: string): MutationDenial => ({ allowed: false, message });
-  const cardById = (id: string) => board.cards.find((item) => item.id === id);
-  const groupById = (id: string) => board.groups.find((item) => item.id === id);
-  switch (gate.kind) {
-    case 'create-card':
-      return canContribute(board) ? null : deny('This Board is not accepting new Cards.');
-    case 'update-card':
-      return canManageCard(board, gate.cardId) ? null : deny('This Card can no longer be edited.');
-    case 'move-card':
-    case 'delete-card':
-      return canManageCard(board, gate.cardId) ? null : deny();
-    case 'update-action-item': {
-      const card = cardById(gate.cardId);
-      return card && canEditActionItem(board, card, gate.patch) ? null : deny();
-    }
-    case 'toggle-reaction': {
-      const card = cardById(gate.cardId);
-      return card && canInteractWithCard(board, card)
-        ? null
-        : deny('This Card can no longer receive reactions.');
-    }
-    case 'create-comment': {
-      const card = cardById(gate.cardId);
-      return card && canInteractWithCard(board, card)
-        ? null
-        : deny('This Card can no longer receive comments.');
-    }
-    case 'delete-comment': {
-      const card = cardById(gate.cardId);
-      const comment = card?.comments.find((item) => item.id === gate.commentId);
-      return card && comment &&
-        canInteractWithCard(board, card) &&
-        canDeleteComment(board, comment)
-        ? null
-        : deny('This comment can no longer be deleted.');
-    }
-    case 'merge-card':
-      return canMergeCard(board, gate.cardId, gate.targetType, gate.targetId) ? null : deny();
-    case 'grouping': {
-      if (gate.groupId !== undefined) {
-        const group = groupById(gate.groupId);
-        return group && canManageGroup(board, group, board.cards) ? null : deny();
+function applyBoardEvent(
+  draft: { board: BoardViewDTO | null },
+  boardId: string,
+  event: BoardEvent,
+  outcome: BoardReconcileOutcome,
+): void {
+  switch (event.type) {
+    case 'board:snapshot': {
+      const current = draft.board;
+      if (
+        !current ||
+        current.id !== boardId ||
+        event.board.id !== boardId ||
+        event.board.version < current.version
+      ) {
+        return;
       }
-      if (!canManageGrouping(board)) return deny();
-      const cards = gate.cardIds?.map(cardById);
-      return cards && cards.length > 0 &&
-        cards.every(
-          (card) =>
-            card && !card.pending && !card.redacted && passesPrivateMode(board, card),
-        )
-        ? null
-        : deny();
+      reconcile({ board: cloneBoardView(event.board) }, 'id')(draft);
+      outcome.serverNow = event.serverNow;
+      return;
     }
-    case 'vote': {
-      if (!canContribute(board)) return deny();
-      if (gate.targetType === 'group') {
-        const group = groupById(gate.targetId);
-        return group && !isGroupRedacted(group) ? null : deny();
+
+    case 'board:deleted': {
+      if (draft.board?.id === boardId) {
+        reconcile({ board: null }, 'id')(draft);
+        outcome.deleted = true;
       }
-      const card = cardById(gate.targetId);
-      return card && !card.pending && canInteractWithCard(board, card) ? null : deny();
+      return;
     }
-    case 'add-column':
-      return canAddColumn(board) ? null : deny();
-    case 'update-column':
-    case 'move-column':
-      return canControlFacilitation(board) ? null : deny();
-    case 'delete-column': {
-      const cards = board.cards.filter((card) => card.columnId === gate.columnId);
-      return canDeleteColumn(board, board.columns.length, cards) ? null : deny();
+
+    case 'presence:count': {
+      outcome.presenceCount = event.count;
+      return;
     }
-    case 'facilitate':
-      return canFacilitate(board) ? null : deny();
-    case 'control-facilitation':
-      return canControlFacilitation(board) ? null : deny();
+  }
+
+  const board = draft.board;
+  if (!board) return;
+
+  if (event.version > board.version) {
+    board.version = event.version;
+  }
+
+  switch (event.type) {
+    case 'board:updated': {
+      const { patch } = event;
+      if (patch.title !== undefined) board.title = patch.title;
+      if (patch.subtitle !== undefined) board.subtitle = patch.subtitle;
+      if (patch.isBlurred !== undefined) board.isBlurred = patch.isBlurred;
+      if (patch.blindVoting !== undefined) {
+        board.blindVoting = patch.blindVoting;
+      }
+      if (patch.isLocked !== undefined) board.isLocked = patch.isLocked;
+      if (patch.allowParticipantGroup !== undefined) {
+        board.allowParticipantGroup = patch.allowParticipantGroup;
+      }
+      if (patch.voteLimit !== undefined) board.voteLimit = patch.voteLimit;
+      if (patch.maxVotesPerCard !== undefined) {
+        board.maxVotesPerCard = patch.maxVotesPerCard;
+      }
+      if (patch.retentionDays !== undefined) {
+        board.retentionDays = patch.retentionDays;
+      }
+      break;
+    }
+
+    case 'timer:updated': {
+      board.timer.endsAt = event.timer.endsAt;
+      board.timer.remainingMs = event.timer.remainingMs;
+      board.timer.durationMs = event.timer.durationMs;
+      outcome.serverNow = event.serverNow;
+      break;
+    }
+
+    case 'column:upserted': {
+      const existing = board.columns.find((c) => c.id === event.column.id);
+      if (existing) {
+        existing.title = event.column.title;
+        existing.accent = event.column.accent;
+        existing.position = event.column.position;
+        existing.isActionColumn = event.column.isActionColumn;
+      } else {
+        board.columns.push({ ...event.column });
+      }
+      board.columns.sort((a, b) => a.position - b.position);
+      break;
+    }
+
+    case 'columns:reordered': {
+      const orderIndex = new Map(
+        event.columnIds.map((id, index) => [id, index]),
+      );
+      board.columns.sort((a, b) => {
+        const aIdx = orderIndex.get(a.id) ?? a.position;
+        const bIdx = orderIndex.get(b.id) ?? b.position;
+        return aIdx - bIdx;
+      });
+      for (let i = 0; i < board.columns.length; i += 1) {
+        board.columns[i].position = i;
+      }
+      break;
+    }
+
+    case 'column:deleted': {
+      const colIndex = board.columns.findIndex((c) => c.id === event.columnId);
+      if (colIndex !== -1) {
+        board.columns.splice(colIndex, 1);
+      }
+      for (let i = 0; i < board.columns.length; i += 1) {
+        board.columns[i].position = i;
+      }
+      for (let i = board.cards.length - 1; i >= 0; i -= 1) {
+        if (board.cards[i].columnId === event.columnId) {
+          board.cards.splice(i, 1);
+        }
+      }
+      for (let i = board.groups.length - 1; i >= 0; i -= 1) {
+        if (board.groups[i].columnId === event.columnId) {
+          board.groups.splice(i, 1);
+        }
+      }
+      break;
+    }
+
+    case 'card:upserted': {
+      const existingIndex = board.cards.findIndex(
+        (c) => c.id === event.card.id,
+      );
+      if (existingIndex !== -1) {
+        const previousColumnId = board.cards[existingIndex].columnId;
+        if (previousColumnId !== event.card.columnId) {
+          adjustColumnCardCount(board, previousColumnId, -1);
+          adjustColumnCardCount(board, event.card.columnId, 1);
+        }
+        reconcile(cloneCardView(event.card), 'id')(board.cards[existingIndex]);
+      } else {
+        const card = cloneCardView(event.card);
+        const insertAt = board.cards.findIndex((item) => item.createdAt < card.createdAt);
+        if (insertAt === -1) board.cards.push(card);
+        else board.cards.splice(insertAt, 0, card);
+        adjustColumnCardCount(board, event.card.columnId, 1);
+      }
+      break;
+    }
+
+    case 'card:deleted': {
+      const cardIndex = board.cards.findIndex((c) => c.id === event.cardId);
+      if (cardIndex !== -1) {
+        const [removed] = board.cards.splice(cardIndex, 1);
+        adjustColumnCardCount(board, removed.columnId, -1);
+        for (const group of board.groups) {
+          const memberIdx = group.cardIds.indexOf(event.cardId);
+          if (memberIdx !== -1) {
+            group.cardIds.splice(memberIdx, 1);
+          }
+        }
+      }
+      break;
+    }
+
+    case 'group:upserted': {
+      const existingIndex = board.groups.findIndex(
+        (g) => g.id === event.group.id,
+      );
+      if (existingIndex !== -1) {
+        reconcile(cloneCardGroup(event.group), 'id')(board.groups[existingIndex]);
+      } else {
+        const group = cloneCardGroup(event.group);
+        const insertAt = board.groups.findIndex((item) => item.createdAt > group.createdAt);
+        if (insertAt === -1) board.groups.push(group);
+        else board.groups.splice(insertAt, 0, group);
+      }
+      break;
+    }
+
+    case 'group:dissolved': {
+      const groupIndex = board.groups.findIndex((g) => g.id === event.groupId);
+      if (groupIndex !== -1) {
+        board.groups.splice(groupIndex, 1);
+      }
+      for (const card of board.cards) {
+        if (card.groupId === event.groupId) {
+          card.groupId = null;
+        }
+      }
+      break;
+    }
+
+    case 'vote:updated': {
+      const targets = event.targetType === 'card' ? board.cards : board.groups;
+      const target = targets.find((item) => item.id === event.targetId);
+      if (target) {
+        target.votes = event.totalVotes;
+        target.myVotes = event.myVotes;
+      }
+      board.remainingVotes = event.remainingVotes;
+      break;
+    }
+
+    case 'vote:balance':
+      board.remainingVotes = event.remainingVotes;
+      break;
+
+    case 'reaction:updated': {
+      const card = board.cards.find((c) => c.id === event.cardId);
+      if (card) {
+        reconcile({ ...event.counts })(card.reactions);
+        reconcile([...event.myReactions])(card.myReactions);
+      }
+      break;
+    }
+
+    case 'comment:created': {
+      const card = board.cards.find((c) => c.id === event.cardId);
+      if (card && !card.comments.some((c) => c.id === event.comment.id)) {
+        const insertAt = card.comments.findIndex(
+          (c) => c.createdAt > event.comment.createdAt,
+        );
+        if (insertAt === -1) card.comments.push({ ...event.comment });
+        else card.comments.splice(insertAt, 0, { ...event.comment });
+        card.commentCount = card.comments.length;
+      }
+      break;
+    }
+
+    case 'comment:deleted': {
+      const card = board.cards.find((c) => c.id === event.cardId);
+      if (card) {
+        const idx = card.comments.findIndex((c) => c.id === event.commentId);
+        if (idx !== -1) {
+          card.comments.splice(idx, 1);
+          card.commentCount = card.comments.length;
+        }
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Unified Board state reconciliation pipeline shared by live stream frames and
+ * HTTP mutation responses. Enforces version ordering and gap detection while
+ * returning side-effect metadata (server clock, presence count, deletion, resync)
+ * for the controller to apply outside the store draft.
+ */
+export function reconcileBoardUpdate(
+  draft: { board: BoardViewDTO | null },
+  boardId: string,
+  message: BoardLiveMessage,
+): BoardReconcileOutcome {
+  const outcome: BoardReconcileOutcome = {
+    needsResync: false,
+    deleted: false,
+  };
+
+  switch (message.type) {
+    case 'board:snapshot':
+    case 'board:deleted':
+    case 'presence:count':
+      applyBoardEvent(draft, boardId, message, outcome);
+      return outcome;
+
+    case 'board:mutation': {
+      const deletedEvent = message.events.find((event) => event.type === 'board:deleted');
+      if (deletedEvent) {
+        applyBoardEvent(draft, boardId, deletedEvent, outcome);
+        return outcome;
+      }
+      const snapshotEvent = message.events.find((event) => event.type === 'board:snapshot');
+      if (snapshotEvent) {
+        applyBoardEvent(draft, boardId, snapshotEvent, outcome);
+        return outcome;
+      }
+      const board = draft.board;
+      if (!board || board.id !== boardId || message.version <= board.version) {
+        return outcome;
+      }
+      if (message.version > board.version + 1) {
+        outcome.needsResync = true;
+        return outcome;
+      }
+      for (const event of message.events) {
+        applyBoardEvent(draft, boardId, event, outcome);
+      }
+      if (draft.board) {
+        draft.board.version = message.version;
+        if (message.lastActiveAt !== undefined) {
+          draft.board.lastActiveAt = message.lastActiveAt;
+        }
+      }
+      return outcome;
+    }
+
+    case 'heartbeat':
+      return outcome;
   }
 }
 
@@ -282,41 +542,73 @@ interface MutationRequest {
   pending?: (board: BoardViewDTO) => void;
   /** Runs after a successful response is known, before its events apply. */
   beforeCommit?: (response: BoardMutationSuccess) => void;
-  preserveError?: boolean;
+  clearGlobalError?: boolean;
   send: () => Promise<BoardMutationResponse>;
 }
 
-interface GuardedMutation extends Omit<MutationRequest, 'boardId' | 'send' | 'preserveError'> {
-  gate: MutationGate;
+interface GuardedMutation extends Omit<MutationRequest, 'boardId' | 'send' | 'clearGlobalError'> {
+  /** Shared Board authorization policy check evaluated once before opening the action. */
+  authorize: (board: BoardViewDTO) => boolean;
+  guardMessage?: string;
   failureMessage: string;
-  reportFailure?: true | ReportMutationFailure;
+  /**
+   * When true, failures write to the global Board error banner (`errorMessage`)
+   * and successes clear it. Inline-error mutations leave this false so at most
+   * one `role="alert"` renders per failure.
+   */
+  reportGlobalError?: boolean;
+  /** Scoped entity pending keys held while this mutation is in flight. */
+  pendingKeys?: readonly string[];
   send: (boardId: string) => Promise<BoardMutationResponse>;
 }
 
-type MutationOutcome<T> =
-  | { ok: true; response: BoardMutationSuccess; value?: T }
-  | { ok: false; message?: string; reason: 'guard' | 'rejection' | 'network' };
-
 const GENERIC_FAILURE = 'Could not update the Board. Try again.';
+const CARD_PENDING_ACTIONS: readonly CardPendingAction[] = ['move', 'group', 'ungroup', 'delete'];
+const GROUP_PENDING_ACTIONS: readonly GroupPendingAction[] = ['move', 'dissolve'];
+const COLUMN_PENDING_ACTIONS: readonly ColumnPendingAction[] = ['delete'];
+
+function cardPendingKey(cardId: string, action: CardPendingAction): string {
+  return `card:${cardId}:${action}`;
+}
+
+function groupPendingKey(groupId: string, action: GroupPendingAction): string {
+  return `group:${groupId}:${action}`;
+}
+
+function columnPendingKey(columnId: string, action: ColumnPendingAction): string {
+  return `column:${columnId}:${action}`;
+}
+
+function commentCardPendingKey(cardId: string): string {
+  return `comment:${cardId}`;
+}
+
+function commentItemPendingKey(cardId: string, commentId: string): string {
+  return `comment:${cardId}:${commentId}`;
+}
 
 /**
- * Reactive Board client controller: owns the Board store, the live stream
- * application (version-gap resync included), the server clock, and every
- * mutation. All mutations share one Solid 2.0 `action` over an optimistic
- * store: handlers write the expected value inside the action, the server
- * response commits through `applyVersionedEvents`, and any rejection reverts
- * the guesses automatically. Permission/lock checks happen once, in
- * `authorizeMutation`, before an action opens.
+ * Reactive Board client controller: owns the Board store, unified event
+ * reconciliation (snapshots, deletions, presence, version-gap resync, and
+ * server clock sync), and every mutation. All mutations share one Solid 2.0
+ * `action` over an optimistic store: handlers write the expected value inside
+ * the action, the server response commits through `reconcileServerUpdate`, and
+ * any rejection reverts the guesses automatically. Permission/lock checks
+ * happen once, through the shared Board authorization policy, before an action
+ * opens.
  */
 export function createBoardController(options: BoardControllerOptions): BoardController {
   const { dispatchCommand } = options;
+  const initialBoard = untrack(() => cloneBoardView(options.board()));
+  const boardId = options.boardId ?? initialBoard?.id ?? '';
+  const fragment = options.fragment ?? browserBoardFragmentAdapter;
 
   // Authoritative server state: the route snapshot, live events, and mutation
   // responses patch `serverStore` incrementally. `createOptimisticStore` chains
   // directly to `serverStore` so optimistic writes overlay it without cloning
   // the entire Board on every server revision.
   const [serverStore, setServerStore] = createStore<{ board: BoardViewDTO | null }>({
-    board: untrack(() => cloneBoardView(options.board())),
+    board: initialBoard,
   });
   const [store, setStore] = createOptimisticStore<{ board: BoardViewDTO | null }>(
     () => serverStore,
@@ -336,28 +628,57 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   let serverTimeOffsetMs = 0;
   let reconnectLive: (() => void) | undefined;
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
+  const [claimPending, setClaimPending] = createSignal(false);
+  const [claimError, setClaimError] = createSignal<string | null>(null);
   // Process affordances: optimistic flags show immediately and clear when the
   // action settles, without needing isPending on an optimistically-writable slot.
   const [savingVotes, setSavingVotes] = createOptimistic(false);
   const [pendingActionItems, setPendingActionItems] = createOptimistic<readonly string[]>([]);
+  const [pendingCounts, setPendingCounts] = createStore<Record<string, number>>({});
 
-  const [isChangingPrivateMode, setIsChangingPrivateMode] = createSignal(false);
-  const [isSavingBoardTitle, setIsSavingBoardTitle] = createSignal(false);
-  const [isSavingColumn, setIsSavingColumn] = createSignal(false);
-
-  function applySnapshot(nextBoard: BoardViewDTO | null, fromLive = false): void {
-    if (nextBoard === null) setErrorMessage(null);
+  function reconcileIncomingBoard(
+    nextBoard: BoardViewDTO | null,
+    reconcileOptions: { promoteFacilitatorOnOlderVersion?: boolean } = {},
+  ): void {
     untrack(() => {
       setServerStore((draft) => {
         const current = draft.board;
         if (nextBoard && current?.id === nextBoard.id) {
-          if (nextBoard.version < current.version) return;
-          if (!fromLive && nextBoard.version === current.version &&
-              nextBoard.isFacilitator === current.isFacilitator) return;
+          if (nextBoard.version < current.version) {
+            if (
+              reconcileOptions.promoteFacilitatorOnOlderVersion &&
+              nextBoard.isFacilitator &&
+              !current.isFacilitator
+            ) {
+              current.isFacilitator = true;
+            }
+            return;
+          }
+          if (
+            nextBoard.version === current.version &&
+            (!nextBoard.isFacilitator || current.isFacilitator)
+          ) {
+            return;
+          }
         }
         reconcile({ board: cloneBoardView(nextBoard) }, 'id')(draft);
       });
     });
+  }
+
+  function applyRouteSnapshot(nextBoard: BoardViewDTO | null): void {
+    if (nextBoard === null) setErrorMessage(null);
+    reconcileIncomingBoard(nextBoard);
+  }
+
+  function applyClaimedBoard(claimedBoard: BoardViewDTO): void {
+    if (claimedBoard.id !== boardId) return;
+    setClaimError(null);
+    const hadLiveBoard = untrack(() => serverStore.board?.id === boardId);
+    reconcileIncomingBoard(claimedBoard, { promoteFacilitatorOnOlderVersion: true });
+    if (hadLiveBoard) {
+      reconnectLive?.();
+    }
   }
 
   function syncServerClock(boardId: string, serverNow: number): void {
@@ -366,51 +687,20 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     setNowMs(serverNow);
   }
 
-  function applyServerSnapshot(nextBoard: BoardViewDTO, serverNow: number): void {
-    // Point-in-time guard: judge the snapshot against the board as of this event, not a tracked dependency.
-    const stale = untrack(() => {
-      const current = serverStore.board;
-      return !current || current.id !== nextBoard.id || nextBoard.version < current.version;
-    });
-    if (stale) return;
-    syncServerClock(nextBoard.id, serverNow);
-    applySnapshot(nextBoard, true);
-  }
-
-  function applyVersionedEvents(boardId: string, update: BoardMutationUpdate): void {
-    const { version, events } = update;
-    if (events.some((event) => event.type === 'board:deleted')) {
-      if (untrack(() => serverStore.board?.id) === boardId) {
-        applySnapshot(null);
-      }
-      return;
-    }
-    const snapshot = events.find((event) => event.type === 'board:snapshot');
-    if (snapshot) {
-      applyServerSnapshot(snapshot.board, snapshot.serverNow);
-      return;
-    }
-    let needsResync = false;
-    let serverNow: number | undefined;
+  function reconcileServerUpdate(boardId: string, message: BoardLiveMessage): void {
+    let outcome: BoardReconcileOutcome = { needsResync: false, deleted: false };
     untrack(() => {
       setServerStore((draft) => {
-        const board = draft.board;
-        if (!board || board.id !== boardId || version <= board.version) return;
-        if (version > board.version + 1) {
-          needsResync = true;
-          return;
-        }
-        applyBoardMutation(board, update);
-        for (const event of events) {
-          if (event.type === 'timer:updated') serverNow = event.serverNow;
-        }
+        outcome = reconcileBoardUpdate(draft, boardId, message);
       });
     });
-    if (serverNow !== undefined) syncServerClock(boardId, serverNow);
-    if (needsResync) reconnectLive?.();
+    if (outcome.deleted) setErrorMessage(null);
+    if (outcome.presenceCount !== undefined) setOnlineCount(outcome.presenceCount);
+    if (outcome.serverNow !== undefined) syncServerClock(boardId, outcome.serverNow);
+    if (outcome.needsResync) reconnectLive?.();
   }
 
-  createEffect(() => options.board(), (nextBoard) => applySnapshot(nextBoard));
+  createEffect(() => options.board(), (nextBoard) => applyRouteSnapshot(nextBoard));
 
   const liveBoardId = createMemo(() => serverStore.board?.id);
   createEffect(liveBoardId, (boardId) => {
@@ -423,21 +713,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         handshake: (message) => (message.type === 'board:snapshot' ? message : undefined),
         isTerminal: (message) => message.type === 'board:deleted',
         onMessage(message) {
-          switch (message.type) {
-            case 'board:snapshot':
-              if (message.board.id !== boardId) break;
-              applyServerSnapshot(message.board, message.serverNow);
-              break;
-            case 'board:mutation':
-              applyVersionedEvents(boardId, message);
-              break;
-            case 'board:deleted':
-              applySnapshot(null);
-              break;
-            case 'presence:count':
-              setOnlineCount(message.count);
-              break;
-          }
+          reconcileServerUpdate(boardId, message);
         },
         onDisconnect: () => setOnlineCount(null),
       },
@@ -453,14 +729,33 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     };
   });
 
-  createEffect(
-    () => options.liveReconnectKey?.() ?? 0,
-    (key, previous) => {
-      if (previous !== undefined && key !== previous) {
-        reconnectLive?.();
-      }
-    },
-  );
+  onSettled(() => {
+    if (!boardId || typeof window === 'undefined') return;
+    const claimLink = options.claimFacilitatorLink;
+    return subscribeFacilitatorLinkClaim({
+      path: `/b/${boardId}`,
+      takeToken: fragment.takeToken,
+      onHashChange: fragment.onHashChange,
+      shouldClaim: () => Boolean(claimLink),
+      claim: (token) => (
+        claimLink
+          ? claimLink({ boardId, token })
+          : Promise.resolve({ ok: false as const, code: 'FORBIDDEN' as const, message: '' })
+      ),
+      onStart: () => setClaimError(null),
+      onPendingChange: setClaimPending,
+      onSuccess: (result) => {
+        if (result.ok) {
+          applyClaimedBoard(parseBoardView(result.board));
+        } else {
+          setClaimError(result.message);
+        }
+      },
+      onError: () => {
+        setClaimError('Could not claim Facilitator access. Reopen the link to try again.');
+      },
+    });
+  });
 
   // Keep relative timestamps fresh on the client
   onSettled(() => {
@@ -469,6 +764,33 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     }, 30_000);
     return () => clearInterval(intervalId);
   });
+
+  function isPendingKey(key: string): boolean {
+    return (pendingCounts[key] ?? 0) > 0;
+  }
+
+  function incrementPending(keys: readonly string[] | undefined): void {
+    if (!keys || keys.length === 0) return;
+    setPendingCounts((draft) => {
+      for (const key of keys) {
+        draft[key] = (draft[key] ?? 0) + 1;
+      }
+    });
+  }
+
+  function decrementPending(keys: readonly string[] | undefined): void {
+    if (!keys || keys.length === 0) return;
+    setPendingCounts((draft) => {
+      for (const key of keys) {
+        const next = (draft[key] ?? 1) - 1;
+        if (next <= 0) delete draft[key];
+        else draft[key] = next;
+      }
+    });
+  }
+
+  const isChangingPrivateMode = () => isPendingKey('board:private-mode');
+  const isSavingColumn = () => isPendingKey('board:add-column');
 
   /**
    * The one mutation transaction: optimistic writes first, then the server
@@ -494,52 +816,71 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       });
     }
     request.beforeCommit?.(response);
-    if (!request.preserveError) setErrorMessage(null);
-    applyVersionedEvents(request.boardId, response);
+    if (request.clearGlobalError) setErrorMessage(null);
+    reconcileServerUpdate(request.boardId, {
+      type: 'board:mutation',
+      version: response.version,
+      lastActiveAt: response.lastActiveAt,
+      events: response.events,
+    });
     return response;
   });
 
+  async function runGuardedMutation(
+    mutation: GuardedMutation,
+  ): Promise<BoardMutationResult>;
   async function runGuardedMutation<T>(
     mutation: GuardedMutation,
-    select?: (response: BoardMutationSuccess) => T,
-  ): Promise<MutationOutcome<T>> {
-    // Commit caller-owned process flags written in this tick before the action
-    // opens; the action's transaction would otherwise hold them until it settles.
-    flush();
-    const reportFailure = mutation.reportFailure;
+    select: (response: BoardMutationSuccess) => T | null,
+  ): Promise<BoardMutationResult<T>>;
+  async function runGuardedMutation<T = void>(
+    mutation: GuardedMutation,
+    select?: (response: BoardMutationSuccess) => T | null,
+  ): Promise<{ ok: true } | { ok: true; value: T } | { ok: false; message: string }> {
     const board = store.board;
     if (!board) {
-      const message = 'This Board is no longer available.';
-      if (typeof reportFailure === 'function') reportFailure(message);
-      return { ok: false, reason: 'guard', message };
+      return {
+        ok: false,
+        message: mutation.guardMessage ?? 'This Board is no longer available.',
+      };
     }
-    const denial = authorizeMutation(board, mutation.gate);
-    if (denial) {
-      if (typeof reportFailure === 'function') reportFailure(denial.message ?? mutation.failureMessage);
-      return { ok: false, reason: 'guard', message: denial.message };
+    if (!mutation.authorize(board)) {
+      return {
+        ok: false,
+        message: mutation.guardMessage ?? mutation.failureMessage,
+      };
     }
-    const boardId = board.id;
+    const activeBoardId = board.id;
+    incrementPending(mutation.pendingKeys);
+    // Commit scoped pending flags written in this tick before the action opens;
+    // the action's transaction would otherwise hold them until it settles.
+    flush();
     try {
       const response = await performMutation({
-        boardId,
+        boardId: activeBoardId,
         begin: mutation.begin,
         optimistic: mutation.optimistic,
         pending: mutation.pending,
         beforeCommit: mutation.beforeCommit,
-        preserveError: typeof reportFailure === 'function',
-        send: () => mutation.send(boardId),
+        clearGlobalError: mutation.reportGlobalError,
+        send: () => mutation.send(activeBoardId),
       });
-      return { ok: true, response, value: select?.(response) };
+      if (select) {
+        const value = select(response);
+        if (value === null) {
+          if (mutation.reportGlobalError) setErrorMessage(mutation.failureMessage);
+          return { ok: false, message: mutation.failureMessage };
+        }
+        return { ok: true, value };
+      }
+      return { ok: true };
     } catch (error) {
       const rejection = error instanceof MutationRejected ? error : undefined;
       const message = rejection?.message ?? mutation.failureMessage ?? GENERIC_FAILURE;
-      if (typeof reportFailure === 'function') reportFailure(message);
-      else if (reportFailure) setErrorMessage(message);
-      return {
-        ok: false,
-        reason: rejection ? 'rejection' : 'network',
-        message,
-      };
+      if (mutation.reportGlobalError) setErrorMessage(message);
+      return { ok: false, message };
+    } finally {
+      decrementPending(mutation.pendingKeys);
     }
   }
 
@@ -554,80 +895,82 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   }
 
   function isActionItemPending(cardId: string): boolean {
-    return pendingActionItems().includes(cardId) || isPending(() => {
-      const card = store.board?.cards.find((item) => item.id === cardId);
-      return card ? [card.isActionItem, card.actionDone, card.actionOwner] : undefined;
-    });
+    return pendingActionItems().includes(cardId);
   }
 
-  async function changeCountdown(
-    boardId: string,
-    change: TimerChange,
-  ): Promise<BoardMutationResponse> {
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'control-facilitation' },
-      send: () => dispatchCommand(boardId, { type: 'timer:update', change }),
+  function isCardPending(cardId: string, action?: CardPendingAction): boolean {
+    if (action) return isPendingKey(cardPendingKey(cardId, action));
+    return CARD_PENDING_ACTIONS.some((kind) => isPendingKey(cardPendingKey(cardId, kind)));
+  }
+
+  function isGroupPending(groupId: string, action?: GroupPendingAction): boolean {
+    if (action) return isPendingKey(groupPendingKey(groupId, action));
+    return GROUP_PENDING_ACTIONS.some((kind) => isPendingKey(groupPendingKey(groupId, kind)));
+  }
+
+  function isColumnPending(columnId: string, action?: ColumnPendingAction): boolean {
+    if (action) return isPendingKey(columnPendingKey(columnId, action));
+    return COLUMN_PENDING_ACTIONS.some((kind) => isPendingKey(columnPendingKey(columnId, kind)));
+  }
+
+  function isCommentPending(cardId: string, commentId?: string): boolean {
+    return commentId
+      ? isPendingKey(commentItemPendingKey(cardId, commentId))
+      : isPendingKey(commentCardPendingKey(cardId));
+  }
+
+  async function changeCountdown(change: TimerChange): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'timer:update').allowed,
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'timer:update', change }),
       failureMessage: 'Could not update the Timer. Try again.',
     });
-    return outcome.ok
-      ? outcome.response
-      : {
-          ok: false,
-          code: 'INTERNAL_ERROR',
-          message: outcome.message ?? 'Could not update the Timer. Try again.',
-        };
   }
 
-  async function togglePrivateMode(dramaticRequested: boolean): Promise<PrivateModeOutcome> {
+  async function togglePrivateMode(dramaticRequested: boolean): Promise<BoardMutationResult> {
     const board = store.board;
-    if (!board || isChangingPrivateMode()) return 'ignored';
-    const revealed = dramaticRequested;
-    setIsChangingPrivateMode(true);
-    try {
-      const outcome = await runGuardedMutation({
-        gate: { kind: 'control-facilitation' },
-        send: () =>
-          dispatchCommand(board.id, {
-            type: 'board:set-private-mode',
-            isBlurred: !board.isBlurred,
-          }),
-        beforeCommit: () => {
-          if (revealed) options.onDramaticReveal?.();
-        },
-        failureMessage: 'Could not update Private Mode. Try again.',
-        reportFailure: true,
-      });
-      if (!outcome.ok) return outcome.reason === 'guard' ? 'ignored' : 'rejected';
-      return revealed ? 'revealed' : 'applied';
-    } finally {
-      setIsChangingPrivateMode(false);
+    if (!board) return { ok: false, message: 'This Board is no longer available.' };
+    if (isChangingPrivateMode()) {
+      return { ok: false, message: 'Could not update Private Mode. Try again.' };
     }
+    const nextBlurred = !board.isBlurred;
+    return runGuardedMutation({
+      authorize: (current) =>
+        decideBoardAction(toBoardPolicyContext(current), 'board:set-private-mode').allowed,
+      pendingKeys: ['board:private-mode'],
+      send: (activeBoardId) =>
+        dispatchCommand(activeBoardId, {
+          type: 'board:set-private-mode',
+          isBlurred: nextBlurred,
+        }),
+      beforeCommit: () => {
+        if (dramaticRequested) options.onDramaticReveal?.();
+      },
+      failureMessage: 'Could not update Private Mode. Try again.',
+      reportGlobalError: true,
+    });
   }
 
-  async function renameBoard(title: string): Promise<boolean> {
-    const board = store.board;
+  async function renameBoard(title: string): Promise<BoardMutationResult> {
     const trimmed = title.trim();
-    if (!board || trimmed.length === 0 || isSavingBoardTitle()) return false;
-    setIsSavingBoardTitle(true);
-    try {
-      const outcome = await runGuardedMutation({
-        gate: { kind: 'control-facilitation' },
-        send: () => dispatchCommand(board.id, { type: 'board:rename', title: trimmed }),
-        failureMessage: 'Could not rename the Board. Try again.',
-        reportFailure: true,
-      });
-      return outcome.ok;
-    } finally {
-      setIsSavingBoardTitle(false);
+    if (trimmed.length === 0 || isPendingKey('board:rename')) {
+      return { ok: false, message: 'Could not rename the Board. Try again.' };
     }
+    return runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:rename').allowed,
+      pendingKeys: ['board:rename'],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'board:rename', title: trimmed }),
+      failureMessage: 'Could not rename the Board. Try again.',
+      reportGlobalError: true,
+    });
   }
 
-  async function createCard(columnId: string, content: string): Promise<string | null> {
+  async function createCard(columnId: string, content: string): Promise<BoardMutationResult> {
     const board = store.board;
     const trimmed = content.trim();
-    if (!board) return 'This Board is not accepting new Cards.';
+    if (!board) return { ok: false, message: 'This Board is not accepting new Cards.' };
     const column = board.columns.find((col) => col.id === columnId);
-    if (!column) return 'This Column is no longer available.';
+    if (!column) return { ok: false, message: 'This Column is no longer available.' };
 
     const createdAt = Date.now() + serverTimeOffsetMs;
     const optimisticCard: CardViewDTO = {
@@ -651,40 +994,39 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
       updatedAt: createdAt,
     };
 
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'create-card', columnId },
+    const result = await runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:contribute').allowed,
+      guardMessage: 'This Board is not accepting new Cards.',
       optimistic: (draft) => {
         draft.cards.push({ ...optimisticCard });
         const col = draft.columns.find((item) => item.id === columnId);
         if (col) col.cardCount += 1;
       },
-      send: () => dispatchCommand(board.id, { type: 'card:create', columnId, content }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:create', columnId, content }),
       failureMessage: 'Could not create Card. Try again.',
     });
-    if (!outcome.ok) return outcome.message ?? 'Could not create Card. Try again.';
-    setNowMs(Date.now() + serverTimeOffsetMs);
-    return null;
+    if (result.ok) setNowMs(Date.now() + serverTimeOffsetMs);
+    return result;
   }
 
-  async function updateCard(cardId: string, content: string): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This Card can no longer be edited.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'update-card', cardId },
-      send: () => dispatchCommand(board.id, { type: 'card:update', cardId, content }),
+  async function updateCard(cardId: string, content: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => canManageCard(current, cardId),
+      guardMessage: 'This Card can no longer be edited.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:update', cardId, content }),
       failureMessage: 'Could not save the Card. Try again.',
     });
-    return outcome.ok ? null : outcome.message ?? 'Could not save the Card. Try again.';
   }
 
   async function updateActionItem(
     cardId: string,
     patch: ActionItemPatch,
-  ): Promise<boolean> {
-    const board = store.board;
-    if (!board || isActionItemPending(cardId)) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'update-action-item', cardId, patch },
+  ): Promise<BoardMutationResult> {
+    if (isActionItemPending(cardId)) {
+      return { ok: false, message: 'Could not update the Action Item. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) => canEditActionItem(current, cardId, patch),
       begin: () => setPendingActionItems((ids) => [...ids, cardId]),
       optimistic: (draft) => {
         const card = draft.cards.find((item) => item.id === cardId);
@@ -700,107 +1042,92 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         if (patch.actionOwner !== undefined) card.actionOwner = patch.actionOwner;
         card.updatedAt = Date.now() + serverTimeOffsetMs;
       },
-      pending: (draft) => {
-        const card = draft.cards.find((item) => item.id === cardId);
-        if (!card) return;
-        if (patch.isActionItem !== undefined) affects(card, 'isActionItem');
-        if (patch.actionDone !== undefined) affects(card, 'actionDone');
-        if (patch.actionOwner !== undefined) affects(card, 'actionOwner');
-      },
-      send: () => dispatchCommand(board.id, { type: 'card:set-action', cardId, ...patch }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:set-action', cardId, ...patch }),
       failureMessage: 'Could not update the Action Item. Try again.',
     });
-    return outcome.ok;
   }
 
-  async function moveCard(cardId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'move-card', cardId },
-      send: (boardId) => dispatchCommand(boardId, { type: 'card:move', cardId, targetColumnId }),
+  async function moveCard(cardId: string, targetColumnId: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => canManageCard(current, cardId),
+      pendingKeys: [cardPendingKey(cardId, 'move')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:move', cardId, targetColumnId }),
       failureMessage: 'Could not move the Card. Try again.',
-      reportFailure: onFailure ?? true,
     });
-    return outcome.ok;
   }
 
-  async function deleteCard(cardId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'delete-card', cardId },
-      send: () => dispatchCommand(board.id, { type: 'card:delete', cardId }),
+  async function deleteCard(cardId: string): Promise<BoardMutationResult> {
+    if (isCardPending(cardId, 'delete')) {
+      return { ok: false, message: 'Could not delete the Card. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) => canManageCard(current, cardId),
+      pendingKeys: [cardPendingKey(cardId, 'delete')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:delete', cardId }),
       failureMessage: 'Could not delete the Card. Try again.',
-      reportFailure: true,
     });
-    return outcome.ok;
   }
 
   async function groupCard(
     cardId: string,
     targetType: 'card' | 'group',
     targetId: string,
-    onFailure?: ReportMutationFailure,
-  ): Promise<boolean> {
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'merge-card', cardId, targetType, targetId },
-      send: (boardId) => dispatchCommand(boardId, { type: 'group:merge', cardId, targetType, targetId }),
+  ): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => canMergeCard(current, cardId, targetType, targetId),
+      pendingKeys: [cardPendingKey(cardId, 'group')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:merge', cardId, targetType, targetId }),
       failureMessage: 'Could not group the Card. Try again.',
-      reportFailure: onFailure ?? true,
     });
-    return outcome.ok;
   }
 
-  async function renameCardGroup(groupId: string, title: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', groupId },
-      send: () => dispatchCommand(board.id, { type: 'group:rename', groupId, title }),
+  async function renameCardGroup(groupId: string, title: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => canManageGroup(current, groupId),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:rename', groupId, title }),
       failureMessage: 'Could not rename the Card Group. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function ungroupCard(cardId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', cardIds: [cardId] },
-      send: () => dispatchCommand(board.id, { type: 'group:ungroup', cardId }),
+  async function ungroupCard(cardId: string): Promise<BoardMutationResult> {
+    if (isCardPending(cardId, 'ungroup')) {
+      return { ok: false, message: 'Could not ungroup the Card. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) => canUngroupCard(current, cardId),
+      pendingKeys: [cardPendingKey(cardId, 'ungroup')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:ungroup', cardId }),
       failureMessage: 'Could not ungroup the Card. Try again.',
-      reportFailure: true,
     });
-    return outcome.ok;
   }
 
-  async function dissolveCardGroup(groupId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', groupId },
-      send: () => dispatchCommand(board.id, { type: 'group:dissolve', groupId }),
+  async function dissolveCardGroup(groupId: string): Promise<BoardMutationResult> {
+    if (isGroupPending(groupId, 'dissolve')) {
+      return { ok: false, message: 'Could not dissolve the Card Group. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) => canManageGroup(current, groupId),
+      pendingKeys: [groupPendingKey(groupId, 'dissolve')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:dissolve', groupId }),
       failureMessage: 'Could not dissolve the Card Group. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function moveCardGroup(groupId: string, targetColumnId: string, onFailure?: ReportMutationFailure): Promise<boolean> {
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'grouping', groupId },
-      send: (boardId) => dispatchCommand(boardId, { type: 'group:move', groupId, targetColumnId }),
+  async function moveCardGroup(groupId: string, targetColumnId: string): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => canManageGroup(current, groupId),
+      pendingKeys: [groupPendingKey(groupId, 'move')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'group:move', groupId, targetColumnId }),
       failureMessage: 'Could not move the Card Group. Try again.',
-      reportFailure: onFailure ?? true,
     });
-    return outcome.ok;
   }
 
-  async function toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This Card can no longer receive reactions.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'toggle-reaction', cardId },
+  async function toggleReaction(cardId: string, emoji: ReactionEmoji): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => canInteractWithCard(current, cardId),
+      guardMessage: 'This Card can no longer receive reactions.',
       optimistic: (draft) => {
         const card = draft.cards.find((item) => item.id === cardId);
         if (!card) return;
@@ -822,124 +1149,123 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         affects(card, 'reactions');
         affects(card, 'myReactions');
       },
-      send: () => dispatchCommand(board.id, { type: 'reaction:toggle', cardId, emoji }),
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'reaction:toggle', cardId, emoji }),
       failureMessage: 'Could not update reaction. Try again.',
     });
-    return outcome.ok ? null : outcome.message ?? 'Could not update reaction. Try again.';
   }
 
-  async function createComment(cardId: string, content: string): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This Card can no longer receive comments.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'create-comment', cardId },
-      send: () => dispatchCommand(board.id, { type: 'comment:create', cardId, content }),
+  async function createComment(cardId: string, content: string): Promise<BoardMutationResult> {
+    const result = await runGuardedMutation({
+      authorize: (current) => canInteractWithCard(current, cardId),
+      guardMessage: 'This Card can no longer receive comments.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'comment:create', cardId, content }),
       failureMessage: 'Could not post comment. Try again.',
     });
-    if (!outcome.ok) return outcome.message ?? 'Could not post comment. Try again.';
-    setNowMs(Date.now() + serverTimeOffsetMs);
-    return null;
+    if (result.ok) setNowMs(Date.now() + serverTimeOffsetMs);
+    return result;
   }
 
-  async function deleteComment(cardId: string, commentId: string): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'This comment can no longer be deleted.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'delete-comment', cardId, commentId },
-      send: () => dispatchCommand(board.id, { type: 'comment:delete', cardId, commentId }),
+  async function deleteComment(cardId: string, commentId: string): Promise<BoardMutationResult> {
+    if (isCommentPending(cardId)) {
+      return { ok: false, message: 'Could not delete comment. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) => canDeleteComment(current, cardId, commentId),
+      guardMessage: 'This comment can no longer be deleted.',
+      pendingKeys: [commentCardPendingKey(cardId), commentItemPendingKey(cardId, commentId)],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'comment:delete', cardId, commentId }),
       failureMessage: 'Could not delete comment. Try again.',
     });
-    return outcome.ok ? null : outcome.message ?? 'Could not delete comment. Try again.';
   }
 
-  async function addColumn(input: AddColumnPayload): Promise<ColumnDTO | null> {
-    const board = store.board;
-    if (!board || input.title.trim().length === 0 || isSavingColumn()) return null;
-    setIsSavingColumn(true);
-    try {
-      const outcome = await runGuardedMutation(
-        {
-          gate: { kind: 'add-column' },
-          send: () =>
-            dispatchCommand(board.id, {
-              type: 'column:add',
-              title: input.title,
-              accent: input.accent,
-              isActionColumn: input.isActionColumn,
-            }),
-          failureMessage: 'Could not add the Column. Try again.',
-          reportFailure: true,
-        },
-        (response) => {
-          const upserted = response.events.find((event) => event.type === 'column:upserted');
-          return upserted?.type === 'column:upserted' ? upserted.column : null;
-        },
-      );
-      return outcome.ok ? outcome.value ?? null : null;
-    } finally {
-      setIsSavingColumn(false);
+  async function addColumn(input: AddColumnPayload): Promise<BoardMutationResult<ColumnDTO>> {
+    if (input.title.trim().length === 0 || isSavingColumn()) {
+      return { ok: false, message: 'Could not add the Column. Try again.' };
     }
+    return runGuardedMutation(
+      {
+        authorize: (current) => canAddColumn(current),
+        pendingKeys: ['board:add-column'],
+        send: (activeBoardId) =>
+          dispatchCommand(activeBoardId, {
+            type: 'column:add',
+            title: input.title,
+            accent: input.accent,
+            isActionColumn: input.isActionColumn,
+          }),
+        failureMessage: 'Could not add the Column. Try again.',
+        reportGlobalError: true,
+      },
+      (response) => {
+        const upserted = response.events.find((event) => event.type === 'column:upserted');
+        return upserted?.type === 'column:upserted' ? upserted.column : null;
+      },
+    );
   }
 
   async function updateColumn(
     columnId: string,
     patch: { title?: string; accent?: ColumnAccent; isActionColumn?: boolean },
-  ): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'update-column' },
-      send: () => dispatchCommand(board.id, { type: 'column:update', columnId, ...patch }),
+  ): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) =>
+        decideColumnAction(toBoardPolicyContext(current), { type: 'column:update' }).allowed,
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'column:update', columnId, ...patch }),
       failureMessage: 'Could not update the Column. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function moveColumn(columnId: string, direction: -1 | 1): Promise<boolean> {
+  async function moveColumn(columnId: string, direction: -1 | 1): Promise<BoardMutationResult> {
     const board = store.board;
-    if (!board) return false;
+    if (!board) return { ok: false, message: 'This Board is no longer available.' };
     const ids = board.columns.map((column) => column.id);
     const currentIndex = ids.indexOf(columnId);
     const nextIndex = currentIndex + direction;
     if (currentIndex === -1 || nextIndex < 0 || nextIndex >= ids.length) {
-      return false;
+      return { ok: false, message: 'Could not move the Column. Try again.' };
     }
     const reordered = [...ids];
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(nextIndex, 0, moved);
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'move-column' },
-      send: () => dispatchCommand(board.id, { type: 'column:reorder', columnIds: reordered }),
+    return runGuardedMutation({
+      authorize: (current) =>
+        decideColumnAction(toBoardPolicyContext(current), { type: 'column:reorder' }).allowed,
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'column:reorder', columnIds: reordered }),
       failureMessage: 'Could not move the Column. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
-  async function deleteColumn(columnId: string): Promise<boolean> {
-    const board = store.board;
-    if (!board) return false;
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'delete-column', columnId },
-      send: () => dispatchCommand(board.id, { type: 'column:delete', columnId }),
+  async function deleteColumn(columnId: string): Promise<BoardMutationResult> {
+    if (isColumnPending(columnId, 'delete')) {
+      return { ok: false, message: 'Could not delete the Column. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) =>
+        canDeleteColumn(
+          current,
+          current.columns.length,
+          current.cards.filter((card) => card.columnId === columnId),
+        ),
+      pendingKeys: [columnPendingKey(columnId, 'delete')],
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'column:delete', columnId }),
       failureMessage: 'Could not delete the Column. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
-    return outcome.ok;
   }
 
   async function changeVote(
     targetType: 'card' | 'group',
     targetId: string,
     delta: VoteDelta,
-  ): Promise<void> {
+  ): Promise<BoardMutationResult> {
     // A cast already in flight drops the next one.
-    if (savingVotes() || isPending(() => store.board?.remainingVotes)) return;
-    const board = store.board;
-    if (!board) return;
-    await runGuardedMutation({
-      gate: { kind: 'vote', targetType, targetId },
+    if (savingVotes() || isPending(() => store.board?.remainingVotes)) {
+      return { ok: false, message: 'Could not update your Vote. Try again.' };
+    }
+    return runGuardedMutation({
+      authorize: (current) => canChangeVote(current, targetType, targetId, delta),
       begin: () => setSavingVotes(true),
       optimistic: (draft) => {
         const targets = targetType === 'card' ? draft.cards : draft.groups;
@@ -960,63 +1286,48 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         }
         if (draft.remainingVotes !== null) affects(draft, 'remainingVotes');
       },
-      send: () =>
-        dispatchCommand(board.id, { type: 'vote:change', targetType, targetId, delta }),
+      send: (activeBoardId) =>
+        dispatchCommand(activeBoardId, { type: 'vote:change', targetType, targetId, delta }),
       failureMessage: 'Could not update your Vote. Try again.',
-      reportFailure: true,
+      reportGlobalError: true,
     });
   }
 
-  async function runVotingSettingsMutation(
+  function runVotingSettingsMutation(
     command: Extract<BoardCommand, { type: 'voting:configure' | 'voting:reset' }>,
-  ): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'Voting settings are unavailable.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'control-facilitation' },
-      send: () => dispatchCommand(board.id, command),
+  ): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), command.type).allowed,
+      guardMessage: 'Voting settings are unavailable.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, command),
       failureMessage: 'Could not update Voting. Try again.',
     });
-    if (outcome.ok) return null;
-    return outcome.reason === 'guard'
-      ? 'Voting settings are unavailable.'
-      : outcome.message ?? 'Could not update Voting. Try again.';
   }
 
-  function saveVotingSettings(patch: VotingSettingsPatch): Promise<string | null> {
+  function saveVotingSettings(patch: VotingSettingsPatch): Promise<BoardMutationResult> {
     return runVotingSettingsMutation({ type: 'voting:configure', ...patch });
   }
 
-  function resetAllVotes(): Promise<string | null> {
+  function resetAllVotes(): Promise<BoardMutationResult> {
     return runVotingSettingsMutation({ type: 'voting:reset' });
   }
 
-  async function toggleBoardLock(isLocked: boolean): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'Only a Facilitator can Lock or Unlock the Board.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'facilitate' },
-      send: () => dispatchCommand(board.id, { type: 'board:set-lock', isLocked }),
+  function toggleBoardLock(isLocked: boolean): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:set-lock').allowed,
+      guardMessage: 'Only a Facilitator can Lock or Unlock the Board.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'board:set-lock', isLocked }),
       failureMessage: 'Could not update Board lock state. Try again.',
     });
-    if (outcome.ok) return null;
-    return outcome.reason === 'guard'
-      ? 'Only a Facilitator can Lock or Unlock the Board.'
-      : outcome.message ?? 'Could not update Board lock state. Try again.';
   }
 
-  async function deleteCurrentBoard(): Promise<string | null> {
-    const board = store.board;
-    if (!board) return 'Only a Facilitator can delete this Board.';
-    const outcome = await runGuardedMutation({
-      gate: { kind: 'facilitate' },
-      send: () => dispatchCommand(board.id, { type: 'board:delete' }),
+  function deleteCurrentBoard(): Promise<BoardMutationResult> {
+    return runGuardedMutation({
+      authorize: (current) => decideBoardAction(toBoardPolicyContext(current), 'board:delete').allowed,
+      guardMessage: 'Only a Facilitator can delete this Board.',
+      send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'board:delete' }),
       failureMessage: 'Could not delete this Board. Try again.',
     });
-    if (outcome.ok) return null;
-    return outcome.reason === 'guard'
-      ? 'Only a Facilitator can delete this Board.'
-      : outcome.message ?? 'Could not delete this Board. Try again.';
   }
 
   return {
@@ -1029,8 +1340,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     errorMessage,
     reportError: (message) => setErrorMessage(message),
     clearError: () => setErrorMessage(null),
+    claimPending,
+    claimError,
+    clearClaimError: () => setClaimError(null),
     isChangingPrivateMode,
-    isSavingBoardTitle,
     isSavingColumn,
     changeCountdown,
     togglePrivateMode,
@@ -1039,6 +1352,10 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     updateCard,
     updateActionItem,
     isActionItemPending,
+    isCardPending,
+    isGroupPending,
+    isColumnPending,
+    isCommentPending,
     moveCard,
     deleteCard,
     toggleReaction,

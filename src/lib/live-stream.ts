@@ -4,7 +4,7 @@ import {
   LIVE_CONNECTION_HEADER,
   LIVE_HEARTBEAT_MS,
   LIVE_HEARTBEAT_TIMEOUT_MS,
-} from './board-live-protocol';
+} from './live-protocol';
 
 const RETRY_DELAYS_MS = [500, 1_000, 2_000, 5_000, 10_000];
 

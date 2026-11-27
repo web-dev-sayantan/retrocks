@@ -185,3 +185,87 @@ it('serializes concurrent Votes for a final budget slot and rejects Votes on red
   const rejected = results.find((result) => result.status === 'rejected');
   expect(rejected?.reason).toMatchObject({ code: 'LIMIT_EXCEEDED' });
 });
+
+it('preserves exact Vote denial codes and messages across Cards, Card Groups, and Private Mode', async () => {
+  const { dispatch, createCard, participant, facilitator, settings } = await setup({
+    isBlurred: false,
+    voteLimit: 3,
+    maxVotesPerCard: 1,
+  });
+  await settings({ voteLimit: 2 });
+
+  const participantCard = await createCard('Participant card', participant);
+  const facilitatorCard = await createCard('Facilitator card', facilitator);
+  const standaloneCard = await createCard('Standalone card', participant);
+
+  // Removing a Vote when none cast on a standalone Card -> VALIDATION_ERROR
+  await expect(
+    dispatch({ type: 'vote:change', targetType: 'card', targetId: standaloneCard, delta: -1 }, participant),
+  ).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: 'You have no Votes to remove from this Card.',
+  });
+
+  // Per-Card limit on standalone Card -> LIMIT_EXCEEDED
+  await dispatch({ type: 'vote:change', targetType: 'card', targetId: standaloneCard, delta: 1 }, participant);
+  await expect(
+    dispatch({ type: 'vote:change', targetType: 'card', targetId: standaloneCard, delta: 1 }, participant),
+  ).rejects.toMatchObject({
+    code: 'LIMIT_EXCEEDED',
+    message: 'You reached the Vote limit for this Card.',
+  });
+
+  // Merge participantCard + facilitatorCard into a mixed-authorship Card Group
+  const merged = await dispatch(
+    { type: 'group:merge', cardId: participantCard, targetType: 'card', targetId: facilitatorCard },
+    facilitator,
+  );
+  const groupEvent = merged.result.events.find((e) => e.type === 'group:upserted');
+  if (groupEvent?.type !== 'group:upserted') throw new Error('Expected a Card Group');
+  const groupId = groupEvent.group.id;
+
+  // Voting directly on a grouped Card -> FORBIDDEN with routing message
+  await expect(
+    dispatch({ type: 'vote:change', targetType: 'card', targetId: participantCard, delta: 1 }, participant),
+  ).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: 'Vote on the Card Group instead.',
+  });
+
+  // Removing a Vote when none cast on a Card Group -> VALIDATION_ERROR
+  await expect(
+    dispatch({ type: 'vote:change', targetType: 'group', targetId: groupId, delta: -1 }, participant),
+  ).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: 'You have no Votes to remove from this Card Group.',
+  });
+
+  // Per-Card Group limit -> LIMIT_EXCEEDED
+  await dispatch({ type: 'vote:change', targetType: 'group', targetId: groupId, delta: 1 }, participant);
+  await expect(
+    dispatch({ type: 'vote:change', targetType: 'group', targetId: groupId, delta: 1 }, participant),
+  ).rejects.toMatchObject({
+    code: 'LIMIT_EXCEEDED',
+    message: 'You reached the Vote limit for this Card Group.',
+  });
+
+  // Board Vote budget exhausted (2 of 2 cast) -> LIMIT_EXCEEDED
+  await settings({ maxVotesPerCard: null });
+  await expect(
+    dispatch({ type: 'vote:change', targetType: 'group', targetId: groupId, delta: 1 }, participant),
+  ).rejects.toMatchObject({
+    code: 'LIMIT_EXCEEDED',
+    message: 'You have no Votes left.',
+  });
+
+  // Private Mode blocks voting on a mixed-authorship Card Group for both Participant and Facilitator
+  await dispatch({ type: 'board:set-private-mode', isBlurred: true }, facilitator);
+  for (const cookie of [participant, facilitator]) {
+    await expect(
+      dispatch({ type: 'vote:change', targetType: 'group', targetId: groupId, delta: -1 }, cookie),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: "Cannot change another Participant's Card while Private Mode is active.",
+    });
+  }
+});

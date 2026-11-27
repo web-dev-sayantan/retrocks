@@ -9,7 +9,6 @@ import {
 } from '../components/BoardWorkspaceContext';
 import type { BoardMutations, WorkspaceVoting } from './board-controller';
 import { makeBoardView } from './board-fixtures';
-import { canManageGrouping } from './board-permissions';
 import { boardTransfer } from './board-transfer';
 import type { BoardViewDTO, ColumnDTO } from './board-types';
 
@@ -26,24 +25,29 @@ export type TestBoardMutations = {
 export function createTestBoardMutations(
   overrides?: Partial<BoardMutations>,
 ): TestBoardMutations {
+  const ok = async () => ({ ok: true as const });
   const base: TestBoardMutations = {
-    createCard: vi.fn<BoardMutations['createCard']>(async () => null),
-    updateCard: vi.fn<BoardMutations['updateCard']>(async () => null),
-    updateActionItem: vi.fn<BoardMutations['updateActionItem']>(async () => true),
-    moveCard: vi.fn<BoardMutations['moveCard']>(async () => true),
-    deleteCard: vi.fn<BoardMutations['deleteCard']>(async () => true),
-    toggleReaction: vi.fn<BoardMutations['toggleReaction']>(async () => null),
-    createComment: vi.fn<BoardMutations['createComment']>(async () => null),
-    deleteComment: vi.fn<BoardMutations['deleteComment']>(async () => null),
-    groupCard: vi.fn<BoardMutations['groupCard']>(async () => true),
-    ungroupCard: vi.fn<BoardMutations['ungroupCard']>(async () => true),
-    renameCardGroup: vi.fn<BoardMutations['renameCardGroup']>(async () => true),
-    dissolveCardGroup: vi.fn<BoardMutations['dissolveCardGroup']>(async () => true),
-    moveCardGroup: vi.fn<BoardMutations['moveCardGroup']>(async () => true),
-    updateColumn: vi.fn<BoardMutations['updateColumn']>(async () => true),
-    moveColumn: vi.fn<BoardMutations['moveColumn']>(async () => true),
-    deleteColumn: vi.fn<BoardMutations['deleteColumn']>(async () => true),
+    createCard: vi.fn<BoardMutations['createCard']>(ok),
+    updateCard: vi.fn<BoardMutations['updateCard']>(ok),
+    updateActionItem: vi.fn<BoardMutations['updateActionItem']>(ok),
+    moveCard: vi.fn<BoardMutations['moveCard']>(ok),
+    deleteCard: vi.fn<BoardMutations['deleteCard']>(ok),
+    toggleReaction: vi.fn<BoardMutations['toggleReaction']>(ok),
+    createComment: vi.fn<BoardMutations['createComment']>(ok),
+    deleteComment: vi.fn<BoardMutations['deleteComment']>(ok),
+    groupCard: vi.fn<BoardMutations['groupCard']>(ok),
+    ungroupCard: vi.fn<BoardMutations['ungroupCard']>(ok),
+    renameCardGroup: vi.fn<BoardMutations['renameCardGroup']>(ok),
+    dissolveCardGroup: vi.fn<BoardMutations['dissolveCardGroup']>(ok),
+    moveCardGroup: vi.fn<BoardMutations['moveCardGroup']>(ok),
+    updateColumn: vi.fn<BoardMutations['updateColumn']>(ok),
+    moveColumn: vi.fn<BoardMutations['moveColumn']>(ok),
+    deleteColumn: vi.fn<BoardMutations['deleteColumn']>(ok),
     isActionItemPending: vi.fn<BoardMutations['isActionItemPending']>(() => false),
+    isCardPending: vi.fn<BoardMutations['isCardPending']>(() => false),
+    isGroupPending: vi.fn<BoardMutations['isGroupPending']>(() => false),
+    isColumnPending: vi.fn<BoardMutations['isColumnPending']>(() => false),
+    isCommentPending: vi.fn<BoardMutations['isCommentPending']>(() => false),
   };
 
   if (overrides) {
@@ -61,7 +65,7 @@ export interface TestBoardWorkspaceProps {
   isLocked?: MaybeAccessor<boolean>;
   isBlurred?: MaybeAccessor<boolean>;
   blindVoting?: MaybeAccessor<boolean>;
-  canGroupCards?: MaybeAccessor<boolean>;
+  allowParticipantGroup?: MaybeAccessor<boolean>;
   nowMs?: MaybeAccessor<number>;
   actions?: Partial<BoardMutations>;
   openCardDetail?: (cardId: string, trigger: HTMLButtonElement) => void;
@@ -126,13 +130,10 @@ export function TestBoardWorkspace(props: TestBoardWorkspaceProps) {
         ? unwrap(props.blindVoting)
         : resolveBoard().blindVoting;
     },
-    get canGroupCards() {
-      if (props.canGroupCards !== undefined) return unwrap(props.canGroupCards);
-      return canManageGrouping({
-        isLocked: contextValue.isLocked,
-        isFacilitator: contextValue.isFacilitator,
-        allowParticipantGroup: resolveBoard().allowParticipantGroup,
-      });
+    get allowParticipantGroup() {
+      return props.allowParticipantGroup !== undefined
+        ? unwrap(props.allowParticipantGroup)
+        : resolveBoard().allowParticipantGroup;
     },
     get nowMs() {
       return props.nowMs !== undefined ? unwrap(props.nowMs) : Date.now();

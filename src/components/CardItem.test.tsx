@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { CardGroupDTO } from '../lib/board-types';
 import CardItem from './CardItem';
@@ -111,10 +112,11 @@ describe('<CardItem />', () => {
     flush();
     expect(getByRole('menuitem', { name: 'Edit Card' })).toBeInTheDocument();
 
-    // Toggling Private Mode revokes Facilitator edit/delete on another participant's card
+    // Toggling Private Mode revokes Facilitator edit/delete and Action Item flagging on another participant's card
     setIsBlurred(true);
     flush();
     expect(queryByRole('menuitem', { name: 'Edit Card' })).not.toBeInTheDocument();
+    expect(getByRole('menuitem', { name: 'Flag as Action Item' })).toHaveAttribute('aria-disabled', 'true');
     expect(container.querySelector('article[data-card-id="card_other"]')).toBe(article);
 
     // Exhausting remaining ballots disables Cast Vote reactively
@@ -171,6 +173,245 @@ describe('<CardItem />', () => {
     expect(actions.ungroupCard).toHaveBeenCalledWith('card_1');
   });
 
+  it('enforces whole-Card-Group Private Mode on Ungroup Card', () => {
+    const mixedGroup: CardGroupDTO = {
+      id: 'group_mixed',
+      columnId: 'col_1',
+      title: 'Mixed Group',
+      cardIds: ['card_mine', 'card_peer'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      isMine: false,
+      redacted: true,
+    });
+    const [isBlurred, setIsBlurred] = createSignal(true);
+
+    const { getByRole, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={isBlurred}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, peerCard]}
+          columnGroups={[mixedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(queryByRole('menuitem', { name: 'Ungroup Card' })).not.toBeInTheDocument();
+
+    setIsBlurred(false);
+    flush();
+    expect(getByRole('menuitem', { name: 'Ungroup Card' })).toBeInTheDocument();
+  });
+
+  it('hides Group with… for a Card in a mixed-authorship Card Group during Private Mode', () => {
+    const mixedGroup: CardGroupDTO = {
+      id: 'group_mixed',
+      columnId: 'col_1',
+      title: 'Mixed Group',
+      cardIds: ['card_mine', 'card_peer'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      content: 'My grouped card',
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      isMine: false,
+      redacted: true,
+    });
+    const myLooseCard = makeCard({
+      id: 'card_loose',
+      columnId: 'col_1',
+      groupId: null,
+      content: 'My loose target',
+      isMine: true,
+    });
+    const [isBlurred, setIsBlurred] = createSignal(true);
+
+    const { getByRole, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={isBlurred}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, peerCard, myLooseCard]}
+          columnGroups={[mixedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(queryByRole('menuitem', { name: /Group with/i })).not.toBeInTheDocument();
+
+    setIsBlurred(false);
+    flush();
+    expect(getByRole('menuitem', { name: /Group with/i })).toBeInTheDocument();
+  });
+
+  it('excludes redacted and mixed-authorship Card Groups from the Group with… submenu during Private Mode', () => {
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      content: 'My loose note',
+      isMine: true,
+    });
+    const myOwnGroupCard = makeCard({
+      id: 'card_own_g',
+      columnId: 'col_1',
+      groupId: 'group_own',
+      content: 'Own group member',
+      isMine: true,
+    });
+    const peerGroupCard = makeCard({
+      id: 'card_peer_g',
+      columnId: 'col_1',
+      groupId: 'group_redacted',
+      content: '',
+      isMine: false,
+      redacted: true,
+    });
+    const ownGroup: CardGroupDTO = {
+      id: 'group_own',
+      columnId: 'col_1',
+      title: 'My Own Group',
+      cardIds: ['card_own_g'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+    const redactedGroup: CardGroupDTO = {
+      id: 'group_redacted',
+      columnId: 'col_1',
+      title: 'Secret Group',
+      cardIds: ['card_peer_g'],
+      redacted: true,
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+
+    const { getByRole, queryByRole, unmount } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={true}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, myOwnGroupCard, peerGroupCard]}
+          columnGroups={[ownGroup, redactedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Card actions' }));
+    flush();
+    const groupTrigger = getByRole('menuitem', { name: /Group with/i });
+    fireEvent.click(groupTrigger);
+    flush();
+
+    expect(getByRole('menuitem', { name: 'My Own Group' })).toBeInTheDocument();
+    expect(queryByRole('menuitem', { name: 'Secret Group' })).not.toBeInTheDocument();
+    unmount();
+
+    // When only a redacted Card Group exists in Private Mode, Group with… is hidden entirely.
+    const onlyRedacted = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={true}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, peerGroupCard]}
+          columnGroups={[redactedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+    fireEvent.click(onlyRedacted.getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(onlyRedacted.queryByRole('menuitem', { name: /Group with/i })).not.toBeInTheDocument();
+  });
+
+  it('disables reaction, Vote, edit, move, grouping, and Action Item controls on optimistic pending Cards', () => {
+    const pendingCard = makeCard({
+      id: 'card_pending',
+      columnId: 'col_1',
+      content: 'Optimistic note',
+      isMine: true,
+      pending: true,
+      isActionItem: true,
+      actionDone: false,
+      votes: 0,
+      myVotes: 0,
+      reactions: { '👍': 1 },
+      myReactions: ['👍'],
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      content: 'Peer note',
+      isMine: false,
+    });
+    const actions = createTestBoardMutations();
+
+    const { container, getByRole, getByText, queryByRole } = render(() => (
+      <TestBoardWorkspace
+        isFacilitator={true}
+        allowParticipantGroup={true}
+        actions={actions}
+        voting={{ remainingVotes: 5, maxVotesPerCard: 2 }}
+      >
+        <CardItem
+          card={pendingCard}
+          columnCards={[pendingCard, peerCard]}
+          columnGroups={[]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    const article = container.querySelector('article[data-card-id="card_pending"]');
+    expect(article).not.toHaveAttribute('tabindex');
+    expect(article).not.toHaveAttribute('aria-roledescription');
+
+    // Reactions are disabled and Add reaction trigger is hidden
+    expect(queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+    expect(getByRole('button', { name: /👍/ })).toBeDisabled();
+
+    // Vote controls are disabled
+    expect(getByRole('button', { name: 'Cast Vote' })).toBeDisabled();
+    expect(getByRole('button', { name: 'Remove Vote' })).toBeDisabled();
+
+    // Action Item Done checkbox is disabled
+    expect(getByRole('checkbox', { name: 'Mark Optimistic note as Done' })).toBeDisabled();
+
+    // Card actions menu trigger (Edit, Move, Group, Flag Action Item, Delete) is disabled
+    expect(getByRole('button', { name: 'Card actions' })).toBeDisabled();
+
+    // Double-click inline edit does not open
+    fireEvent.dblClick(getByText('Optimistic note'));
+    flush();
+    expect(queryByRole('textbox', { name: 'Edit card text' })).not.toBeInTheDocument();
+  });
+
   it('handles Card inline editing with IME Enter, container focus-out, Escape cancel, Private Mode/Locked invalidation, error retention, and focus restoration', async () => {
     const otherCard = makeCard({
       id: 'card_edit',
@@ -180,12 +421,12 @@ describe('<CardItem />', () => {
     });
     const [isLocked, setIsLocked] = createSignal(false);
     const [isBlurred, setIsBlurred] = createSignal(false);
-    const pending = Promise.withResolvers<string | null>();
+    const pending = Promise.withResolvers<BoardMutationResult>();
     const updateCard = vi
-      .fn<() => Promise<string | null>>()
+      .fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce('Could not save card.')
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce({ ok: false, message: 'Could not save card.' })
+      .mockResolvedValueOnce({ ok: true });
     const actions = createTestBoardMutations({ updateCard });
 
     const { getByRole, getByText, queryByRole } = render(() => (
@@ -226,7 +467,7 @@ describe('<CardItem />', () => {
     flush();
     expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
     expect(getByRole('button', { name: 'Card actions' })).toHaveFocus();
-    pending.resolve('Stale error');
+    pending.resolve({ ok: false, message: 'Stale error' });
     await pending.promise;
     await Promise.resolve();
     flush();
@@ -271,5 +512,78 @@ describe('<CardItem />', () => {
     setIsLocked(true);
     flush();
     expect(queryByRole('textbox', { name: 'Edit card text' })).toBeNull();
+  });
+
+  it('surfaces real server rejection messages and reads controller-backed Card pending state', async () => {
+    const card = makeCard({
+      id: 'card_err',
+      columnId: 'col_1',
+      content: 'Server error card',
+      isMine: true,
+      isActionItem: true,
+      actionDone: false,
+    });
+    const [moving, setMoving] = createSignal(false);
+    const actions = createTestBoardMutations({
+      isCardPending: (id, action) => id === card.id && action === 'move' && moving(),
+      updateActionItem: vi.fn(async () => ({
+        ok: false as const,
+        message: 'Board was locked before Action Item saved.',
+      })),
+    });
+
+    const { getByRole, getByText } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} actions={actions}>
+        <CardItem card={card} columnCards={[card]} columnGroups={[]} />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    setMoving(true);
+    flush();
+    expect(getByText('Moving Card…')).toBeInTheDocument();
+    setMoving(false);
+    flush();
+
+    const checkbox = getByRole('checkbox', { name: 'Mark Server error card as Done' });
+    fireEvent.click(checkbox);
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    expect(getByRole('alert')).toHaveTextContent('Board was locked before Action Item saved.');
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it('disables the inline Action Item Done checkbox while an Action Item mutation is in flight', () => {
+    const card = makeCard({
+      id: 'card_action_pending',
+      columnId: 'col_1',
+      content: 'Follow up with team',
+      isMine: true,
+      isActionItem: true,
+      actionDone: false,
+    });
+    const [actionPending, setActionPending] = createSignal(false);
+    const actions = createTestBoardMutations({
+      isActionItemPending: (id) => id === card.id && actionPending(),
+    });
+
+    const { getByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} actions={actions}>
+        <CardItem card={card} columnCards={[card]} columnGroups={[]} />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    const checkbox = getByRole('checkbox', { name: 'Mark Follow up with team as Done' });
+    expect(checkbox).toBeEnabled();
+
+    setActionPending(true);
+    flush();
+    expect(checkbox).toBeDisabled();
+
+    setActionPending(false);
+    flush();
+    expect(checkbox).toBeEnabled();
   });
 });

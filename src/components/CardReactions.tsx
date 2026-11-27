@@ -2,6 +2,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/solid/popover';
 import { SmilePlus } from 'lucide';
 import { For, Show, createMemo, createSignal } from 'solid-js';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { REACTION_EMOJIS, type ReactionEmoji } from '../lib/board-types';
 import LucideIcon from './LucideIcon';
 
@@ -11,7 +12,7 @@ export interface CardReactionsProps {
   myReactions: readonly ReactionEmoji[];
   disabled: boolean;
   inCardFooter?: boolean;
-  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<string | null>;
+  onToggleReaction: (cardId: string, emoji: ReactionEmoji) => Promise<BoardMutationResult>;
 }
 
 export default function CardReactions(props: CardReactionsProps) {
@@ -45,7 +46,8 @@ export default function CardReactions(props: CardReactionsProps) {
     setReactionError(null);
     setPendingEmoji(emoji);
     try {
-      setReactionError(await props.onToggleReaction(props.cardId, emoji));
+      const result = await props.onToggleReaction(props.cardId, emoji);
+      setReactionError(result.ok ? null : result.message);
     } finally {
       setPendingEmoji(null);
     }

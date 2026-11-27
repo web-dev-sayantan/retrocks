@@ -1,12 +1,89 @@
 import 'server-only';
 
-import { checkPrivateCardPermission } from '../domain/card-permissions';
-import type { BoardMutationActor, BoardMutationCommand, BoardMutationOutcome, RawBoardRow } from './raw-types';
+import {
+  decideVoteChange,
+  type BoardPolicyDenialReason,
+  type VoteLimitFacts,
+} from '../../lib/board-policy';
+import {
+  BOARD_LOCKED_ERROR,
+  PRIVATE_MODE_ERROR,
+  type BoardMutationActor,
+  type BoardMutationCommand,
+  type BoardMutationFailure,
+  type RawBoardRow,
+} from './raw-types';
 import type { SqlRunner } from './sql-runner';
 
 export type ChangeVoteResult =
   | { ok: true; decrementedMemberCardId?: string }
-  | Extract<BoardMutationOutcome, { ok: false }>;
+  | BoardMutationFailure;
+
+function mapVotePolicyDenial(
+  reason: BoardPolicyDenialReason,
+  targetKind: 'card' | 'group',
+): BoardMutationFailure {
+  const label = targetKind === 'card' ? 'Card' : 'Card Group';
+  switch (reason) {
+    case 'board-locked':
+      return BOARD_LOCKED_ERROR;
+    case 'private-mode-restricted':
+      return PRIVATE_MODE_ERROR;
+    case 'card-in-group':
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'Vote on the Card Group instead.',
+      };
+    case 'target-vote-limit-reached':
+      return {
+        ok: false,
+        code: 'LIMIT_EXCEEDED',
+        message: `You reached the Vote limit for this ${label}.`,
+      };
+    case 'board-vote-limit-reached':
+      return {
+        ok: false,
+        code: 'LIMIT_EXCEEDED',
+        message: 'You have no Votes left.',
+      };
+    case 'no-votes-to-remove':
+      return {
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: `You have no Votes to remove from this ${label}.`,
+      };
+    default:
+      return {
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'You do not have permission to vote here.',
+      };
+  }
+}
+
+function buildVoteLimits(
+  sql: SqlRunner,
+  board: RawBoardRow,
+  participantHash: string,
+): VoteLimitFacts {
+  const { id: boardId, voteLimit, maxVotesPerCard } = board;
+  return {
+    maxVotesPerCard,
+    remainingVotes:
+      voteLimit === null
+        ? null
+        : () => {
+            const cast =
+              sql.get<{ total: number }>(
+                'SELECT COALESCE(SUM(count), 0) AS total FROM votes WHERE board_id = ? AND voter_token_hash = ?',
+                boardId,
+                participantHash,
+              )?.total ?? 0;
+            return voteLimit - cast;
+          },
+  };
+}
 
 export function changeVote(
   sql: SqlRunner,
@@ -31,11 +108,6 @@ export function changeVote(
   if (!card) {
     return { ok: false, code: 'NOT_FOUND', message: 'Card not found.' };
   }
-  const permission = checkPrivateCardPermission(board, actor, card.author_token_hash);
-  if (!permission.ok) return permission;
-  if (card.group_id !== null) {
-    return { ok: false, code: 'FORBIDDEN', message: 'Vote on the Card Group instead.' };
-  }
 
   const current = sql.get<{ count: number }>(
     'SELECT count FROM votes WHERE board_id = ? AND target_type = ? AND target_id = ? AND voter_token_hash = ?',
@@ -45,22 +117,19 @@ export function changeVote(
     participantHash,
   )?.count ?? 0;
 
-  if (delta === 1) {
-    if (board.maxVotesPerCard !== null && current >= board.maxVotesPerCard) {
-      return { ok: false, code: 'LIMIT_EXCEEDED', message: 'You reached the Vote limit for this Card.' };
-    }
-    if (board.voteLimit !== null) {
-      const cast = sql.get<{ total: number }>(
-        'SELECT COALESCE(SUM(count), 0) AS total FROM votes WHERE board_id = ? AND voter_token_hash = ?',
-        boardId,
-        participantHash,
-      )?.total ?? 0;
-      if (cast >= board.voteLimit) {
-        return { ok: false, code: 'LIMIT_EXCEEDED', message: 'You have no Votes left.' };
-      }
-    }
-  } else if (current === 0) {
-    return { ok: false, code: 'VALIDATION_ERROR', message: 'You have no Votes to remove from this Card.' };
+  const decision = decideVoteChange(
+    { isLocked: board.isLocked, isPrivateMode: board.isBlurred },
+    {
+      kind: 'card',
+      isMine: card.author_token_hash === participantHash,
+      groupId: card.group_id,
+      myVotes: current,
+    },
+    buildVoteLimits(sql, board, participantHash),
+    delta,
+  );
+  if (!decision.allowed) {
+    return mapVotePolicyDenial(decision.reason, 'card');
   }
 
   return writeVoteCount(sql, boardId, targetType, targetId, participantHash, current + delta, now);
@@ -96,10 +165,6 @@ function changeGroupVote(
   if (members.length === 0) {
     return { ok: false, code: 'NOT_FOUND', message: 'Card Group not found.' };
   }
-  for (const member of members) {
-    const permission = checkPrivateCardPermission(board, actor, member.author_token_hash);
-    if (!permission.ok) return permission;
-  }
 
   const directVotes = sql.get<{ count: number }>(
     `SELECT count FROM votes
@@ -125,24 +190,23 @@ function changeGroupVote(
   const combinedMine =
     directVotes + memberVotes.reduce((sum, vote) => sum + vote.count, 0);
 
+  const decision = decideVoteChange(
+    { isLocked: board.isLocked, isPrivateMode: board.isBlurred },
+    {
+      kind: 'group',
+      allCardsAreMine: members.every(
+        (member) => member.author_token_hash === participantHash,
+      ),
+      myVotes: combinedMine,
+    },
+    buildVoteLimits(sql, board, participantHash),
+    delta,
+  );
+  if (!decision.allowed) {
+    return mapVotePolicyDenial(decision.reason, 'group');
+  }
+
   if (delta === 1) {
-    if (board.maxVotesPerCard !== null && combinedMine >= board.maxVotesPerCard) {
-      return {
-        ok: false,
-        code: 'LIMIT_EXCEEDED',
-        message: 'You reached the Vote limit for this Card Group.',
-      };
-    }
-    if (board.voteLimit !== null) {
-      const cast = sql.get<{ total: number }>(
-        'SELECT COALESCE(SUM(count), 0) AS total FROM votes WHERE board_id = ? AND voter_token_hash = ?',
-        boardId,
-        participantHash,
-      )?.total ?? 0;
-      if (cast >= board.voteLimit) {
-        return { ok: false, code: 'LIMIT_EXCEEDED', message: 'You have no Votes left.' };
-      }
-    }
     return writeVoteCount(sql, boardId, 'group', groupId, participantHash, directVotes + 1, now);
   }
 
@@ -155,11 +219,7 @@ function changeGroupVote(
     .filter((vote) => vote.count > 0)
     .sort((a, b) => b.updated_at - a.updated_at || a.target_id.localeCompare(b.target_id))[0];
   if (!memberVote) {
-    return {
-      ok: false,
-      code: 'VALIDATION_ERROR',
-      message: 'You have no Votes to remove from this Card Group.',
-    };
+    return mapVotePolicyDenial('no-votes-to-remove', 'group');
   }
   writeVoteCount(
     sql,

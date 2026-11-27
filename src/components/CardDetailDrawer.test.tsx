@@ -1,7 +1,9 @@
+import { captureArtifact, expectNoDiagnostics } from '@solidjs/diagnostics';
 import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { ColumnDTO, CommentViewDTO } from '../lib/board-types';
 import {
@@ -183,6 +185,42 @@ describe('<CardDetailDrawer />', () => {
     expect(getByRole('dialog', { name: 'Card details' })).toBe(drawer);
   });
 
+  it('disables reactions, Action Item controls, and comment composer for optimistic pending Cards', () => {
+    const pendingCard = makeCard({
+      id: 'card_pending',
+      columnId: 'col_1',
+      content: 'Pending card details',
+      isMine: true,
+      pending: true,
+      isActionItem: true,
+      actionDone: false,
+      actionOwner: 'Ops',
+      reactions: { '👍': 1 },
+      myReactions: ['👍'],
+    });
+
+    const { getByLabelText, getByRole, queryByLabelText, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true}>
+        <CardDetailDrawer
+          card={pendingCard}
+          isOpen={true}
+          side="right"
+          onClose={() => {}}
+          onExit={() => {}}
+          restoreFocusTarget={() => undefined}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    expect(queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+    expect(getByRole('button', { name: /👍/ })).toBeDisabled();
+    expect(getByRole('checkbox', { name: 'Action Item' })).toBeDisabled();
+    expect(getByRole('checkbox', { name: 'Done' })).toBeDisabled();
+    expect(getByLabelText('Action owner')).toBeDisabled();
+    expect(queryByLabelText('Comment')).not.toBeInTheDocument();
+  });
+
   it('invalidates stale Action Item owner saves on Card switch or close and retains failed drafts for retry', async () => {
     const cardA = makeCard({
       id: 'card_a',
@@ -201,12 +239,12 @@ describe('<CardDetailDrawer />', () => {
     const [activeCard, setActiveCard] = createSignal(cardA);
     const [isOpen, setIsOpen] = createSignal(true);
     const onClose = vi.fn(() => setIsOpen(false));
-    const slowSaveA = Promise.withResolvers<boolean>();
+    const slowSaveA = Promise.withResolvers<BoardMutationResult>();
     const updateActionItem = vi
-      .fn<() => Promise<boolean>>()
+      .fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => slowSaveA.promise)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: false, message: 'Could not update the Action Item.' })
+      .mockResolvedValueOnce({ ok: true });
     const actions = createTestBoardMutations({ updateActionItem });
 
     const { getByLabelText, getByRole, queryByRole } = render(() => (
@@ -248,7 +286,7 @@ describe('<CardDetailDrawer />', () => {
     expect(ownerInput).toHaveValue('Security');
 
     // Stale failure from Card A must not show an error or overwrite Card B's owner
-    slowSaveA.resolve(false);
+    slowSaveA.resolve({ ok: false, message: 'Stale error' });
     await slowSaveA.promise;
     await Promise.resolve();
     flush();
@@ -272,5 +310,103 @@ describe('<CardDetailDrawer />', () => {
     fireEvent.keyDown(ownerInput, { key: 'Escape' });
     flush();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces real server rejection messages for comment deletion and Action Item updates after pending clears with zero diagnostics', async () => {
+    const { artifact } = await captureArtifact(async () => {
+      const nowMs = Date.UTC(2026, 0, 1, 12, 10, 0);
+      const comment1: CommentViewDTO = {
+        id: 'comment_1',
+        cardId: 'card_1',
+        content: 'First comment',
+        isMine: true,
+        createdAt: nowMs - 2 * 60_000,
+      };
+      const comment2: CommentViewDTO = {
+        id: 'comment_2',
+        cardId: 'card_1',
+        content: 'Second comment',
+        isMine: true,
+        createdAt: nowMs - 60_000,
+      };
+      const card = makeCard({
+        id: 'card_1',
+        columnId: 'col_1',
+        content: 'Investigate latency',
+        isMine: true,
+        isActionItem: true,
+        actionDone: false,
+        actionOwner: 'Infra',
+        commentCount: 2,
+        comments: [comment1, comment2],
+      });
+      const board = makeBoardView({ isFacilitator: true, cards: [card] });
+      const [commentPending, setCommentPending] = createSignal(false);
+      const deleteComment = vi.fn(async () => {
+        setCommentPending(true);
+        await Promise.resolve();
+        setCommentPending(false);
+        return { ok: false as const, message: 'Comment was already removed.' };
+      });
+      const updateActionItem = vi
+        .fn<() => Promise<BoardMutationResult>>()
+        .mockResolvedValueOnce({ ok: false, message: 'Board was locked by Facilitator.' })
+        .mockResolvedValueOnce({ ok: false, message: 'Owner tag rejected by policy.' })
+        .mockResolvedValueOnce({ ok: false, message: 'Cannot unflag while locked.' });
+      const actions = createTestBoardMutations({
+        deleteComment,
+        updateActionItem,
+        isCommentPending: () => commentPending(),
+      });
+
+      const view = render(() => (
+        <TestBoardWorkspace board={board} nowMs={nowMs} actions={actions}>
+          <CardDetailDrawer
+            card={card}
+            isOpen={true}
+            side="right"
+            onClose={() => {}}
+            onExit={() => {}}
+            restoreFocusTarget={() => undefined}
+          />
+          <BoardConfirmDialog />
+        </TestBoardWorkspace>
+      ));
+      flush();
+
+      // Failed comment delete keeps its alert rendered on the target comment after pending clears
+      const firstRow = view.getByText('First comment').closest('li')!;
+      const secondRow = view.getByText('Second comment').closest('li')!;
+      fireEvent.click(within(firstRow).getByRole('button', { name: 'Delete' }));
+      flush();
+      fireEvent.click(
+        within(view.getByRole('alertdialog')).getByRole('button', { name: 'Delete comment' }),
+      );
+      await waitFor(() => {
+        expect(within(firstRow).getByRole('alert')).toHaveTextContent('Comment was already removed.');
+      });
+      expect(within(firstRow).getByRole('button', { name: 'Delete' })).toBeEnabled();
+      expect(within(secondRow).queryByRole('alert')).toBeNull();
+
+      // Action Item done, owner, and flag failures surface real server messages (at most one Action Item alert)
+      fireEvent.click(view.getByRole('checkbox', { name: 'Done' }));
+      await waitFor(() => {
+        expect(view.getByText('Board was locked by Facilitator.')).toHaveAttribute('role', 'alert');
+      });
+
+      const ownerInput = view.getByLabelText('Action owner');
+      fireEvent.input(ownerInput, { target: { value: 'SRE' } });
+      flush();
+      fireEvent.keyDown(ownerInput, { key: 'Enter' });
+      await waitFor(() => {
+        expect(view.getByText('Owner tag rejected by policy.')).toHaveAttribute('role', 'alert');
+      });
+
+      fireEvent.click(view.getByRole('checkbox', { name: 'Action Item' }));
+      await waitFor(() => {
+        expect(view.getByText('Cannot unflag while locked.')).toHaveAttribute('role', 'alert');
+      });
+    }, { scenario: 'card-detail-drawer-inline-server-errors' });
+    expectNoDiagnostics(artifact);
   });
 });

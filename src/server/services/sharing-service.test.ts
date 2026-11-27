@@ -211,8 +211,33 @@ it('lets a Facilitator rotate a Locked Board link and revokes prior links', asyn
     () => getFacilitatorLinkForRequest(boardId),
     facilitatorCookie,
   );
+  await expect(runRequest(() => getFacilitatorLinkForRequest(boardId)))
+    .rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Facilitator access is required.',
+    });
   await expect(runRequest(() => rotateFacilitatorLinkForRequest(boardId)))
-    .rejects.toMatchObject({ code: 'FORBIDDEN' });
+    .rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Facilitator access is required.',
+    });
+  // Store-level facilitator:rotate also returns FORBIDDEN (not BOARD_LOCKED) on a Locked Board
+  const storeRotateOutcome = await store.mutateBoard(
+    boardId,
+    { participantHash: 'non_facilitator_hash', isFacilitator: false },
+    {
+      type: 'facilitator:rotate',
+      capability: {
+        facilitatorTokenHash: 'unused_hash',
+        facilitatorTokenEncrypted: 'unused_enc',
+      },
+    },
+  );
+  expect(storeRotateOutcome).toEqual({
+    ok: false,
+    code: 'FORBIDDEN',
+    message: 'Only a Facilitator can rotate the Co-Facilitator Link.',
+  });
 
   const { result: newLink } = await runRequest(
     () => rotateFacilitatorLinkForRequest(boardId),

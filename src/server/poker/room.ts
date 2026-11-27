@@ -22,7 +22,6 @@ import type { PokerSharingResult } from '../../lib/poker-sharing-types';
 import { generateEntityId } from '../crypto';
 import type { SqlRunner } from '../db/sql-runner';
 import { facilitatorTokenHashesMatch } from '../facilitator-capability';
-import { createBoardWriteRateLimiter } from '../rate-limit';
 
 const ROOM_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const notFound = {
@@ -52,7 +51,7 @@ const linkReplaced = {
   code: 'LINK_REPLACED',
   message: 'The Co-Facilitator Link was already replaced. Show the current link to try again.',
 } as const;
-const rateLimited = {
+export const pokerRoomRateLimited = {
   ok: false,
   code: 'RATE_LIMITED',
   message: 'Too many changes. Try again shortly.',
@@ -60,7 +59,14 @@ const rateLimited = {
 
 export type PokerRoomWriteSuccess = Extract<PokerResult<StoredPokerRoom>, { ok: true }> & { updated?: true };
 
-type PokerSharingWrite = Extract<PokerSharingResult<never>, { ok: false }> | PokerRoomWriteSuccess;
+export type PokerRoomLookupResult =
+  | { status: 'found'; room: StoredPokerRoom }
+  | { status: 'expired' }
+  | { status: 'missing' };
+
+type PokerSharingWrite =
+  | (Extract<PokerSharingResult<never>, { ok: false }> & { expired?: true })
+  | PokerRoomWriteSuccess;
 
 export interface PokerFacilitatorCapability {
   hash: string;
@@ -261,20 +267,38 @@ export function projectPokerRoom(room: StoredPokerRoom, hash: string): PokerRoom
   };
 }
 
-export class PokerRoomStorage {
-  private readonly writeLimiter = createBoardWriteRateLimiter();
+function normalizeStoredRoom(data: string): StoredPokerRoom {
+  const room = JSON.parse(data) as StoredPokerRoom;
+  room.name = typeof room.name === 'string' && room.name.trim() ? room.name.trim() : POKER_DEFAULT_ROOM_NAME;
+  room.stories ??= [];
+  for (const story of room.stories) story.locked ??= false;
+  room.activeStoryId ??= null;
+  room.deck ??= POKER_DECK_PRESETS.fibonacci;
+  room.deckType ??= 'fibonacci';
+  room.round ??= null;
+  return room;
+}
 
+export class PokerRoomStorage {
   private ready = false;
 
   constructor(private readonly db: SqlRunner) {}
 
-  private hasSchema(): boolean {
+  hasSchema(): boolean {
     if (!this.ready) {
       this.ready = Boolean(this.db.get(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'poker_rooms'",
       ));
     }
     return this.ready;
+  }
+
+  /**
+   * Resets cached schema state after Durable Object `storage.deleteAll()` wipes
+   * all SQLite tables on a live instance.
+   */
+  resetSchemaState(): void {
+    this.ready = false;
   }
 
   private ensureSchema(): void {
@@ -288,7 +312,7 @@ export class PokerRoomStorage {
     this.ready = true;
   }
 
-  isAvailable(id: string, now = Date.now()): boolean {
+  isAvailable(id: string, now: number = Date.now()): boolean {
     return this.hasSchema() && Boolean(this.db.get(
       'SELECT 1 FROM poker_rooms WHERE id = ? AND expires_at > ?',
       id,
@@ -296,37 +320,53 @@ export class PokerRoomStorage {
     ));
   }
 
-  snapshot(id: string, now = Date.now()): StoredPokerRoom | null {
+  snapshot(id: string, now: number = Date.now()): StoredPokerRoom | null {
     if (!this.hasSchema()) return null;
     const row = this.db.get<{ data: string }>(
       'SELECT data FROM poker_rooms WHERE id = ? AND expires_at > ?',
       id,
       now,
     );
-    if (!row) return null;
-    const room = JSON.parse(row.data) as StoredPokerRoom;
-    room.name = typeof room.name === 'string' && room.name.trim() ? room.name.trim() : POKER_DEFAULT_ROOM_NAME;
-    room.stories ??= [];
-    for (const story of room.stories) story.locked ??= false;
-    room.activeStoryId ??= null;
-    room.deck ??= POKER_DECK_PRESETS.fibonacci;
-    room.deckType ??= 'fibonacci';
-    room.round ??= null;
-    return room;
+    return row ? normalizeStoredRoom(row.data) : null;
   }
 
-  read(id: string, hash: string): PokerRoomView | null {
-    const room = this.snapshot(id);
+  /**
+   * Loads a Room by ID and distinguishes missing vs lazily expired records.
+   * When an expired record is found, it is deleted from SQLite so subsequent
+   * lookups observe `'missing'`.
+   */
+  lookup(id: string, now: number = Date.now()): PokerRoomLookupResult {
+    if (!this.hasSchema()) return { status: 'missing' };
+    const row = this.db.get<{ expires_at: number; data: string }>(
+      'SELECT expires_at, data FROM poker_rooms WHERE id = ?',
+      id,
+    );
+    if (!row) return { status: 'missing' };
+    if (row.expires_at <= now) {
+      this.db.run('DELETE FROM poker_rooms WHERE id = ? AND expires_at <= ?', id, now);
+      return { status: 'expired' };
+    }
+    return { status: 'found', room: normalizeStoredRoom(row.data) };
+  }
+
+  read(id: string, hash: string, now: number = Date.now()): PokerRoomView | null {
+    const room = this.snapshot(id, now);
     return room && projectPokerRoom(room, hash);
   }
 
-  create(id: string, hash: string, displayName: string, name = POKER_DEFAULT_ROOM_NAME): StoredPokerRoom {
+  create(
+    id: string,
+    hash: string,
+    displayName: string,
+    name = POKER_DEFAULT_ROOM_NAME,
+    now: number = Date.now(),
+  ): StoredPokerRoom {
     this.ensureSchema();
     const room: StoredPokerRoom = {
       id,
       name: name.trim() || POKER_DEFAULT_ROOM_NAME,
       version: 1,
-      expiresAt: Date.now() + ROOM_TTL_MS,
+      expiresAt: now + ROOM_TTL_MS,
       participants: [{ id: generateEntityId(), hash, displayName, isFacilitator: true }],
       stories: [],
       activeStoryId: null,
@@ -343,12 +383,18 @@ export class PokerRoomStorage {
     return room;
   }
 
-  mutate(id: string, hash: string, command: PokerRoomCommand): Extract<PokerResult, { ok: false }> | PokerRoomWriteSuccess {
-    if (!this.writeLimiter.check(id, hash, Date.now()).allowed) return rateLimited;
+  mutate(
+    id: string,
+    hash: string,
+    command: PokerRoomCommand,
+    now: number = Date.now(),
+  ): (Extract<PokerResult, { ok: false }> & { expired?: true }) | PokerRoomWriteSuccess {
     return this.db.transaction(() => {
-      const now = Date.now();
-      const room = this.snapshot(id, now);
-      if (!room) return notFound;
+      const found = this.lookup(id, now);
+      if (found.status !== 'found') {
+        return found.status === 'expired' ? { ...notFound, expired: true } : notFound;
+      }
+      const { room } = found;
 
       if (room.closedAt !== undefined) {
         if (command.type === 'close-room') {
@@ -613,21 +659,29 @@ export class PokerRoomStorage {
     });
   }
 
-  delete(id: string, hash: string): PokerDeleteResult {
+  delete(id: string, hash: string, now: number = Date.now()): PokerDeleteResult & { expired?: true } {
     return this.db.transaction(() => {
-      const room = this.snapshot(id);
-      if (!room) return notFound;
-      if (!pokerCanDeleteRoom(room, hash)) return forbidden;
+      const found = this.lookup(id, now);
+      if (found.status !== 'found') {
+        return found.status === 'expired' ? { ...notFound, expired: true } : notFound;
+      }
+      if (!pokerCanDeleteRoom(found.room, hash)) return forbidden;
       this.db.run('DELETE FROM poker_rooms WHERE id = ?', id);
       return { ok: true };
     });
   }
 
-  getFacilitatorCapability(id: string, hash: string): PokerSharingResult<PokerFacilitatorCapability | null> {
-    const room = this.snapshot(id);
-    if (!room) return notFound;
-    if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
-    return { ok: true, value: room.facilitatorCapability ?? null };
+  getFacilitatorCapability(
+    id: string,
+    hash: string,
+    now: number = Date.now(),
+  ): PokerSharingResult<PokerFacilitatorCapability | null> & { expired?: true } {
+    const found = this.lookup(id, now);
+    if (found.status !== 'found') {
+      return found.status === 'expired' ? { ...notFound, expired: true } : notFound;
+    }
+    if (!pokerParticipant(found.room, hash)?.isFacilitator) return forbidden;
+    return { ok: true, value: found.room.facilitatorCapability ?? null };
   }
 
   replaceFacilitatorCapability(
@@ -635,13 +689,18 @@ export class PokerRoomStorage {
     hash: string,
     expectedRevision: number,
     capability: PokerFacilitatorCapability,
+    now: number = Date.now(),
+    checkWriteLimit?: () => boolean,
   ): PokerSharingWrite {
     return this.db.transaction(() => {
-      const room = this.snapshot(id);
-      if (!room) return notFound;
+      const found = this.lookup(id, now);
+      if (found.status !== 'found') {
+        return found.status === 'expired' ? { ...notFound, expired: true } : notFound;
+      }
+      const { room } = found;
       if (!pokerParticipant(room, hash)?.isFacilitator) return forbidden;
       if ((room.facilitatorCapability?.revision ?? 0) !== expectedRevision) return linkReplaced;
-      if (!this.writeLimiter.check(id, hash, Date.now()).allowed) return rateLimited;
+      if (checkWriteLimit && !checkWriteLimit()) return pokerRoomRateLimited;
 
       room.facilitatorCapability = capability;
       this.save(room);
@@ -654,12 +713,16 @@ export class PokerRoomStorage {
     hash: string,
     expectedRevision: number,
     encrypted: string,
-  ): void {
-    this.db.transaction(() => {
-      const room = this.snapshot(id);
-      if (!room || room.closedAt !== undefined) return;
-      if (!pokerParticipant(room, hash)?.isFacilitator) return;
-      if (room.facilitatorCapability?.revision !== expectedRevision) return;
+    now: number = Date.now(),
+  ): { expired?: true } {
+    return this.db.transaction(() => {
+      const found = this.lookup(id, now);
+      if (found.status === 'expired') return { expired: true };
+      if (found.status === 'missing') return {};
+      const { room } = found;
+      if (room.closedAt !== undefined) return {};
+      if (!pokerParticipant(room, hash)?.isFacilitator) return {};
+      if (room.facilitatorCapability?.revision !== expectedRevision) return {};
 
       room.facilitatorCapability = {
         ...room.facilitatorCapability,
@@ -670,14 +733,22 @@ export class PokerRoomStorage {
         JSON.stringify(room),
         room.id,
       );
+      return {};
     });
   }
 
-  claimFacilitator(id: string, hash: string, candidate: string): PokerSharingWrite {
-    const now = Date.now();
-    if (!this.writeLimiter.check(id, hash, now).allowed) return rateLimited;
+  claimFacilitator(
+    id: string,
+    hash: string,
+    candidate: string,
+    now: number = Date.now(),
+  ): PokerSharingWrite {
     return this.db.transaction(() => {
-      const room = this.snapshot(id, now);
+      const found = this.lookup(id, now);
+      if (found.status === 'expired') {
+        return { ...invalidPokerFacilitatorLink, expired: true };
+      }
+      const room = found.status === 'found' ? found.room : null;
       if (!room?.facilitatorCapability || !facilitatorTokenHashesMatch(candidate, room.facilitatorCapability.hash)) {
         return invalidPokerFacilitatorLink;
       }
@@ -703,7 +774,7 @@ export class PokerRoomStorage {
     );
   }
 
-  purgeExpired(now = Date.now()): void {
+  purgeExpired(now: number = Date.now()): void {
     if (!this.hasSchema()) return;
     this.db.run('DELETE FROM poker_rooms WHERE expires_at <= ?', now);
   }

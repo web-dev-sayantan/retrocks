@@ -8,10 +8,9 @@ import type {
   FacilitatorCapability,
   RawBoardSnapshot,
 } from '../../db/raw-types';
+import { forwardWebSocketUpgrade } from '../../live/cloudflare-ws-hub';
+import { LIVE_FACILITATOR_HEADER, LIVE_PARTICIPANT_HEADER } from '../../live/headers';
 import type { BoardPublication, BoardRealtime, BoardStore } from '../types';
-
-export const LIVE_PARTICIPANT_HEADER = 'x-retrocks-live-participant';
-export const LIVE_FACILITATOR_HEADER = 'x-retrocks-live-facilitator';
 
 export interface BoardRoomRpcStub {
   publishLive(publication: BoardPublication): Promise<void>;
@@ -102,15 +101,11 @@ export function createCloudflareBoardRealtime(namespace: DurableObjectNamespace)
     publish(boardId, publication) {
       return stubFor(boardId).publishLive(publication);
     },
-    async handleLiveConnection(boardId, request, viewer) {
-      if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
-        return new Response(null, { status: 426, headers: { upgrade: 'websocket' } });
-      }
-      const headers = new Headers(request.headers);
-      headers.delete('cookie');
-      headers.set(LIVE_PARTICIPANT_HEADER, viewer.participantHash);
-      headers.set(LIVE_FACILITATOR_HEADER, String(viewer.isFacilitator));
-      return stubFor(boardId).fetch(new Request(request.url, { headers }));
+    handleLiveConnection(boardId, request, viewer) {
+      return forwardWebSocketUpgrade(stubFor(boardId), request, {
+        [LIVE_PARTICIPANT_HEADER]: viewer.participantHash,
+        [LIVE_FACILITATOR_HEADER]: String(viewer.isFacilitator),
+      });
     },
     getPresenceCount(boardId) {
       return stubFor(boardId).getPresenceCount();

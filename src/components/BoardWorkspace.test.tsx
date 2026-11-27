@@ -11,7 +11,9 @@ import type { BoardLiveMessage } from '../lib/board-live-protocol';
 import { createFakeBoardDispatcher, makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { BoardMutationResponse, BoardViewDTO, CardGroupDTO } from '../lib/board-types';
 import { logPrivacyColophon } from '../lib/easter-eggs';
+import type { LiveTransport } from '../lib/live-stream';
 import { readRecentBoards, recordRecentBoard } from '../lib/recent-boards';
+import type { FacilitatorClaimInput, FacilitatorClaimResponse } from '../lib/sharing-actions';
 import BoardConfirmDialog from './BoardConfirmDialog';
 import BoardWorkspace from './BoardWorkspace';
 
@@ -61,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   toast.dismiss();
+  window.history.replaceState(null, '', '/');
 });
 
 function openBoardSettings(view: Pick<ReturnType<typeof render>, 'getByRole'>) {
@@ -1188,6 +1191,7 @@ describe('<BoardWorkspace />', () => {
     select('Move to…');
     select('To Improve');
     await flushPromises();
+    expect(view.getAllByRole('alert')).toHaveLength(1);
     expect(mine.getByRole('alert')).toHaveTextContent('Could not move the Card.');
     expect(trigger).toHaveFocus();
 
@@ -1196,7 +1200,8 @@ describe('<BoardWorkspace />', () => {
     select('Group with…');
     select('Group target');
     await flushPromises();
-    expect(mine.getByRole('alert')).toHaveTextContent('Could not group the Card.');
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(mine.getByRole('alert')).toHaveTextContent('Grouping failed.');
 
     // A failed delete stays confirmable for a retry through the shared dialog.
     fireEvent.click(trigger);
@@ -1211,6 +1216,7 @@ describe('<BoardWorkspace />', () => {
     await waitFor(() =>
       expect(mine.getByRole('alert')).toHaveTextContent('Could not delete the Card.'),
     );
+    expect(view.getAllByRole('alert')).toHaveLength(1);
     fireEvent.click(trigger);
     flush();
     select('Delete Card');
@@ -3038,7 +3044,7 @@ describe('<BoardWorkspace />', () => {
     expect(pendingMove).toHaveClass('sr-only');
     rejectMove({ ok: false, code: 'VALIDATION_ERROR', message: 'Move was rejected.' });
     await flushPromises();
-    expect(within(wentWell).getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
+    expect(within(wentWell).getByRole('alert')).toHaveTextContent('Move was rejected.');
     expect(moveGroup).toBeEnabled();
     expect(moveGroup).toHaveFocus();
 
@@ -3133,7 +3139,8 @@ describe('<BoardWorkspace />', () => {
         expect(trigger).toBeEnabled();
         expect(trigger).toHaveFocus();
         expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
-        expect(view.getByText('Could not move the Card Group. Try again.')).toBeVisible();
+        expect(view.getAllByRole('alert')).toHaveLength(1);
+        expect(view.getByRole('alert')).toHaveTextContent('Could not move the Card Group.');
         focus.mockRestore();
       } finally {
         view.unmount();
@@ -5896,5 +5903,293 @@ describe('<BoardWorkspace />', () => {
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, { type: 'board:rename', title: 'Q2 Retro' });
     expect(view.queryByRole('textbox', { name: 'Board title' })).toBeNull();
     expect(view.getByRole('heading', { level: 1, name: 'Q2 Retro' })).toBeInTheDocument();
+  });
+
+  it('claims a Co-Facilitator Link in place via hashchange, activates Facilitator controls, preserves local filter state, and reconnects live updates without diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      async () => {
+        const boardId = 'board_0123456789abcdef';
+        const boardPath = `/b/${boardId}`;
+        const validToken = 'A'.repeat(43);
+        const participantBoard = makeBoardView({
+          id: boardId,
+          version: 2,
+          isFacilitator: false,
+        });
+        const facilitatorBoard: BoardViewDTO = {
+          ...participantBoard,
+          isFacilitator: true,
+        };
+        const { dispatchCommand } = createFakeBoardDispatcher(facilitatorBoard);
+        const connections: Array<{ path: string; closed: boolean }> = [];
+        const transport: LiveTransport = {
+          connect(path) {
+            const connection = { path, closed: false };
+            connections.push(connection);
+            return {
+              ping() {},
+              close() {
+                connection.closed = true;
+              },
+            };
+          },
+        };
+        const claim = vi.fn(async (input: FacilitatorClaimInput): Promise<FacilitatorClaimResponse> => {
+          expect(window.location.hash).toBe('');
+          expect(input).toEqual({ boardId, token: validToken });
+          return { ok: true, board: facilitatorBoard };
+        });
+
+        window.history.replaceState(null, '', boardPath);
+
+        const view = render(() => (
+          <BoardWorkspace
+            board={participantBoard}
+            boardId={boardId}
+            dispatchCommand={dispatchCommand}
+            claimFacilitatorLink={claim}
+            liveTransport={transport}
+          />
+        ));
+
+        try {
+          flush();
+          expect(connections).toHaveLength(1);
+          expect(view.queryByRole('button', { name: /Private Mode/i })).not.toBeInTheDocument();
+
+          // Local search filter state must survive the in-place Facilitator upgrade.
+          const searchInput = view.getByPlaceholderText('Search cards…') as HTMLInputElement;
+          fireEvent.input(searchInput, { target: { value: 'deploy' } });
+          flush();
+          expect(searchInput.value).toBe('deploy');
+
+          // Trigger an in-page Co-Facilitator Link claim via hashchange.
+          window.history.replaceState(null, '', `${boardPath}#f=${validToken}`);
+          window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+          await waitFor(() =>
+            expect(view.getByRole('button', { name: /Private Mode/i })).toBeInTheDocument(),
+          );
+          expect(searchInput.value).toBe('deploy');
+          expect(window.location.hash).toBe('');
+          expect(view.queryByRole('alert')).not.toBeInTheDocument();
+          expect(connections[0].closed).toBe(true);
+          expect(connections).toHaveLength(2);
+        } finally {
+          view.unmount();
+        }
+      },
+      { scenario: 'board-workspace-facilitator-link-claim-in-place' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('scrubs an invalid Co-Facilitator Link on an active Board, shows a single dismissible alert, and clears it on valid hashchange', async () => {
+    const boardId = 'board_active_claim_err';
+    const boardPath = `/b/${boardId}`;
+    const validToken = 'B'.repeat(43);
+    const participantBoard = makeBoardView({
+      id: boardId,
+      version: 2,
+      isFacilitator: false,
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(participantBoard);
+    const claim = vi
+      .fn<(input: FacilitatorClaimInput) => Promise<FacilitatorClaimResponse>>()
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'This Co-Facilitator Link is invalid or has expired.',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        board: { ...participantBoard, isFacilitator: true },
+      });
+
+    window.history.replaceState(null, '', `${boardPath}#f=rotated-or-invalid`);
+
+    const view = render(() => (
+      <BoardWorkspace
+        board={participantBoard}
+        boardId={boardId}
+        dispatchCommand={dispatchCommand}
+        claimFacilitatorLink={claim}
+      />
+    ));
+
+    const alert = await view.findByRole('alert');
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(alert).toHaveTextContent('This Co-Facilitator Link is invalid or has expired.');
+    expect(window.location.hash).toBe('');
+
+    // Opening a valid Co-Facilitator Link via hashchange clears the error and unlocks Facilitator controls.
+    window.history.replaceState(null, '', `${boardPath}#f=${validToken}`);
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+    await waitFor(() =>
+      expect(view.getByRole('button', { name: /Private Mode/i })).toBeInTheDocument(),
+    );
+    expect(view.queryByRole('alert')).not.toBeInTheDocument();
+    expect(window.location.hash).toBe('');
+  });
+
+  it('scrubs an invalid Co-Facilitator Link and renders a single dismissible alert on a missing or unavailable Board', async () => {
+    const missingId = 'board_missing_01234567';
+    window.history.replaceState(null, '', `/b/${missingId}#f=expired-token`);
+    const claim = vi.fn(async (): Promise<FacilitatorClaimResponse> => ({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'This Co-Facilitator Link is invalid or has expired.',
+    }));
+
+    const view = render(() => (
+      <BoardWorkspace
+        board={null}
+        boardId={missingId}
+        homeHref="/"
+        claimFacilitatorLink={claim}
+      />
+    ));
+
+    expect(view.getByRole('heading', { name: 'Board not found or expired' })).toBeInTheDocument();
+    const alert = await view.findByRole('alert');
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(alert).toHaveTextContent('This Co-Facilitator Link is invalid or has expired.');
+    expect(window.location.hash).toBe('');
+
+    fireEvent.click(view.getByRole('button', { name: 'Dismiss error' }));
+    flush();
+    expect(view.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('displays pending Co-Facilitator Link claim status while in flight on both active and missing Board views and clears when resolved', async () => {
+    // Active Board view
+    const boardId = 'board_pending_claim_active';
+    const participantBoard = makeBoardView({
+      id: boardId,
+      version: 2,
+      isFacilitator: false,
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(participantBoard);
+    let resolveActiveClaim!: (response: FacilitatorClaimResponse) => void;
+    const activeClaim = vi.fn(
+      () => new Promise<FacilitatorClaimResponse>((resolve) => { resolveActiveClaim = resolve; }),
+    );
+    window.history.replaceState(null, '', `/b/${boardId}#f=${'C'.repeat(43)}`);
+
+    const activeView = render(() => (
+      <BoardWorkspace
+        board={participantBoard}
+        boardId={boardId}
+        dispatchCommand={dispatchCommand}
+        claimFacilitatorLink={activeClaim}
+      />
+    ));
+    flush();
+
+    expect(
+      activeView.getAllByRole('status').some((el) => el.textContent?.includes('Claiming Facilitator access…')),
+    ).toBe(true);
+
+    resolveActiveClaim({ ok: true, board: { ...participantBoard, isFacilitator: true } });
+    await waitFor(() =>
+      expect(activeView.getByRole('button', { name: /Private Mode/i })).toBeInTheDocument(),
+    );
+    expect(activeView.queryByText('Claiming Facilitator access…')).not.toBeInTheDocument();
+    activeView.unmount();
+
+    // Missing / unavailable Board view
+    const missingId = 'board_pending_claim_missing';
+    let resolveMissingClaim!: (response: FacilitatorClaimResponse) => void;
+    const missingClaim = vi.fn(
+      () => new Promise<FacilitatorClaimResponse>((resolve) => { resolveMissingClaim = resolve; }),
+    );
+    window.history.replaceState(null, '', `/b/${missingId}#f=${'D'.repeat(43)}`);
+
+    const missingView = render(() => (
+      <BoardWorkspace
+        board={null}
+        boardId={missingId}
+        homeHref="/"
+        claimFacilitatorLink={missingClaim}
+      />
+    ));
+    flush();
+
+    expect(missingView.getByRole('status')).toHaveTextContent('Claiming Facilitator access…');
+
+    resolveMissingClaim({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'This Co-Facilitator Link is invalid or has expired.',
+    });
+    const alert = await missingView.findByRole('alert');
+    expect(alert).toHaveTextContent('This Co-Facilitator Link is invalid or has expired.');
+    expect(missingView.queryByText('Claiming Facilitator access…')).not.toBeInTheDocument();
+  });
+
+  it('renders a single inline alert with the server reason on failed Card ungroup and Action Item updates without triggering the global banner', async () => {
+    const groupedCard = makeCard({
+      id: 'card_grouped',
+      columnId: 'col_1',
+      groupId: 'group_1',
+      content: 'Grouped note',
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: 'group_1',
+      content: 'Peer note',
+      isMine: true,
+    });
+    const board = makeBoardView({
+      isFacilitator: true,
+      groups: [
+        {
+          id: 'group_1',
+          columnId: 'col_1',
+          title: 'Cluster',
+          cardIds: ['card_grouped', 'card_peer'],
+          votes: 0,
+          myVotes: 0,
+          createdAt: Date.now(),
+        },
+      ],
+      cards: [groupedCard, peerCard],
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(board);
+    dispatchCommand
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Card Group changed while ungrouping.',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        code: 'FORBIDDEN',
+        message: 'Action Item flag rejected by Board Lock.',
+      });
+
+    const view = render(() => (
+      <BoardWorkspace board={board} boardId={board.id} dispatchCommand={dispatchCommand} />
+    ));
+    flush();
+
+    const cardEl = view.getByText('Grouped note').closest('article')!;
+    const cardScope = within(cardEl);
+    fireEvent.click(cardScope.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(cardScope.getByRole('menuitem', { name: 'Ungroup Card' }));
+    await flushPromises();
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(cardScope.getByRole('alert')).toHaveTextContent('Card Group changed while ungrouping.');
+
+    fireEvent.click(cardScope.getByRole('button', { name: 'Card actions' }));
+    flush();
+    fireEvent.click(cardScope.getByRole('menuitem', { name: 'Flag as Action Item' }));
+    await flushPromises();
+    expect(view.getAllByRole('alert')).toHaveLength(1);
+    expect(cardScope.getByRole('alert')).toHaveTextContent('Action Item flag rejected by Board Lock.');
   });
 });

@@ -1,189 +1,129 @@
 import 'server-only';
 
-import { LIVE_CONNECTION_HEADER, LIVE_HEARTBEAT_MS, LIVE_HEARTBEAT_TIMEOUT_MS } from '../../lib/board-live-protocol';
-import type { PokerLiveMessage, PokerRoomCommand } from '../../lib/poker-types';
+import type { PokerLiveMessage } from '../../lib/poker-types';
 import { openNodeDatabase, wrapDatabaseSync } from '../adapters/node/sqlite';
+import { createNodeSseHub, createSseFrameResponse } from '../live/node-sse-hub';
 import {
-  PokerRoomStorage, pokerParticipant, projectPokerRoom,
-  type PokerFacilitatorCapability,
-} from './room';
-import {
-  committedPokerDeletion, committedPokerMutation, missingPokerRoom,
-  projectPokerPublication, type PokerRoomPublication,
-} from './publication';
+  createPokerRoomCore,
+  evaluatePokerLiveConnect,
+  missingPokerRoom,
+  projectPokerPresence,
+  projectPokerPublication,
+  type PokerLiveViewer,
+  type PokerRoomRuntime,
+  type PokerWriteRateLimiter,
+} from './room-core';
 
-interface Connection {
-  id: string;
-  hash: string;
-  participantId: string;
-  lastSeenAt: number;
-  send(message: PokerLiveMessage): void;
+const DEFAULT_EXPIRY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+export interface OpenNodePokerRoomsOptions {
+  /** Clock returning Unix epoch milliseconds; defaults to `Date.now`. */
+  now?: () => number;
+  /** Periodic inactivity cleanup interval in ms; pass `0` to disable. Defaults to 24 hours. */
+  expirySweepIntervalMs?: number;
+  /** Optional per-Room write rate limiter; defaults to a fresh `createBoardWriteRateLimiter()`. */
+  writeLimiter?: PokerWriteRateLimiter;
+}
+
+export interface NodePokerRooms extends PokerRoomRuntime {
+  connect(id: string, hash: string, request: Request): Response;
+  heartbeat(id: string, hash: string, connectionId: string): boolean;
   close(): void;
 }
 
-const encoder = new TextEncoder();
-const streamHeaders = {
-  'content-type': 'text/event-stream',
-  'cache-control': 'no-store, no-transform',
-  'x-accel-buffering': 'no',
-};
-
-function formatFrame(message: PokerLiveMessage) {
-  return `data: ${JSON.stringify(message)}\n\n`;
-}
-
-export async function openNodePokerRooms(dbPath: string) {
+export async function openNodePokerRooms(
+  dbPath: string,
+  options: OpenNodePokerRoomsOptions = {},
+): Promise<NodePokerRooms> {
   const db = await openNodeDatabase(dbPath);
-  const storage = new PokerRoomStorage(wrapDatabaseSync(db));
-  const streams = new Map<string, Set<Connection>>();
+  const clock = options.now ?? (() => Date.now());
 
-  function sendPresence(connections: Set<Connection>) {
-    const online = [...new Set(Array.from(connections, (connection) => connection.participantId))];
-    for (const connection of connections) connection.send({ type: 'room:presence', online });
-  }
+  const hub = createNodeSseHub<PokerLiveViewer, PokerLiveMessage, string>({
+    matchesViewer: (subscribed, hash) => subscribed.hash === hash,
+    formatPresence: projectPokerPresence,
+    checkAvailability: (roomId, now) =>
+      core.isAvailable(roomId, options.now ? clock() : now)
+        ? null
+        : (viewer) => projectPokerPublication(missingPokerRoom, viewer.hash),
+  });
 
-  function publish(id: string, publication: PokerRoomPublication) {
-    const connections = streams.get(id);
-    if (!connections) return;
-    if (publication.terminal) streams.delete(id);
-    for (const connection of connections) {
-      connection.send(projectPokerPublication(publication, connection.hash));
-    }
-    if (publication.terminal) {
-      for (const connection of connections) connection.close();
-    }
-  }
+  const core = createPokerRoomCore(wrapDatabaseSync(db), {
+    now: clock,
+    writeLimiter: options.writeLimiter,
+    publisher: {
+      publish(id, publication) {
+        hub.publish(id, {
+          project: (viewer) => projectPokerPublication(publication, viewer.hash),
+          terminal: publication.terminal,
+        });
+      },
+    },
+  });
 
-  const heartbeat = setInterval(() => {
-    const now = Date.now();
-    for (const [id, connections] of streams) {
-      if (!storage.isAvailable(id, now)) publish(id, missingPokerRoom);
-      else {
-        for (const connection of connections) {
-          if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) connection.close();
-        }
+  const sweepIntervalMs =
+    options.expirySweepIntervalMs ?? DEFAULT_EXPIRY_SWEEP_INTERVAL_MS;
+  core.purgeExpired(clock());
+
+  let closed = false;
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  if (sweepIntervalMs > 0) {
+    sweepTimer = setInterval(() => {
+      if (closed) return;
+      try {
+        core.purgeExpired(clock());
+      } catch {
+        // Ignore if the database was closed concurrently.
       }
-    }
-  }, LIVE_HEARTBEAT_MS);
-  heartbeat.unref();
-  storage.purgeExpired();
-  const expirySweep = setInterval(() => storage.purgeExpired(), 24 * 60 * 60 * 1000);
-  expirySweep.unref();
+    }, sweepIntervalMs);
+    sweepTimer.unref?.();
+  }
 
   return {
-    read: (id: string, hash: string) => storage.read(id, hash),
-    create(id: string, hash: string, displayName: string, name?: string) {
-      return projectPokerRoom(storage.create(id, hash, displayName, name), hash);
-    },
-    mutate(id: string, hash: string, command: PokerRoomCommand) {
-      const result = storage.mutate(id, hash, command);
-      if (!result.ok) return result;
-      const publication = committedPokerMutation(result);
-      if (publication) publish(id, publication);
-      return { ok: true as const, room: projectPokerRoom(result.room, hash) };
-    },
-    delete(id: string, hash: string) {
-      const result = storage.delete(id, hash);
-      const publication = committedPokerDeletion(result);
-      if (publication) publish(id, publication);
-      return result;
-    },
-    getFacilitatorCapability: (id: string, hash: string) => storage.getFacilitatorCapability(id, hash),
-    replaceFacilitatorCapability(id: string, hash: string, revision: number, capability: PokerFacilitatorCapability) {
-      const result = storage.replaceFacilitatorCapability(id, hash, revision, capability);
-      if (!result.ok) return result;
-      const publication = committedPokerMutation(result);
-      if (publication) publish(id, publication);
-      return { ok: true as const, value: null };
-    },
-    updateFacilitatorCapabilityEncryption(id: string, hash: string, revision: number, encrypted: string) {
-      storage.updateFacilitatorCapabilityEncryption(id, hash, revision, encrypted);
-    },
-    claimFacilitator(id: string, hash: string, candidate: string) {
-      const result = storage.claimFacilitator(id, hash, candidate);
-      if (!result.ok) return result;
-      const publication = committedPokerMutation(result);
-      if (publication) publish(id, publication);
-      return { ok: true as const, value: projectPokerRoom(result.room, hash) };
-    },
+    create: (id, hash, displayName, name) => core.create(id, hash, displayName, name),
+    read: (id, hash) => core.read(id, hash),
+    mutate: (id, hash, command) => core.mutate(id, hash, command),
+    delete: (id, hash) => core.delete(id, hash),
+    getFacilitatorCapability: (id, hash) => core.getFacilitatorCapability(id, hash),
+    replaceFacilitatorCapability: (id, hash, expectedRevision, capability) =>
+      core.replaceFacilitatorCapability(id, hash, expectedRevision, capability),
+    updateFacilitatorCapabilityEncryption: (id, hash, expectedRevision, encrypted) =>
+      core.updateFacilitatorCapabilityEncryption(id, hash, expectedRevision, encrypted),
+    claimFacilitator: (id, hash, candidate) => core.claimFacilitator(id, hash, candidate),
     connect(id: string, hash: string, request: Request): Response {
-      const room = storage.snapshot(id);
-      if (!room) return new Response(formatFrame({ type: 'room:missing' }), { headers: streamHeaders });
-      if (room.closedAt !== undefined) {
-        return new Response(formatFrame({ type: 'room:snapshot', room: projectPokerRoom(room, hash) }), { headers: streamHeaders });
+      const decision = evaluatePokerLiveConnect(core.snapshot(id, clock()), hash);
+      switch (decision.status) {
+        case 'missing':
+        case 'closed':
+          return createSseFrameResponse(decision.message);
+        case 'unjoined':
+          return new Response(null, { status: decision.httpStatus });
+        case 'joined':
+          return hub.connect(
+            id,
+            request,
+            decision.viewer,
+            (connectionId) => ({
+              initialMessage: {
+                type: 'room:snapshot',
+                room: decision.room,
+                connectionId,
+              },
+            }),
+          );
       }
-      const participant = pokerParticipant(room, hash);
-      if (!participant) return new Response(null, { status: 403 });
-      if (request.signal.aborted) return new Response(null, { status: 408 });
-      const connections = streams.get(id) ?? new Set<Connection>();
-      streams.set(id, connections);
-      const connectionId = crypto.randomUUID();
-      let unsubscribe: () => void;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          const connection: Connection = {
-            id: connectionId,
-            hash,
-            participantId: participant.id,
-            lastSeenAt: Date.now(),
-            send(message) {
-              if ((controller.desiredSize ?? 0) <= -128) {
-                queueMicrotask(connection.close);
-                return;
-              }
-              controller.enqueue(encoder.encode(formatFrame(message)));
-            },
-            close() {
-              if (!connections.has(connection)) return;
-              unsubscribe();
-              controller.close();
-            },
-          };
-          unsubscribe = () => {
-            request.signal.removeEventListener('abort', connection.close);
-            if (!connections.delete(connection) || streams.get(id) !== connections) return;
-            if (connections.size === 0) streams.delete(id);
-            else sendPresence(connections);
-          };
-          connections.add(connection);
-          request.signal.addEventListener('abort', connection.close, { once: true });
-          connection.send({ type: 'room:snapshot', room: projectPokerRoom(room, hash), connectionId });
-          sendPresence(connections);
-        },
-        cancel() {
-          unsubscribe();
-        },
-      });
-      return new Response(body, { headers: streamHeaders });
     },
-    heartbeat(id: string, hash: string, request: Request): Response {
-      const connectionId = request.headers.get(LIVE_CONNECTION_HEADER);
-      for (const connection of streams.get(id) ?? []) {
-        if (connection.hash !== hash || connection.id !== connectionId) continue;
-        const now = Date.now();
-        if (!storage.isAvailable(id, now)) {
-          publish(id, missingPokerRoom);
-          return new Response(null, { status: 204 });
-        }
-        if (now - connection.lastSeenAt > LIVE_HEARTBEAT_TIMEOUT_MS) {
-          connection.close();
-          break;
-        }
-        connection.lastSeenAt = now;
-        connection.send({ type: 'heartbeat' });
-        return new Response(null, { status: 204 });
-      }
-      return new Response(null, { status: 404 });
+    heartbeat(id: string, hash: string, connectionId: string): boolean {
+      return hub.recordHeartbeat(id, connectionId, hash);
     },
-    close() {
-      clearInterval(heartbeat);
-      clearInterval(expirySweep);
-      for (const connections of streams.values()) {
-        for (const connection of connections) connection.close();
+    close(): void {
+      if (closed) return;
+      closed = true;
+      if (sweepTimer !== undefined) {
+        clearInterval(sweepTimer);
+        sweepTimer = undefined;
       }
+      hub.close();
       db.close();
     },
   };
 }
-
-export type NodePokerRooms = Awaited<ReturnType<typeof openNodePokerRooms>>;
