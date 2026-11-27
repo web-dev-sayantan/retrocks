@@ -343,6 +343,14 @@ export function canMergeCard(
 ): boolean {
   const sourceCard = board.cards.find((item) => item.id === cardId);
   if (!sourceCard) return false;
+  const sourceGroup =
+    sourceCard.groupId !== null
+      ? board.groups.find((item) => item.id === sourceCard.groupId)
+      : null;
+  if (sourceCard.groupId !== null && !sourceGroup) return false;
+  const sourceGroupFacts = sourceGroup
+    ? toGroupPolicyFacts(sourceGroup, board.cards)
+    : null;
   const policyBoard = toBoardPolicyContext(board);
 
   if (targetType === 'group') {
@@ -351,6 +359,7 @@ export function canMergeCard(
     return decideGroupAction(policyBoard, {
       type: 'group:merge',
       sourceCard: toMergeCardFacts(sourceCard),
+      sourceGroup: sourceGroupFacts,
       target: {
         kind: 'group',
         group: toMergeGroupFacts(group, board.cards),
@@ -369,6 +378,7 @@ export function canMergeCard(
   return decideGroupAction(policyBoard, {
     type: 'group:merge',
     sourceCard: toMergeCardFacts(sourceCard),
+    sourceGroup: sourceGroupFacts,
     target: {
       kind: 'card',
       card: toMergeCardFacts(targetCard),
@@ -383,6 +393,16 @@ export function getCardMergeTargets(
   columnCards: readonly CardViewDTO[],
   columnGroups: readonly CardGroupDTO[],
 ): { cards: CardViewDTO[]; groups: CardGroupDTO[] } {
+  const sourceGroup =
+    card.groupId !== null
+      ? (columnGroups.find((item) => item.id === card.groupId) ?? null)
+      : null;
+  if (card.groupId !== null && !sourceGroup) {
+    return { cards: [], groups: [] };
+  }
+  const sourceGroupFacts = sourceGroup
+    ? toGroupPolicyFacts(sourceGroup, columnCards)
+    : null;
   const policyBoard = toBoardPolicyContext(board);
   const sourceCard = toMergeCardFacts(card);
   const cards = columnCards.filter(
@@ -391,6 +411,7 @@ export function getCardMergeTargets(
       decideGroupAction(policyBoard, {
         type: 'group:merge',
         sourceCard,
+        sourceGroup: sourceGroupFacts,
         target: {
           kind: 'card',
           card: toMergeCardFacts(other),
@@ -403,6 +424,7 @@ export function getCardMergeTargets(
       decideGroupAction(policyBoard, {
         type: 'group:merge',
         sourceCard,
+        sourceGroup: sourceGroupFacts,
         target: {
           kind: 'group',
           group: toMergeGroupFacts(group, columnCards),

@@ -569,3 +569,83 @@ it('requires the entire Card Group to pass Private Mode on group:ungroup', async
     ]),
   });
 });
+
+it('protects sourceCard current Card Group on group:merge during Private Mode', async () => {
+  const {
+    facilitator,
+    participant,
+    read,
+    createCard,
+    merge,
+    groupIdFrom,
+    settings,
+    setPrivateMode,
+  } = await setup({ isBlurred: false });
+  await settings({ allowParticipantGroup: true });
+
+  // Mixed-authorship Card Group (Participant + Facilitator)
+  const participantGrouped = await createCard('Participant grouped', participant);
+  const facilitatorGrouped = await createCard('Facilitator grouped', facilitator);
+  const mixedGroupId = groupIdFrom(
+    (await merge(participantGrouped, 'card', facilitatorGrouped)).events,
+  );
+
+  // All-own Card Group for Participant + standalone Cards for both actors
+  const ownCardA = await createCard('Own A', participant);
+  const ownCardB = await createCard('Own B', participant);
+  const ownGroupId = groupIdFrom(
+    (await merge(ownCardA, 'card', ownCardB, participant)).events,
+  );
+  const participantLoose = await createCard('Participant loose', participant);
+  const facilitatorLoose = await createCard('Facilitator loose', facilitator);
+
+  await setPrivateMode(true);
+
+  // Neither Participant nor Facilitator can bypass group:ungroup by merging
+  // their own Card out of a mixed-authorship Card Group during Private Mode.
+  await expect(
+    merge(participantGrouped, 'card', participantLoose, participant),
+  ).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: "Cannot change another Participant's Card while Private Mode is active.",
+  });
+  await expect(
+    merge(participantGrouped, 'group', ownGroupId, participant),
+  ).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: "Cannot change another Participant's Card while Private Mode is active.",
+  });
+  await expect(
+    merge(facilitatorGrouped, 'card', facilitatorLoose, facilitator),
+  ).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+    message: "Cannot change another Participant's Card while Private Mode is active.",
+  });
+
+  // The mixed-authorship Card Group remained intact (was not dissolved).
+  const privateSnapshot = (await read(participant)).result!;
+  expect(privateSnapshot.groups).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: mixedGroupId })]),
+  );
+
+  // Merging an own Card out of an all-own Card Group into another own Card succeeds.
+  await expect(
+    merge(ownCardA, 'card', participantLoose, participant),
+  ).resolves.toMatchObject({
+    ok: true,
+    events: expect.arrayContaining([
+      expect.objectContaining({ type: 'group:dissolved', groupId: ownGroupId }),
+    ]),
+  });
+
+  // After Reveal All, merging out of the mixed-authorship Card Group succeeds.
+  await setPrivateMode(false);
+  await expect(
+    merge(facilitatorGrouped, 'card', facilitatorLoose, facilitator),
+  ).resolves.toMatchObject({
+    ok: true,
+    events: expect.arrayContaining([
+      expect.objectContaining({ type: 'group:dissolved', groupId: mixedGroupId }),
+    ]),
+  });
+});

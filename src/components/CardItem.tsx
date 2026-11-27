@@ -391,7 +391,7 @@ export default function CardItem(props: CardItemProps) {
                 <input
                   type="checkbox"
                   checked={actionDone()}
-                  disabled={!canEditActionItemFollowUp(workspace, props.card)}
+                  disabled={!canEditActionItemFollowUp(workspace, props.card) || isUpdatingAction()}
                   aria-label={`Mark ${props.card.content} as Done`}
                   onChange={async (event) => {
                     const checkbox = event.currentTarget;

@@ -14,24 +14,18 @@ import {
   type DurableObjectWebSocketHub,
 } from '../live/cloudflare-ws-hub';
 import { POKER_LIVE_VIEWER_HEADER } from '../live/headers';
-import {
-  pokerParticipant,
-  projectPokerRoom,
-  type PokerFacilitatorCapability,
-} from './room';
+import type { PokerFacilitatorCapability } from './room';
 import {
   createPokerRoomCore,
+  evaluatePokerLiveConnect,
   missingPokerRoom,
+  projectPokerPresence,
   projectPokerPublication,
+  type PokerLiveViewer,
   type PokerRoomCore,
   type PokerRoomOperations,
   type PokerRoomPublication,
 } from './room-core';
-
-interface PokerLiveViewer {
-  hash: string;
-  participantId: string;
-}
 
 export class PointingPokerRoom extends DurableObject<Cloudflare.Env> implements PokerRoomOperations {
   private readonly core: PokerRoomCore;
@@ -59,46 +53,39 @@ export class PointingPokerRoom extends DurableObject<Cloudflare.Env> implements 
       },
       onConnect: (hash, now) => {
         const id = this.ctx.id.name;
-        const room = id ? this.core.snapshot(id, now) : null;
-        const participant = room && pokerParticipant(room, hash);
-        if (room && room.closedAt === undefined && !participant) {
-          return { type: 'reject', status: 403 };
+        const decision = evaluatePokerLiveConnect(
+          id ? this.core.snapshot(id, now) : null,
+          hash,
+        );
+        switch (decision.status) {
+          case 'unjoined':
+            return { type: 'reject', status: decision.httpStatus };
+          case 'missing':
+            return {
+              type: 'terminal',
+              message: decision.message,
+              closeReason: 'Room unavailable',
+            };
+          case 'closed':
+            return {
+              type: 'terminal',
+              message: decision.message,
+              closeReason: 'Room closed',
+            };
+          case 'joined':
+            return {
+              type: 'accept',
+              viewer: decision.viewer,
+              initialMessage: { type: 'room:snapshot', room: decision.room },
+            };
         }
-        if (!room) {
-          return {
-            type: 'terminal',
-            message: { type: 'room:missing' },
-            closeReason: 'Room unavailable',
-          };
-        }
-        const initialMessage: PokerLiveMessage = {
-          type: 'room:snapshot',
-          room: projectPokerRoom(room, hash),
-        };
-        if (room.closedAt !== undefined || !participant) {
-          return {
-            type: 'terminal',
-            message: initialMessage,
-            closeReason: 'Room closed',
-          };
-        }
-        return {
-          type: 'accept',
-          viewer: { hash, participantId: participant.id },
-          initialMessage,
-        };
       },
       shouldBroadcastPresence: (now) => {
         const id = this.ctx.id.name;
         const room = id ? this.core.snapshot(id, now) : null;
         return Boolean(room && room.closedAt === undefined);
       },
-      createPresenceMessage(viewers) {
-        return {
-          type: 'room:presence',
-          online: [...new Set(viewers.map((viewer) => viewer.participantId))],
-        };
-      },
+      createPresenceMessage: projectPokerPresence,
       onPing: (now) => {
         const id = this.ctx.id.name;
         if (!id || !this.core.isAvailable(id, now)) {

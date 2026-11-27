@@ -636,17 +636,27 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   const [pendingActionItems, setPendingActionItems] = createOptimistic<readonly string[]>([]);
   const [pendingCounts, setPendingCounts] = createStore<Record<string, number>>({});
 
-  function applyRouteSnapshot(nextBoard: BoardViewDTO | null): void {
-    if (nextBoard === null) setErrorMessage(null);
+  function reconcileIncomingBoard(
+    nextBoard: BoardViewDTO | null,
+    reconcileOptions: { promoteFacilitatorOnOlderVersion?: boolean } = {},
+  ): void {
     untrack(() => {
       setServerStore((draft) => {
         const current = draft.board;
         if (nextBoard && current?.id === nextBoard.id) {
-          if (nextBoard.version < current.version) return;
+          if (nextBoard.version < current.version) {
+            if (
+              reconcileOptions.promoteFacilitatorOnOlderVersion &&
+              nextBoard.isFacilitator &&
+              !current.isFacilitator
+            ) {
+              current.isFacilitator = true;
+            }
+            return;
+          }
           if (
             nextBoard.version === current.version &&
-            (nextBoard.isFacilitator === current.isFacilitator ||
-              (current.isFacilitator && !nextBoard.isFacilitator))
+            (!nextBoard.isFacilitator || current.isFacilitator)
           ) {
             return;
           }
@@ -656,30 +666,16 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
     });
   }
 
+  function applyRouteSnapshot(nextBoard: BoardViewDTO | null): void {
+    if (nextBoard === null) setErrorMessage(null);
+    reconcileIncomingBoard(nextBoard);
+  }
+
   function applyClaimedBoard(claimedBoard: BoardViewDTO): void {
     if (claimedBoard.id !== boardId) return;
     setClaimError(null);
     const hadLiveBoard = untrack(() => serverStore.board?.id === boardId);
-    untrack(() => {
-      setServerStore((draft) => {
-        const current = draft.board;
-        if (current?.id === claimedBoard.id) {
-          if (claimedBoard.version < current.version) {
-            if (claimedBoard.isFacilitator && !current.isFacilitator) {
-              current.isFacilitator = true;
-            }
-            return;
-          }
-          if (
-            claimedBoard.version === current.version &&
-            claimedBoard.isFacilitator === current.isFacilitator
-          ) {
-            return;
-          }
-        }
-        reconcile({ board: cloneBoardView(claimedBoard) }, 'id')(draft);
-      });
-    });
+    reconcileIncomingBoard(claimedBoard, { promoteFacilitatorOnOlderVersion: true });
     if (hadLiveBoard) {
       reconnectLive?.();
     }
@@ -899,10 +895,7 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
   }
 
   function isActionItemPending(cardId: string): boolean {
-    return pendingActionItems().includes(cardId) || isPending(() => {
-      const card = store.board?.cards.find((item) => item.id === cardId);
-      return card ? [card.isActionItem, card.actionDone, card.actionOwner] : undefined;
-    });
+    return pendingActionItems().includes(cardId);
   }
 
   function isCardPending(cardId: string, action?: CardPendingAction): boolean {
@@ -1048,13 +1041,6 @@ export function createBoardController(options: BoardControllerOptions): BoardCon
         if (patch.actionDone !== undefined) card.actionDone = patch.actionDone;
         if (patch.actionOwner !== undefined) card.actionOwner = patch.actionOwner;
         card.updatedAt = Date.now() + serverTimeOffsetMs;
-      },
-      pending: (draft) => {
-        const card = draft.cards.find((item) => item.id === cardId);
-        if (!card) return;
-        if (patch.isActionItem !== undefined) affects(card, 'isActionItem');
-        if (patch.actionDone !== undefined) affects(card, 'actionDone');
-        if (patch.actionOwner !== undefined) affects(card, 'actionOwner');
       },
       send: (activeBoardId) => dispatchCommand(activeBoardId, { type: 'card:set-action', cardId, ...patch }),
       failureMessage: 'Could not update the Action Item. Try again.',

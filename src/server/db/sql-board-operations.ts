@@ -26,21 +26,24 @@ import {
   type ColumnAccent,
 } from '../../lib/board-types';
 import { applyTimerChange } from '../domain/timer';
-import type {
-  BoardMutationActor,
-  BoardMutationCommand,
-  BoardMutationOutcome,
-  CreateBoardRecord,
-  FacilitatorCapability,
-  RawBoardMutationEvent,
-  RawBoardRow,
-  RawBoardSnapshot,
-  RawCardGroupRow,
-  RawCardRow,
-  RawColumnRow,
-  RawCommentRow,
-  RawReactionRow,
-  RawVoteRow,
+import {
+  BOARD_LOCKED_ERROR,
+  PRIVATE_MODE_ERROR,
+  type BoardMutationActor,
+  type BoardMutationCommand,
+  type BoardMutationFailure,
+  type BoardMutationOutcome,
+  type CreateBoardRecord,
+  type FacilitatorCapability,
+  type RawBoardMutationEvent,
+  type RawBoardRow,
+  type RawBoardSnapshot,
+  type RawCardGroupRow,
+  type RawCardRow,
+  type RawColumnRow,
+  type RawCommentRow,
+  type RawReactionRow,
+  type RawVoteRow,
 } from './raw-types';
 import { BOARD_SCHEMA_STATEMENTS } from './schema';
 import type { SqlRunner } from './sql-runner';
@@ -236,18 +239,23 @@ export function computeBoardExpiryAt(
   return lastActiveAt + retentionDays * MS_PER_DAY;
 }
 
-type MutationFailure = Extract<BoardMutationOutcome, { ok: false }>;
-
-const BOARD_LOCKED_ERROR: MutationFailure = {
-  ok: false,
-  code: 'BOARD_LOCKED',
-  message: 'This Board is Locked and cannot be edited.',
-};
-
-const PRIVATE_MODE_ERROR: MutationFailure = {
-  ok: false,
-  code: 'FORBIDDEN',
-  message: "Cannot change another Participant's Card while Private Mode is active.",
+const BOARD_FACILITATOR_MESSAGES: Record<
+  | 'voting:configure'
+  | 'voting:reset'
+  | 'facilitator:rotate'
+  | 'timer:update'
+  | 'board:rename'
+  | 'board:set-private-mode'
+  | 'board:set-lock',
+  string
+> = {
+  'voting:configure': 'Only a Facilitator can change Voting settings or reset Votes.',
+  'voting:reset': 'Only a Facilitator can change Voting settings or reset Votes.',
+  'facilitator:rotate': 'Only a Facilitator can rotate the Co-Facilitator Link.',
+  'timer:update': 'Only a Facilitator can control the timer.',
+  'board:rename': 'Only a Facilitator can rename the Board.',
+  'board:set-private-mode': 'Only a Facilitator can change Private Mode.',
+  'board:set-lock': 'Only a Facilitator can Lock or Unlock the Board.',
 };
 
 const COLUMN_FACILITATOR_MESSAGES: Record<
@@ -263,10 +271,15 @@ const COLUMN_FACILITATOR_MESSAGES: Record<
 function authorizeCommandAccess(
   policyBoard: BoardPolicyContext,
   command: BoardMutationCommand,
-): MutationFailure | null {
+): BoardMutationFailure | null {
   switch (command.type) {
     case 'voting:configure':
-    case 'voting:reset': {
+    case 'voting:reset':
+    case 'facilitator:rotate':
+    case 'timer:update':
+    case 'board:rename':
+    case 'board:set-private-mode':
+    case 'board:set-lock': {
       const decision = decideBoardAction(policyBoard, command.type);
       if (decision.allowed) return null;
       return decision.reason === 'board-locked'
@@ -274,65 +287,7 @@ function authorizeCommandAccess(
         : {
             ok: false,
             code: 'FORBIDDEN',
-            message: 'Only a Facilitator can change Voting settings or reset Votes.',
-          };
-    }
-
-    case 'facilitator:rotate': {
-      const decision = decideBoardAction(policyBoard, 'facilitator:rotate');
-      if (decision.allowed) return null;
-      return {
-        ok: false,
-        code: 'FORBIDDEN',
-        message: 'Only a Facilitator can rotate the Co-Facilitator Link.',
-      };
-    }
-
-    case 'timer:update': {
-      const decision = decideBoardAction(policyBoard, 'timer:update');
-      if (decision.allowed) return null;
-      return decision.reason === 'board-locked'
-        ? BOARD_LOCKED_ERROR
-        : {
-            ok: false,
-            code: 'FORBIDDEN',
-            message: 'Only a Facilitator can control the timer.',
-          };
-    }
-
-    case 'board:rename': {
-      const decision = decideBoardAction(policyBoard, 'board:rename');
-      if (decision.allowed) return null;
-      return decision.reason === 'board-locked'
-        ? BOARD_LOCKED_ERROR
-        : {
-            ok: false,
-            code: 'FORBIDDEN',
-            message: 'Only a Facilitator can rename the Board.',
-          };
-    }
-
-    case 'board:set-private-mode': {
-      const decision = decideBoardAction(policyBoard, 'board:set-private-mode');
-      if (decision.allowed) return null;
-      return decision.reason === 'board-locked'
-        ? BOARD_LOCKED_ERROR
-        : {
-            ok: false,
-            code: 'FORBIDDEN',
-            message: 'Only a Facilitator can change Private Mode.',
-          };
-    }
-
-    case 'board:set-lock': {
-      const decision = decideBoardAction(policyBoard, 'board:set-lock');
-      if (decision.allowed) return null;
-      return decision.reason === 'board-locked'
-        ? BOARD_LOCKED_ERROR
-        : {
-            ok: false,
-            code: 'FORBIDDEN',
-            message: 'Only a Facilitator can Lock or Unlock the Board.',
+            message: BOARD_FACILITATOR_MESSAGES[command.type],
           };
     }
 
@@ -391,7 +346,7 @@ function authorizeCommandAccess(
 function mapCardPolicyDenial(
   reason: BoardPolicyDenialReason,
   verb?: 'edit' | 'move' | 'delete',
-): MutationFailure {
+): BoardMutationFailure {
   switch (reason) {
     case 'board-locked':
       return BOARD_LOCKED_ERROR;
@@ -424,7 +379,7 @@ function mapCardPolicyDenial(
   }
 }
 
-function mapGroupPolicyDenial(reason: BoardPolicyDenialReason): MutationFailure {
+function mapGroupPolicyDenial(reason: BoardPolicyDenialReason): BoardMutationFailure {
   switch (reason) {
     case 'board-locked':
       return BOARD_LOCKED_ERROR;
@@ -472,7 +427,7 @@ function mapGroupPolicyDenial(reason: BoardPolicyDenialReason): MutationFailure 
 function mapColumnPolicyDenial(
   reason: BoardPolicyDenialReason,
   actionType: 'column:add' | 'column:update' | 'column:reorder' | 'column:delete',
-): MutationFailure {
+): BoardMutationFailure {
   switch (reason) {
     case 'board-locked':
       return BOARD_LOCKED_ERROR;
@@ -1325,6 +1280,10 @@ export class SqlBoardOperations {
             };
           }
 
+          const sourceGroup =
+            source.group_id !== null
+              ? this.getGroupPolicyFacts(boardId, source.group_id, actor)
+              : null;
           const mergeDecision = decideGroupAction(policyBoard, {
             type: 'group:merge',
             sourceCard: {
@@ -1333,6 +1292,7 @@ export class SqlBoardOperations {
               groupId: source.group_id,
               isMine: source.author_token_hash === actor.participantHash,
             },
+            sourceGroup,
             target: mergeTarget,
           });
           if (!mergeDecision.allowed) {

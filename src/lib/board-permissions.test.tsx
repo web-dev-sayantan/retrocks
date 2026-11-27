@@ -310,6 +310,31 @@ describe('board-permissions', () => {
       expect(canMergeCard(blurredBoard, 'my-loose', 'group', 'g-red')).toBe(false);
       expect(canMergeCard(blurredBoard, 'my-loose', 'group', 'g-mix')).toBe(false);
       expect(canMergeCard(blurredBoard, 'my-loose', 'card', 'pending-other')).toBe(false);
+
+      // Merging own Card out of a mixed-authorship Card Group is blocked in Private Mode,
+      // while merging out of an all-mine Card Group remains allowed.
+      expect(getCardMergeTargets(blurredBoard, mixedGroupMine, cards, groups)).toEqual({
+        cards: [],
+        groups: [],
+      });
+      expect(canMergeCard(blurredBoard, 'mix-g-1', 'card', 'my-loose')).toBe(false);
+      expect(canMergeCard(blurredBoard, 'mix-g-1', 'group', 'g-own')).toBe(false);
+
+      expect(getCardMergeTargets(blurredBoard, ownGroupCard, cards, groups).cards.map((c) => c.id)).toEqual([
+        'my-loose',
+        'my-other',
+      ]);
+      expect(canMergeCard(blurredBoard, 'own-g-1', 'card', 'my-loose')).toBe(true);
+
+      // Outside Private Mode, merging out of a mixed-authorship Card Group is allowed.
+      const revealedBoard = makeBoard({
+        isFacilitator: true,
+        isBlurred: false,
+        cards,
+        groups,
+      });
+      expect(canMergeCard(revealedBoard, 'mix-g-1', 'card', 'my-loose')).toBe(true);
+      expect(canMergeCard(revealedBoard, 'mix-g-1', 'group', 'g-own')).toBe(true);
     });
   });
 

@@ -218,6 +218,59 @@ describe('<CardItem />', () => {
     expect(getByRole('menuitem', { name: 'Ungroup Card' })).toBeInTheDocument();
   });
 
+  it('hides Group with… for a Card in a mixed-authorship Card Group during Private Mode', () => {
+    const mixedGroup: CardGroupDTO = {
+      id: 'group_mixed',
+      columnId: 'col_1',
+      title: 'Mixed Group',
+      cardIds: ['card_mine', 'card_peer'],
+      votes: 0,
+      myVotes: 0,
+      createdAt: Date.now(),
+    };
+    const myCard = makeCard({
+      id: 'card_mine',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      content: 'My grouped card',
+      isMine: true,
+    });
+    const peerCard = makeCard({
+      id: 'card_peer',
+      columnId: 'col_1',
+      groupId: mixedGroup.id,
+      isMine: false,
+      redacted: true,
+    });
+    const myLooseCard = makeCard({
+      id: 'card_loose',
+      columnId: 'col_1',
+      groupId: null,
+      content: 'My loose target',
+      isMine: true,
+    });
+    const [isBlurred, setIsBlurred] = createSignal(true);
+
+    const { getByRole, queryByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} isBlurred={isBlurred}>
+        <CardItem
+          card={myCard}
+          columnCards={[myCard, peerCard, myLooseCard]}
+          columnGroups={[mixedGroup]}
+        />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    fireEvent.click(getByRole('button', { name: 'Card actions' }));
+    flush();
+    expect(queryByRole('menuitem', { name: /Group with/i })).not.toBeInTheDocument();
+
+    setIsBlurred(false);
+    flush();
+    expect(getByRole('menuitem', { name: /Group with/i })).toBeInTheDocument();
+  });
+
   it('excludes redacted and mixed-authorship Card Groups from the Group with… submenu during Private Mode', () => {
     const myCard = makeCard({
       id: 'card_mine',
@@ -499,5 +552,38 @@ describe('<CardItem />', () => {
     flush();
     expect(getByRole('alert')).toHaveTextContent('Board was locked before Action Item saved.');
     expect(checkbox).not.toBeChecked();
+  });
+
+  it('disables the inline Action Item Done checkbox while an Action Item mutation is in flight', () => {
+    const card = makeCard({
+      id: 'card_action_pending',
+      columnId: 'col_1',
+      content: 'Follow up with team',
+      isMine: true,
+      isActionItem: true,
+      actionDone: false,
+    });
+    const [actionPending, setActionPending] = createSignal(false);
+    const actions = createTestBoardMutations({
+      isActionItemPending: (id) => id === card.id && actionPending(),
+    });
+
+    const { getByRole } = render(() => (
+      <TestBoardWorkspace isFacilitator={true} actions={actions}>
+        <CardItem card={card} columnCards={[card]} columnGroups={[]} />
+      </TestBoardWorkspace>
+    ));
+    flush();
+
+    const checkbox = getByRole('checkbox', { name: 'Mark Follow up with team as Done' });
+    expect(checkbox).toBeEnabled();
+
+    setActionPending(true);
+    flush();
+    expect(checkbox).toBeDisabled();
+
+    setActionPending(false);
+    flush();
+    expect(checkbox).toBeEnabled();
   });
 });

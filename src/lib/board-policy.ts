@@ -269,6 +269,12 @@ export type GroupPolicyAction =
   | {
       readonly type: 'group:merge';
       readonly sourceCard: MergeCardFacts;
+      /**
+       * Card Group containing `sourceCard` when `sourceCard.groupId !== null`.
+       * During Private Mode, moving a Card out of a mixed-authorship Card Group
+       * via `group:merge` must obey the same whole-Group protection as `group:ungroup`.
+       */
+      readonly sourceGroup?: CardGroupPolicyFacts | null;
       readonly target:
         | {
             readonly kind: 'card';
@@ -286,6 +292,23 @@ function isGroupHiddenByPrivateMode(
   group: CardGroupPolicyFacts,
 ): boolean {
   return (board.isPrivateMode && !group.allCardsAreMine) || Boolean(group.isRedacted);
+}
+
+function checkMergeTargetGroup(
+  board: Pick<BoardPolicyContext, 'isPrivateMode'>,
+  sourceCard: MergeCardFacts,
+  targetGroup: MergeGroupFacts,
+): BoardPolicyDecision {
+  if (sourceCard.columnId !== targetGroup.columnId) {
+    return deny('different-column');
+  }
+  if (isGroupHiddenByPrivateMode(board, targetGroup)) {
+    return deny('private-mode-restricted');
+  }
+  if (sourceCard.groupId === targetGroup.id) {
+    return deny('already-in-group');
+  }
+  return ALLOWED;
 }
 
 /**
@@ -325,9 +348,16 @@ export function decideGroupAction(
       return ALLOWED;
 
     case 'group:merge': {
-      const { sourceCard, target } = action;
+      const { sourceCard, sourceGroup, target } = action;
       if (sourceCard.isPending) return deny('card-pending');
       if (isCardHiddenByPrivateMode(board, sourceCard)) {
+        return deny('private-mode-restricted');
+      }
+      if (
+        sourceCard.groupId !== null &&
+        sourceGroup &&
+        isGroupHiddenByPrivateMode(board, sourceGroup)
+      ) {
         return deny('private-mode-restricted');
       }
 
@@ -337,31 +367,15 @@ export function decideGroupAction(
         if (isCardHiddenByPrivateMode(board, target.card)) {
           return deny('private-mode-restricted');
         }
-        const targetColumnId = target.group?.columnId ?? target.card.columnId;
-        if (sourceCard.columnId !== targetColumnId) {
-          return deny('different-column');
-        }
         if (target.group !== null) {
-          if (isGroupHiddenByPrivateMode(board, target.group)) {
-            return deny('private-mode-restricted');
-          }
-          if (sourceCard.groupId === target.group.id) {
-            return deny('already-in-group');
-          }
+          return checkMergeTargetGroup(board, sourceCard, target.group);
         }
-        return ALLOWED;
+        return sourceCard.columnId !== target.card.columnId
+          ? deny('different-column')
+          : ALLOWED;
       }
 
-      if (sourceCard.columnId !== target.group.columnId) {
-        return deny('different-column');
-      }
-      if (isGroupHiddenByPrivateMode(board, target.group)) {
-        return deny('private-mode-restricted');
-      }
-      if (sourceCard.groupId === target.group.id) {
-        return deny('already-in-group');
-      }
-      return ALLOWED;
+      return checkMergeTargetGroup(board, sourceCard, target.group);
     }
   }
 }
