@@ -6062,6 +6062,72 @@ describe('<BoardWorkspace />', () => {
     expect(view.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('displays pending Co-Facilitator Link claim status while in flight on both active and missing Board views and clears when resolved', async () => {
+    // Active Board view
+    const boardId = 'board_pending_claim_active';
+    const participantBoard = makeBoardView({
+      id: boardId,
+      version: 2,
+      isFacilitator: false,
+    });
+    const { dispatchCommand } = createFakeBoardDispatcher(participantBoard);
+    let resolveActiveClaim!: (response: FacilitatorClaimResponse) => void;
+    const activeClaim = vi.fn(
+      () => new Promise<FacilitatorClaimResponse>((resolve) => { resolveActiveClaim = resolve; }),
+    );
+    window.history.replaceState(null, '', `/b/${boardId}#f=${'C'.repeat(43)}`);
+
+    const activeView = render(() => (
+      <BoardWorkspace
+        board={participantBoard}
+        boardId={boardId}
+        dispatchCommand={dispatchCommand}
+        claimFacilitatorLink={activeClaim}
+      />
+    ));
+    flush();
+
+    expect(
+      activeView.getAllByRole('status').some((el) => el.textContent?.includes('Claiming Facilitator access…')),
+    ).toBe(true);
+
+    resolveActiveClaim({ ok: true, board: { ...participantBoard, isFacilitator: true } });
+    await waitFor(() =>
+      expect(activeView.getByRole('button', { name: /Private Mode/i })).toBeInTheDocument(),
+    );
+    expect(activeView.queryByText('Claiming Facilitator access…')).not.toBeInTheDocument();
+    activeView.unmount();
+
+    // Missing / unavailable Board view
+    const missingId = 'board_pending_claim_missing';
+    let resolveMissingClaim!: (response: FacilitatorClaimResponse) => void;
+    const missingClaim = vi.fn(
+      () => new Promise<FacilitatorClaimResponse>((resolve) => { resolveMissingClaim = resolve; }),
+    );
+    window.history.replaceState(null, '', `/b/${missingId}#f=${'D'.repeat(43)}`);
+
+    const missingView = render(() => (
+      <BoardWorkspace
+        board={null}
+        boardId={missingId}
+        homeHref="/"
+        claimFacilitatorLink={missingClaim}
+      />
+    ));
+    flush();
+
+    expect(missingView.getByRole('status')).toHaveTextContent('Claiming Facilitator access…');
+
+    resolveMissingClaim({
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'This Co-Facilitator Link is invalid or has expired.',
+    });
+    const alert = await missingView.findByRole('alert');
+    expect(alert).toHaveTextContent('This Co-Facilitator Link is invalid or has expired.');
+    expect(missingView.queryByText('Claiming Facilitator access…')).not.toBeInTheDocument();
+  });
+
   it('renders a single inline alert with the server reason on failed Card ungroup and Action Item updates without triggering the global banner', async () => {
     const groupedCard = makeCard({
       id: 'card_grouped',

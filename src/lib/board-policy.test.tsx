@@ -792,6 +792,63 @@ describe('board-policy', () => {
         },
         expected: deny('already-in-group'),
       },
+
+      // Source Card Group Private Mode protection (prevents bypassing group:ungroup via group:merge)
+      {
+        label: 'Private Mode blocks Participant from merging own Card out of mixed-authorship Card Group into standalone Card',
+        board: makeBoard({ allowParticipantGroup: true, isPrivateMode: true }),
+        action: {
+          type: 'group:merge',
+          sourceCard: sourceCard({ groupId: 'group-mixed', isMine: true }),
+          sourceGroup: { allCardsAreMine: false },
+          target: { kind: 'card', card: targetCard({ isMine: true }), group: null },
+        },
+        expected: deny('private-mode-restricted'),
+      },
+      {
+        label: 'Private Mode blocks Facilitator from merging own Card out of mixed-authorship Card Group into all-mine Card Group',
+        board: makeBoard({ isFacilitator: true, isPrivateMode: true }),
+        action: {
+          type: 'group:merge',
+          sourceCard: sourceCard({ groupId: 'group-mixed', isMine: true }),
+          sourceGroup: { allCardsAreMine: false },
+          target: { kind: 'group', group: targetGroup({ id: 'group-own', allCardsAreMine: true }) },
+        },
+        expected: deny('private-mode-restricted'),
+      },
+      {
+        label: 'redacted source Card Group blocks merging own Card out of it',
+        board: makeBoard({ isFacilitator: true }),
+        action: {
+          type: 'group:merge',
+          sourceCard: sourceCard({ groupId: 'group-redacted', isMine: true }),
+          sourceGroup: { allCardsAreMine: true, isRedacted: true },
+          target: { kind: 'card', card: targetCard({ isMine: true }), group: null },
+        },
+        expected: deny('private-mode-restricted'),
+      },
+      {
+        label: 'Private Mode allows merging own Card out of all-mine Card Group into own standalone Card',
+        board: makeBoard({ allowParticipantGroup: true, isPrivateMode: true }),
+        action: {
+          type: 'group:merge',
+          sourceCard: sourceCard({ groupId: 'group-own', isMine: true }),
+          sourceGroup: { allCardsAreMine: true },
+          target: { kind: 'card', card: targetCard({ isMine: true }), group: null },
+        },
+        expected: ALLOW,
+      },
+      {
+        label: 'outside Private Mode, merging own Card out of mixed-authorship Card Group is allowed',
+        board: makeBoard({ allowParticipantGroup: true, isPrivateMode: false }),
+        action: {
+          type: 'group:merge',
+          sourceCard: sourceCard({ groupId: 'group-mixed', isMine: true }),
+          sourceGroup: { allCardsAreMine: false },
+          target: { kind: 'card', card: targetCard({ isMine: false }), group: null },
+        },
+        expected: ALLOW,
+      },
     ];
 
     it.each(mergeCases)('group:merge — $label -> $expected', ({ board, action, expected }) => {

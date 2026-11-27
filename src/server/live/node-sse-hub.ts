@@ -145,15 +145,25 @@ export function createNodeSseHub<Viewer, Message, HeartbeatViewer = Viewer>(
     heartbeatTimer.unref?.();
   }
 
+  function teardownConnection(
+    connection: SseConnection<Viewer, Message>,
+    closeController: boolean,
+  ): void {
+    if (connection.closed) return;
+    connection.closed = true;
+    connection.pending = null;
+    connection.signal.removeEventListener('abort', connection.onAbort);
+    if (closeController) {
+      safeClose(connection.controller);
+    }
+  }
+
   function removeConnection(
     channelId: string,
     connection: SseConnection<Viewer, Message>,
     action: { closeController: boolean; notifyPresence: boolean },
   ): void {
     if (connection.closed) return;
-    connection.closed = true;
-    connection.pending = null;
-    connection.signal.removeEventListener('abort', connection.onAbort);
 
     const channel = channels.get(channelId);
     const removedFromActiveChannel =
@@ -165,9 +175,7 @@ export function createNodeSseHub<Viewer, Message, HeartbeatViewer = Viewer>(
       stopHeartbeatIfIdle();
     }
 
-    if (action.closeController) {
-      safeClose(connection.controller);
-    }
+    teardownConnection(connection, action.closeController);
 
     if (action.notifyPresence && removedFromActiveChannel && channel.size > 0) {
       broadcastPresence(channelId);
@@ -231,7 +239,6 @@ export function createNodeSseHub<Viewer, Message, HeartbeatViewer = Viewer>(
       stopHeartbeatIfIdle();
       for (const connection of Array.from(channel.values())) {
         if (connection.closed) continue;
-        connection.pending = null;
         if (!hasBackpressure(connection.controller)) {
           try {
             connection.controller.enqueue(encodeSseFrame(publishOptions.project(connection.viewer)));
@@ -239,9 +246,7 @@ export function createNodeSseHub<Viewer, Message, HeartbeatViewer = Viewer>(
             // Stream may already be cancelled/closed by a concurrent abort.
           }
         }
-        connection.closed = true;
-        connection.signal.removeEventListener('abort', connection.onAbort);
-        safeClose(connection.controller);
+        teardownConnection(connection, true);
       }
       return;
     }
@@ -422,11 +427,7 @@ export function createNodeSseHub<Viewer, Message, HeartbeatViewer = Viewer>(
       channels.clear();
       for (const channel of activeChannels) {
         for (const connection of channel.values()) {
-          if (connection.closed) continue;
-          connection.closed = true;
-          connection.pending = null;
-          connection.signal.removeEventListener('abort', connection.onAbort);
-          safeClose(connection.controller);
+          teardownConnection(connection, true);
         }
       }
     },

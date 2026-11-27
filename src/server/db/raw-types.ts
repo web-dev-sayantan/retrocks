@@ -224,3 +224,17 @@ export type BoardMutationOutcome =
       code: BoardErrorCode;
       message: string;
     };
+
+export type BoardMutationFailure = Extract<BoardMutationOutcome, { ok: false }>;
+
+export const BOARD_LOCKED_ERROR: BoardMutationFailure = {
+  ok: false,
+  code: 'BOARD_LOCKED',
+  message: 'This Board is Locked and cannot be edited.',
+};
+
+export const PRIVATE_MODE_ERROR: BoardMutationFailure = {
+  ok: false,
+  code: 'FORBIDDEN',
+  message: "Cannot change another Participant's Card while Private Mode is active.",
+};

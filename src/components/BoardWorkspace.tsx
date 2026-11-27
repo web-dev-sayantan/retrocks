@@ -117,6 +117,22 @@ export interface BoardWorkspaceProps {
   liveTransport?: LiveTransport;
 }
 
+function BoardStatusBanner(props: { message: string; class?: string }) {
+  return (
+    <div
+      role="status"
+      class={[
+        'mx-auto mt-3 flex w-full items-center px-4 sm:px-6',
+        props.class ?? 'max-w-[1600px]',
+      ]}
+    >
+      <div class="flex flex-1 items-center gap-2 rounded-md border border-border bg-surface-subtle px-3.5 py-2 text-xs font-medium text-text-muted">
+        <span>{props.message}</span>
+      </div>
+    </div>
+  );
+}
+
 function BoardAlertBanner(props: { message: string; onDismiss: () => void; class?: string }) {
   return (
     <div
@@ -793,6 +809,10 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
             </div>
           </header>
 
+          <Show when={controller.claimPending()}>
+            <BoardStatusBanner message="Claiming Facilitator access…" class="max-w-xl" />
+          </Show>
+
           <Show when={controller.claimError()}>
             {(message) => (
               <BoardAlertBanner
@@ -1184,6 +1204,10 @@ function BoardWorkspaceSession(props: BoardWorkspaceProps) {
               searchInputEl = el;
             }}
           />
+
+          <Show when={controller.claimPending()}>
+            <BoardStatusBanner message="Claiming Facilitator access…" />
+          </Show>
 
           {/* Inline dismissible error feedback */}
           <Show when={controller.errorMessage() ?? controller.claimError()}>

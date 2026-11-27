@@ -3,21 +3,18 @@ import 'server-only';
 import type { PokerLiveMessage } from '../../lib/poker-types';
 import { openNodeDatabase, wrapDatabaseSync } from '../adapters/node/sqlite';
 import { createNodeSseHub, createSseFrameResponse } from '../live/node-sse-hub';
-import { pokerParticipant, projectPokerRoom } from './room';
 import {
   createPokerRoomCore,
+  evaluatePokerLiveConnect,
   missingPokerRoom,
+  projectPokerPresence,
   projectPokerPublication,
+  type PokerLiveViewer,
   type PokerRoomRuntime,
   type PokerWriteRateLimiter,
 } from './room-core';
 
 const DEFAULT_EXPIRY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-interface PokerSseViewer {
-  readonly hash: string;
-  readonly participantId: string;
-}
 
 export interface OpenNodePokerRoomsOptions {
   /** Clock returning Unix epoch milliseconds; defaults to `Date.now`. */
@@ -41,12 +38,9 @@ export async function openNodePokerRooms(
   const db = await openNodeDatabase(dbPath);
   const clock = options.now ?? (() => Date.now());
 
-  const hub = createNodeSseHub<PokerSseViewer, PokerLiveMessage, string>({
+  const hub = createNodeSseHub<PokerLiveViewer, PokerLiveMessage, string>({
     matchesViewer: (subscribed, hash) => subscribed.hash === hash,
-    formatPresence: (viewers) => ({
-      type: 'room:presence',
-      online: [...new Set(viewers.map((viewer) => viewer.participantId))],
-    }),
+    formatPresence: projectPokerPresence,
     checkAvailability: (roomId, now) =>
       core.isAvailable(roomId, options.now ? clock() : now)
         ? null
@@ -96,26 +90,27 @@ export async function openNodePokerRooms(
       core.updateFacilitatorCapabilityEncryption(id, hash, expectedRevision, encrypted),
     claimFacilitator: (id, hash, candidate) => core.claimFacilitator(id, hash, candidate),
     connect(id: string, hash: string, request: Request): Response {
-      const room = core.snapshot(id, clock());
-      if (!room) return createSseFrameResponse({ type: 'room:missing' });
-      if (room.closedAt !== undefined) {
-        return createSseFrameResponse({ type: 'room:snapshot', room: projectPokerRoom(room, hash) });
+      const decision = evaluatePokerLiveConnect(core.snapshot(id, clock()), hash);
+      switch (decision.status) {
+        case 'missing':
+        case 'closed':
+          return createSseFrameResponse(decision.message);
+        case 'unjoined':
+          return new Response(null, { status: decision.httpStatus });
+        case 'joined':
+          return hub.connect(
+            id,
+            request,
+            decision.viewer,
+            (connectionId) => ({
+              initialMessage: {
+                type: 'room:snapshot',
+                room: decision.room,
+                connectionId,
+              },
+            }),
+          );
       }
-      const participant = pokerParticipant(room, hash);
-      if (!participant) return new Response(null, { status: 403 });
-
-      return hub.connect(
-        id,
-        request,
-        { hash, participantId: participant.id },
-        (connectionId) => ({
-          initialMessage: {
-            type: 'room:snapshot',
-            room: projectPokerRoom(room, hash),
-            connectionId,
-          },
-        }),
-      );
     },
     heartbeat(id: string, hash: string, connectionId: string): boolean {
       return hub.recordHeartbeat(id, connectionId, hash);

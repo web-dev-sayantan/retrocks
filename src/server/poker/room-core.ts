@@ -12,17 +12,23 @@ import type { SqlRunner } from '../db/sql-runner';
 import { createBoardWriteRateLimiter, type BoardWriteRateLimiter } from '../rate-limit';
 import {
   PokerRoomStorage,
+  pokerParticipant,
   pokerRoomRateLimited,
   projectPokerRoom,
   type PokerFacilitatorCapability,
   type StoredPokerRoom,
 } from './room';
 
+export interface PokerLiveViewer {
+  readonly hash: string;
+  readonly participantId: string;
+}
+
 export type PokerRoomPublication =
   | { type: 'snapshot'; room: StoredPokerRoom; terminal: boolean }
   | { type: 'missing'; terminal: true; frame: { type: 'room:missing' } };
 
-export const missingPokerRoom: PokerRoomPublication = {
+export const missingPokerRoom: Extract<PokerRoomPublication, { type: 'missing' }> = {
   type: 'missing',
   terminal: true,
   frame: { type: 'room:missing' },
@@ -38,6 +44,45 @@ export function projectPokerPublication(
 ): PokerLiveMessage {
   if (publication.type === 'missing') return publication.frame;
   return { type: 'room:snapshot', room: projectPokerRoom(publication.room, hash) };
+}
+
+export type PokerLiveConnectDecision =
+  | { readonly status: 'missing'; readonly message: Extract<PokerLiveMessage, { type: 'room:missing' }> }
+  | { readonly status: 'closed'; readonly message: Extract<PokerLiveMessage, { type: 'room:snapshot' }> }
+  | { readonly status: 'unjoined'; readonly httpStatus: 403 }
+  | { readonly status: 'joined'; readonly viewer: PokerLiveViewer; readonly room: PokerRoomView };
+
+export function evaluatePokerLiveConnect(
+  room: StoredPokerRoom | null,
+  hash: string,
+): PokerLiveConnectDecision {
+  if (!room) {
+    return { status: 'missing', message: missingPokerRoom.frame };
+  }
+  if (room.closedAt !== undefined) {
+    return {
+      status: 'closed',
+      message: { type: 'room:snapshot', room: projectPokerRoom(room, hash) },
+    };
+  }
+  const participant = pokerParticipant(room, hash);
+  if (!participant) {
+    return { status: 'unjoined', httpStatus: 403 };
+  }
+  return {
+    status: 'joined',
+    viewer: { hash, participantId: participant.id },
+    room: projectPokerRoom(room, hash),
+  };
+}
+
+export function projectPokerPresence(
+  viewers: readonly Pick<PokerLiveViewer, 'participantId'>[],
+): Extract<PokerLiveMessage, { type: 'room:presence' }> {
+  return {
+    type: 'room:presence',
+    online: [...new Set(viewers.map((viewer) => viewer.participantId))],
+  };
 }
 
 /**
@@ -183,6 +228,16 @@ export function createPokerRoomCore(
     await clearExpiry(id);
   }
 
+  async function handleExpiredFailure<Code extends string>(
+    id: string,
+    result: { ok: false; code: Code; message: string; expired?: boolean },
+  ): Promise<{ ok: false; code: Code; message: string }> {
+    if (result.expired) {
+      await handleMissingExpiry(id);
+    }
+    return { ok: false, code: result.code, message: result.message };
+  }
+
   return {
     async create(id, hash, displayName, name) {
       const room = storage.create(id, hash, displayName, name, clock());
@@ -205,11 +260,7 @@ export function createPokerRoomCore(
       if (!writeLimiter.check(id, hash, now).allowed) return pokerRoomRateLimited;
       const result = storage.mutate(id, hash, command, now);
       if (!result.ok) {
-        if (result.expired) {
-          await handleMissingExpiry(id);
-          return { ok: false, code: result.code, message: result.message };
-        }
-        return result;
+        return handleExpiredFailure(id, result);
       }
       if (result.updated) {
         await publish(id, pokerRoomSnapshot(result.room));
@@ -223,11 +274,7 @@ export function createPokerRoomCore(
     async delete(id, hash) {
       const result = storage.delete(id, hash, clock());
       if (!result.ok) {
-        if (result.expired) {
-          await handleMissingExpiry(id);
-          return { ok: false, code: result.code, message: result.message };
-        }
-        return result;
+        return handleExpiredFailure(id, result);
       }
       await handleMissingExpiry(id);
       return { ok: true };
@@ -235,9 +282,8 @@ export function createPokerRoomCore(
 
     async getFacilitatorCapability(id, hash) {
       const result = storage.getFacilitatorCapability(id, hash, clock());
-      if (!result.ok && result.expired) {
-        await handleMissingExpiry(id);
-        return { ok: false, code: result.code, message: result.message };
+      if (!result.ok) {
+        return handleExpiredFailure(id, result);
       }
       return result;
     },
@@ -253,11 +299,7 @@ export function createPokerRoomCore(
         () => writeLimiter.check(id, hash, now).allowed,
       );
       if (!result.ok) {
-        if (result.expired) {
-          await handleMissingExpiry(id);
-          return { ok: false, code: result.code, message: result.message };
-        }
-        return result;
+        return handleExpiredFailure(id, result);
       }
       if (result.updated) {
         await publish(id, pokerRoomSnapshot(result.room));
@@ -283,11 +325,7 @@ export function createPokerRoomCore(
       if (!writeLimiter.check(id, hash, now).allowed) return pokerRoomRateLimited;
       const result = storage.claimFacilitator(id, hash, candidate, now);
       if (!result.ok) {
-        if (result.expired) {
-          await handleMissingExpiry(id);
-          return { ok: false, code: result.code, message: result.message };
-        }
-        return result;
+        return handleExpiredFailure(id, result);
       }
       if (result.updated) {
         await publish(id, pokerRoomSnapshot(result.room));

@@ -5,33 +5,30 @@ import {
   type BoardPolicyDenialReason,
   type VoteLimitFacts,
 } from '../../lib/board-policy';
-import type { BoardMutationActor, BoardMutationCommand, BoardMutationOutcome, RawBoardRow } from './raw-types';
+import {
+  BOARD_LOCKED_ERROR,
+  PRIVATE_MODE_ERROR,
+  type BoardMutationActor,
+  type BoardMutationCommand,
+  type BoardMutationFailure,
+  type RawBoardRow,
+} from './raw-types';
 import type { SqlRunner } from './sql-runner';
 
 export type ChangeVoteResult =
   | { ok: true; decrementedMemberCardId?: string }
-  | Extract<BoardMutationOutcome, { ok: false }>;
-
-type VoteFailure = Extract<BoardMutationOutcome, { ok: false }>;
+  | BoardMutationFailure;
 
 function mapVotePolicyDenial(
   reason: BoardPolicyDenialReason,
   targetKind: 'card' | 'group',
-): VoteFailure {
+): BoardMutationFailure {
   const label = targetKind === 'card' ? 'Card' : 'Card Group';
   switch (reason) {
     case 'board-locked':
-      return {
-        ok: false,
-        code: 'BOARD_LOCKED',
-        message: 'This Board is Locked and cannot be edited.',
-      };
+      return BOARD_LOCKED_ERROR;
     case 'private-mode-restricted':
-      return {
-        ok: false,
-        code: 'FORBIDDEN',
-        message: "Cannot change another Participant's Card while Private Mode is active.",
-      };
+      return PRIVATE_MODE_ERROR;
     case 'card-in-group':
       return {
         ok: false,
