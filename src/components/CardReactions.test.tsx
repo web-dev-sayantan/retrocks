@@ -3,7 +3,10 @@ import { cleanup, fireEvent, render, within } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import CardReactions from './CardReactions';
+
+const ok = async (): Promise<BoardMutationResult> => ({ ok: true });
 
 afterEach(() => {
   cleanup();
@@ -18,7 +21,7 @@ function renderPicker(onOutsideClick = vi.fn()) {
         reactions={{}}
         myReactions={[]}
         disabled={false}
-        onToggleReaction={() => Promise.resolve(null)}
+        onToggleReaction={ok}
       />
       <button type="button" onClick={onOutsideClick}>Other Card</button>
     </>
@@ -28,7 +31,7 @@ function renderPicker(onOutsideClick = vi.fn()) {
 describe('<CardReactions /> picker dismissal', () => {
   it('opens a floating picker and announces pending updates without adding a text row', async () => {
     const { artifact } = await captureArtifact(() => {
-      const onToggleReaction = vi.fn(() => new Promise<string | null>(() => {}));
+      const onToggleReaction = vi.fn(() => new Promise<BoardMutationResult>(() => {}));
       const view = render(() => (
         <CardReactions
           cardId="card_1"
@@ -62,7 +65,7 @@ describe('<CardReactions /> picker dismissal', () => {
         reactions={{}}
         myReactions={[]}
         disabled={disabled()}
-        onToggleReaction={() => Promise.resolve(null)}
+        onToggleReaction={ok}
       />
     ));
     const trigger = () => view.getByRole('button', { name: 'Add reaction' });

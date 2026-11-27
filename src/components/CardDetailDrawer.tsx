@@ -52,11 +52,15 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [commentDraft, setCommentDraft] = createSignal('');
   const [commentError, setCommentError] = createSignal<string | null>(null);
-  const [deleteCommentError, setDeleteCommentError] = createSignal<string | null>(null);
+  const [deleteCommentError, setDeleteCommentError] = createSignal<{
+    commentId: string;
+    message: string;
+  } | null>(() => {
+    void props.card.id;
+    return null;
+  });
   const [isPosting, setIsPosting] = createSignal(false);
-  const [deletingCommentId, setDeletingCommentId] = createSignal<string | null>(
-    null,
-  );
+  const isDeletingComment = () => workspace.actions.isCommentPending(props.card.id);
 
   const column = createMemo(
     () => workspace.columns.find((col) => col.id === props.card.columnId) ?? null,
@@ -94,10 +98,11 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     if (!canEditActionItem(workspace, props.card, patch)) return false;
     setActionError(null);
     ownerEdit.resetError();
+    followUp.clearDoneError();
     try {
-      const ok = await workspace.actions.updateActionItem(props.card.id, patch);
-      if (!ok) setActionError('Could not update the Action Item. Try again.');
-      return ok;
+      const result = await workspace.actions.updateActionItem(props.card.id, patch);
+      if (!result.ok) setActionError(result.message);
+      return result.ok;
     } catch {
       setActionError('Could not update the Action Item. Try again.');
       return false;
@@ -117,8 +122,8 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
     setIsPosting(true);
     setCommentError(null);
     try {
-      const error = await workspace.actions.createComment(props.card.id, trimmed);
-      if (error) setCommentError(error);
+      const result = await workspace.actions.createComment(props.card.id, trimmed);
+      if (!result.ok) setCommentError(result.message);
       else setCommentDraft('');
     } finally {
       setIsPosting(false);
@@ -138,20 +143,17 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
   }
 
   async function handleDeleteComment(commentId: string): Promise<void> {
-    if (deletingCommentId() !== null) return;
+    if (isDeletingComment()) return;
     const confirmed = await confirmBoardAction({
       title: 'Delete this comment?',
       description: 'The comment is removed for everyone on this Board.',
       confirmLabel: 'Delete comment',
     });
     if (!confirmed) return;
-    setDeletingCommentId(commentId);
     setDeleteCommentError(null);
-    try {
-      const error = await workspace.actions.deleteComment(props.card.id, commentId);
-      if (error) setDeleteCommentError(error);
-    } finally {
-      setDeletingCommentId(null);
+    const result = await workspace.actions.deleteComment(props.card.id, commentId);
+    if (!result.ok) {
+      setDeleteCommentError({ commentId, message: result.message });
     }
   }
 
@@ -314,10 +316,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
               <Show when={isSavingAction()}>
                 <p role="status" class="text-xs text-text-muted">Updating Action Item…</p>
               </Show>
-              <Show when={followUp.doneFailed()}>
-                <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">Could not update Done. Try again.</p>
-              </Show>
-              <Show when={ownerEdit.error() ?? actionError()}>
+              <Show when={followUp.doneError() ?? ownerEdit.error() ?? actionError()}>
                 {(message) => (
                   <p role="alert" class="text-sm text-rose-700 dark:text-rose-300">{message()}</p>
                 )}
@@ -368,7 +367,7 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                             type="button"
                             aria-label="Delete"
                             title="Delete comment"
-                            disabled={deletingCommentId() !== null}
+                            disabled={isDeletingComment()}
                             onClick={() => {
                               setDeleteCommentError(null);
                               void handleDeleteComment(comment.id);
@@ -384,8 +383,18 @@ export default function CardDetailDrawer(props: CardDetailDrawerProps) {
                           </button>
                         </Show>
                       </div>
-                      <Show when={deletingCommentId() === comment.id && deleteCommentError()}>
-                        <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">{deleteCommentError()}</p>
+                      <Show
+                        when={
+                          deleteCommentError()?.commentId === comment.id
+                            ? deleteCommentError()?.message
+                            : null
+                        }
+                      >
+                        {(message) => (
+                          <p role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">
+                            {message()}
+                          </p>
+                        )}
                       </Show>
                     </li>
                   )}

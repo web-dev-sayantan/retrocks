@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { createSignal, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import { makeBoardView, makeCard } from '../lib/board-fixtures';
 import type { CardGroupDTO } from '../lib/board-types';
 import CardGroupItem from './CardGroupItem';
@@ -179,12 +180,12 @@ describe('<CardGroupItem />', () => {
     });
     const [isLocked, setIsLocked] = createSignal(false);
     const [isBlurred, setIsBlurred] = createSignal(false);
-    const pending = Promise.withResolvers<boolean>();
+    const pending = Promise.withResolvers<BoardMutationResult>();
     const renameCardGroup = vi
-      .fn<() => Promise<boolean>>()
+      .fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => pending.promise)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: false, message: 'Could not rename the Card Group.' })
+      .mockResolvedValueOnce({ ok: true });
     const actions = createTestBoardMutations({ renameCardGroup });
 
     const { getByRole, queryByRole } = render(() => (
@@ -229,7 +230,7 @@ describe('<CardGroupItem />', () => {
     flush();
     expect(queryByRole('textbox', { name: 'Card Group title' })).toBeNull();
     expect(getByRole('button', { name: 'Release Flow — Edit Card Group title' })).toHaveFocus();
-    pending.resolve(true);
+    pending.resolve({ ok: true });
     await pending.promise;
     await Promise.resolve();
     flush();

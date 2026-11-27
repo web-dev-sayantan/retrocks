@@ -3,8 +3,11 @@ import { cleanup, fireEvent, render, waitFor, within } from '@solidjs/testing-li
 import { createSignal, createStore, flush } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import type { BoardViewDTO, CardViewDTO } from '../lib/board-types';
 import ActionItemsDrawer, { type ActionItemsDrawerProps } from './ActionItemsDrawer';
+
+const ok = async (): Promise<BoardMutationResult> => ({ ok: true });
 
 function makeCard(overrides?: Partial<CardViewDTO>): CardViewDTO {
   return {
@@ -111,7 +114,7 @@ describe('<ActionItemsDrawer />', () => {
           cards={board.cards}
           isLocked={false}
           onClose={() => {}}
-          onUpdateActionItem={() => Promise.resolve(true)}
+          onUpdateActionItem={ok}
         />
       ));
       flush();
@@ -140,7 +143,7 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('lists only Action Items with All/Open/Done filters and inline completion and owner edits', async () => {
-    const onUpdateActionItem = vi.fn(async () => true);
+    const onUpdateActionItem = vi.fn(ok);
     const board = makeBoard([openItem, doneItem, regularCard]);
     const view = render(() => (
       <ActionItemsDrawer
@@ -204,7 +207,7 @@ describe('<ActionItemsDrawer />', () => {
         cards={board.cards}
         isLocked={false}
         onClose={() => {}}
-        onUpdateActionItem={vi.fn(async () => true)}
+        onUpdateActionItem={vi.fn(ok)}
       />
     ));
     flush();
@@ -230,12 +233,12 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('keeps a failed owner draft and rolls back a failed Done change so both can be retried', async () => {
-    let completeOwnerSave!: (ok: boolean) => void;
-    const onUpdate = vi.fn<() => Promise<boolean>>()
+    let completeOwnerSave!: (result: BoardMutationResult) => void;
+    const onUpdate = vi.fn<() => Promise<BoardMutationResult>>()
       .mockImplementationOnce(() => new Promise((resolve) => { completeOwnerSave = resolve; }))
-      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({ ok: true })
       .mockRejectedValueOnce(new Error('Disconnected'))
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: true });
     const board = makeBoard([openItem]);
     const view = render(() => (
       <ActionItemsDrawer
@@ -261,7 +264,7 @@ describe('<ActionItemsDrawer />', () => {
     expect(owner).toHaveAttribute('readonly');
     expect(done).toBeEnabled();
     expect(onUpdate).toHaveBeenCalledTimes(1);
-    completeOwnerSave(false);
+    completeOwnerSave({ ok: false, message: 'Could not save the owner. Try again.' });
     await flushPromises();
 
     expect(owner).toHaveValue('API squad');
@@ -282,19 +285,19 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it.each([true, false])('keeps a Done click while the Owner save is pending (Owner succeeds: %s)', async (ownerSaved) => {
-    let completeOwnerSave!: (ok: boolean) => void;
+    let completeOwnerSave!: (result: BoardMutationResult) => void;
     const update = vi.fn<ActionItemsDrawerProps['onUpdateActionItem']>()
       .mockImplementationOnce(() => new Promise((resolve) => { completeOwnerSave = resolve; }))
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: true });
     const view = render(() => {
       const [board, setBoard] = createStore(makeBoard([{ ...openItem }]));
       const applyUpdate: ActionItemsDrawerProps['onUpdateActionItem'] = async (id, patch) => {
         const previous = { ...board.cards[0] };
         // The session owns the optimistic write; the harness mirrors it here.
         setBoard((draft) => { Object.assign(draft.cards[0], patch); });
-        const ok = await update(id, patch);
-        if (!ok) setBoard((draft) => { Object.assign(draft.cards[0], previous); });
-        return ok;
+        const result = await update(id, patch);
+        if (!result.ok) setBoard((draft) => { Object.assign(draft.cards[0], previous); });
+        return result;
       };
       return (
         <ActionItemsDrawer
@@ -324,7 +327,11 @@ describe('<ActionItemsDrawer />', () => {
     expect(done).toBeChecked();
     expect(update).toHaveBeenCalledTimes(1);
 
-    completeOwnerSave(ownerSaved);
+    completeOwnerSave(
+      ownerSaved
+        ? { ok: true }
+        : { ok: false, message: 'Could not save the owner. Try again.' },
+    );
     await waitFor(() => {
       expect(update).toHaveBeenNthCalledWith(2, 'open', { actionDone: true });
       expect(done).toBeEnabled();
@@ -337,10 +344,10 @@ describe('<ActionItemsDrawer />', () => {
 
   it('saves a queued Done click for the original Card after the drawer closes', async () => {
     const board = makeBoard([openItem]);
-    const ownerSave = Promise.withResolvers<boolean>();
+    const ownerSave = Promise.withResolvers<BoardMutationResult>();
     const update = vi.fn<ActionItemsDrawerProps['onUpdateActionItem']>()
       .mockReturnValueOnce(ownerSave.promise)
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce({ ok: true });
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
@@ -363,7 +370,7 @@ describe('<ActionItemsDrawer />', () => {
     expect(update).toHaveBeenCalledExactlyOnceWith('open', { actionOwner: 'API squad' });
 
     view.unmount();
-    ownerSave.resolve(true);
+    ownerSave.resolve({ ok: true });
     await waitFor(() => expect(update).toHaveBeenNthCalledWith(2, 'open', { actionDone: true }));
   });
 
@@ -384,7 +391,7 @@ describe('<ActionItemsDrawer />', () => {
           cards={board.cards}
           isLocked={false}
           onClose={onClose}
-          onUpdateActionItem={vi.fn(async () => true)}
+          onUpdateActionItem={vi.fn(ok)}
         />
       ));
       await flushPromises();
@@ -435,7 +442,7 @@ describe('<ActionItemsDrawer />', () => {
           cards={board.cards}
           isLocked={false}
           onClose={() => setOpen(false)}
-          onUpdateActionItem={vi.fn(async () => true)}
+          onUpdateActionItem={vi.fn(ok)}
         />
       ));
       await flushPromises();
@@ -466,7 +473,7 @@ describe('<ActionItemsDrawer />', () => {
         cards={board.cards}
         isLocked={false}
         onClose={() => {}}
-        onUpdateActionItem={vi.fn(async () => true)}
+        onUpdateActionItem={vi.fn(ok)}
       />
     ));
     flush();
@@ -478,7 +485,7 @@ describe('<ActionItemsDrawer />', () => {
   });
 
   it('disables Action Item edits for Participants when Locked, but allows Facilitators to update done and owner', async () => {
-    const participantUpdate = vi.fn(async () => true);
+    const participantUpdate = vi.fn(ok);
     const participantBoard = { ...makeBoard([openItem]), isLocked: true, isFacilitator: false };
     const participantView = render(() => (
       <ActionItemsDrawer
@@ -501,7 +508,7 @@ describe('<ActionItemsDrawer />', () => {
     ).toBeDisabled();
     cleanup();
 
-    const facilitatorUpdate = vi.fn(async () => true);
+    const facilitatorUpdate = vi.fn(ok);
     const facilitatorBoard = { ...makeBoard([openItem]), isLocked: true, isFacilitator: true };
     const facilitatorView = render(() => (
       <ActionItemsDrawer
@@ -544,7 +551,7 @@ describe('<ActionItemsDrawer />', () => {
         cards={board.cards}
         isLocked={false}
         onClose={() => {}}
-        onUpdateActionItem={vi.fn(async () => true)}
+        onUpdateActionItem={vi.fn(ok)}
       />
     ));
     await flushPromises();
@@ -562,7 +569,7 @@ describe('<ActionItemsDrawer />', () => {
   it('lets Escape close the drawer while the owner text is unchanged, and cancels only the edit once it changed', async () => {
     const board = makeBoard([openItem, doneItem]);
     const onClose = vi.fn();
-    const onUpdateActionItem = vi.fn(async () => true);
+    const onUpdateActionItem = vi.fn(ok);
     const view = render(() => (
       <ActionItemsDrawer
         side="right"
@@ -606,11 +613,49 @@ describe('<ActionItemsDrawer />', () => {
           cards={board.cards}
           isLocked={false}
           onClose={() => {}}
-          onUpdateActionItem={vi.fn(async () => true)}
+          onUpdateActionItem={vi.fn(ok)}
         />
       ));
       flush();
     });
     expectNoDiagnostics(artifact);
+  });
+
+  it('surfaces real server rejection messages for owner and Done updates with a single alert', async () => {
+    const onUpdateActionItem = vi
+      .fn<ActionItemsDrawerProps['onUpdateActionItem']>()
+      .mockResolvedValueOnce({ ok: false, message: 'Owner tag exceeds server limit.' })
+      .mockResolvedValueOnce({ ok: false, message: 'Only a Facilitator can complete this Action Item.' });
+    const board = makeBoard([openItem]);
+    const view = render(() => (
+      <ActionItemsDrawer
+        side="right"
+        open={true}
+        board={board}
+        cards={board.cards}
+        isLocked={false}
+        onClose={() => {}}
+        onUpdateActionItem={onUpdateActionItem}
+      />
+    ));
+    flush();
+
+    const drawer = within(view.getByRole('dialog', { name: 'Action Items' }));
+    const owner = drawer.getByLabelText('Owner for Ship the API');
+    fireEvent.input(owner, { target: { value: 'Platform' } });
+    flush();
+    fireEvent.keyDown(owner, { key: 'Enter' });
+    await flushPromises();
+    expect(drawer.getAllByRole('alert')).toHaveLength(1);
+    expect(drawer.getByRole('alert')).toHaveTextContent('Owner tag exceeds server limit.');
+
+    const done = drawer.getByLabelText('Mark Ship the API as Done');
+    fireEvent.click(done);
+    await flushPromises();
+    expect(done).not.toBeChecked();
+    expect(drawer.getAllByRole('alert')).toHaveLength(1);
+    expect(drawer.getByRole('alert')).toHaveTextContent(
+      'Only a Facilitator can complete this Action Item.',
+    );
   });
 });

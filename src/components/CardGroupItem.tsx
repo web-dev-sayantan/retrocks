@@ -3,6 +3,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/solid
 import { ArrowRightLeft, Check, ChevronRight, Pencil, Ungroup, X } from 'lucide';
 import { For, Show, createMemo, createSignal, onSettled } from 'solid-js';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import type {
   CardGroupDTO,
   CardViewDTO,
@@ -32,9 +33,9 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   const workspace = useBoardWorkspace();
   const [expanded, setExpanded] = createSignal(true);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
-  const [isMoving, setIsMoving] = createSignal(false);
-  const [moveFailed, setMoveFailed] = createSignal(false);
-  const [isDissolving, setIsDissolving] = createSignal(false);
+  const [moveError, setMoveError] = createSignal<string | null>(null);
+  const isMoving = () => workspace.actions.isGroupPending(props.group.id, 'move');
+  const isDissolving = () => workspace.actions.isGroupPending(props.group.id, 'dissolve');
   let moveTrigger: HTMLButtonElement | undefined;
   let titleButtonEl: HTMLButtonElement | undefined;
 
@@ -68,24 +69,23 @@ export default function CardGroupItem(props: CardGroupItemProps) {
   async function saveGroupTitle(text: string): Promise<InlineEditOutcome> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return (await workspace.actions.renameCardGroup(props.group.id, trimmed))
-      ? true
-      : false;
+    return (await workspace.actions.renameCardGroup(props.group.id, trimmed)).ok;
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    setIsMoving(true);
-    setMoveFailed(false);
-    let ok = false;
+    setMoveError(null);
+    let result: BoardMutationResult = {
+      ok: false,
+      message: 'Could not move the Card Group. Try again.',
+    };
     try {
-      ok = await workspace.actions.moveCardGroup(props.group.id, targetColumnId);
+      result = await workspace.actions.moveCardGroup(props.group.id, targetColumnId);
     } catch {
       // Treat an unexpected rejection like a failed move.
     }
-    setMoveFailed(!ok);
-    setIsMoving(false);
-    if (!ok) {
+    if (!result.ok) {
+      setMoveError(result.message);
       onSettled(() => {
         if (moveTrigger?.isConnected) moveTrigger.focus({ preventScroll: true });
       });
@@ -94,12 +94,7 @@ export default function CardGroupItem(props: CardGroupItemProps) {
 
   async function handleDissolve(): Promise<void> {
     if (isDissolving()) return;
-    setIsDissolving(true);
-    try {
-      await workspace.actions.dissolveCardGroup(props.group.id);
-    } finally {
-      setIsDissolving(false);
-    }
+    await workspace.actions.dissolveCardGroup(props.group.id);
   }
 
   return (
@@ -294,10 +289,12 @@ export default function CardGroupItem(props: CardGroupItemProps) {
         </Show>
 
         <Show when={canManageGroup()}>
-          <Show when={moveFailed()}>
-            <p role="alert" data-print-hide="true" class="text-xs text-rose-700 dark:text-rose-300">
-              Could not move the Card Group. Try again.
-            </p>
+          <Show when={moveError()}>
+            {(message) => (
+              <p role="alert" data-print-hide="true" class="text-xs text-rose-700 dark:text-rose-300">
+                {message()}
+              </p>
+            )}
           </Show>
           <p role="status" class="sr-only">
             {titleEdit.isSaving() ? 'Saving Card Group title…' : isMoving() ? 'Moving Card Group…' : isDissolving() ? 'Dissolving Card Group…' : ''}

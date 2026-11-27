@@ -162,7 +162,7 @@ afterEach(() => {
 });
 
 describe('createBoardController', () => {
-  it('reports the rejected transfer independently of an earlier successful transfer', async () => {
+  it('returns uniform transfer outcomes and does not clobber a caller-reported error when an earlier transfer settles', async () => {
     const first = makeCard({ id: 'card_first' });
     const second = makeCard({ id: 'card_second' });
     const board = makeBoardView({ cards: [first, second] });
@@ -174,16 +174,21 @@ describe('createBoardController', () => {
       message: 'The destination Column was removed.',
     });
 
-    const olderFailure = vi.fn();
-    const older = controller.moveCard(first.id, 'col_2', olderFailure);
-    await expect(controller.moveCard(second.id, 'col_2', controller.reportError)).resolves.toBe(false);
+    const older = controller.moveCard(first.id, 'col_2');
+    const newerResult = await controller.moveCard(second.id, 'col_2');
+    expect(newerResult).toEqual({
+      ok: false,
+      message: 'The destination Column was removed.',
+    });
+    // Inline-error mutations never auto-write global errorMessage; transfer callers report it explicitly.
+    expect(controller.errorMessage()).toBeNull();
+    if (!newerResult.ok) controller.reportError(newerResult.message);
     flush();
     expect(controller.errorMessage()).toBe('The destination Column was removed.');
 
     olderResponse.resolve({ ok: true, version: board.version, events: [] });
-    await expect(older).resolves.toBe(true);
+    await expect(older).resolves.toEqual({ ok: true });
     flush();
-    expect(olderFailure).not.toHaveBeenCalled();
     expect(controller.errorMessage()).toBe('The destination Column was removed.');
   });
 
@@ -418,9 +423,10 @@ describe('createBoardController', () => {
     const failure = controller.createCard('col_1', 'Second');
     flush();
     expect(controller.board()?.cards).toHaveLength(2);
-    const message = await failure;
+    const result = await failure;
     flush();
-    expect(message).toBe('Board card limit reached.');
+    expect(result).toEqual({ ok: false, message: 'Board card limit reached.' });
+    expect(controller.errorMessage()).toBeNull();
     expect(controller.board()?.cards.map((card) => card.id)).toEqual(['card_server']);
     expect(controller.board()?.columns[0]?.cardCount).toBe(1);
   });
@@ -457,9 +463,10 @@ describe('createBoardController', () => {
     flush();
     expect(controller.board()?.cards[0]?.reactions['👍']).toBe(1);
     expect(controller.board()?.cards[0]?.myReactions).toEqual([]);
-    const message = await removed;
+    const result = await removed;
     flush();
-    expect(message).toBe('Slow down reactions.');
+    expect(result).toEqual({ ok: false, message: 'Slow down reactions.' });
+    expect(controller.errorMessage()).toBeNull();
     expect(controller.board()?.cards[0]?.reactions['👍']).toBe(2);
     expect(controller.board()?.cards[0]?.myReactions).toEqual(['👍']);
   });
@@ -546,7 +553,7 @@ describe('createBoardController', () => {
         card: { ...card, actionDone: true, actionOwner: 'Platform' },
       }],
     });
-    expect(await update).toBe(true);
+    expect(await update).toEqual({ ok: true });
     flush();
     expect(controller.isActionItemPending(card.id)).toBe(false);
     expect(controller.board()?.cards[0]?.actionDone).toBe(true);
@@ -557,11 +564,15 @@ describe('createBoardController', () => {
       code: 'RATE_LIMITED',
       message: 'Slow down.',
     });
-    expect(await controller.updateActionItem(card.id, { actionDone: false })).toBe(false);
+    expect(await controller.updateActionItem(card.id, { actionDone: false })).toEqual({
+      ok: false,
+      message: 'Slow down.',
+    });
     flush();
     // The optimistic guess reverted to the last committed server value.
     expect(controller.board()?.cards[0]?.actionDone).toBe(true);
     expect(controller.isActionItemPending(card.id)).toBe(false);
+    expect(controller.errorMessage()).toBeNull();
   });
 
   it('checks permissions once at the mutation seam before dispatching', async () => {
@@ -570,24 +581,34 @@ describe('createBoardController', () => {
     const harness = mountSession(participant);
     const { controller, dispatchCommand } = harness;
 
-    expect(await controller.renameBoard('Nope')).toBe(false);
-    expect(await controller.saveVotingSettings({ voteLimit: 3 })).toBe(
-      'Voting settings are unavailable.',
-    );
-    expect(await controller.toggleBoardLock(true)).toBe(
-      'Only a Facilitator can Lock or Unlock the Board.',
-    );
-    expect(await controller.deleteColumn('col_1')).toBe(false);
+    expect(await controller.renameBoard('Nope')).toEqual({
+      ok: false,
+      message: 'Could not rename the Board. Try again.',
+    });
+    expect(await controller.saveVotingSettings({ voteLimit: 3 })).toEqual({
+      ok: false,
+      message: 'Voting settings are unavailable.',
+    });
+    expect(await controller.toggleBoardLock(true)).toEqual({
+      ok: false,
+      message: 'Only a Facilitator can Lock or Unlock the Board.',
+    });
+    expect(await controller.deleteColumn('col_1')).toEqual({
+      ok: false,
+      message: 'Could not delete the Column. Try again.',
+    });
     expect(dispatchCommand).not.toHaveBeenCalled();
 
     const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
     const lockedHarness = mountSession(locked);
-    expect(await lockedHarness.controller.updateCard(card.id, 'Nope')).toBe(
-      'This Card can no longer be edited.',
-    );
-    expect(await lockedHarness.controller.createCard('col_1', 'Nope')).toBe(
-      'This Board is not accepting new Cards.',
-    );
+    expect(await lockedHarness.controller.updateCard(card.id, 'Nope')).toEqual({
+      ok: false,
+      message: 'This Card can no longer be edited.',
+    });
+    expect(await lockedHarness.controller.createCard('col_1', 'Nope')).toEqual({
+      ok: false,
+      message: 'This Board is not accepting new Cards.',
+    });
     expect(lockedHarness.dispatchCommand).not.toHaveBeenCalled();
   });
 
@@ -644,10 +665,10 @@ describe('createBoardController', () => {
     });
     const { controller, dispatchCommand } = mountSession(board);
 
-    expect(await controller.ungroupCard(myCard.id)).toBe(false);
+    expect((await controller.ungroupCard(myCard.id)).ok).toBe(false);
     expect(dispatchCommand).not.toHaveBeenCalled();
 
-    expect(await controller.ungroupCard(ownCardA.id)).toBe(true);
+    expect(await controller.ungroupCard(ownCardA.id)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenCalledTimes(1);
     expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
       type: 'group:ungroup',
@@ -709,31 +730,35 @@ describe('createBoardController', () => {
     const { controller, dispatchCommand } = mountSession(board);
 
     // Optimistic pending Card is rejected across all Card mutations.
-    expect(await controller.toggleReaction(pendingCard.id, '👍')).toBe(
-      'This Card can no longer receive reactions.',
-    );
-    expect(await controller.createComment(pendingCard.id, 'Hello')).toBe(
-      'This Card can no longer receive comments.',
-    );
-    expect(await controller.updateActionItem(pendingCard.id, { actionDone: true })).toBe(false);
-    expect(await controller.updateCard(pendingCard.id, 'Edit')).toBe(
-      'This Card can no longer be edited.',
-    );
-    expect(await controller.moveCard(pendingCard.id, 'col_2')).toBe(false);
-    expect(await controller.deleteCard(pendingCard.id)).toBe(false);
-    expect(await controller.groupCard(pendingCard.id, 'card', ownCard.id)).toBe(false);
-    expect(await controller.ungroupCard(pendingCard.id)).toBe(false);
-    await controller.changeVote('card', pendingCard.id, 1);
+    expect(await controller.toggleReaction(pendingCard.id, '👍')).toEqual({
+      ok: false,
+      message: 'This Card can no longer receive reactions.',
+    });
+    expect(await controller.createComment(pendingCard.id, 'Hello')).toEqual({
+      ok: false,
+      message: 'This Card can no longer receive comments.',
+    });
+    expect((await controller.updateActionItem(pendingCard.id, { actionDone: true })).ok).toBe(false);
+    expect(await controller.updateCard(pendingCard.id, 'Edit')).toEqual({
+      ok: false,
+      message: 'This Card can no longer be edited.',
+    });
+    expect((await controller.moveCard(pendingCard.id, 'col_2')).ok).toBe(false);
+    expect((await controller.deleteCard(pendingCard.id)).ok).toBe(false);
+    expect((await controller.groupCard(pendingCard.id, 'card', ownCard.id)).ok).toBe(false);
+    expect((await controller.ungroupCard(pendingCard.id)).ok).toBe(false);
+    expect((await controller.changeVote('card', pendingCard.id, 1)).ok).toBe(false);
 
     // Vote policy preflight blocks cap/balance/zero-vote/grouped-Card violations.
-    await controller.changeVote('card', ownCard.id, 1);
-    await controller.changeVote('card', groupedCard.id, 1);
-    await controller.changeVote('group', 'group_own', -1);
+    expect((await controller.changeVote('card', ownCard.id, 1)).ok).toBe(false);
+    expect((await controller.changeVote('card', groupedCard.id, 1)).ok).toBe(false);
+    expect((await controller.changeVote('group', 'group_own', -1)).ok).toBe(false);
 
     // Client-conservative Private Mode comment moderation blocks Facilitator deleting peer comment.
-    expect(await controller.deleteComment(ownCard.id, peerComment.id)).toBe(
-      'This comment can no longer be deleted.',
-    );
+    expect(await controller.deleteComment(ownCard.id, peerComment.id)).toEqual({
+      ok: false,
+      message: 'This comment can no longer be deleted.',
+    });
     expect(dispatchCommand).not.toHaveBeenCalled();
 
     // Facilitator on a Locked Board in Private Mode cannot follow up on another Participant's Action Item.
@@ -751,7 +776,7 @@ describe('createBoardController', () => {
     });
     const lockedHarness = mountSession(lockedPrivate);
     expect(
-      await lockedHarness.controller.updateActionItem(foreignAction.id, { actionDone: true }),
+      (await lockedHarness.controller.updateActionItem(foreignAction.id, { actionDone: true })).ok,
     ).toBe(false);
     expect(lockedHarness.dispatchCommand).not.toHaveBeenCalled();
   });
@@ -770,7 +795,7 @@ describe('createBoardController', () => {
         card: { ...card, columnId: 'col_2' },
       }],
     });
-    expect(await controller.moveCard(card.id, 'col_2')).toBe(true);
+    expect(await controller.moveCard(card.id, 'col_2')).toEqual({ ok: true });
     flush();
     expect(controller.board()?.version).toBe(3);
     expect(controller.board()?.cards[0]?.columnId).toBe('col_1');
@@ -784,7 +809,7 @@ describe('createBoardController', () => {
         card: { ...card, columnId: 'col_2' },
       }],
     });
-    expect(await controller.moveCard(card.id, 'col_2')).toBe(true);
+    expect(await controller.moveCard(card.id, 'col_2')).toEqual({ ok: true });
     flush();
     expect(controller.board()?.version).toBe(3);
     expect(controller.board()?.cards[0]?.columnId).toBe('col_1');
@@ -806,7 +831,7 @@ describe('createBoardController', () => {
 
     const moved = await controller.moveCard(card.id, 'col_2');
     flush();
-    expect(moved).toBe(true);
+    expect(moved).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
       type: 'card:move',
       cardId: card.id,
@@ -819,16 +844,16 @@ describe('createBoardController', () => {
     const locked = makeBoardView({ isLocked: true, isFacilitator: false, cards: [card] });
     const lockedSession = mountSession(locked).controller;
     const rejected = await lockedSession.updateCard(card.id, 'Nope');
-    expect(rejected).toBe('This Card can no longer be edited.');
+    expect(rejected).toEqual({ ok: false, message: 'This Card can no longer be edited.' });
   });
 
   it('clears the board when the current Board is deleted', async () => {
     const board = makeBoardView();
     const { controller, dispatchCommand } = mountSession(board);
 
-    const message = await controller.deleteCurrentBoard();
+    const result = await controller.deleteCurrentBoard();
     flush();
-    expect(message).toBeNull();
+    expect(result).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenCalledWith(board.id, { type: 'board:delete' });
     expect(controller.board()).toBeNull();
   });
@@ -847,9 +872,9 @@ describe('createBoardController', () => {
         timer: { endsAt: 20000, remainingMs: 60000, durationMs: 60000 },
       }],
     });
-    const response = await controller.changeCountdown(board.id, { action: 'start', minutes: 1 });
+    const response = await controller.changeCountdown({ action: 'start', minutes: 1 });
     flush();
-    expect(response.ok).toBe(true);
+    expect(response).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenCalledWith(board.id, {
       type: 'timer:update',
       change: { action: 'start', minutes: 1 },
@@ -870,20 +895,20 @@ describe('createBoardController', () => {
     const board = makeBoardView({ cards: [cardA, cardB] });
     const { controller, dispatchCommand } = mountSession(board);
 
-    expect(await controller.renameBoard('  Sprint 43  ')).toBe(true);
+    expect(await controller.renameBoard('  Sprint 43  ')).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'board:rename',
       title: 'Sprint 43',
     });
 
-    expect(await controller.updateCard(cardA.id, 'Updated A')).toBeNull();
+    expect(await controller.updateCard(cardA.id, 'Updated A')).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'card:update',
       cardId: cardA.id,
       content: 'Updated A',
     });
 
-    expect(await controller.groupCard(cardA.id, 'card', cardB.id)).toBe(true);
+    expect(await controller.groupCard(cardA.id, 'card', cardB.id)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'group:merge',
       cardId: cardA.id,
@@ -894,43 +919,45 @@ describe('createBoardController', () => {
     const groupId = controller.board()?.groups[0]?.id;
     expect(groupId).toBeDefined();
 
-    expect(await controller.renameCardGroup(groupId!, 'Cluster')).toBe(true);
+    expect(await controller.renameCardGroup(groupId!, 'Cluster')).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'group:rename',
       groupId: groupId!,
       title: 'Cluster',
     });
 
-    expect(await controller.moveCardGroup(groupId!, 'col_2')).toBe(true);
+    expect(await controller.moveCardGroup(groupId!, 'col_2')).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'group:move',
       groupId: groupId!,
       targetColumnId: 'col_2',
     });
 
-    expect(await controller.ungroupCard(cardA.id)).toBe(true);
+    expect(await controller.ungroupCard(cardA.id)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'group:ungroup',
       cardId: cardA.id,
     });
 
-    expect(await controller.groupCard(cardA.id, 'card', cardB.id)).toBe(true);
+    expect(await controller.groupCard(cardA.id, 'card', cardB.id)).toEqual({ ok: true });
     flush();
     const nextGroupId = controller.board()?.groups[0]?.id;
-    expect(await controller.dissolveCardGroup(nextGroupId!)).toBe(true);
+    expect(await controller.dissolveCardGroup(nextGroupId!)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'group:dissolve',
       groupId: nextGroupId!,
     });
 
-    expect(await controller.deleteCard(cardB.id)).toBe(true);
+    expect(await controller.deleteCard(cardB.id)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'card:delete',
       cardId: cardB.id,
     });
 
     const added = await controller.addColumn({ title: 'Kudos', accent: 'amber', isActionColumn: false });
-    expect(added?.title).toBe('Kudos');
+    expect(added.ok).toBe(true);
+    if (!added.ok) throw new Error('Expected addColumn to succeed');
+    expect(added.value.title).toBe('Kudos');
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'column:add',
       title: 'Kudos',
@@ -938,23 +965,23 @@ describe('createBoardController', () => {
       isActionColumn: false,
     });
 
-    expect(await controller.updateColumn(added!.id, { title: 'Shoutouts' })).toBe(true);
+    expect(await controller.updateColumn(added.value.id, { title: 'Shoutouts' })).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'column:update',
-      columnId: added!.id,
+      columnId: added.value.id,
       title: 'Shoutouts',
     });
 
-    expect(await controller.moveColumn(added!.id, -1)).toBe(true);
+    expect(await controller.moveColumn(added.value.id, -1)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'column:reorder',
-      columnIds: ['col_1', 'col_2', added!.id, 'col_3'],
+      columnIds: ['col_1', 'col_2', added.value.id, 'col_3'],
     });
 
-    expect(await controller.deleteColumn(added!.id)).toBe(true);
+    expect(await controller.deleteColumn(added.value.id)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'column:delete',
-      columnId: added!.id,
+      columnId: added.value.id,
     });
 
     const nextVersion = () => (controller.board()?.version ?? 0) + 1;
@@ -964,7 +991,7 @@ describe('createBoardController', () => {
       version: nextVersion(),
       events: [{ type: 'board:updated', version: nextVersion(), patch: { isBlurred: true } }],
     });
-    expect(await controller.togglePrivateMode(false)).toBe('applied');
+    expect(await controller.togglePrivateMode(false)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'board:set-private-mode',
       isBlurred: true,
@@ -975,7 +1002,7 @@ describe('createBoardController', () => {
       version: nextVersion(),
       events: [{ type: 'board:updated', version: nextVersion(), patch: { isBlurred: false } }],
     });
-    expect(await controller.togglePrivateMode(true)).toBe('revealed');
+    expect(await controller.togglePrivateMode(true)).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'board:set-private-mode',
       isBlurred: false,
@@ -991,7 +1018,7 @@ describe('createBoardController', () => {
         comment: { id: 'cm_2', cardId: cardA.id, content: 'Nice!', isMine: true, createdAt: 200 },
       }],
     });
-    expect(await controller.createComment(cardA.id, 'Nice!')).toBeNull();
+    expect(await controller.createComment(cardA.id, 'Nice!')).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'comment:create',
       cardId: cardA.id,
@@ -1003,7 +1030,7 @@ describe('createBoardController', () => {
       version: nextVersion(),
       events: [{ type: 'comment:deleted', version: nextVersion(), cardId: cardA.id, commentId: 'cm_1' }],
     });
-    expect(await controller.deleteComment(cardA.id, 'cm_1')).toBeNull();
+    expect(await controller.deleteComment(cardA.id, 'cm_1')).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'comment:delete',
       cardId: cardA.id,
@@ -1015,7 +1042,7 @@ describe('createBoardController', () => {
       version: nextVersion(),
       events: [{ type: 'board:updated', version: nextVersion(), patch: { blindVoting: true } }],
     });
-    expect(await controller.saveVotingSettings({ blindVoting: true })).toBeNull();
+    expect(await controller.saveVotingSettings({ blindVoting: true })).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'voting:configure',
       blindVoting: true,
@@ -1031,7 +1058,7 @@ describe('createBoardController', () => {
         board: { ...controller.board()!, version: nextVersion(), remainingVotes: 5 },
       }],
     });
-    expect(await controller.resetAllVotes()).toBeNull();
+    expect(await controller.resetAllVotes()).toEqual({ ok: true });
     expect(dispatchCommand).toHaveBeenLastCalledWith(board.id, {
       type: 'voting:reset',
     });
@@ -1490,7 +1517,7 @@ describe('createBoardController', () => {
             version: 7,
             events: [{ type: 'board:updated', version: 7, patch: { isLocked: true } }],
           });
-          expect(await controller.toggleBoardLock(true)).toBeNull();
+          expect(await controller.toggleBoardLock(true)).toEqual({ ok: true });
           flush();
           expect(controller.board()?.isLocked).toBe(true);
           expect(cardBRuns).toBe(1);
@@ -2140,6 +2167,111 @@ describe('createBoardController', () => {
         }
       },
       { scenario: 'board-controller-group-shrink-and-vote-dissolve' },
+    );
+    expectNoDiagnostics(artifact);
+  });
+
+  it('tracks single-source scoped pending state and routes inline vs global errors strictly without double-reporting or Solid 2.0 diagnostics', async () => {
+    const { artifact } = await captureArtifact(
+      async () => {
+        const card = makeCard({
+          id: 'card_1',
+          columnId: 'col_1',
+          groupId: 'group_1',
+          isMine: true,
+          comments: [
+            { id: 'cm_1', cardId: 'card_1', content: 'Note', isMine: true, createdAt: 100 },
+          ],
+          commentCount: 1,
+        });
+        const peer = makeCard({ id: 'card_2', columnId: 'col_1', groupId: 'group_1', isMine: true });
+        const board = makeBoardView({
+          isFacilitator: true,
+          groups: [
+            {
+              id: 'group_1',
+              columnId: 'col_1',
+              title: 'Theme',
+              cardIds: ['card_1', 'card_2'],
+              votes: 0,
+              myVotes: 0,
+              createdAt: 100,
+            },
+          ],
+          cards: [card, peer],
+        });
+        const { controller, dispatchCommand, dispose } = mountSession(board);
+        try {
+          // 1. Scoped pending helpers flip true while in flight and false on settle, and inline-error mutations do NOT write global errorMessage.
+          const pendingMove = Promise.withResolvers<BoardMutationResponse>();
+          dispatchCommand.mockReturnValueOnce(pendingMove.promise);
+          const movePromise = controller.moveCard(card.id, 'col_2');
+          expect(controller.isCardPending(card.id, 'move')).toBe(true);
+          expect(controller.isCardPending(card.id)).toBe(true);
+          expect(controller.isCardPending(peer.id)).toBe(false);
+          pendingMove.resolve({ ok: false, code: 'VALIDATION_ERROR', message: 'Card move rejected.' });
+          await expect(movePromise).resolves.toEqual({ ok: false, message: 'Card move rejected.' });
+          flush();
+          expect(controller.isCardPending(card.id, 'move')).toBe(false);
+          expect(controller.errorMessage()).toBeNull();
+
+          const pendingComment = Promise.withResolvers<BoardMutationResponse>();
+          dispatchCommand.mockReturnValueOnce(pendingComment.promise);
+          const commentPromise = controller.deleteComment(card.id, 'cm_1');
+          expect(controller.isCommentPending(card.id, 'cm_1')).toBe(true);
+          expect(controller.isCommentPending(card.id)).toBe(true);
+          pendingComment.resolve({ ok: false, code: 'NOT_FOUND', message: 'Comment already removed.' });
+          await expect(commentPromise).resolves.toEqual({ ok: false, message: 'Comment already removed.' });
+          flush();
+          expect(controller.isCommentPending(card.id, 'cm_1')).toBe(false);
+          expect(controller.errorMessage()).toBeNull();
+
+          const pendingGroupMove = Promise.withResolvers<BoardMutationResponse>();
+          dispatchCommand.mockReturnValueOnce(pendingGroupMove.promise);
+          const groupMovePromise = controller.moveCardGroup('group_1', 'col_2');
+          expect(controller.isGroupPending('group_1', 'move')).toBe(true);
+          pendingGroupMove.resolve({ ok: false, code: 'FORBIDDEN', message: 'Cannot move group.' });
+          await expect(groupMovePromise).resolves.toEqual({ ok: false, message: 'Cannot move group.' });
+          flush();
+          expect(controller.isGroupPending('group_1', 'move')).toBe(false);
+          expect(controller.errorMessage()).toBeNull();
+
+          dispatchCommand.mockResolvedValueOnce({ ok: false, code: 'FORBIDDEN', message: 'Delete blocked.' });
+          await expect(controller.deleteCard(card.id)).resolves.toEqual({ ok: false, message: 'Delete blocked.' });
+          dispatchCommand.mockResolvedValueOnce({ ok: false, code: 'FORBIDDEN', message: 'Ungroup blocked.' });
+          await expect(controller.ungroupCard(card.id)).resolves.toEqual({ ok: false, message: 'Ungroup blocked.' });
+          dispatchCommand.mockResolvedValueOnce({ ok: false, code: 'FORBIDDEN', message: 'Timer locked.' });
+          await expect(controller.changeCountdown({ action: 'start', minutes: 5 })).resolves.toEqual({
+            ok: false,
+            message: 'Timer locked.',
+          });
+          flush();
+          expect(controller.errorMessage()).toBeNull();
+
+          // 2. Global-banner mutations write errorMessage on failure and clear it on success.
+          const pendingColDelete = Promise.withResolvers<BoardMutationResponse>();
+          dispatchCommand.mockReturnValueOnce(pendingColDelete.promise);
+          const deleteColPromise = controller.deleteColumn('col_2');
+          expect(controller.isColumnPending('col_2', 'delete')).toBe(true);
+          pendingColDelete.resolve({ ok: false, code: 'VALIDATION_ERROR', message: 'Column cannot be deleted.' });
+          await expect(deleteColPromise).resolves.toEqual({ ok: false, message: 'Column cannot be deleted.' });
+          flush();
+          expect(controller.isColumnPending('col_2', 'delete')).toBe(false);
+          expect(controller.errorMessage()).toBe('Column cannot be deleted.');
+
+          dispatchCommand.mockResolvedValueOnce({
+            ok: true,
+            version: 2,
+            events: [{ type: 'board:updated', version: 2, patch: { title: 'Updated' } }],
+          });
+          await expect(controller.renameBoard('Updated')).resolves.toEqual({ ok: true });
+          flush();
+          expect(controller.errorMessage()).toBeNull();
+        } finally {
+          dispose();
+        }
+      },
+      { scenario: 'board-controller-uniform-outcomes-and-pending' },
     );
     expectNoDiagnostics(artifact);
   });

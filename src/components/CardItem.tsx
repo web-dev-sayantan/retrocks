@@ -2,6 +2,7 @@ import { Menu, MenuItem, MenuSub, MenuSubTrigger, MenuTrigger } from '@ui-sdk/so
 import { ChevronRight, Ellipsis, Flag, MessageSquare, PanelRightOpen } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
 
+import type { BoardMutationResult } from '../lib/board-controller';
 import {
   MAX_CARD_CONTENT_LENGTH,
   type ActionItemPatch,
@@ -53,11 +54,11 @@ const PLACEHOLDER_LINES_3 = ['w-full', 'w-11/12', 'w-2/3'] as const;
 
 export default function CardItem(props: CardItemProps) {
   const workspace = useBoardWorkspace();
-  const [isDeleting, setIsDeleting] = createSignal(false);
-  const [isMoving, setIsMoving] = createSignal(false);
-  const [isGrouping, setIsGrouping] = createSignal(false);
-  const [isUngrouping, setIsUngrouping] = createSignal(false);
-  const isUpdatingAction = createMemo(() => workspace.actions.isActionItemPending(props.card.id));
+  const isDeleting = () => workspace.actions.isCardPending(props.card.id, 'delete');
+  const isMoving = () => workspace.actions.isCardPending(props.card.id, 'move');
+  const isGrouping = () => workspace.actions.isCardPending(props.card.id, 'group');
+  const isUngrouping = () => workspace.actions.isCardPending(props.card.id, 'ungroup');
+  const isUpdatingAction = () => workspace.actions.isActionItemPending(props.card.id);
   // The optimistic store is the draft: the pending value is the checkbox value.
   const actionDone = () => props.card.actionDone;
   const [actionError, setActionError] = createSignal('');
@@ -194,26 +195,24 @@ export default function CardItem(props: CardItemProps) {
     if (!canManage()) return false;
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    const error = await workspace.actions.updateCard(props.card.id, trimmed);
-    return error === null ? true : error;
+    const result = await workspace.actions.updateCard(props.card.id, trimmed);
+    return result.ok ? true : result.message;
   }
 
-  async function runCardAction(
-    request: () => Promise<boolean>,
-    failureMessage: string,
-    setPending?: (pending: boolean) => void,
+  async function settleCardAction(
+    pending: Promise<BoardMutationResult>,
+    fallbackMessage: string,
   ): Promise<boolean> {
-    setPending?.(true);
     setActionError('');
     try {
-      if (await request()) return true;
+      const result = await pending;
+      if (result.ok) return true;
+      if (!props.card.redacted) setActionError(result.message);
+      return false;
     } catch {
-      // Report rejected requests alongside unsuccessful mutation responses.
-    } finally {
-      setPending?.(false);
+      if (!props.card.redacted) setActionError(fallbackMessage);
+      return false;
     }
-    if (!props.card.redacted) setActionError(failureMessage);
-    return false;
   }
 
   async function handleDeleteCard(): Promise<void> {
@@ -224,27 +223,24 @@ export default function CardItem(props: CardItemProps) {
       confirmLabel: 'Delete Card',
     });
     if (!confirmed) return;
-    await runCardAction(
-      () => workspace.actions.deleteCard(props.card.id),
+    await settleCardAction(
+      workspace.actions.deleteCard(props.card.id),
       'Could not delete the Card. Try again.',
-      setIsDeleting,
     );
   }
 
   function updateAction(patch: ActionItemPatch): Promise<boolean> {
-    return runCardAction(
-      // eslint-disable-next-line solid/reactivity -- invoked from event handlers only
-      () => workspace.actions.updateActionItem(props.card.id, patch),
+    return settleCardAction(
+      workspace.actions.updateActionItem(props.card.id, patch),
       'Could not update the Action Item. Try again.',
     );
   }
 
   async function handleSelectMoveTarget(targetColumnId: string): Promise<void> {
     if (isMoving()) return;
-    await runCardAction(
-      () => workspace.actions.moveCard(props.card.id, targetColumnId),
+    await settleCardAction(
+      workspace.actions.moveCard(props.card.id, targetColumnId),
       'Could not move the Card. Try again.',
-      setIsMoving,
     );
   }
 
@@ -254,19 +250,17 @@ export default function CardItem(props: CardItemProps) {
     targetId: string,
   ): Promise<void> {
     if (isGrouping()) return;
-    await runCardAction(
-      () => workspace.actions.groupCard(cardId, targetType, targetId),
+    await settleCardAction(
+      workspace.actions.groupCard(cardId, targetType, targetId),
       'Could not group the Card. Try again.',
-      setIsGrouping,
     );
   }
 
   async function handleUngroup(): Promise<void> {
     if (isUngrouping()) return;
-    await runCardAction(
-      () => workspace.actions.ungroupCard(props.card.id),
+    await settleCardAction(
+      workspace.actions.ungroupCard(props.card.id),
       'Could not ungroup the Card. Try again.',
-      setIsUngrouping,
     );
   }
 

@@ -12,7 +12,8 @@ import { useShortcut } from '@ui-sdk/solid/shortcuts';
 import { Clock, Pause, Volume2, VolumeX, X } from 'lucide';
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from 'solid-js';
 
-import type { BoardMutationResponse, TimerStateDTO } from '../lib/board-types';
+import type { BoardMutationResult } from '../lib/board-controller';
+import type { TimerStateDTO } from '../lib/board-types';
 import type { TimerChange } from '../lib/schemas';
 import { MAX_TIMER_MINUTES, MIN_TIMER_MINUTES, type ServerClockSample } from '../lib/timer';
 import { TIMER_MUTE_STORAGE_KEY, createTimerChime } from '../lib/timer-chime';
@@ -57,7 +58,7 @@ export default function CountdownTimer(props: {
   timer: TimerStateDTO;
   clock: ServerClockSample | null;
   canControl: boolean;
-  onChange: (change: TimerChange) => Promise<BoardMutationResponse>;
+  onChange: (change: TimerChange) => Promise<BoardMutationResult>;
 }) {
   const durationId = createUniqueId();
   const popover = createPopoverController();
