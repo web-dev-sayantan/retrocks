@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit",
     "knip": "knip",
     "prepare": "husky",
-    "deploy": "pnpm exec wrangler deploy"
+    "deploy": "pnpm build && pnpm exec wrangler deploy"
   },
   "lint-staged": {
     "*.{ts,tsx}": "oxlint --fix"
